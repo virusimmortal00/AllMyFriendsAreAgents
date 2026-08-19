@@ -29,13 +29,13 @@ export function BuddyList({ availability }: { availability?: Record<AgentId, boo
       <PanelTitle>Buddy List</PanelTitle>
       <div className="buddy-list">
         {(["codex", "claude", "you"] as const).map((buddy) => {
-          const online = buddy === "you" || availability?.[buddy] !== false;
+          const available = buddy === "you" || availability?.[buddy] !== false;
           return (
             <div className="buddy-row" key={buddy}>
               <PixelBuddy buddy={buddy} />
               <div>
                 <strong className={`speaker speaker--${buddy}`}>{buddyLabels[buddy]}</strong>
-                <span>{online ? "Online" : "Offline"}</span>
+                <span>{buddy === "you" ? "Present" : available ? "CLI installed" : "CLI missing"}</span>
               </div>
             </div>
           );
@@ -146,4 +146,3 @@ export function RoomControls({
     </aside>
   );
 }
-

@@ -142,7 +142,7 @@ export default function App() {
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">
-          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟</span> 3 people online</div>
+          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟</span> 3 participants</div>
           <div className="status-cell">{statusText}</div>
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> Connected</div>
         </footer>
@@ -150,4 +150,3 @@ export default function App() {
     </main>
   );
 }
-

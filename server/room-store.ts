@@ -7,7 +7,7 @@ const DEFAULT_MESSAGES: RoomMessage[] = [
   {
     id: randomUUID(),
     speaker: "system",
-    text: "Welcome to AgentWire 98. Both agents are online and reviews are read-only.",
+    text: "Welcome to AgentWire 98. Both agent CLIs were detected and reviews are read-only.",
     timestamp: new Date().toISOString(),
     kind: "status",
   },
@@ -96,4 +96,3 @@ export class RoomStore {
     await rename(temporaryPath, this.statePath);
   }
 }
-
