@@ -1,4 +1,4 @@
-import { visibleAgentText } from "../shared/message-format.js";
+import { visibleAgentChatText, visibleAgentText } from "../shared/message-format.js";
 import type { RoomMessage, RoomState } from "./types.js";
 
 export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
@@ -12,7 +12,9 @@ interface TranscriptEntry {
 function entriesFor(messages: RoomMessage[]) {
   const entries: TranscriptEntry[] = [];
   for (const message of messages) {
-    const text = visibleAgentText(message.text);
+    const text = message.speaker === "codex" || message.speaker === "claude"
+      ? visibleAgentChatText(message.text)
+      : visibleAgentText(message.text);
     if (!text) continue;
     const previous = entries.at(-1);
     if (message.burstId && previous?.speaker === message.speaker && previous.burstId === message.burstId) {

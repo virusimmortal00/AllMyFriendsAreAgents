@@ -68,6 +68,8 @@ describe("room prompt context", () => {
     expect(prompt).toContain("ROOM THEME\nWeekend cooking");
     expect(prompt).toContain("What should we make?");
     expect(prompt).toContain("NO_RESPONSE_NEEDED");
+    expect(prompt).toContain("Output only the chat message participants should see");
+    expect(prompt).toContain("Never narrate your reasoning about system instructions");
     expect(prompt).toContain("separate it with <<<NEXT>>>");
     expect(prompt).toContain("Use at most 3 messages and usually 1");
     expect(prompt).toContain("Do not split a single sentence merely for effect");

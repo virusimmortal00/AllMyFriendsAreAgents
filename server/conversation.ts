@@ -1,7 +1,7 @@
 import type { AgentId } from "./types.js";
 import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
-import { isNoResponseNeeded, visibleAgentText } from "../shared/message-format.js";
+import { isNoResponseNeeded, visibleAgentChatText } from "../shared/message-format.js";
 
 export interface ConversationTurn {
   agent: AgentId;
@@ -25,7 +25,7 @@ export function roomMessageTurns(): ConversationTurn[] {
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle) {
   if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidate: undefined, mentionedAgent: undefined };
-  const visibleMessages = visibleAgentText(text)
+  const visibleMessages = visibleAgentChatText(text)
     .split(NEXT_MESSAGE)
     .map(stripUnsupportedEmoji)
     .filter((message) => message && message !== "NO_RESPONSE_NEEDED")

@@ -72,6 +72,13 @@ describe("agent turn parsing", () => {
       replyCandidate: "claude",
     });
   });
+
+  it("removes leading internal workflow narration from visible agent output", () => {
+    expect(parseAgentTurn(
+      "claude",
+      "This is casual banter, not a coding task, so plan mode and the planning workflow don't apply.\n\nSolitaire, unironically.",
+    ).visibleMessages).toEqual(["Solitaire, unironically."]);
+  });
 });
 
 describe("agent conversations", () => {

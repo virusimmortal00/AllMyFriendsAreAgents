@@ -42,4 +42,16 @@ describe("agent transcript context", () => {
     expect(transcript).toContain("message 29");
     expect(transcript.length).toBeLessThanOrEqual(4_000);
   });
+
+  it("excludes agent workflow narration without altering the same words from a human", () => {
+    const preface = "This is not a coding task, so plan mode and the planning workflow do not apply.";
+    const transcript = transcriptFor(state([
+      { id: "1", speaker: "you", text: `${preface}\n\nWhat game wins?`, timestamp: "2026-08-19T12:00:00Z" },
+      { id: "2", speaker: "claude", text: `${preface}\n\nSolitaire, unironically.`, timestamp: "2026-08-19T12:00:01Z" },
+    ]));
+
+    expect(transcript).toContain(`[YOU]\n${preface}\n\nWhat game wins?`);
+    expect(transcript).toContain("[CLAUDE]\nSolitaire, unironically.");
+    expect(transcript.match(/plan mode/g)).toHaveLength(1);
+  });
 });

@@ -7,7 +7,7 @@ import {
   CHAT_FONT_STACKS,
   type ChatStyle,
 } from "../shared/chat-style";
-import { visibleAgentText } from "../shared/message-format";
+import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
@@ -120,7 +120,11 @@ export function Transcript({
             <div>
               <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
               <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
-                <span className="message__text">{renderAimSmileys(visibleAgentText(message.text))}</span>
+                <span className="message__text">{renderAimSmileys(
+                  message.speaker === "codex" || message.speaker === "claude"
+                    ? visibleAgentChatText(message.text)
+                    : visibleAgentText(message.text),
+                )}</span>
               </span>
             </div>
           </article>
