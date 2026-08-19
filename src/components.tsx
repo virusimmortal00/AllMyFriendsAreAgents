@@ -8,9 +8,9 @@ const buddyLabels = {
   you: "You",
 } as const;
 
-export function PixelBuddy({ buddy, small = false }: { buddy: "codex" | "claude" | "you"; small?: boolean }) {
+export function PixelBuddy({ buddy }: { buddy: "codex" | "claude" | "you" }) {
   return (
-    <span className={`pixel-buddy pixel-buddy--${buddy} ${small ? "pixel-buddy--small" : ""}`} aria-hidden="true">
+    <span className={`pixel-buddy pixel-buddy--${buddy}`} aria-hidden="true">
       <span className="pixel-buddy__antenna" />
       <span className="pixel-buddy__face">
         <span className="pixel-buddy__eyes" />
@@ -82,8 +82,6 @@ interface RoomControlsProps {
   disabled: boolean;
   onWritableChange: (agent: WritableAgent) => void;
   onRoundsChange: (rounds: number) => void;
-  onAsk: (agent: AgentId | "both") => void;
-  onReview: () => void;
 }
 
 export function RoomControls({
@@ -92,8 +90,6 @@ export function RoomControls({
   disabled,
   onWritableChange,
   onRoundsChange,
-  onAsk,
-  onReview,
 }: RoomControlsProps) {
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
@@ -130,21 +126,6 @@ export function RoomControls({
         disabled={disabled}
         onChange={(event) => onRoundsChange(Math.min(8, Math.max(1, Number(event.target.value))))}
       />
-      <div className="agent-actions">
-        <button className="classic-button" type="button" disabled={disabled} onClick={() => onAsk("codex")}>
-          <PixelBuddy buddy="codex" small /> Ask Codex
-        </button>
-        <button className="classic-button" type="button" disabled={disabled} onClick={() => onAsk("claude")}>
-          <PixelBuddy buddy="claude" small /> Ask Claude
-        </button>
-        <button className="classic-button" type="button" disabled={disabled} onClick={() => onAsk("both")}>
-          <span className="duo-icon"><PixelBuddy buddy="you" small /><PixelBuddy buddy="codex" small /></span> Ask Both
-        </button>
-      </div>
-      <hr />
-      <button className="classic-button review-button" type="button" disabled={disabled} onClick={onReview}>
-        <span className="review-icon">✓</span> Review Changes
-      </button>
     </aside>
   );
 }

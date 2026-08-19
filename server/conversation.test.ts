@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseAgentTurn, runMentionConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId } from "./types.js";
 
 describe("agent turn parsing", () => {
@@ -72,5 +72,11 @@ describe("mention-driven conversations", () => {
     );
 
     expect(seenAgents).toEqual(["codex", "claude", "codex"]);
+  });
+});
+
+describe("room message policy", () => {
+  it("sends every normal room message to both agents", () => {
+    expect(roomMessageTurns().map(({ agent }) => agent)).toEqual(["codex", "claude"]);
   });
 });

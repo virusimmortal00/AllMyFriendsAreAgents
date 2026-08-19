@@ -19,7 +19,6 @@ const EMPTY_ROOM: RoomState = {
 export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [draft, setDraft] = useState("");
-  const [target, setTarget] = useState<AgentId | "both">("both");
   const [menuOpen, setMenuOpen] = useState(false);
   const [clientError, setClientError] = useState("");
   const transcript = useRef<HTMLDivElement>(null);
@@ -66,7 +65,7 @@ export default function App() {
     const message = draft.trim();
     if (!message || working) return;
     setDraft("");
-    void withErrorHandling(() => sendMessage(message, target));
+    void withErrorHandling(() => sendMessage(message));
   }
 
   function invoke(action: "ask" | "review" | "roundtable", agent: AgentId | "both") {
@@ -109,16 +108,10 @@ export default function App() {
             <PanelTitle>The Agent Room</PanelTitle>
             <Transcript messages={room.messages} transcriptRef={transcript} />
             <form className="composer" onSubmit={submitMessage}>
-              <label htmlFor="recipient">To:</label>
-              <select id="recipient" className="classic-select" value={target} onChange={(event) => setTarget(event.target.value as AgentId | "both")}>
-                <option value="both">Everyone</option>
-                <option value="codex">Codex</option>
-                <option value="claude">Claude</option>
-              </select>
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
-                placeholder="Type your message here..."
+                placeholder="Message everyone in this room..."
                 aria-label="Message"
                 disabled={working}
                 onKeyDown={(event) => {
@@ -137,8 +130,6 @@ export default function App() {
             disabled={working}
             onWritableChange={changeWritable}
             onRoundsChange={changeRounds}
-            onAsk={(agent) => invoke("ask", agent)}
-            onReview={() => invoke("review", "both")}
           />
         </div>
 

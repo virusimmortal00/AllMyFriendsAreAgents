@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Response } from "express";
 import { cliAvailability, runAgent } from "./agent-runner.js";
-import { parseAgentTurn, runMentionConversation, type ConversationTurn } from "./conversation.js";
+import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn } from "./conversation.js";
 import { RoomStore } from "./room-store.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
@@ -85,23 +85,14 @@ app.patch("/api/settings", async (request, response) => {
 
 app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
-  const target = request.body?.target as AgentId | "both" | "everyone";
   if (!text) return response.status(400).json({ error: "Message text is required." });
-  if (!["codex", "claude", "both", "everyone"].includes(target)) {
-    return response.status(400).json({ error: "Unknown message target." });
-  }
   if (activeJob) return response.status(409).json({ error: "The room is already working." });
 
   await store.addMessage("you", text);
   broadcast();
-  if (target === "everyone") return response.status(201).json(store.snapshot());
 
-  const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
   void runJob(async () => {
-    await performConversation(agents.map((agent) => ({
-      agent,
-      instruction: "Respond to the latest human message and the current room discussion.",
-    })));
+    await performConversation(roomMessageTurns());
   });
   return response.status(202).json({ accepted: true });
 });

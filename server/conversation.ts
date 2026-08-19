@@ -11,6 +11,13 @@ export interface TurnResult {
   mentionedAgent?: AgentId;
 }
 
+export function roomMessageTurns(): ConversationTurn[] {
+  return (["codex", "claude"] as const).map((agent) => ({
+    agent,
+    instruction: "Respond to the latest human message and the current room discussion.",
+  }));
+}
+
 export function parseAgentTurn(agent: AgentId, text: string) {
   if (isNoResponseNeeded(text)) return { visibleText: "", mentionedAgent: undefined };
   const visibleText = visibleAgentText(text);

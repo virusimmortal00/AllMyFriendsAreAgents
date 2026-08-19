@@ -154,13 +154,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .pixel-buddy__eyes { position: absolute; left: 6px; top: 6px; width: 5px; height: 5px; background: #111; box-shadow: 15px 0 0 #111; }
 .pixel-buddy__mouth { position: absolute; left: 8px; top: 17px; width: 13px; height: 4px; background: #111; }
 .pixel-buddy__body { position: absolute; left: 9px; top: 41px; width: 28px; height: 10px; background: #111; box-shadow: -5px 4px 0 #111, 28px 4px 0 #111; }
-.pixel-buddy--small { width: 25px; height: 29px; }
-.pixel-buddy--small .pixel-buddy__antenna { left: 11px; top: 0; width: 4px; height: 5px; box-shadow: none; }
-.pixel-buddy--small .pixel-buddy__face { left: 2px; top: 5px; width: 21px; height: 17px; border-width: 3px; }
-.pixel-buddy--small .pixel-buddy__eyes { left: 3px; top: 3px; width: 3px; height: 3px; box-shadow: 9px 0 0 #111; }
-.pixel-buddy--small .pixel-buddy__mouth { left: 5px; top: 9px; width: 7px; height: 2px; }
-.pixel-buddy--small .pixel-buddy__body { left: 6px; top: 22px; width: 14px; height: 5px; box-shadow: -3px 2px 0 #111, 14px 2px 0 #111; }
-
 .rooms-list { padding: 12px; }
 .room-row { width: 100%; display: flex; align-items: center; gap: 11px; padding: 9px 10px; border: 0; background: transparent; text-align: left; font-size: 17px; }
 .room-row--active { color: #fff; background: var(--blue-bright); font-weight: 700; }
@@ -180,14 +173,13 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .speaker--you { color: var(--you); }
 .speaker--system, .speaker--nobody { color: #111; }
 
-.composer { display: grid; grid-template-columns: 38px 190px 1fr 112px; grid-template-rows: 36px 1fr; gap: 6px 8px; padding: 8px; border-top: 2px groove white; background: var(--chrome); }
-.composer label { align-self: center; font-weight: 800; }
-.composer textarea { grid-column: 1 / 4; grid-row: 2; min-height: 86px; padding: 9px; resize: none; border: 2px inset white; background: #fff; font-size: 16px; }
+.composer { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; padding: 8px; border-top: 2px groove white; background: var(--chrome); }
+.composer textarea { min-height: 0; padding: 9px; resize: none; border: 2px inset white; background: #fff; font-size: 16px; }
 .classic-select, .classic-input { height: 34px; padding: 3px 7px; border: 2px inset white; background: white; color: #111; }
 .classic-button { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 12px; border: 3px outset white; background: var(--chrome); color: #111; font-family: "Arial Narrow", Arial, sans-serif; font-size: 17px; font-weight: 800; text-transform: uppercase; box-shadow: 1px 1px 0 #555; }
 .classic-button:active:not(:disabled) { border-style: inset; transform: translate(1px, 1px); box-shadow: none; }
 .classic-button:disabled { color: #777; text-shadow: 1px 1px white; }
-.send-button { grid-column: 4; grid-row: 2; height: 86px; }
+.send-button { height: auto; }
 
 .controls-panel { padding-bottom: 12px; background: #ededed; }
 .controls-panel fieldset { margin: 15px 20px 8px; padding: 0; border: 0; }
@@ -197,11 +189,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .controls-panel hr { margin: 16px 20px; border: 0; border-top: 2px groove white; }
 .field-label { margin: 13px 22px 6px; }
 .controls-panel .classic-select, .controls-panel .classic-input { width: calc(100% - 44px); margin: 0 22px; font-size: 16px; }
-.agent-actions { display: grid; gap: 12px; margin: 24px 20px 18px; }
-.duo-icon { display: flex; width: 32px; }
-.review-button { width: calc(100% - 40px); margin: 0 20px; min-height: 65px; }
-.review-icon { display: inline-grid; place-items: center; width: 25px; height: 25px; color: white; background: #0c38c7; border: 2px inset white; }
-
 .error-strip { grid-row: 4; padding: 6px 12px; color: #fff; background: #a40000; border-top: 2px solid #570000; font-size: 14px; }
 .status-bar { grid-row: 5; display: grid; grid-template-columns: 370px 1fr 245px; gap: 3px; padding: 3px; border-top: 2px groove white; font-size: 16px; }
 .status-cell { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 10px; border: 2px inset white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -215,12 +202,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .desktop { align-items: start; padding: 12px; }
   .app-window { width: 100%; height: auto; min-height: calc(100vh - 24px); grid-template-rows: 44px 41px auto auto 38px; }
   .workspace { grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: minmax(590px, 70vh) auto; }
-  .controls-panel { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; align-items: end; }
-  .controls-panel .panel-title { grid-column: 1 / -1; }
-  .controls-panel fieldset { grid-row: span 3; }
-  .controls-panel hr { display: none; }
-  .agent-actions { grid-column: 2; grid-row: 2 / span 4; margin: 10px; }
-  .review-button { grid-column: 3; grid-row: 4; margin: 10px; width: auto; }
+  .controls-panel { grid-column: 1 / -1; }
   .status-bar { grid-template-columns: 260px 1fr 190px; }
 }
 
@@ -234,17 +216,13 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .menu-bar button { font-size: 16px; }
   .workspace { display: flex; flex-direction: column; padding: 5px; }
   .buddy-panel { display: none; }
-  .chat-panel { min-height: 70vh; grid-template-rows: 38px minmax(300px, 1fr) auto 178px; }
+  .chat-panel { min-height: 70vh; grid-template-rows: 38px minmax(300px, 1fr) 130px; }
   .message { grid-template-columns: 1fr; gap: 0; font-size: 15px; }
   .message time { font-size: 12px; }
-  .composer { grid-template-columns: 30px 1fr 78px; grid-template-rows: 34px 92px; }
-  .composer textarea { grid-column: 1 / 3; }
-  .send-button { grid-column: 3; }
+  .composer { grid-template-columns: minmax(0, 1fr) 78px; }
   .controls-panel { display: block; }
   .controls-panel fieldset { display: flex; flex-wrap: wrap; gap: 14px; }
   .radio-row { margin: 6px 0; }
-  .agent-actions { margin: 16px 20px; }
-  .review-button { width: calc(100% - 40px); margin: 0 20px; }
   .status-bar { grid-template-columns: 1fr 1fr; }
   .status-cell:first-child { display: none; }
   .status-cell--connection { justify-content: flex-end; }

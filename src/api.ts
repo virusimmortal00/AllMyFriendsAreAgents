@@ -23,10 +23,10 @@ export async function updateSettings(settings: { writableAgent?: WritableAgent; 
   });
 }
 
-export async function sendMessage(text: string, target: AgentId | "both") {
+export async function sendMessage(text: string) {
   return request("/api/messages", {
     method: "POST",
-    body: JSON.stringify({ text, target }),
+    body: JSON.stringify({ text }),
   });
 }
 
@@ -36,4 +36,3 @@ export async function runAction(action: "ask" | "review" | "roundtable", target:
     body: JSON.stringify({ action, target }),
   });
 }
-
