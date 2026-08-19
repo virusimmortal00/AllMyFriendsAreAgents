@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
 const buddyLabels = {
@@ -58,9 +59,9 @@ function formatTime(timestamp: string) {
   return new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
-export function Transcript({ messages }: { messages: RoomMessage[] }) {
+export function Transcript({ messages, transcriptRef }: { messages: RoomMessage[]; transcriptRef: RefObject<HTMLDivElement | null> }) {
   return (
-    <div className="transcript beveled-inset" role="log" aria-live="polite" aria-label="Room transcript">
+    <div ref={transcriptRef} className="transcript beveled-inset" role="log" aria-live="polite" aria-label="Room transcript">
       {messages.map((message) => (
         <article className={`message message--${message.kind || "chat"}`} key={message.id}>
           <time>[{formatTime(message.timestamp)}]</time>

@@ -22,7 +22,7 @@ export default function App() {
   const [target, setTarget] = useState<AgentId | "both">("both");
   const [menuOpen, setMenuOpen] = useState(false);
   const [clientError, setClientError] = useState("");
-  const transcriptEnd = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void loadRoom().then(setRoom).catch((error: Error) => setClientError(error.message));
@@ -37,7 +37,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    scrollTranscriptToEnd(transcriptEnd.current);
+    scrollTranscriptToEnd(transcript.current);
   }, [room.messages.length]);
 
   const working = room.status === "working";
@@ -107,8 +107,7 @@ export default function App() {
           <BuddyList availability={room.availability} />
           <section className="chat-panel beveled-inset">
             <PanelTitle>The Agent Room</PanelTitle>
-            <Transcript messages={room.messages} />
-            <div ref={transcriptEnd} />
+            <Transcript messages={room.messages} transcriptRef={transcript} />
             <form className="composer" onSubmit={submitMessage}>
               <label htmlFor="recipient">To:</label>
               <select id="recipient" className="classic-select" value={target} onChange={(event) => setTarget(event.target.value as AgentId | "both")}>
