@@ -7,6 +7,25 @@ export const CHAT_FONT_FAMILIES = [
   "Trebuchet MS",
 ] as const;
 
+// AIM 5.x used the Windows-era 8x6 basic color grid and an 8x2 grayscale
+// custom-color row. Keep these values finite so the UI and agent directives
+// share the same period-appropriate palette.
+export const AIM_5_BASIC_COLORS = [
+  "#f07d77", "#fefe78", "#8ffa76", "#5df975", "#91fbfe", "#3074fd", "#f07db9", "#f17eff",
+  "#ec301a", "#fefe1e", "#8ffa13", "#5cf93a", "#5ffafe", "#2d73b7", "#7575b7", "#ed36ff",
+  "#6e3b39", "#f07c3e", "#5cf90f", "#2b7274", "#173874", "#7677fe", "#6c1739", "#ec3177",
+  "#6c160a", "#f07c1b", "#2a7204", "#2a7238", "#1618fd", "#0c0d94", "#6c1974", "#6e20fd",
+  "#340a00", "#6e3b0a", "#0c3800", "#0c3838", "#0c0d74", "#000038", "#340a38", "#360e74",
+  "#000000", "#74740d", "#747439", "#757575", "#447374", "#b8b8b8", "#340a38", "#ffffff",
+] as const;
+
+export const AIM_5_CUSTOM_COLORS = [
+  "#111111", "#1d1d1d", "#292929", "#373737", "#464646", "#545454", "#646464", "#747474",
+  "#848484", "#959595", "#a5a5a5", "#b7b7b7", "#c8c8c8", "#dadada", "#ececec", "#ffffff",
+] as const;
+
+export const AIM_5_COLOR_PALETTE = [...new Set([...AIM_5_BASIC_COLORS, ...AIM_5_CUSTOM_COLORS])] as readonly string[];
+
 export type ChatFontFamily = (typeof CHAT_FONT_FAMILIES)[number];
 
 export interface ChatStyle {
@@ -26,8 +45,8 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
   you: {
     fontFamily: "Arial",
     fontSize: 17,
-    textColor: "#101cda",
-    backgroundColor: "#f3f5ff",
+    textColor: "#1618fd",
+    backgroundColor: "#ffffff",
     bold: false,
     italic: false,
     underline: false,
@@ -35,8 +54,8 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
   codex: {
     fontFamily: "Trebuchet MS",
     fontSize: 17,
-    textColor: "#075f15",
-    backgroundColor: "#f2fff4",
+    textColor: "#2a7238",
+    backgroundColor: "#ffffff",
     bold: false,
     italic: false,
     underline: false,
@@ -44,15 +63,20 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
   claude: {
     fontFamily: "Georgia",
     fontSize: 17,
-    textColor: "#8a3500",
-    backgroundColor: "#fff7ef",
+    textColor: "#f07c1b",
+    backgroundColor: "#ffffff",
     bold: false,
     italic: false,
     underline: false,
   },
 };
 
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+function sanitizePaletteColor(value: unknown, fallback: string, safeDefault: string) {
+  const normalizedValue = typeof value === "string" ? value.toLowerCase() : "";
+  if (AIM_5_COLOR_PALETTE.includes(normalizedValue)) return normalizedValue;
+  const normalizedFallback = fallback.toLowerCase();
+  return AIM_5_COLOR_PALETTE.includes(normalizedFallback) ? normalizedFallback : safeDefault;
+}
 
 export function sanitizeChatStyle(input: unknown, fallback: ChatStyle): ChatStyle {
   const value = input && typeof input === "object" ? input as Partial<ChatStyle> : {};
@@ -61,8 +85,8 @@ export function sanitizeChatStyle(input: unknown, fallback: ChatStyle): ChatStyl
     fontSize: typeof value.fontSize === "number" && Number.isFinite(value.fontSize)
       ? Math.min(28, Math.max(12, Math.round(value.fontSize)))
       : fallback.fontSize,
-    textColor: typeof value.textColor === "string" && HEX_COLOR.test(value.textColor) ? value.textColor.toLowerCase() : fallback.textColor,
-    backgroundColor: typeof value.backgroundColor === "string" && HEX_COLOR.test(value.backgroundColor) ? value.backgroundColor.toLowerCase() : fallback.backgroundColor,
+    textColor: sanitizePaletteColor(value.textColor, fallback.textColor, "#000000"),
+    backgroundColor: sanitizePaletteColor(value.backgroundColor, fallback.backgroundColor, "#ffffff"),
     bold: typeof value.bold === "boolean" ? value.bold : fallback.bold,
     italic: typeof value.italic === "boolean" ? value.italic : fallback.italic,
     underline: typeof value.underline === "boolean" ? value.underline : fallback.underline,

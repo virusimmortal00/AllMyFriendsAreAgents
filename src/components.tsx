@@ -1,5 +1,12 @@
 import { useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
-import { CHAT_FONT_FAMILIES, type ChatStyle, type ParticipantStyles, type StyledParticipant } from "../shared/chat-style";
+import {
+  AIM_5_BASIC_COLORS,
+  AIM_5_CUSTOM_COLORS,
+  CHAT_FONT_FAMILIES,
+  type ChatStyle,
+  type ParticipantStyles,
+  type StyledParticipant,
+} from "../shared/chat-style";
 import { visibleAgentText } from "../shared/message-format";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
@@ -95,8 +102,8 @@ export function Transcript({
           <article className={`message message--${message.kind || "chat"}`} key={message.id}>
             <time>[{formatTime(message.timestamp)}]</time>
             <div>
+              <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
               <span className="message__bubble" style={messageStyle ? chatStyleProperties(messageStyle) : undefined}>
-                <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
                 <span className="message__text">{visibleAgentText(message.text)}</span>
               </span>
             </div>
@@ -118,6 +125,7 @@ interface ChatComposerProps {
 
 export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
 
   function updateStyle(update: Partial<ChatStyle>) {
@@ -134,6 +142,11 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
       textarea.current?.focus();
       textarea.current?.setSelectionRange(start + emoji.length, start + emoji.length);
     });
+  }
+
+  function chooseColor(color: string) {
+    updateStyle(colorPicker === "background" ? { backgroundColor: color } : { textColor: color });
+    setColorPicker(null);
   }
 
   return (
@@ -153,14 +166,63 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
         <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} disabled={disabled} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
         <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} disabled={disabled} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
         <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} disabled={disabled} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
-        <label className="color-well color-well--text" title="Text color">
+        <button
+          type="button"
+          className="color-well color-well--text"
+          title="Text color"
+          aria-label="Text color"
+          aria-expanded={colorPicker === "text"}
+          disabled={disabled}
+          onClick={() => setColorPicker((current) => current === "text" ? null : "text")}
+        >
           <span aria-hidden="true">A</span>
-          <input type="color" aria-label="Text color" value={style.textColor} disabled={disabled} onChange={(event) => updateStyle({ textColor: event.target.value })} />
-        </label>
-        <label className="color-well color-well--background" title="Background color">
+          <i aria-hidden="true" style={{ backgroundColor: style.textColor }} />
+        </button>
+        <button
+          type="button"
+          className="color-well color-well--background"
+          title="Background color"
+          aria-label="Background color"
+          aria-expanded={colorPicker === "background"}
+          disabled={disabled}
+          onClick={() => setColorPicker((current) => current === "background" ? null : "background")}
+        >
           <span aria-hidden="true">▧</span>
-          <input type="color" aria-label="Background color" value={style.backgroundColor} disabled={disabled} onChange={(event) => updateStyle({ backgroundColor: event.target.value })} />
-        </label>
+          <i aria-hidden="true" style={{ backgroundColor: style.backgroundColor }} />
+        </button>
+        {colorPicker ? (
+          <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Background"} color palette`}>
+            <strong>{colorPicker === "text" ? "Text" : "Background"} color</strong>
+            <span>Basic colors:</span>
+            <div className="aim-color-grid">
+              {AIM_5_BASIC_COLORS.map((color, index) => (
+                <button
+                  type="button"
+                  className="aim-color-swatch"
+                  key={`${color}-${index}`}
+                  aria-label={`Select ${color}`}
+                  aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                  style={{ backgroundColor: color }}
+                  onClick={() => chooseColor(color)}
+                />
+              ))}
+            </div>
+            <span>Custom colors:</span>
+            <div className="aim-color-grid">
+              {AIM_5_CUSTOM_COLORS.map((color, index) => (
+                <button
+                  type="button"
+                  className="aim-color-swatch"
+                  key={`${color}-${index}`}
+                  aria-label={`Select ${color}`}
+                  aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                  style={{ backgroundColor: color }}
+                  onClick={() => chooseColor(color)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="emoji-control">
           <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} disabled={disabled} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
           {emojiOpen ? (

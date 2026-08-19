@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import { AIM_5_COLOR_PALETTE } from "../shared/chat-style.js";
 import { visibleAgentText } from "../shared/message-format.js";
 import type { AgentId, RoomState } from "./types.js";
 
@@ -58,7 +59,7 @@ ROOM RULES
 - Address the other agent by name when you want to invite them to answer or continue the discussion.
 - For substantive replies, end with exactly one disposition line: DISPOSITION: AGREE, CONCERN, PROPOSAL, or NEEDS_USER.
 - If YOUR TURN explicitly permits no response, output exactly NO_RESPONSE_NEEDED when replying would not add useful information; do not include a disposition in that case.
-- Your current chat style is ${JSON.stringify(currentStyle)}. You may change your own style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are Arial, Times New Roman, Georgia, Comic Sans MS, Courier New, and Trebuchet MS; size is 12-28; colors must be six-digit hex. Omit STYLE when keeping your current look.
+- Your current chat style is ${JSON.stringify(currentStyle)}. You may change your own style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are Arial, Times New Roman, Georgia, Comic Sans MS, Courier New, and Trebuchet MS; size is 12-28; text and background colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. Omit STYLE when keeping your current look.
 - Your current access is ${permission}. Do not attempt edits when read-only.
 
 CURRENT ROOM TRANSCRIPT

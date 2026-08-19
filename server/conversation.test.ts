@@ -21,7 +21,7 @@ describe("agent turn parsing", () => {
   it("extracts and validates an agent's private style directive", () => {
     expect(parseAgentTurn(
       "claude",
-      "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#FF00AA\",\"backgroundColor\":\"#FFFFCC\",\"bold\":true,\"italic\":false,\"underline\":false}",
+      "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#ED36FF\",\"backgroundColor\":\"#ECECEC\",\"bold\":true,\"italic\":false,\"underline\":false}",
       DEFAULT_PARTICIPANT_STYLES.claude,
     )).toEqual({
       visibleText: "A useful answer.",
@@ -29,8 +29,8 @@ describe("agent turn parsing", () => {
       styleUpdate: {
         fontFamily: "Comic Sans MS",
         fontSize: 22,
-        textColor: "#ff00aa",
-        backgroundColor: "#ffffcc",
+        textColor: "#ed36ff",
+        backgroundColor: "#ececec",
         bold: true,
         italic: false,
         underline: false,

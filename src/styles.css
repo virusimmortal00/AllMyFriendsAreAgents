@@ -168,7 +168,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .message--status { color: #555; font-style: italic; }
-.speaker { font-weight: 800; }
+.speaker {
+  color: #111;
+  background: transparent;
+  font: normal 800 17px/1.36 Arial, sans-serif;
+  text-decoration: none;
+}
 .speaker--codex { color: var(--codex); }
 .speaker--claude { color: var(--claude); }
 .speaker--you { color: var(--you); }
@@ -203,10 +208,31 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .format-italic { font-style: italic !important; }
 .format-underline { text-decoration: underline; }
 .font-size-readout { width: 27px; flex: 0 0 auto; text-align: center; font: 13px "Courier New", monospace; }
-.color-well { position: relative; width: 38px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border: 2px outset white; background: var(--chrome); font: 800 17px/1 Georgia, serif; overflow: hidden; }
-.color-well--text span { text-decoration: underline 4px var(--you); text-underline-offset: 3px; }
+.format-toolbar .color-well { position: relative; width: 38px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; border: 2px outset white; background: var(--chrome); font: 800 17px/1 Georgia, serif; overflow: hidden; }
+.color-well--text span { text-decoration: underline; text-underline-offset: 3px; }
 .color-well--background span { font-size: 20px; }
-.color-well input { position: absolute; inset: auto 2px 1px; width: 30px; height: 7px; padding: 0; border: 0; opacity: .85; cursor: pointer; }
+.color-well i { position: absolute; inset: auto 3px 2px; height: 5px; border: 1px solid #333; }
+.aim-color-picker {
+  position: absolute;
+  z-index: 14;
+  top: 38px;
+  right: 42px;
+  width: 238px;
+  padding: 7px;
+  background: var(--chrome);
+  border: 3px outset white;
+  box-shadow: 3px 3px 0 rgba(0,0,0,.35);
+  font: 13px Arial, sans-serif;
+}
+.aim-color-picker > strong, .aim-color-picker > span { display: block; margin-bottom: 5px; }
+.aim-color-picker > span { margin-top: 7px; }
+.aim-color-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.format-toolbar .aim-color-swatch {
+  width: 24px;
+  height: 19px;
+  border: 2px outset white;
+}
+.format-toolbar .aim-color-swatch[aria-pressed="true"] { border-style: inset; outline: 1px dotted #000; outline-offset: -4px; }
 .emoji-control { position: relative; }
 .emoji-control > button { font-size: 21px; }
 .emoji-picker {
