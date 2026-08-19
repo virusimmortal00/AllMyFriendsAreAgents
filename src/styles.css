@@ -44,6 +44,41 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   box-shadow: 8px 10px 0 rgba(0, 45, 45, .38);
 }
 
+.loading-window {
+  width: min(520px, calc(100vw - 36px));
+  display: grid;
+  grid-template-rows: 48px minmax(180px, auto);
+  background: var(--chrome);
+  border: 3px outset #efefef;
+  box-shadow: 8px 10px 0 rgba(0, 45, 45, .38);
+}
+.loading-dialog {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  gap: 5px 14px;
+  margin: 18px;
+  padding: 24px;
+  border: 2px inset white;
+  background: #f5f5f5;
+  font: 14px/1.35 Tahoma, Arial, sans-serif;
+}
+.loading-dialog strong { color: var(--blue); font-size: 18px; }
+.loading-dialog > span:last-child { grid-column: 2; color: #555; }
+.retro-spinner {
+  grid-row: 1 / span 2;
+  width: 32px;
+  height: 32px;
+  border: 5px dotted #888;
+  border-top-color: var(--blue);
+  border-right-color: #1114ae;
+  border-radius: 50%;
+  animation: retro-spin .8s steps(8, end) infinite;
+}
+@keyframes retro-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .retro-spinner { animation: none; border-color: var(--blue) #888 #888; } }
+
 .window-titlebar {
   display: flex;
   align-items: center;

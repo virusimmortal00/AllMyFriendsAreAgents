@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { BuddyList, ChatComposer, RoomControls, Transcript } from "./components";
+import { LoadingScreen } from "./App";
 
 describe("BuddyList", () => {
   it("renders a compact online roster and active room", () => {
@@ -12,6 +13,17 @@ describe("BuddyList", () => {
     expect(html).toContain("The Agent Room");
     expect(html).toContain("CLI unavailable");
     expect(html).not.toContain("pixel-buddy");
+  });
+});
+
+describe("LoadingScreen", () => {
+  it("shows a compact retro room-loading state without mounting the transcript", () => {
+    const html = renderToStaticMarkup(<LoadingScreen />);
+
+    expect(html).toContain("Entering The Agent Room...");
+    expect(html).toContain("retro-spinner");
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain("Room transcript");
   });
 });
 

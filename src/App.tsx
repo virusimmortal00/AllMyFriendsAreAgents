@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { BuddyList, ChatComposer, RoomControls, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
@@ -20,27 +20,52 @@ const EMPTY_ROOM: RoomState = {
   },
   status: "idle",
 };
+const MINIMUM_LOADING_MS = 450;
+
+export function LoadingScreen({ error = "" }: { error?: string }) {
+  return (
+    <main className="desktop">
+      <section className="loading-window" aria-label="AllMyFriendsAreAgents loading">
+        <header className="window-titlebar">
+          <span className="app-icon" aria-hidden="true">AW</span>
+          <h1>AllMyFriendsAreAgents</h1>
+          <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
+        </header>
+        <div className="loading-dialog" role="status" aria-live="polite">
+          <span className="retro-spinner" aria-hidden="true" />
+          <strong>Entering The Agent Room...</strong>
+          <span>{error || "Loading the latest conversation"}</span>
+        </div>
+      </section>
+    </main>
+  );
+}
 
 export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [draft, setDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [clientError, setClientError] = useState("");
+  const [hasInitialState, setHasInitialState] = useState(false);
+  const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
   const receivedLiveState = useRef(false);
+  const roomRevealed = useRef(false);
 
   useEffect(() => {
     void loadRoom().then((next) => {
       setRoom((current) => receivedLiveState.current
         ? { ...current, availability: next.availability || current.availability }
         : next);
+      setHasInitialState(true);
     }).catch((error: Error) => setClientError(error.message));
     const events = new EventSource("/api/events");
     events.onmessage = (event) => {
       const next = JSON.parse(event.data) as RoomState;
       receivedLiveState.current = true;
       setRoom((current) => ({ ...next, availability: current.availability }));
+      setHasInitialState(true);
       setClientError("");
     };
     events.onerror = () => setClientError("The local room server disconnected. Retrying...");
@@ -48,8 +73,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    scrollTranscriptToEnd(transcript.current);
-  }, [room.messages.length]);
+    const timer = window.setTimeout(() => setMinimumLoadingComplete(true), MINIMUM_LOADING_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const ready = hasInitialState && minimumLoadingComplete;
+
+  useLayoutEffect(() => {
+    if (!ready) return;
+    scrollTranscriptToEnd(transcript.current, roomRevealed.current ? "smooth" : "auto");
+    roomRevealed.current = true;
+  }, [ready, room.messages.length]);
 
   const working = room.status === "working";
 
@@ -139,6 +173,8 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
+
+  if (!ready) return <LoadingScreen error={clientError} />;
 
   return (
     <main className="desktop">
