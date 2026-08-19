@@ -20,7 +20,7 @@ const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 export function roomMessageTurns(): ConversationTurn[] {
   return AGENT_IDS.map((agent) => ({
     agent,
-    instruction: "Respond to the latest human message and the current room discussion.",
+    instruction: "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
   }));
 }
 

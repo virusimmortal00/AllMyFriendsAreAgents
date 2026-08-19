@@ -86,6 +86,8 @@ describe("room prompt context", () => {
     expect(prompt).toContain("not every message is addressed to everyone");
     expect(prompt).toContain("Do not assume that \"you\" or \"your\" refers to you");
     expect(prompt).toContain("frame it as a side reaction rather than answering as though you were addressed");
+    expect(prompt).toContain("do not apologize, agree to comply, accept the correction");
+    expect(prompt).toContain("make your observer perspective unmistakable");
     expect(prompt).toContain("CURRENT PARTICIPANT STYLES");
     expect(prompt).toContain(`Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`);
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);

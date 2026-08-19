@@ -179,6 +179,9 @@ describe("agent conversations", () => {
 
 describe("room message policy", () => {
   it("sends every normal room message to all configured agents", () => {
-    expect(new Set(roomMessageTurns().map(({ agent }) => agent))).toEqual(new Set(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    const turns = roomMessageTurns();
+    expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    expect(turns[0]?.instruction).toContain("decide whether the message is actually directed at you");
+    expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
   });
 });
