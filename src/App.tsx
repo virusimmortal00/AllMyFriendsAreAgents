@@ -9,6 +9,7 @@ const EMPTY_ROOM: RoomState = {
   messages: [],
   sessions: {},
   settings: {
+    topic: "Open conversation",
     writableAgent: "nobody",
     reviewMode: "read-only",
     maxRounds: 3,
@@ -60,6 +61,17 @@ export default function App() {
   function changeRounds(rounds: number) {
     setRoom((current) => ({ ...current, settings: { ...current.settings, maxRounds: rounds } }));
     void withErrorHandling(() => updateSettings({ maxRounds: rounds }));
+  }
+
+  function changeTopic(topic: string) {
+    const nextTopic = topic.trim() || "Open conversation";
+    if (nextTopic === room.settings.topic) return;
+    setRoom((current) => ({
+      ...current,
+      sessions: {},
+      settings: { ...current.settings, topic: nextTopic },
+    }));
+    void withErrorHandling(() => updateSettings({ topic: nextTopic }));
   }
 
   function changeMyStyle(style: ChatStyle) {
@@ -115,7 +127,7 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          <button type="button" title="AllMyFriendsAreAgents keeps reviews read-only unless you choose a writable agent.">Help</button>
+          <button type="button" title="Ordinary chat can use the selected writable agent. Explicit reviews are always read-only.">Help</button>
         </nav>
 
         <div className="workspace">
@@ -134,9 +146,11 @@ export default function App() {
           <div className="right-rail">
             <BuddyList availability={room.availability} />
             <RoomControls
+              topic={room.settings.topic}
               writableAgent={room.settings.writableAgent}
               maxRounds={room.settings.maxRounds}
               disabled={working}
+              onTopicChange={changeTopic}
               onWritableChange={changeWritable}
               onRoundsChange={changeRounds}
             />

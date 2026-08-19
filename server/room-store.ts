@@ -4,14 +4,27 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "./types.js";
 
+export const DEFAULT_ROOM_TOPIC = "Open conversation";
+
+function topicMessage(topic: string): RoomMessage {
+  return {
+    id: randomUUID(),
+    speaker: "system",
+    text: `Room topic: ${topic}`,
+    timestamp: new Date().toISOString(),
+    kind: "topic",
+  };
+}
+
 const DEFAULT_MESSAGES: RoomMessage[] = [
   {
     id: randomUUID(),
     speaker: "system",
-    text: "Welcome to AllMyFriendsAreAgents. Both agent CLIs were detected and reviews are read-only.",
+    text: "Welcome to AllMyFriendsAreAgents. Everyone is here—set a topic or start chatting.",
     timestamp: new Date().toISOString(),
     kind: "status",
   },
+  topicMessage(DEFAULT_ROOM_TOPIC),
 ];
 
 export class RoomStore {
@@ -30,6 +43,7 @@ export class RoomStore {
     await mkdir(stateDirectory, { recursive: true });
     const statePath = path.join(stateDirectory, "room.json");
     const defaultSettings: RoomSettings = {
+      topic: DEFAULT_ROOM_TOPIC,
       writableAgent: "nobody",
       reviewMode: "read-only",
       maxRounds: 3,
@@ -44,16 +58,23 @@ export class RoomStore {
         .then((entry) => entry.isDirectory())
         .catch(() => false);
       const participantStyles = normalizeParticipantStyles(stored.settings.participantStyles);
+      const storedTopic = typeof stored.settings.topic === "string" && stored.settings.topic.trim()
+        ? stored.settings.topic.trim()
+        : DEFAULT_ROOM_TOPIC;
+      const topicWasMissing = typeof stored.settings.topic !== "string" || !stored.settings.topic.trim();
       const messages = stored.messages.map((message) => {
         if (message.style || !(["you", "codex", "claude"] as const).includes(message.speaker as StyledParticipant)) return message;
         return { ...message, style: participantStyles[message.speaker as StyledParticipant] };
       });
+      if (topicWasMissing) messages.push(topicMessage(storedTopic));
       const state: RoomState = {
         ...stored,
         messages,
+        sessions: topicWasMissing ? {} : stored.sessions,
         settings: {
           ...defaultSettings,
           ...stored.settings,
+          topic: storedTopic,
           projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
           participantStyles,
         },
@@ -62,7 +83,7 @@ export class RoomStore {
         error: undefined,
       };
       const store = new RoomStore(stateDirectory, state);
-      if (state.settings.projectPath !== stored.settings.projectPath || !stored.settings.participantStyles || messages.some((message, index) => message !== stored.messages[index])) {
+      if (topicWasMissing || state.settings.projectPath !== stored.settings.projectPath || !stored.settings.participantStyles || messages.some((message, index) => message !== stored.messages[index])) {
         await store.save();
       }
       return store;
@@ -99,6 +120,14 @@ export class RoomStore {
 
   async updateSettings(update: Partial<RoomSettings>) {
     this.state.settings = { ...this.state.settings, ...update };
+    await this.save();
+  }
+
+  async changeTopic(topic: string) {
+    if (topic === this.state.settings.topic) return;
+    this.state.settings.topic = topic;
+    this.state.sessions = {};
+    this.state.messages.push(topicMessage(topic));
     await this.save();
   }
 

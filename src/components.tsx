@@ -239,23 +239,47 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
 }
 
 interface RoomControlsProps {
+  topic: string;
   writableAgent: WritableAgent;
   maxRounds: number;
   disabled: boolean;
+  onTopicChange: (topic: string) => void;
   onWritableChange: (agent: WritableAgent) => void;
   onRoundsChange: (rounds: number) => void;
 }
 
 export function RoomControls({
+  topic,
   writableAgent,
   maxRounds,
   disabled,
+  onTopicChange,
   onWritableChange,
   onRoundsChange,
 }: RoomControlsProps) {
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
       <PanelTitle>Room Controls</PanelTitle>
+      <label className="field-label" htmlFor="room-topic">Room topic:</label>
+      <input
+        id="room-topic"
+        key={topic}
+        className="classic-input"
+        type="text"
+        maxLength={160}
+        defaultValue={topic}
+        disabled={disabled}
+        onBlur={(event) => {
+          const nextTopic = event.currentTarget.value.trim() || "Open conversation";
+          event.currentTarget.value = nextTopic;
+          onTopicChange(nextTopic);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      <p className="field-help">Changing topics starts fresh agent context. Conversation can still wander.</p>
+      <hr />
       <fieldset>
         <legend>Writable agent:</legend>
         {(["codex", "claude", "nobody"] as const).map((agent) => (

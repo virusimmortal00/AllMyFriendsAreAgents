@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { BuddyList, Transcript } from "./components";
+import { BuddyList, RoomControls, Transcript } from "./components";
 
 describe("BuddyList", () => {
   it("renders a compact online roster and active room", () => {
@@ -12,6 +12,25 @@ describe("BuddyList", () => {
     expect(html).toContain("The Agent Room");
     expect(html).toContain("CLI unavailable");
     expect(html).not.toContain("pixel-buddy");
+  });
+});
+
+describe("RoomControls", () => {
+  it("shows the current loose room topic and explains its context boundary", () => {
+    const html = renderToStaticMarkup(
+      <RoomControls
+        topic="Weekend cooking"
+        writableAgent="nobody"
+        maxRounds={3}
+        disabled={false}
+        onTopicChange={() => undefined}
+        onWritableChange={() => undefined}
+        onRoundsChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('value="Weekend cooking"');
+    expect(html).toContain("Changing topics starts fresh agent context. Conversation can still wander.");
   });
 });
 

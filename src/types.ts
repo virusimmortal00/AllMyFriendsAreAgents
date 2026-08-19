@@ -9,7 +9,7 @@ export interface RoomMessage {
   speaker: SpeakerId;
   text: string;
   timestamp: string;
-  kind?: "chat" | "review" | "status";
+  kind?: "chat" | "review" | "status" | "topic";
   style?: ChatStyle;
 }
 
@@ -17,6 +17,7 @@ export interface RoomState {
   messages: RoomMessage[];
   sessions: Partial<Record<AgentId, { id: string; permission: "read-only" | "writable" }>>;
   settings: {
+    topic: string;
     writableAgent: WritableAgent;
     reviewMode: "read-only";
     maxRounds: number;

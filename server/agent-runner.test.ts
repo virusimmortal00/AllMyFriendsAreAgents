@@ -23,6 +23,7 @@ describe("agent permissions", () => {
     messages: [],
     sessions: {},
     settings: {
+      topic: "Open conversation",
       writableAgent: "codex",
       reviewMode: "read-only",
       maxRounds: 3,
@@ -39,6 +40,45 @@ describe("agent permissions", () => {
   it("allows only the selected agent to write on ordinary turns", () => {
     expect(__testing.resolvePermission("codex", state, false)).toBe("writable");
     expect(__testing.resolvePermission("claude", state, false)).toBe("read-only");
+  });
+});
+
+describe("room prompt context", () => {
+  const state = {
+    messages: [
+      { id: "old", speaker: "you", text: "Please review the implementation.", timestamp: "2026-08-19T12:00:00.000Z", kind: "chat" },
+      { id: "topic", speaker: "system", text: "Room topic: Weekend cooking", timestamp: "2026-08-19T12:01:00.000Z", kind: "topic" },
+      { id: "new", speaker: "you", text: "What should we make?", timestamp: "2026-08-19T12:02:00.000Z", kind: "chat" },
+    ],
+    sessions: {},
+    settings: {
+      topic: "Weekend cooking",
+      writableAgent: "nobody",
+      reviewMode: "read-only",
+      maxRounds: 3,
+      projectPath: process.cwd(),
+      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
+    },
+    status: "idle",
+  } satisfies RoomState;
+
+  it("keeps ordinary chat casual and scoped to the latest topic", async () => {
+    const prompt = await __testing.buildPrompt("codex", state, "Join if useful.", false, "read-only");
+
+    expect(prompt).toContain("ROOM THEME\nWeekend cooking");
+    expect(prompt).toContain("What should we make?");
+    expect(prompt).toContain("NO_RESPONSE_NEEDED");
+    expect(prompt).not.toContain("Please review the implementation.");
+    expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
+    expect(prompt).not.toContain("DISPOSITION:");
+  });
+
+  it("adds worktree context only for an explicit review turn", async () => {
+    const prompt = await __testing.buildPrompt("claude", state, "Review the changes.", true, "read-only");
+
+    expect(prompt).toContain("EXPLICIT REVIEW CONTEXT");
+    expect(prompt).toContain("CURRENT WORKTREE DIFF");
+    expect(prompt).toContain("Your current access is read-only");
   });
 });
 

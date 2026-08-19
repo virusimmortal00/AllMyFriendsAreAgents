@@ -76,6 +76,12 @@ app.get("/api/events", (request, response) => {
 
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;
+  if (typeof update.topic === "string") {
+    if (activeJob) return response.status(409).json({ error: "Wait for the current conversation to finish before changing the topic." });
+    const topic = update.topic.trim().replace(/\s+/g, " ");
+    if (!topic || topic.length > 160) return response.status(400).json({ error: "Room topic must be between 1 and 160 characters." });
+    await store.changeTopic(topic);
+  }
   const allowed: Partial<RoomSettings> = {};
   if (["codex", "claude", "nobody"].includes(update.writableAgent || "")) {
     allowed.writableAgent = update.writableAgent;
@@ -83,7 +89,7 @@ app.patch("/api/settings", async (request, response) => {
   if (Number.isInteger(update.maxRounds) && Number(update.maxRounds) >= 1 && Number(update.maxRounds) <= 8) {
     allowed.maxRounds = Number(update.maxRounds);
   }
-  await store.updateSettings(allowed);
+  if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
   broadcast();
   response.json(store.snapshot());
 });

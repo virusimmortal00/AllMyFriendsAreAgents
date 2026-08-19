@@ -44,4 +44,29 @@ describe("room style persistence", () => {
       { speaker: "claude", text: "Claude finished." },
     ]);
   });
+
+  it("starts fresh agent context while preserving visible history when the topic changes", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.setSession("codex", "old-session", "read-only");
+    await store.addMessage("you", "An earlier conversation");
+
+    await store.changeTopic("Weekend cooking");
+
+    const snapshot = store.snapshot();
+    expect(snapshot.settings.topic).toBe("Weekend cooking");
+    expect(snapshot.sessions).toEqual({});
+    expect(snapshot.messages.some(({ text }) => text === "An earlier conversation")).toBe(true);
+    expect(snapshot.messages.at(-1)).toMatchObject({
+      speaker: "system",
+      text: "Room topic: Weekend cooking",
+      kind: "topic",
+    });
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().settings.topic).toBe("Weekend cooking");
+    expect(reopened.snapshot().sessions).toEqual({});
+  });
 });

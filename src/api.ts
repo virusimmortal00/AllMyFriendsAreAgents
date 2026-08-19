@@ -17,7 +17,7 @@ export async function loadRoom(): Promise<RoomState> {
   return request("/api/state").then((response) => response.json());
 }
 
-export async function updateSettings(settings: { writableAgent?: WritableAgent; maxRounds?: number }) {
+export async function updateSettings(settings: { topic?: string; writableAgent?: WritableAgent; maxRounds?: number }) {
   return request("/api/settings", {
     method: "PATCH",
     body: JSON.stringify(settings),
