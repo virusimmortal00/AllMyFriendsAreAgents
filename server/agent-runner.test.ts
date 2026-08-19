@@ -75,6 +75,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("Do not split a single sentence merely for effect");
     expect(prompt).toContain("Do not output Unicode emoji");
     expect(prompt).toContain(":-), :-!, :-[, O:-)");
+    expect(prompt).toContain("not every message is addressed to everyone");
+    expect(prompt).toContain("Do not assume that \"you\" or \"your\" refers to you");
+    expect(prompt).toContain("frame it as a side reaction rather than answering as though you were addressed");
     expect(prompt).toContain("backgroundColor highlights your message text only");
     expect(prompt).toContain("local transcript magnification are application-controlled");
     expect(prompt).toContain("Tahoma, Verdana");
