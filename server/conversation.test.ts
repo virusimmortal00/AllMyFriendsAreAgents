@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 
@@ -7,6 +7,7 @@ describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
       visibleText: "Claude, what do you think?",
+      replyCandidate: "claude",
       mentionedAgent: "claude",
     });
   });
@@ -14,6 +15,7 @@ describe("agent turn parsing", () => {
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude", "NO_RESPONSE_NEEDED")).toEqual({
       visibleText: "",
+      replyCandidate: undefined,
       mentionedAgent: undefined,
     });
   });
@@ -25,6 +27,7 @@ describe("agent turn parsing", () => {
       DEFAULT_PARTICIPANT_STYLES.claude,
     )).toEqual({
       visibleText: "A useful answer.",
+      replyCandidate: "codex",
       mentionedAgent: undefined,
       styleUpdate: {
         fontFamily: "Comic Sans MS",
@@ -39,7 +42,7 @@ describe("agent turn parsing", () => {
   });
 });
 
-describe("mention-driven conversations", () => {
+describe("agent conversations", () => {
   it("lets an agent start another turn after the other agent mentions them", async () => {
     const responses = [
       { mentionedAgent: "claude" as const },
@@ -52,7 +55,7 @@ describe("mention-driven conversations", () => {
       return responses.shift() || {};
     });
 
-    await runMentionConversation(
+    await runAgentConversation(
       [{ agent: "codex", instruction: "Respond to the human." }],
       3,
       performTurn,
@@ -61,13 +64,14 @@ describe("mention-driven conversations", () => {
     expect(seenAgents).toEqual(["codex", "claude", "codex"]);
   });
 
-  it("does not duplicate an agent that already has a pending turn", async () => {
+  it("defers a direct mention when the named agent already has a pending turn", async () => {
     const performTurn = vi
       .fn()
       .mockResolvedValueOnce({ mentionedAgent: "claude" })
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
 
-    await runMentionConversation(
+    await runAgentConversation(
       [
         { agent: "codex", instruction: "Respond to the human." },
         { agent: "claude", instruction: "Respond to the human." },
@@ -76,7 +80,7 @@ describe("mention-driven conversations", () => {
       performTurn,
     );
 
-    expect(performTurn).toHaveBeenCalledTimes(2);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex", "claude", "claude"]);
   });
 
   it("caps automatic follow-ups", async () => {
@@ -86,7 +90,7 @@ describe("mention-driven conversations", () => {
       return { mentionedAgent: agent === "codex" ? "claude" : "codex" };
     });
 
-    await runMentionConversation(
+    await runAgentConversation(
       [{ agent: "codex", instruction: "Start." }],
       2,
       performTurn,
@@ -94,10 +98,42 @@ describe("mention-driven conversations", () => {
 
     expect(seenAgents).toEqual(["codex", "claude", "codex"]);
   });
+
+  it("starts initial agents concurrently and schedules reactions from completion order", async () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((next) => { resolve = next; });
+      return { promise, resolve };
+    }
+
+    const codexInitial = deferred<TurnResult>();
+    const claudeInitial = deferred<TurnResult>();
+    const claudeReaction = deferred<TurnResult>();
+    const seenAgents: AgentId[] = [];
+    let claudeTurns = 0;
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      seenAgents.push(turn.agent);
+      if (turn.agent === "codex") return codexInitial.promise;
+      claudeTurns += 1;
+      return claudeTurns === 1 ? claudeInitial.promise : claudeReaction.promise;
+    });
+
+    const conversation = runAgentConversation(roomMessageTurns(), 1, performTurn);
+    await vi.waitFor(() => expect(seenAgents).toEqual(["codex", "claude"]));
+
+    claudeInitial.resolve({ replyCandidate: "codex" });
+    await Promise.resolve();
+    expect(performTurn).toHaveBeenCalledTimes(2);
+
+    codexInitial.resolve({ replyCandidate: "claude" });
+    await vi.waitFor(() => expect(seenAgents).toEqual(["codex", "claude", "claude"]));
+    claudeReaction.resolve({});
+    await conversation;
+  });
 });
 
 describe("room message policy", () => {
   it("sends every normal room message to both agents", () => {
-    expect(roomMessageTurns().map(({ agent }) => agent)).toEqual(["codex", "claude"]);
+    expect(new Set(roomMessageTurns().map(({ agent }) => agent))).toEqual(new Set(["codex", "claude"]));
   });
 });

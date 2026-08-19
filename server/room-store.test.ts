@@ -26,4 +26,22 @@ describe("room style persistence", () => {
     expect(reopened.snapshot().settings.participantStyles.you).toEqual(style);
     expect(reopened.snapshot().messages.at(-1)?.style).toEqual(style);
   });
+
+  it("serializes simultaneous message saves without dropping either response", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+
+    await Promise.all([
+      store.addMessage("codex", "Codex finished."),
+      store.addMessage("claude", "Claude finished."),
+    ]);
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().messages.slice(-2).map(({ speaker, text }) => ({ speaker, text }))).toEqual([
+      { speaker: "codex", text: "Codex finished." },
+      { speaker: "claude", text: "Claude finished." },
+    ]);
+  });
 });

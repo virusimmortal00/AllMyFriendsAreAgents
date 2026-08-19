@@ -277,7 +277,7 @@ export function RoomControls({
       <select id="review-mode" value="read-only" disabled className="classic-select">
         <option value="read-only">Read only</option>
       </select>
-      <label className="field-label" htmlFor="max-rounds">Maximum rounds:</label>
+      <label className="field-label" htmlFor="max-rounds">Maximum follow-ups:</label>
       <input
         id="max-rounds"
         className="classic-input"

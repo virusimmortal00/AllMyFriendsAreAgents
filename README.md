@@ -2,7 +2,7 @@
 
 A local, chatroom-style collaboration surface for you, Codex, and Claude Code.
 
-The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per agent, and stores the room transcript locally. Reviews are read-only by default and automated roundtables have a hard turn limit.
+The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per agent, and stores the room transcript locally. Reviews are read-only by default and automated conversations have a hard follow-up limit.
 
 ## Development
 
@@ -30,7 +30,7 @@ By default the agents inspect this repository. To point the room at another proj
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project npm run dev
 ```
 
-Every message is sent to all agents in the room. Use **Actions → Start roundtable** for a bounded alternating exchange or **Actions → Review with both agents** for a read-only review.
+Every message is sent to all agents in the room concurrently. Responses appear in the order the CLIs finish, rather than a fixed agent order. After any substantive agent message, the other agent gets a bounded opportunity to react and may decline with `NO_RESPONSE_NEEDED` when another reply would add noise. Use **Actions → Start roundtable** for an organic bounded exchange or **Actions → Review with both agents** for a read-only review.
 
 ## Chat styling
 

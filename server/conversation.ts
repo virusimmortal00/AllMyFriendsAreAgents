@@ -9,6 +9,7 @@ export interface ConversationTurn {
 }
 
 export interface TurnResult {
+  replyCandidate?: AgentId;
   mentionedAgent?: AgentId;
 }
 
@@ -20,43 +21,87 @@ export function roomMessageTurns(): ConversationTurn[] {
 }
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle) {
-  if (isNoResponseNeeded(text)) return { visibleText: "", mentionedAgent: undefined };
+  if (isNoResponseNeeded(text)) return { visibleText: "", replyCandidate: undefined, mentionedAgent: undefined };
   const visibleText = visibleAgentText(text);
   const otherAgent: AgentId = agent === "codex" ? "claude" : "codex";
   const mentionPattern = otherAgent === "claude" ? /\bClaude(?: Code)?\b/i : /\bCodex\b/i;
   const styleUpdate = currentStyle ? extractStyleDirective(text, currentStyle) : undefined;
   return {
     visibleText,
+    replyCandidate: visibleText ? otherAgent : undefined,
     mentionedAgent: mentionPattern.test(visibleText) ? otherAgent : undefined,
     ...(styleUpdate ? { styleUpdate } : {}),
   };
 }
 
-function followUpInstruction(sourceAgent: AgentId) {
+function followUpInstruction(sourceAgent: AgentId, directlyMentioned: boolean) {
   const sourceName = sourceAgent === "codex" ? "Codex" : "Claude";
-  return `${sourceName} mentioned you in their latest message. Respond conversationally if you can add something useful, answer a question, resolve a disagreement, or move the work forward. If a response would only repeat agreement or add noise, reply exactly NO_RESPONSE_NEEDED.`;
+  const mentionContext = directlyMentioned ? " They addressed you directly." : "";
+  return `${sourceName} just added a message to the room.${mentionContext} Read it in the latest transcript and respond conversationally if you can add something useful, answer a question, react naturally, resolve a disagreement, or move the discussion forward. A brief reaction is welcome. If a response would only repeat agreement or add noise, reply exactly NO_RESPONSE_NEEDED.`;
 }
 
-export async function runMentionConversation(
+interface CompletedTurn {
+  id: number;
+  turn: ConversationTurn;
+  result?: TurnResult;
+  error?: unknown;
+}
+
+export async function runAgentConversation(
   initialTurns: ConversationTurn[],
   maxFollowUps: number,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
 ) {
-  const queue = [...initialTurns];
+  const pending = new Map<number, { turn: ConversationTurn; completion: Promise<CompletedTurn> }>();
+  const deferredMentions = new Map<AgentId, ConversationTurn>();
   let followUps = 0;
+  let nextId = 0;
 
-  for (let index = 0; index < queue.length; index += 1) {
-    const turn = queue[index];
-    const result = await performTurn(turn);
-    if (!result.mentionedAgent || followUps >= maxFollowUps) continue;
+  const startTurn = (turn: ConversationTurn) => {
+    const id = nextId;
+    nextId += 1;
+    const completion = performTurn(turn).then(
+      (result) => ({ id, turn, result }),
+      (error: unknown) => ({ id, turn, error }),
+    );
+    pending.set(id, { turn, completion });
+  };
 
-    const alreadyPending = queue.slice(index + 1).some((pending) => pending.agent === result.mentionedAgent);
-    if (alreadyPending) continue;
+  for (const turn of initialTurns) startTurn(turn);
 
-    queue.push({
-      agent: result.mentionedAgent,
-      instruction: followUpInstruction(turn.agent),
-      includeDiff: turn.includeDiff,
+  while (pending.size > 0) {
+    const completed = await Promise.race([...pending.values()].map(({ completion }) => completion));
+    pending.delete(completed.id);
+
+    if (completed.error) {
+      await Promise.allSettled([...pending.values()].map(({ completion }) => completion));
+      throw completed.error;
+    }
+
+    const deferredMention = deferredMentions.get(completed.turn.agent);
+    if (deferredMention && followUps < maxFollowUps) {
+      deferredMentions.delete(completed.turn.agent);
+      startTurn({
+        agent: completed.turn.agent,
+        instruction: followUpInstruction(deferredMention.agent, true),
+        includeDiff: deferredMention.includeDiff,
+      });
+      followUps += 1;
+    }
+
+    const replyCandidate = completed.result?.replyCandidate || completed.result?.mentionedAgent;
+    if (!replyCandidate || followUps >= maxFollowUps) continue;
+
+    const alreadyPending = [...pending.values()].some(({ turn }) => turn.agent === replyCandidate);
+    if (alreadyPending) {
+      if (completed.result?.mentionedAgent === replyCandidate) deferredMentions.set(replyCandidate, completed.turn);
+      continue;
+    }
+
+    startTurn({
+      agent: replyCandidate,
+      instruction: followUpInstruction(completed.turn.agent, completed.result?.mentionedAgent === replyCandidate),
+      includeDiff: completed.turn.includeDiff,
     });
     followUps += 1;
   }

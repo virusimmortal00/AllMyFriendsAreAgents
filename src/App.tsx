@@ -88,7 +88,9 @@ export default function App() {
   }
 
   const statusText = working
-    ? `${room.activeAgent === "codex" ? "Codex" : "Claude"} is typing...`
+    ? room.activeAgent
+      ? `${room.activeAgent === "codex" ? "Codex" : "Claude"} is typing...`
+      : "Agents are typing..."
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
@@ -108,7 +110,7 @@ export default function App() {
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu">
-                <button type="button" disabled={working} onClick={() => invoke("roundtable", "both")}>Start roundtable ({room.settings.maxRounds} turns)</button>
+                <button type="button" disabled={working} onClick={() => invoke("roundtable", "both")}>Start roundtable</button>
                 <button type="button" disabled={working} onClick={() => invoke("review", "both")}>Review with both agents</button>
               </div>
             ) : null}

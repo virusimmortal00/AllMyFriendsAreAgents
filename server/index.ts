@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { Response } from "express";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
-import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn } from "./conversation.js";
+import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
 import { RoomStore } from "./room-store.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
@@ -24,8 +24,6 @@ function broadcast() {
 }
 
 async function performTurn({ agent, instruction, includeDiff = false }: ConversationTurn) {
-  await store.setStatus("working", agent);
-  broadcast();
   const before = store.snapshot();
   const result = await runAgent(agent, before, instruction, includeDiff);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
@@ -37,12 +35,14 @@ async function performTurn({ agent, instruction, includeDiff = false }: Conversa
     await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat", parsed.styleUpdate || currentStyle);
   }
   broadcast();
-  return { mentionedAgent: parsed.mentionedAgent };
+  return { replyCandidate: parsed.replyCandidate, mentionedAgent: parsed.mentionedAgent };
 }
 
 async function performConversation(turns: ConversationTurn[]) {
   const maxFollowUps = store.snapshot().settings.maxRounds;
-  await runMentionConversation(turns, maxFollowUps, performTurn);
+  await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
+  broadcast();
+  await runAgentConversation(turns, maxFollowUps, performTurn);
 }
 
 async function runJob(job: () => Promise<void>) {
@@ -122,17 +122,11 @@ app.post("/api/actions", async (request, response) => {
 
   const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
   void runJob(async () => {
-    if (action === "roundtable") {
-      const rounds = store.snapshot().settings.maxRounds;
-      for (let index = 0; index < rounds; index += 1) {
-        const agent = index % 2 === 0 ? "codex" : "claude";
-        await performTurn({ agent, instruction: "Continue the discussion by responding to the other participants. Stop escalating if consensus is clear." });
-      }
-      return;
-    }
     await performConversation(agents.map((agent) => ({
       agent,
-      instruction: action === "review"
+      instruction: action === "roundtable"
+        ? "Join the discussion with the most useful opening thought. React to the room naturally and stop escalating once further replies would add noise."
+        : action === "review"
           ? "Review the current worktree changes. Focus on correctness, clarity, security, accessibility, and missing tests. Report concrete findings before general observations."
           : "Read the room and contribute the most useful next thought.",
       includeDiff: action === "review",

@@ -18,6 +18,7 @@ export class RoomStore {
   readonly stateDirectory: string;
   readonly statePath: string;
   private state: RoomState;
+  private saveQueue: Promise<void> = Promise.resolve();
 
   private constructor(stateDirectory: string, state: RoomState) {
     this.stateDirectory = stateDirectory;
@@ -119,8 +120,12 @@ export class RoomStore {
   }
 
   private async save() {
-    const temporaryPath = `${this.statePath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(this.state, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, this.statePath);
+    const operation = this.saveQueue.then(async () => {
+      const temporaryPath = `${this.statePath}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(this.state, null, 2)}\n`, "utf8");
+      await rename(temporaryPath, this.statePath);
+    });
+    this.saveQueue = operation.catch(() => undefined);
+    await operation;
   }
 }
