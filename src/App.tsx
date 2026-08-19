@@ -68,6 +68,7 @@ export default function App() {
       setHasInitialState(true);
       setClientError("");
     };
+    events.onopen = () => setClientError("");
     events.onerror = () => setClientError("The local room server disconnected. Retrying...");
     return () => events.close();
   }, []);

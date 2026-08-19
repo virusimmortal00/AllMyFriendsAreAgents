@@ -2,7 +2,6 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Response } from "express";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
@@ -11,6 +10,7 @@ import { GenerationJournal } from "./generation-journal.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
+import { RoomEventStream } from "./room-event-stream.js";
 import { RoomStore } from "./room-store.js";
 import { roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
@@ -21,15 +21,14 @@ const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AG
 const app = express();
 const store = await RoomStore.open(projectRoot);
 const generationJournal = await GenerationJournal.open(projectRoot);
-const clients = new Set<Response>();
+const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 
 app.use(express.json({ limit: "64kb" }));
 
 function broadcast() {
-  const event = `data: ${JSON.stringify(store.snapshot())}\n\n`;
-  for (const client of clients) client.write(event);
+  roomEvents.broadcast(store.snapshot());
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false }: ConversationTurn) {
@@ -208,13 +207,7 @@ app.get("/api/state", async (_request, response) => {
 });
 
 app.get("/api/events", (request, response) => {
-  response.setHeader("Content-Type", "text/event-stream");
-  response.setHeader("Cache-Control", "no-cache");
-  response.setHeader("Connection", "keep-alive");
-  response.flushHeaders();
-  clients.add(response);
-  response.write(`data: ${JSON.stringify(store.snapshot())}\n\n`);
-  request.on("close", () => clients.delete(response));
+  roomEvents.connect(request, response, store.snapshot());
 });
 
 app.patch("/api/settings", async (request, response) => {
