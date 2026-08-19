@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { AIM_5_COLOR_PALETTE } from "../shared/chat-style.js";
+import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { visibleAgentText } from "../shared/message-format.js";
 import type { AgentId, RoomState } from "./types.js";
 
@@ -79,7 +79,7 @@ ROOM RULES
 - Address the other agent by name when you want to invite them to answer or continue the discussion.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
-- Your current chat style is ${JSON.stringify(currentStyle)}. You may change your own style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are Arial, Times New Roman, Georgia, Comic Sans MS, Courier New, and Trebuchet MS; size is 12-28; text and background colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. Omit STYLE when keeping your current look.
+- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
 
 CURRENT ROOM CONVERSATION
 ${transcriptFor(state)}

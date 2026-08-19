@@ -5,7 +5,24 @@ export const CHAT_FONT_FAMILIES = [
   "Comic Sans MS",
   "Courier New",
   "Trebuchet MS",
+  "Tahoma",
+  "Verdana",
 ] as const;
+
+export type ChatFontFamily = (typeof CHAT_FONT_FAMILIES)[number];
+
+export const CHAT_FONT_STACKS: Record<ChatFontFamily, string> = {
+  Arial: 'Arial, Helvetica, sans-serif',
+  "Times New Roman": '"Times New Roman", Times, serif',
+  Georgia: 'Georgia, "Times New Roman", serif',
+  "Comic Sans MS": '"Comic Sans MS", "Comic Sans", "Chalkboard SE", cursive',
+  "Courier New": '"Courier New", Courier, monospace',
+  "Trebuchet MS": '"Trebuchet MS", Arial, sans-serif',
+  Tahoma: 'Tahoma, Geneva, sans-serif',
+  Verdana: 'Verdana, Geneva, sans-serif',
+};
+
+export const CHAT_FONT_SIZES = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28] as const;
 
 // AIM 5.x used the Windows-era 8x6 basic color grid and an 8x2 grayscale
 // custom-color row. Keep these values finite so the UI and agent directives
@@ -25,8 +42,6 @@ export const AIM_5_CUSTOM_COLORS = [
 ] as const;
 
 export const AIM_5_COLOR_PALETTE = [...new Set([...AIM_5_BASIC_COLORS, ...AIM_5_CUSTOM_COLORS])] as readonly string[];
-
-export type ChatFontFamily = (typeof CHAT_FONT_FAMILIES)[number];
 
 export interface ChatStyle {
   fontFamily: ChatFontFamily;

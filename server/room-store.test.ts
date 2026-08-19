@@ -12,19 +12,40 @@ afterEach(async () => {
 });
 
 describe("room style persistence", () => {
-  it("persists participant profiles and snapshots them onto messages", async () => {
+  it("persists participant preferences while retaining each message's original snapshot", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
-    const style = { ...DEFAULT_PARTICIPANT_STYLES.you, fontFamily: "Comic Sans MS" as const, fontSize: 21, bold: true };
+    const firstStyle = { ...DEFAULT_PARTICIPANT_STYLES.you, fontFamily: "Comic Sans MS" as const, fontSize: 21, bold: true };
+    const secondStyle = { ...firstStyle, fontFamily: "Georgia" as const, textColor: "#6c1739", backgroundColor: "#ececec", bold: false, italic: true };
 
-    await store.updateParticipantStyle("you", style);
-    await store.addMessage("you", "Styled hello", "chat", style);
+    await store.updateParticipantStyle("you", firstStyle);
+    await store.addMessage("you", "First look");
+    await store.updateParticipantStyle("you", secondStyle);
+    await store.addMessage("you", "Second look");
 
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
-    expect(reopened.snapshot().settings.participantStyles.you).toEqual(style);
-    expect(reopened.snapshot().messages.at(-1)?.style).toEqual(style);
+    expect(reopened.snapshot().settings.participantStyles.you).toEqual(secondStyle);
+    expect(reopened.snapshot().messages.slice(-2).map(({ style }) => style)).toEqual([firstStyle, secondStyle]);
+  });
+
+  it("automatically snapshots independent agent preferences onto their messages", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
+    const codexStyle = { ...DEFAULT_PARTICIPANT_STYLES.codex, fontFamily: "Courier New" as const, underline: true };
+    const claudeStyle = { ...DEFAULT_PARTICIPANT_STYLES.claude, fontFamily: "Times New Roman" as const, backgroundColor: "#fefe78" };
+
+    await store.updateParticipantStyle("codex", codexStyle);
+    await store.updateParticipantStyle("claude", claudeStyle);
+    await store.addMessage("codex", "Codex body");
+    await store.addMessage("claude", "Claude body");
+
+    expect(store.snapshot().messages.slice(-2).map(({ speaker, style }) => ({ speaker, style }))).toEqual([
+      { speaker: "codex", style: codexStyle },
+      { speaker: "claude", style: claudeStyle },
+    ]);
   });
 
   it("serializes simultaneous message saves without dropping either response", async () => {

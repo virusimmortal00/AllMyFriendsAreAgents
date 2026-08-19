@@ -11,7 +11,7 @@ export function appendOptimisticHumanMessage(room: RoomState, id: string, text: 
         text,
         timestamp,
         kind: "chat",
-        style: room.settings.participantStyles.you,
+        style: { ...room.settings.participantStyles.you },
       },
     ],
   };

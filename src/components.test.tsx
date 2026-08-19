@@ -48,34 +48,85 @@ describe("ChatComposer", () => {
 
     expect(html).toContain("Another thought");
     expect(html).toContain('type="submit"');
+    expect(html).toContain('aria-label="Outgoing font size"');
+    expect(html).toContain('aria-label="Message highlight color"');
     expect(html).not.toContain("disabled");
   });
 });
 
 describe("Transcript message styling", () => {
-  it("keeps participant names outside the customizable message style", () => {
+  it("renders mixed participant snapshots while keeping names and timestamps application-controlled", () => {
     const html = renderToStaticMarkup(
       <Transcript
-        messages={[{
-          id: "styled-message",
-          speaker: "you",
-          text: "Styled body",
-          timestamp: "2026-08-19T12:00:00.000Z",
-          kind: "chat",
-          style: {
-            ...DEFAULT_PARTICIPANT_STYLES.you,
-            fontFamily: "Comic Sans MS",
-            textColor: "#ed36ff",
-            backgroundColor: "#111111",
+        messages={[
+          {
+            id: "styled-human",
+            speaker: "you",
+            text: "Styled human body",
+            timestamp: "2026-08-19T12:00:00.000Z",
+            kind: "chat",
+            style: {
+              ...DEFAULT_PARTICIPANT_STYLES.you,
+              fontFamily: "Comic Sans MS",
+              textColor: "#ed36ff",
+              backgroundColor: "#111111",
+            },
           },
-        }]}
-        participantStyles={DEFAULT_PARTICIPANT_STYLES}
+          {
+            id: "styled-claude",
+            speaker: "claude",
+            text: "A different agent body",
+            timestamp: "2026-08-19T12:01:00.000Z",
+            kind: "chat",
+            style: {
+              ...DEFAULT_PARTICIPANT_STYLES.claude,
+              fontFamily: "Courier New",
+              fontSize: 20,
+              textColor: "#173874",
+              backgroundColor: "#ececec",
+              italic: true,
+            },
+          },
+        ]}
+        magnification={125}
         transcriptRef={createRef<HTMLDivElement>()}
       />,
     );
 
     expect(html).toContain('<strong class="speaker speaker--you">You:</strong> <span class="message__bubble" style=');
+    expect(html).toContain('<strong class="speaker speaker--claude">Claude:</strong> <span class="message__bubble" style=');
     expect(html).not.toMatch(/<strong class="speaker speaker--you" style=/);
-    expect(html).toContain('font-family:&quot;Comic Sans MS&quot;, sans-serif');
+    expect(html).not.toMatch(/<time[^>]+style=/);
+    expect(html).toContain('font-family:&quot;Comic Sans MS&quot;, &quot;Comic Sans&quot;, &quot;Chalkboard SE&quot;, cursive');
+    expect(html).toContain('font-family:&quot;Courier New&quot;, Courier, monospace');
+    expect(html).toContain('font-size:21.25px');
+    expect(html).toContain('font-size:25px');
+    expect(html).toContain('background-color:#111111');
+    expect(html).toContain('background-color:#ececec');
+    expect(html).toContain('--transcript-magnification:1.25');
+  });
+
+  it("uses each message snapshot instead of a participant's current preference", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[
+          { id: "before", speaker: "you", text: "Before", timestamp: "2026-08-19T12:00:00.000Z", style: DEFAULT_PARTICIPANT_STYLES.you },
+          {
+            id: "after",
+            speaker: "you",
+            text: "After",
+            timestamp: "2026-08-19T12:01:00.000Z",
+            style: { ...DEFAULT_PARTICIPANT_STYLES.you, fontFamily: "Georgia", textColor: "#6c1739", bold: true },
+          },
+        ]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain("font-family:Arial, Helvetica, sans-serif");
+    expect(html).toContain('font-family:Georgia, &quot;Times New Roman&quot;, serif');
+    expect(html).toContain("color:#1618fd");
+    expect(html).toContain("color:#6c1739");
   });
 });

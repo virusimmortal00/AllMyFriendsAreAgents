@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES, extractStyleDirective, sanitizeChatStyle } from "./chat-style.js";
+import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES, CHAT_FONT_STACKS, DEFAULT_PARTICIPANT_STYLES, extractStyleDirective, sanitizeChatStyle } from "./chat-style.js";
 
 describe("chat style validation", () => {
   it("allows AIM-safe styling and clamps font size", () => {
@@ -36,5 +36,24 @@ describe("chat style validation", () => {
       textColor: "#abcdef",
       backgroundColor: "#123456",
     })).toMatchObject({ textColor: "#000000", backgroundColor: "#ffffff" });
+  });
+
+  it("limits styles to AIM-era local fonts with category-appropriate fallbacks", () => {
+    expect(CHAT_FONT_FAMILIES).toEqual([
+      "Arial", "Times New Roman", "Georgia", "Comic Sans MS", "Courier New", "Trebuchet MS", "Tahoma", "Verdana",
+    ]);
+    expect(CHAT_FONT_STACKS["Times New Roman"]).toContain("serif");
+    expect(CHAT_FONT_STACKS["Courier New"]).toContain("monospace");
+    expect(CHAT_FONT_STACKS["Comic Sans MS"]).toContain("cursive");
+  });
+
+  it("does not admit local transcript magnification into transmitted style", () => {
+    const style = sanitizeChatStyle({
+      ...DEFAULT_PARTICIPANT_STYLES.you,
+      transcriptMagnification: 150,
+    }, DEFAULT_PARTICIPANT_STYLES.you);
+
+    expect(style).toEqual(DEFAULT_PARTICIPANT_STYLES.you);
+    expect(style).not.toHaveProperty("transcriptMagnification");
   });
 });

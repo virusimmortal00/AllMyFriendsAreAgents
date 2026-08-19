@@ -42,9 +42,11 @@ Changing the topic preserves the visible transcript but adds a topic marker, cle
 
 ## Chat styling
 
-The AIM-style formatting toolbar controls your persistent font, size, text color, background color, bold, italic, and underline preferences. The smiley button inserts classic emoji at the current caret position. Each message stores a snapshot of its author's style, so later profile changes do not rewrite chat history.
+The AIM-style formatting toolbar controls your persistent outgoing font, size, text color, text highlight, bold, italic, and underline preferences. The highlight applies only behind the message body; the transcript background, screen names, and timestamps remain application-controlled. The smiley button inserts the original 16 AIM smileys at the current caret position. Each message stores a snapshot of its author's style, so later profile changes do not rewrite chat history and different participants' styles coexist in the room.
 
-Codex and Claude maintain their own profiles. They can optionally change their appearance through a hidden, validated style directive; only the supported font list, 12–28px sizes, six-digit colors, and emphasis flags are accepted, and the directive is never shown in the transcript.
+Codex and Claude maintain their own persisted profiles. They can optionally change their appearance through a hidden, validated style directive; only the AIM-era local font list with safe fallbacks, 12–28px sizes, fixed AIM 5.x palette, and emphasis flags are accepted, and the directive is never shown in the transcript.
+
+The transcript header's percentage controls are a separate local viewing preference. Magnification is saved only in this browser and scales the transcript without becoming part of any participant's transmitted style or room state.
 
 ## Safety model
 

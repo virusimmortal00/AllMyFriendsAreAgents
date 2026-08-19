@@ -140,6 +140,31 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   letter-spacing: .02em;
 }
 .panel-title--section { margin-top: 12px; }
+.transcript-header { position: relative; min-width: 0; }
+.transcript-header .panel-title { padding-right: 150px; }
+.transcript-view-controls {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  color: #fff;
+  font: 700 12px/1 Tahoma, Arial, sans-serif;
+}
+.transcript-view-controls button {
+  width: 27px;
+  height: 25px;
+  padding: 0;
+  border: 2px outset white;
+  background: var(--chrome);
+  color: #111;
+  font: 700 16px/1 Arial, sans-serif;
+}
+.transcript-view-controls button:active:not(:disabled) { border-style: inset; }
+.transcript-view-controls button:disabled { color: #888; }
+.transcript-view-controls output { width: 48px; text-align: center; text-shadow: 1px 1px #000080; }
 
 .buddy-panel, .controls-panel, .chat-panel, .right-rail { min-height: 0; overflow: hidden; }
 .right-rail { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 9px; }
@@ -159,16 +184,16 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 
 .chat-panel { display: grid; grid-template-rows: 38px minmax(0, 1fr) 205px; }
 .transcript { overflow-y: auto; padding: 14px 16px; background: #fff; scroll-behavior: smooth; }
-.message { display: grid; grid-template-columns: 92px 1fr; gap: 5px; margin-bottom: 10px; font-size: 17px; line-height: 1.36; }
-.message time { white-space: nowrap; color: #222; font-family: "Courier New", monospace; font-size: 15px; padding-top: 2px; }
+.message { display: grid; grid-template-columns: calc(92px * var(--transcript-magnification, 1)) 1fr; gap: 5px; margin-bottom: 10px; font-size: calc(17px * var(--transcript-magnification, 1)); line-height: 1.36; }
+.message time { white-space: nowrap; color: #222; font-family: "Courier New", Courier, monospace; font-size: calc(15px * var(--transcript-magnification, 1)); padding-top: 2px; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.aim-smiley { display: inline-block; width: 18px; height: 18px; margin: 0 1px; vertical-align: -3px; }
+.aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: auto; }
 .message--status { color: #555; font-style: italic; }
 .speaker {
   color: #111;
   background: transparent;
-  font: normal 800 17px/1.36 Arial, sans-serif;
+  font: normal 800 calc(17px * var(--transcript-magnification, 1))/1.36 Arial, Helvetica, sans-serif;
   text-decoration: none;
 }
 .speaker--codex { color: var(--codex); }
@@ -191,6 +216,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   border: 2px outset white;
 }
 .format-toolbar select { width: 136px; height: 31px; padding: 2px 4px; border: 2px inset white; background: #fff; font: 14px Arial, sans-serif; }
+.format-toolbar .font-size-select { width: 58px; flex: 0 0 58px; }
 .format-toolbar button {
   width: 32px;
   height: 31px;
@@ -295,8 +321,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .menu-bar button { font-size: 16px; }
   .workspace { display: flex; flex-direction: column; padding: 5px; }
   .chat-panel { min-height: 70vh; grid-template-rows: 38px minmax(300px, 1fr) 225px; }
-  .message { grid-template-columns: 1fr; gap: 0; font-size: 15px; }
-  .message time { font-size: 12px; }
+  .transcript-header .panel-title { padding-right: 126px; font-size: 16px; }
+  .transcript-view-controls { right: 4px; }
+  .transcript-view-controls button { width: 24px; }
+  .transcript-view-controls output { width: 42px; }
+  .message { grid-template-columns: 1fr; gap: 0; font-size: calc(15px * var(--transcript-magnification, 1)); }
+  .message time { font-size: calc(12px * var(--transcript-magnification, 1)); }
   .composer { grid-template-columns: minmax(0, 1fr) 78px; }
   .format-toolbar { flex-wrap: wrap; align-content: center; }
   .format-toolbar select { width: 128px; }

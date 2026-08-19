@@ -68,6 +68,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("ROOM THEME\nWeekend cooking");
     expect(prompt).toContain("What should we make?");
     expect(prompt).toContain("NO_RESPONSE_NEEDED");
+    expect(prompt).toContain("backgroundColor highlights your message text only");
+    expect(prompt).toContain("local transcript magnification are application-controlled");
+    expect(prompt).toContain("Tahoma, Verdana");
     expect(prompt).not.toContain("Please review the implementation.");
     expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
     expect(prompt).not.toContain("DISPOSITION:");

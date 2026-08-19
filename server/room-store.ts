@@ -5,6 +5,22 @@ import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatSty
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "./types.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
+const styledParticipants = ["you", "codex", "claude"] as const;
+
+function styledParticipant(speaker: RoomMessage["speaker"]): StyledParticipant | undefined {
+  return styledParticipants.includes(speaker as StyledParticipant) ? speaker as StyledParticipant : undefined;
+}
+
+function sameStyle(left: ChatStyle | undefined, right: ChatStyle) {
+  if (!left) return false;
+  return left.fontFamily === right.fontFamily
+    && left.fontSize === right.fontSize
+    && left.textColor === right.textColor
+    && left.backgroundColor === right.backgroundColor
+    && left.bold === right.bold
+    && left.italic === right.italic
+    && left.underline === right.underline;
+}
 
 function topicMessage(topic: string): RoomMessage {
   return {
@@ -63,8 +79,10 @@ export class RoomStore {
         : DEFAULT_ROOM_TOPIC;
       const topicWasMissing = typeof stored.settings.topic !== "string" || !stored.settings.topic.trim();
       const messages = stored.messages.map((message) => {
-        if (message.style || !(["you", "codex", "claude"] as const).includes(message.speaker as StyledParticipant)) return message;
-        return { ...message, style: participantStyles[message.speaker as StyledParticipant] };
+        const participant = styledParticipant(message.speaker);
+        if (!participant) return message;
+        const style = sanitizeChatStyle(message.style, participantStyles[participant]);
+        return sameStyle(message.style, style) ? message : { ...message, style };
       });
       if (topicWasMissing) messages.push(topicMessage(storedTopic));
       const state: RoomState = {
@@ -105,13 +123,17 @@ export class RoomStore {
   }
 
   async addMessage(speaker: RoomMessage["speaker"], text: string, kind: RoomMessage["kind"] = "chat", style?: ChatStyle) {
+    const participant = styledParticipant(speaker);
+    const messageStyle = participant
+      ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant])
+      : undefined;
     const message: RoomMessage = {
       id: randomUUID(),
       speaker,
       text: text.trim(),
       timestamp: new Date().toISOString(),
       kind,
-      ...(style ? { style: sanitizeChatStyle(style, style) } : {}),
+      ...(messageStyle ? { style: messageStyle } : {}),
     };
     this.state.messages.push(message);
     await this.save();

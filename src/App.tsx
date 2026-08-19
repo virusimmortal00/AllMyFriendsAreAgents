@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { BuddyList, ChatComposer, PanelTitle, RoomControls, Transcript } from "./components";
+import { BuddyList, ChatComposer, RoomControls, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
+import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
@@ -25,6 +26,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [clientError, setClientError] = useState("");
+  const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
   const receivedLiveState = useRef(false);
 
@@ -93,6 +95,14 @@ export default function App() {
     void withErrorHandling(() => updateMyStyle(nextStyle));
   }
 
+  function changeTranscriptMagnification(direction: -1 | 1) {
+    setTranscriptMagnification((current) => {
+      const next = adjacentTranscriptMagnification(current, direction);
+      saveTranscriptMagnification(next);
+      return next;
+    });
+  }
+
   function submitMessage(event: React.FormEvent) {
     event.preventDefault();
     const message = draft.trim();
@@ -155,8 +165,8 @@ export default function App() {
 
         <div className="workspace">
           <section className="chat-panel beveled-inset">
-            <PanelTitle>The Agent Room</PanelTitle>
-            <Transcript messages={room.messages} participantStyles={room.settings.participantStyles} transcriptRef={transcript} />
+            <TranscriptHeader magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
+            <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} />
             <ChatComposer
               draft={draft}
               style={room.settings.participantStyles.you}

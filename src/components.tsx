@@ -3,9 +3,9 @@ import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
   CHAT_FONT_FAMILIES,
+  CHAT_FONT_SIZES,
+  CHAT_FONT_STACKS,
   type ChatStyle,
-  type ParticipantStyles,
-  type StyledParticipant,
 } from "../shared/chat-style";
 import { visibleAgentText } from "../shared/message-format";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
@@ -18,10 +18,10 @@ const buddyLabels = {
 } as const;
 const buddyIds = ["codex", "claude", "you"] as const;
 
-function chatStyleProperties(style: ChatStyle): CSSProperties {
+function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
-    fontFamily: `"${style.fontFamily}", sans-serif`,
-    fontSize: `${style.fontSize}px`,
+    fontFamily: CHAT_FONT_STACKS[style.fontFamily],
+    fontSize: `${style.fontSize * magnification / 100}px`,
     color: style.textColor,
     backgroundColor: style.backgroundColor,
     fontWeight: style.bold ? 700 : 400,
@@ -32,6 +32,37 @@ function chatStyleProperties(style: ChatStyle): CSSProperties {
 
 export function PanelTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="panel-title">{children}</h2>;
+}
+
+export function TranscriptHeader({
+  magnification,
+  onMagnificationChange,
+}: {
+  magnification: number;
+  onMagnificationChange: (direction: -1 | 1) => void;
+}) {
+  return (
+    <header className="transcript-header">
+      <PanelTitle>The Agent Room</PanelTitle>
+      <div className="transcript-view-controls" aria-label="Local transcript magnification">
+        <button
+          type="button"
+          aria-label="Decrease transcript magnification"
+          title="Make the transcript smaller on this device"
+          disabled={magnification <= 75}
+          onClick={() => onMagnificationChange(-1)}
+        >−</button>
+        <output aria-label={`Transcript magnification ${magnification}%`}>{magnification}%</output>
+        <button
+          type="button"
+          aria-label="Increase transcript magnification"
+          title="Make the transcript larger on this device"
+          disabled={magnification >= 150}
+          onClick={() => onMagnificationChange(1)}
+        >+</button>
+      </div>
+    </header>
+  );
 }
 
 export function BuddyList({ availability }: { availability?: Record<AgentId, boolean> }) {
@@ -66,26 +97,29 @@ function formatTime(timestamp: string) {
 
 export function Transcript({
   messages,
-  participantStyles,
+  magnification,
   transcriptRef,
 }: {
   messages: RoomMessage[];
-  participantStyles: ParticipantStyles;
+  magnification: number;
   transcriptRef: RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <div ref={transcriptRef} className="transcript beveled-inset" role="log" aria-live="polite" aria-label="Room transcript">
+    <div
+      ref={transcriptRef}
+      className="transcript beveled-inset"
+      role="log"
+      aria-live="polite"
+      aria-label="Room transcript"
+      style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
+    >
       {messages.map((message) => {
-        const participant = (["you", "codex", "claude"] as const).includes(message.speaker as StyledParticipant)
-          ? message.speaker as StyledParticipant
-          : undefined;
-        const messageStyle = message.style || (participant ? participantStyles[participant] : undefined);
         return (
           <article className={`message message--${message.kind || "chat"}`} key={message.id}>
             <time>[{formatTime(message.timestamp)}]</time>
             <div>
               <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
-              <span className="message__bubble" style={messageStyle ? chatStyleProperties(messageStyle) : undefined}>
+              <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
                 <span className="message__text">{renderAimSmileys(visibleAgentText(message.text))}</span>
               </span>
             </div>
@@ -140,9 +174,15 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
         >
           {CHAT_FONT_FAMILIES.map((font) => <option value={font} key={font}>{font}</option>)}
         </select>
-        <button type="button" aria-label="Decrease text size" title="Smaller text" disabled={style.fontSize <= 12} onClick={() => updateStyle({ fontSize: style.fontSize - 1 })}>A−</button>
-        <span className="font-size-readout" aria-label={`Text size ${style.fontSize}`}>{style.fontSize}</span>
-        <button type="button" aria-label="Increase text size" title="Larger text" disabled={style.fontSize >= 28} onClick={() => updateStyle({ fontSize: style.fontSize + 1 })}>A+</button>
+        <select
+          className="font-size-select"
+          aria-label="Outgoing font size"
+          title="Font size sent with your messages"
+          value={style.fontSize}
+          onChange={(event) => updateStyle({ fontSize: Number(event.target.value) })}
+        >
+          {CHAT_FONT_SIZES.map((size) => <option value={size} key={size}>{size}</option>)}
+        </select>
         <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
         <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
         <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
@@ -160,8 +200,8 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
         <button
           type="button"
           className="color-well color-well--background"
-          title="Background color"
-          aria-label="Background color"
+          title="Message highlight color"
+          aria-label="Message highlight color"
           aria-expanded={colorPicker === "background"}
           onClick={() => setColorPicker((current) => current === "background" ? null : "background")}
         >
@@ -169,8 +209,8 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
           <i aria-hidden="true" style={{ backgroundColor: style.backgroundColor }} />
         </button>
         {colorPicker ? (
-          <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Background"} color palette`}>
-            <strong>{colorPicker === "text" ? "Text" : "Background"} color</strong>
+          <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Message highlight"} color palette`}>
+            <strong>{colorPicker === "text" ? "Text color" : "Message highlight"}</strong>
             <span>Basic colors:</span>
             <div className="aim-color-grid">
               {AIM_5_BASIC_COLORS.map((color, index) => (
