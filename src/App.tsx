@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { BuddyList, ChatComposer, PanelTitle, RoomControls, Transcript } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
+import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
@@ -25,12 +26,18 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [clientError, setClientError] = useState("");
   const transcript = useRef<HTMLDivElement>(null);
+  const receivedLiveState = useRef(false);
 
   useEffect(() => {
-    void loadRoom().then(setRoom).catch((error: Error) => setClientError(error.message));
+    void loadRoom().then((next) => {
+      setRoom((current) => receivedLiveState.current
+        ? { ...current, availability: next.availability || current.availability }
+        : next);
+    }).catch((error: Error) => setClientError(error.message));
     const events = new EventSource("/api/events");
     events.onmessage = (event) => {
       const next = JSON.parse(event.data) as RoomState;
+      receivedLiveState.current = true;
       setRoom((current) => ({ ...next, availability: current.availability }));
       setClientError("");
     };
@@ -90,8 +97,24 @@ export default function App() {
     event.preventDefault();
     const message = draft.trim();
     if (!message || working) return;
+    const optimisticId = `pending-${crypto.randomUUID()}`;
     setDraft("");
-    void withErrorHandling(() => sendMessage(message));
+    setRoom((current) => appendOptimisticHumanMessage(current, optimisticId, message, new Date().toISOString()));
+    void (async () => {
+      try {
+        setClientError("");
+        const next = await sendMessage(message);
+        setRoom((current) => {
+          const stillPending = current.messages.some(({ id }) => id === optimisticId);
+          if (!stillPending && current.messages.length >= next.messages.length) return current;
+          return { ...next, availability: current.availability };
+        });
+      } catch (error) {
+        setRoom((current) => discardOptimisticMessage(current, optimisticId));
+        setDraft((current) => current || message);
+        setClientError(error instanceof Error ? error.message : String(error));
+      }
+    })();
   }
 
   function invoke(action: "ask" | "review" | "roundtable", agent: AgentId | "both") {

@@ -31,11 +31,11 @@ export async function updateMyStyle(style: ChatStyle) {
   });
 }
 
-export async function sendMessage(text: string) {
+export async function sendMessage(text: string): Promise<RoomState> {
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ text }),
-  });
+  }).then((response) => response.json());
 }
 
 export async function runAction(action: "ask" | "review" | "roundtable", target: AgentId | "both") {

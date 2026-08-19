@@ -6,6 +6,7 @@ import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
 import { RoomStore } from "./room-store.js";
+import { roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -61,7 +62,7 @@ async function runJob(job: () => Promise<void>) {
 }
 
 app.get("/api/state", async (_request, response) => {
-  response.json({ ...store.snapshot(), availability: await cliAvailability() });
+  response.json(await roomStateWithAvailability(() => store.snapshot(), cliAvailability));
 });
 
 app.get("/api/events", (request, response) => {
@@ -112,7 +113,7 @@ app.post("/api/messages", async (request, response) => {
   void runJob(async () => {
     await performConversation(roomMessageTurns());
   });
-  return response.status(202).json({ accepted: true });
+  return response.status(202).json(store.snapshot());
 });
 
 app.post("/api/actions", async (request, response) => {
