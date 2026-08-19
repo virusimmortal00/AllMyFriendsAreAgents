@@ -117,7 +117,6 @@ export default function App() {
         </nav>
 
         <div className="workspace">
-          <BuddyList availability={room.availability} />
           <section className="chat-panel beveled-inset">
             <PanelTitle>The Agent Room</PanelTitle>
             <Transcript messages={room.messages} participantStyles={room.settings.participantStyles} transcriptRef={transcript} />
@@ -130,13 +129,16 @@ export default function App() {
               onSubmit={submitMessage}
             />
           </section>
-          <RoomControls
-            writableAgent={room.settings.writableAgent}
-            maxRounds={room.settings.maxRounds}
-            disabled={working}
-            onWritableChange={changeWritable}
-            onRoundsChange={changeRounds}
-          />
+          <div className="right-rail">
+            <BuddyList availability={room.availability} />
+            <RoomControls
+              writableAgent={room.settings.writableAgent}
+              maxRounds={room.settings.maxRounds}
+              disabled={working}
+              onWritableChange={changeWritable}
+              onRoundsChange={changeRounds}
+            />
+          </div>
         </div>
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}

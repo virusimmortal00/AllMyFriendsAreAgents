@@ -16,6 +16,7 @@ const buddyLabels = {
   claude: "Claude",
   you: "You",
 } as const;
+const buddyIds = ["codex", "claude", "you"] as const;
 
 function chatStyleProperties(style: ChatStyle): CSSProperties {
   return {
@@ -29,50 +30,32 @@ function chatStyleProperties(style: ChatStyle): CSSProperties {
   };
 }
 
-export function PixelBuddy({ buddy }: { buddy: "codex" | "claude" | "you" }) {
-  return (
-    <span className={`pixel-buddy pixel-buddy--${buddy}`} aria-hidden="true">
-      <span className="pixel-buddy__antenna" />
-      <span className="pixel-buddy__face">
-        <span className="pixel-buddy__eyes" />
-        <span className="pixel-buddy__mouth" />
-      </span>
-      <span className="pixel-buddy__body" />
-    </span>
-  );
-}
-
 export function PanelTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="panel-title">{children}</h2>;
 }
 
 export function BuddyList({ availability }: { availability?: Record<AgentId, boolean> }) {
+  const isAvailable = (buddy: typeof buddyIds[number]) => buddy === "you" || availability?.[buddy] !== false;
+  const onlineCount = buddyIds.filter(isAvailable).length;
+
   return (
     <aside className="buddy-panel beveled-inset" aria-label="Buddy list">
       <PanelTitle>Buddy List</PanelTitle>
-      <div className="buddy-list">
-        {(["codex", "claude", "you"] as const).map((buddy) => {
-          const available = buddy === "you" || availability?.[buddy] !== false;
+      <div className="buddy-group"><span aria-hidden="true">▾</span> Buddies ({onlineCount}/{buddyIds.length})</div>
+      <div className="buddy-list" role="list">
+        {buddyIds.map((buddy) => {
+          const available = isAvailable(buddy);
           return (
-            <div className="buddy-row" key={buddy}>
-              <PixelBuddy buddy={buddy} />
-              <div>
-                <strong className={`speaker speaker--${buddy}`}>{buddyLabels[buddy]}</strong>
-                <span>{buddy === "you" ? "Present" : available ? "CLI installed" : "CLI missing"}</span>
-              </div>
+            <div className="buddy-row" role="listitem" key={buddy} title={buddy === "you" ? "Present" : available ? "CLI connected" : "CLI unavailable"}>
+              <span className={`buddy-status buddy-status--${available ? "online" : "offline"}`} aria-hidden="true" />
+              <strong className={`speaker speaker--${buddy}`}>{buddyLabels[buddy]}</strong>
+              <span className="sr-only">{available ? "Online" : "Offline"}</span>
             </div>
           );
         })}
       </div>
-      <div className="panel-title panel-title--section">Rooms</div>
-      <nav className="rooms-list" aria-label="Rooms">
-        <button className="room-row room-row--active" type="button">
-          <span className="room-icon">•••</span> The Agent Room
-        </button>
-        <button className="room-row" type="button" disabled title="Multiple rooms are coming soon">
-          <span className="new-room-icon">+</span> New room...
-        </button>
-      </nav>
+      <div className="buddy-group buddy-group--rooms"><span aria-hidden="true">▾</span> Rooms (1)</div>
+      <div className="buddy-room" aria-current="page"><span aria-hidden="true">●</span> The Agent Room</div>
     </aside>
   );
 }

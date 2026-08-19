@@ -2,7 +2,18 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { Transcript } from "./components";
+import { BuddyList, Transcript } from "./components";
+
+describe("BuddyList", () => {
+  it("renders a compact online roster and active room", () => {
+    const html = renderToStaticMarkup(<BuddyList availability={{ codex: true, claude: false }} />);
+
+    expect(html).toContain("Buddies (2/3)");
+    expect(html).toContain("The Agent Room");
+    expect(html).toContain("CLI unavailable");
+    expect(html).not.toContain("pixel-buddy");
+  });
+});
 
 describe("Transcript message styling", () => {
   it("keeps participant names outside the customizable message style", () => {
