@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateSettings } from "./api";
 import { BuddyList, PanelTitle, RoomControls, Transcript } from "./components";
+import { scrollTranscriptToEnd } from "./scroll";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -35,7 +36,9 @@ export default function App() {
     return () => events.close();
   }, []);
 
-  useEffect(() => transcriptEnd.current?.scrollIntoView({ behavior: "smooth" }), [room.messages.length]);
+  useEffect(() => {
+    scrollTranscriptToEnd(transcriptEnd.current);
+  }, [room.messages.length]);
 
   const working = room.status === "working";
 
