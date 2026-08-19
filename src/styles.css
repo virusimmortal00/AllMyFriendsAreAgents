@@ -167,6 +167,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message time { white-space: nowrap; color: #222; font-family: "Courier New", monospace; font-size: 15px; padding-top: 2px; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.aim-smiley { display: inline-block; width: 18px; height: 18px; margin: 0 1px; vertical-align: -3px; }
 .message--status { color: #555; font-style: italic; }
 .speaker {
   color: #111;
@@ -250,6 +251,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   box-shadow: 3px 3px 0 rgba(0,0,0,.35);
 }
 .emoji-picker button { width: 34px; height: 32px; font-size: 18px; }
+.emoji-picker button img { display: block; width: 18px; height: 18px; margin: auto; }
 .classic-select, .classic-input { height: 34px; padding: 3px 7px; border: 2px inset white; background: white; color: #111; }
 .classic-button { min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 12px; border: 3px outset white; background: var(--chrome); color: #111; font-family: "Arial Narrow", Arial, sans-serif; font-size: 17px; font-weight: 800; text-transform: uppercase; box-shadow: 1px 1px 0 #555; }
 .classic-button:active:not(:disabled) { border-style: inset; transform: translate(1px, 1px); box-shadow: none; }

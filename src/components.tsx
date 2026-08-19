@@ -8,6 +8,7 @@ import {
   type StyledParticipant,
 } from "../shared/chat-style";
 import { visibleAgentText } from "../shared/message-format";
+import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
 const buddyLabels = {
@@ -15,8 +16,6 @@ const buddyLabels = {
   claude: "Claude",
   you: "You",
 } as const;
-
-const CLASSIC_EMOJIS = ["🙂", "😄", "😉", "😛", "😎", "😂", "😢", "😡", "❤️", "👍", "👎", "🎉"];
 
 function chatStyleProperties(style: ChatStyle): CSSProperties {
   return {
@@ -104,7 +103,7 @@ export function Transcript({
             <div>
               <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
               <span className="message__bubble" style={messageStyle ? chatStyleProperties(messageStyle) : undefined}>
-                <span className="message__text">{visibleAgentText(message.text)}</span>
+                <span className="message__text">{renderAimSmileys(visibleAgentText(message.text))}</span>
               </span>
             </div>
           </article>
@@ -132,15 +131,15 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
     onStyleChange({ ...style, ...update });
   }
 
-  function insertEmoji(emoji: string) {
+  function insertSmiley(shortcut: string) {
     const input = textarea.current;
     const start = input?.selectionStart ?? draft.length;
     const end = input?.selectionEnd ?? draft.length;
-    onDraftChange(`${draft.slice(0, start)}${emoji}${draft.slice(end)}`);
+    onDraftChange(`${draft.slice(0, start)}${shortcut}${draft.slice(end)}`);
     setEmojiOpen(false);
     requestAnimationFrame(() => {
       textarea.current?.focus();
-      textarea.current?.setSelectionRange(start + emoji.length, start + emoji.length);
+      textarea.current?.setSelectionRange(start + shortcut.length, start + shortcut.length);
     });
   }
 
@@ -226,8 +225,12 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
         <div className="emoji-control">
           <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} disabled={disabled} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
           {emojiOpen ? (
-            <div className="emoji-picker" aria-label="Classic emoji picker">
-              {CLASSIC_EMOJIS.map((emoji) => <button type="button" key={emoji} aria-label={`Insert ${emoji}`} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}
+            <div className="emoji-picker" aria-label="Classic AIM smiley picker">
+              {AIM_SMILEYS.map((smiley) => (
+                <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
+                  <img src={smiley.src} alt="" aria-hidden="true" />
+                </button>
+              ))}
             </div>
           ) : null}
         </div>
