@@ -39,3 +39,36 @@ describe("agent permissions", () => {
     expect(__testing.resolvePermission("claude", state, false)).toBe("read-only");
   });
 });
+
+describe("Claude session recovery", () => {
+  it("recognizes only the missing-conversation failure as recoverable", () => {
+    expect(__testing.isMissingClaudeSessionError(new Error("claude exited with 1: No conversation found with session ID: stale"))).toBe(true);
+    expect(__testing.isMissingClaudeSessionError(new Error("claude exited with 1: API unavailable"))).toBe(false);
+  });
+
+  it("restarts a missing read-only session with the original safety policy", () => {
+    expect(__testing.claudeArgs("read-only", "fresh-session")).toEqual([
+      "-p",
+      "--output-format",
+      "json",
+      "--permission-mode",
+      "plan",
+      "--tools",
+      "Read",
+      "Glob",
+      "Grep",
+      "--session-id",
+      "fresh-session",
+    ]);
+  });
+
+  it("uses resume only when an existing session is available", () => {
+    expect(__testing.claudeArgs("read-only", "existing-session", true)).toEqual([
+      "-p",
+      "--output-format",
+      "json",
+      "--resume",
+      "existing-session",
+    ]);
+  });
+});

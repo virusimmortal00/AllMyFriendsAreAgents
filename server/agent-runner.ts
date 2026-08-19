@@ -135,6 +135,29 @@ function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolea
   return includeDiff || state.settings.writableAgent !== agent ? "read-only" : "writable";
 }
 
+function isMissingClaudeSessionError(error: unknown) {
+  return error instanceof Error && /No conversation found with session ID/i.test(error.message);
+}
+
+function claudeArgs(permission: "read-only" | "writable", sessionId: string, resume = false) {
+  if (resume) return ["-p", "--output-format", "json", "--resume", sessionId];
+  return permission === "writable"
+    ? ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--session-id", sessionId]
+    : [
+        "-p",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "plan",
+        "--tools",
+        "Read",
+        "Glob",
+        "Grep",
+        "--session-id",
+        sessionId,
+      ];
+}
+
 export async function runAgent(
   agent: AgentId,
   state: RoomState,
@@ -165,28 +188,18 @@ export async function runAgent(
     return { sessionId, text: parsed.text };
   }
 
-  const newSessionId = randomUUID();
-  const args = existing
-    ? ["-p", "--output-format", "json", "--resume", existing.id]
-    : permission === "writable"
-      ? ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--session-id", newSessionId]
-      : [
-          "-p",
-          "--output-format",
-          "json",
-          "--permission-mode",
-          "plan",
-          "--tools",
-          "Read",
-          "Glob",
-          "Grep",
-          "--session-id",
-          newSessionId,
-        ];
-  const result = await runProcess("claude", args, projectPath, prompt);
+  let sessionId = existing?.id || randomUUID();
+  let result: ProcessResult;
+  try {
+    result = await runProcess("claude", claudeArgs(permission, sessionId, Boolean(existing)), projectPath, prompt);
+  } catch (error) {
+    if (!existing || !isMissingClaudeSessionError(error)) throw error;
+    sessionId = randomUUID();
+    result = await runProcess("claude", claudeArgs(permission, sessionId), projectPath, prompt);
+  }
   const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
   if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
-  return { sessionId: parsed.session_id || existing?.id || newSessionId, text: parsed.result };
+  return { sessionId: parsed.session_id || sessionId, text: parsed.result };
 }
 
 export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
@@ -202,4 +215,4 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
   return { codex, claude };
 }
 
-export const __testing = { parseCodexOutput, resolvePermission };
+export const __testing = { parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs };
