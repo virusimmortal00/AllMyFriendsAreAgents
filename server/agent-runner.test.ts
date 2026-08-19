@@ -71,6 +71,8 @@ describe("room prompt context", () => {
     expect(prompt).toContain("separate it with <<<NEXT>>>");
     expect(prompt).toContain("Use at most 3 messages and usually 1");
     expect(prompt).toContain("Do not split a single sentence merely for effect");
+    expect(prompt).toContain("Do not output Unicode emoji");
+    expect(prompt).toContain(":-), :-!, :-[, O:-)");
     expect(prompt).toContain("backgroundColor highlights your message text only");
     expect(prompt).toContain("local transcript magnification are application-controlled");
     expect(prompt).toContain("Tahoma, Verdana");

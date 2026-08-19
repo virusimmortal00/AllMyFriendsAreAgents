@@ -1,14 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 
 describe("classic AIM smileys", () => {
   it("offers the original 16-icon set", () => {
     expect(AIM_SMILEYS).toHaveLength(16);
-    expect(AIM_SMILEYS.map((smiley) => smiley.shortcut)).toEqual([
-      ":-)", ":-!", ":-[", "O:-)", ":-\\", ":'(", ":-X", ":-D",
-      ":-(", ";-)", ":-P", "=-O", ":-*", ">:O", "8-)", ":-$",
-    ]);
+    expect(AIM_SMILEYS.map((smiley) => smiley.shortcut)).toEqual(AIM_SMILEY_SHORTCUTS);
   });
 
   it("renders recognized shortcuts as the classic GIFs while preserving text", () => {

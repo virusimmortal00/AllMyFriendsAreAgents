@@ -62,6 +62,16 @@ describe("agent turn parsing", () => {
       styleUpdate: { fontFamily: "Verdana", fontSize: 18 },
     });
   });
+
+  it("removes unsupported Unicode emoji while preserving classic AIM shortcuts", () => {
+    expect(parseAgentTurn(
+      "codex",
+      "road trip 🤘🚙🛠️ :-)\n<<<NEXT>>>\n🇺🇸 1️⃣",
+    )).toMatchObject({
+      visibleMessages: ["road trip :-)"],
+      replyCandidate: "claude",
+    });
+  });
 });
 
 describe("agent conversations", () => {
