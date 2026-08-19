@@ -99,13 +99,12 @@ export function Transcript({
 interface ChatComposerProps {
   draft: string;
   style: ChatStyle;
-  disabled: boolean;
   onDraftChange: (draft: string) => void;
   onStyleChange: (style: ChatStyle) => void;
   onSubmit: (event: FormEvent) => void;
 }
 
-export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
+export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -137,24 +136,22 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
         <select
           aria-label="Font family"
           value={style.fontFamily}
-          disabled={disabled}
           onChange={(event) => updateStyle({ fontFamily: event.target.value as ChatStyle["fontFamily"] })}
         >
           {CHAT_FONT_FAMILIES.map((font) => <option value={font} key={font}>{font}</option>)}
         </select>
-        <button type="button" aria-label="Decrease text size" title="Smaller text" disabled={disabled || style.fontSize <= 12} onClick={() => updateStyle({ fontSize: style.fontSize - 1 })}>A−</button>
+        <button type="button" aria-label="Decrease text size" title="Smaller text" disabled={style.fontSize <= 12} onClick={() => updateStyle({ fontSize: style.fontSize - 1 })}>A−</button>
         <span className="font-size-readout" aria-label={`Text size ${style.fontSize}`}>{style.fontSize}</span>
-        <button type="button" aria-label="Increase text size" title="Larger text" disabled={disabled || style.fontSize >= 28} onClick={() => updateStyle({ fontSize: style.fontSize + 1 })}>A+</button>
-        <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} disabled={disabled} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
-        <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} disabled={disabled} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
-        <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} disabled={disabled} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
+        <button type="button" aria-label="Increase text size" title="Larger text" disabled={style.fontSize >= 28} onClick={() => updateStyle({ fontSize: style.fontSize + 1 })}>A+</button>
+        <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
+        <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
+        <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
         <button
           type="button"
           className="color-well color-well--text"
           title="Text color"
           aria-label="Text color"
           aria-expanded={colorPicker === "text"}
-          disabled={disabled}
           onClick={() => setColorPicker((current) => current === "text" ? null : "text")}
         >
           <span aria-hidden="true">A</span>
@@ -166,7 +163,6 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
           title="Background color"
           aria-label="Background color"
           aria-expanded={colorPicker === "background"}
-          disabled={disabled}
           onClick={() => setColorPicker((current) => current === "background" ? null : "background")}
         >
           <span aria-hidden="true">▧</span>
@@ -206,7 +202,7 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
           </div>
         ) : null}
         <div className="emoji-control">
-          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} disabled={disabled} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
+          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
           {emojiOpen ? (
             <div className="emoji-picker" aria-label="Classic AIM smiley picker">
               {AIM_SMILEYS.map((smiley) => (
@@ -225,7 +221,6 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
         onChange={(event) => onDraftChange(event.target.value)}
         placeholder="Message everyone in this room..."
         aria-label="Message"
-        disabled={disabled}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
@@ -233,7 +228,7 @@ export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleCha
           }
         }}
       />
-      <button className="classic-button send-button" type="submit" disabled={disabled || !draft.trim()}>Send</button>
+      <button className="classic-button send-button" type="submit" disabled={!draft.trim()}>Send</button>
     </form>
   );
 }

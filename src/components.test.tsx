@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { BuddyList, RoomControls, Transcript } from "./components";
+import { BuddyList, ChatComposer, RoomControls, Transcript } from "./components";
 
 describe("BuddyList", () => {
   it("renders a compact online roster and active room", () => {
@@ -31,6 +31,24 @@ describe("RoomControls", () => {
 
     expect(html).toContain('value="Weekend cooking"');
     expect(html).toContain("Changing topics starts fresh agent context. Conversation can still wander.");
+  });
+});
+
+describe("ChatComposer", () => {
+  it("keeps chat input and sending available while agents are working", () => {
+    const html = renderToStaticMarkup(
+      <ChatComposer
+        draft="Another thought"
+        style={DEFAULT_PARTICIPANT_STYLES.you}
+        onDraftChange={() => undefined}
+        onStyleChange={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Another thought");
+    expect(html).toContain('type="submit"');
+    expect(html).not.toContain("disabled");
   });
 });
 

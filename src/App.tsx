@@ -96,7 +96,7 @@ export default function App() {
   function submitMessage(event: React.FormEvent) {
     event.preventDefault();
     const message = draft.trim();
-    if (!message || working) return;
+    if (!message) return;
     const optimisticId = `pending-${crypto.randomUUID()}`;
     setDraft("");
     setRoom((current) => appendOptimisticHumanMessage(current, optimisticId, message, new Date().toISOString()));
@@ -160,7 +160,6 @@ export default function App() {
             <ChatComposer
               draft={draft}
               style={room.settings.participantStyles.you}
-              disabled={working}
               onDraftChange={setDraft}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}

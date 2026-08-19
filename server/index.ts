@@ -5,6 +5,7 @@ import type { Response } from "express";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
+import { CoalescingJobQueue } from "./job-queue.js";
 import { RoomStore } from "./room-store.js";
 import { roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
@@ -15,7 +16,7 @@ const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AG
 const app = express();
 const store = await RoomStore.open(projectRoot);
 const clients = new Set<Response>();
-let activeJob = false;
+const jobs = new CoalescingJobQueue();
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -47,7 +48,6 @@ async function performConversation(turns: ConversationTurn[]) {
 }
 
 async function runJob(job: () => Promise<void>) {
-  activeJob = true;
   try {
     await job();
     await store.setStatus("idle");
@@ -56,7 +56,6 @@ async function runJob(job: () => Promise<void>) {
     await store.addMessage("system", `Agent error: ${message}`, "status");
     await store.setStatus("error", undefined, message);
   } finally {
-    activeJob = false;
     broadcast();
   }
 }
@@ -78,7 +77,7 @@ app.get("/api/events", (request, response) => {
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;
   if (typeof update.topic === "string") {
-    if (activeJob) return response.status(409).json({ error: "Wait for the current conversation to finish before changing the topic." });
+    if (jobs.busy) return response.status(409).json({ error: "Wait for the current conversation to finish before changing the topic." });
     const topic = update.topic.trim().replace(/\s+/g, " ");
     if (!topic || topic.length > 160) return response.status(400).json({ error: "Room topic must be between 1 and 160 characters." });
     await store.changeTopic(topic);
@@ -105,21 +104,19 @@ app.patch("/api/style", async (request, response) => {
 app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
-  if (activeJob) return response.status(409).json({ error: "The room is already working." });
-
   await store.addMessage("you", text, "chat", store.snapshot().settings.participantStyles.you);
   broadcast();
 
-  void runJob(async () => {
+  jobs.enqueue("message-conversation", () => runJob(async () => {
     await performConversation(roomMessageTurns());
-  });
+  }));
   return response.status(202).json(store.snapshot());
 });
 
 app.post("/api/actions", async (request, response) => {
   const action = request.body?.action as "ask" | "review" | "roundtable";
   const target = request.body?.target as AgentId | "both";
-  if (activeJob) return response.status(409).json({ error: "The room is already working." });
+  if (jobs.busy) return response.status(409).json({ error: "The room is already working." });
   if (!(["ask", "review", "roundtable"].includes(action))) {
     return response.status(400).json({ error: "Unknown room action." });
   }
@@ -128,7 +125,7 @@ app.post("/api/actions", async (request, response) => {
   }
 
   const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
-  void runJob(async () => {
+  jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
     await performConversation(agents.map((agent) => ({
       agent,
       instruction: action === "roundtable"
@@ -138,7 +135,7 @@ app.post("/api/actions", async (request, response) => {
           : "Read the room and contribute the most useful next thought.",
       includeDiff: action === "review",
     })));
-  });
+  }));
   return response.status(202).json({ accepted: true });
 });
 
