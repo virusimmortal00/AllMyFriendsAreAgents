@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { __testing } from "./agent-runner.js";
+import type { RoomState } from "./types.js";
 
 describe("Codex JSONL parsing", () => {
   it("extracts the session id and final agent message", () => {
@@ -16,3 +17,25 @@ describe("Codex JSONL parsing", () => {
   });
 });
 
+describe("agent permissions", () => {
+  const state = {
+    messages: [],
+    sessions: {},
+    settings: {
+      writableAgent: "codex",
+      reviewMode: "read-only",
+      maxRounds: 3,
+      projectPath: "/tmp/project",
+    },
+    status: "idle",
+  } satisfies RoomState;
+
+  it("keeps explicit review turns read-only", () => {
+    expect(__testing.resolvePermission("codex", state, true)).toBe("read-only");
+  });
+
+  it("allows only the selected agent to write on ordinary turns", () => {
+    expect(__testing.resolvePermission("codex", state, false)).toBe("writable");
+    expect(__testing.resolvePermission("claude", state, false)).toBe("read-only");
+  });
+});

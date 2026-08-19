@@ -37,7 +37,13 @@ async function currentDiff(projectPath: string) {
   }
 }
 
-async function buildPrompt(agent: AgentId, state: RoomState, instruction: string, includeDiff: boolean) {
+async function buildPrompt(
+  agent: AgentId,
+  state: RoomState,
+  instruction: string,
+  includeDiff: boolean,
+  permission: "read-only" | "writable",
+) {
   const otherAgent = agent === "codex" ? "Claude" : "Codex";
   const diff = includeDiff ? await currentDiff(state.settings.projectPath) : "(Not requested for this turn.)";
   return `You are ${agent === "codex" ? "Codex" : "Claude Code"} participating in AgentWire 98, a shared room with a human and ${otherAgent}.
@@ -48,7 +54,7 @@ ROOM RULES
 - Be concise, specific, and candid. Refer to files and evidence when relevant.
 - Do not address the human as though you are the other agent.
 - End with exactly one disposition line: DISPOSITION: AGREE, CONCERN, PROPOSAL, or NEEDS_USER.
-- Your current access is ${state.settings.writableAgent === agent ? "writable" : "read-only"}. Do not attempt edits when read-only.
+- Your current access is ${permission}. Do not attempt edits when read-only.
 
 CURRENT ROOM TRANSCRIPT
 ${transcriptFor(state)}
@@ -60,25 +66,26 @@ YOUR TURN
 ${instruction}`;
 }
 
-function runProcess(command: string, args: string[], cwd: string): Promise<ProcessResult> {
+function runProcess(command: string, args: string[], cwd: string, input?: string): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       env: process.env,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    if (input !== undefined) child.stdin!.end(input);
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       reject(new Error(`${command} timed out after ${RUN_TIMEOUT_MS / 60000} minutes`));
     }, RUN_TIMEOUT_MS);
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout!.on("data", (chunk) => {
       stdout = (stdout + chunk.toString()).slice(-OUTPUT_LIMIT);
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-OUTPUT_LIMIT);
     });
     child.on("error", (error) => {
@@ -88,9 +95,18 @@ function runProcess(command: string, args: string[], cwd: string): Promise<Proce
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`${command} exited with ${code}: ${stderr.trim() || stdout.trim()}`));
+      else reject(new Error(friendlyProcessError(command, code, stderr.trim() || stdout.trim())));
     });
   });
+}
+
+function friendlyProcessError(command: string, code: number | null, output: string) {
+  if (/OAuth session expired|Failed to authenticate/i.test(output)) {
+    const loginCommand = command === "claude" ? "claude auth login" : "codex login";
+    return `${command === "claude" ? "Claude Code" : "Codex"} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
+  }
+  const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
+  return `${command} exited with ${code}: ${conciseOutput || "No diagnostic output."}`;
 }
 
 function parseCodexOutput(stdout: string) {
@@ -115,6 +131,10 @@ function parseCodexOutput(stdout: string) {
   return { sessionId, text };
 }
 
+function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolean) {
+  return includeDiff || state.settings.writableAgent !== agent ? "read-only" : "writable";
+}
+
 export async function runAgent(
   agent: AgentId,
   state: RoomState,
@@ -122,25 +142,23 @@ export async function runAgent(
   includeDiff = false,
 ): Promise<RunResult> {
   const projectPath = state.settings.projectPath;
-  const permission = state.settings.writableAgent === agent ? "writable" : "read-only";
+  const permission = resolvePermission(agent, state, includeDiff);
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
-  const prompt = await buildPrompt(agent, state, instruction, includeDiff);
+  const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
 
   if (agent === "codex") {
     const args = existing
-      ? ["exec", "resume", existing.id, prompt, "--json"]
+      ? ["exec", "resume", existing.id, "-", "--json"]
       : [
           "exec",
           "--json",
           "--sandbox",
           permission === "writable" ? "workspace-write" : "read-only",
-          "--ask-for-approval",
-          "never",
           "-C",
           projectPath,
-          prompt,
+          "-",
         ];
-    const result = await runProcess("codex", args, projectPath);
+    const result = await runProcess("codex", args, projectPath, prompt);
     const parsed = parseCodexOutput(result.stdout);
     const sessionId = parsed.sessionId || existing?.id;
     if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
@@ -149,9 +167,9 @@ export async function runAgent(
 
   const newSessionId = randomUUID();
   const args = existing
-    ? ["-p", "--output-format", "json", "--resume", existing.id, prompt]
+    ? ["-p", "--output-format", "json", "--resume", existing.id]
     : permission === "writable"
-      ? ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--session-id", newSessionId, prompt]
+      ? ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--session-id", newSessionId]
       : [
           "-p",
           "--output-format",
@@ -164,9 +182,8 @@ export async function runAgent(
           "Grep",
           "--session-id",
           newSessionId,
-          prompt,
         ];
-  const result = await runProcess("claude", args, projectPath);
+  const result = await runProcess("claude", args, projectPath, prompt);
   const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
   if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
   return { sessionId: parsed.session_id || existing?.id || newSessionId, text: parsed.result };
@@ -185,5 +202,4 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
   return { codex, claude };
 }
 
-export const __testing = { parseCodexOutput };
-
+export const __testing = { parseCodexOutput, resolvePermission };

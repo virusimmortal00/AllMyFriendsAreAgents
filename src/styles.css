@@ -117,6 +117,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .dropdown-menu button:disabled { color: #777; }
 
 .workspace {
+  grid-row: 3;
   min-height: 0;
   display: grid;
   grid-template-columns: 295px minmax(430px, 1fr) 310px;
@@ -153,7 +154,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .pixel-buddy__eyes { position: absolute; left: 6px; top: 6px; width: 5px; height: 5px; background: #111; box-shadow: 15px 0 0 #111; }
 .pixel-buddy__mouth { position: absolute; left: 8px; top: 17px; width: 13px; height: 4px; background: #111; }
 .pixel-buddy__body { position: absolute; left: 9px; top: 41px; width: 28px; height: 10px; background: #111; box-shadow: -5px 4px 0 #111, 28px 4px 0 #111; }
-.pixel-buddy--small { width: 25px; height: 30px; transform: scale(.58); transform-origin: center; margin: -9px -5px; }
+.pixel-buddy--small { width: 25px; height: 29px; }
+.pixel-buddy--small .pixel-buddy__antenna { left: 11px; top: 0; width: 4px; height: 5px; box-shadow: none; }
+.pixel-buddy--small .pixel-buddy__face { left: 2px; top: 5px; width: 21px; height: 17px; border-width: 3px; }
+.pixel-buddy--small .pixel-buddy__eyes { left: 3px; top: 3px; width: 3px; height: 3px; box-shadow: 9px 0 0 #111; }
+.pixel-buddy--small .pixel-buddy__mouth { left: 5px; top: 9px; width: 7px; height: 2px; }
+.pixel-buddy--small .pixel-buddy__body { left: 6px; top: 22px; width: 14px; height: 5px; box-shadow: -3px 2px 0 #111, 14px 2px 0 #111; }
 
 .rooms-list { padding: 12px; }
 .room-row { width: 100%; display: flex; align-items: center; gap: 11px; padding: 9px 10px; border: 0; background: transparent; text-align: left; font-size: 17px; }
@@ -196,8 +202,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .review-button { width: calc(100% - 40px); margin: 0 20px; min-height: 65px; }
 .review-icon { display: inline-grid; place-items: center; width: 25px; height: 25px; color: white; background: #0c38c7; border: 2px inset white; }
 
-.error-strip { padding: 6px 12px; color: #fff; background: #a40000; border-top: 2px solid #570000; font-size: 14px; }
-.status-bar { display: grid; grid-template-columns: 370px 1fr 245px; gap: 3px; padding: 3px; border-top: 2px groove white; font-size: 16px; }
+.error-strip { grid-row: 4; padding: 6px 12px; color: #fff; background: #a40000; border-top: 2px solid #570000; font-size: 14px; }
+.status-bar { grid-row: 5; display: grid; grid-template-columns: 370px 1fr 245px; gap: 3px; padding: 3px; border-top: 2px groove white; font-size: 16px; }
 .status-cell { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 10px; border: 2px inset white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-cell--connection { justify-content: flex-end; }
 .people-icon { letter-spacing: -6px; margin-right: 5px; }
@@ -238,6 +244,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .controls-panel fieldset { display: flex; flex-wrap: wrap; gap: 14px; }
   .radio-row { margin: 6px 0; }
   .agent-actions { margin: 16px 20px; }
+  .review-button { width: calc(100% - 40px); margin: 0 20px; }
   .status-bar { grid-template-columns: 1fr 1fr; }
   .status-cell:first-child { display: none; }
   .status-cell--connection { justify-content: flex-end; }
@@ -246,4 +253,3 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
-

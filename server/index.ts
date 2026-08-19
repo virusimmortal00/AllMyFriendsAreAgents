@@ -79,6 +79,9 @@ app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   const target = request.body?.target as AgentId | "both" | "everyone";
   if (!text) return response.status(400).json({ error: "Message text is required." });
+  if (!["codex", "claude", "both", "everyone"].includes(target)) {
+    return response.status(400).json({ error: "Unknown message target." });
+  }
   if (activeJob) return response.status(409).json({ error: "The room is already working." });
 
   await store.addMessage("you", text);
@@ -98,6 +101,9 @@ app.post("/api/actions", async (request, response) => {
   if (activeJob) return response.status(409).json({ error: "The room is already working." });
   if (!(["ask", "review", "roundtable"].includes(action))) {
     return response.status(400).json({ error: "Unknown room action." });
+  }
+  if (!["codex", "claude", "both"].includes(target)) {
+    return response.status(400).json({ error: "Unknown action target." });
   }
 
   const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
