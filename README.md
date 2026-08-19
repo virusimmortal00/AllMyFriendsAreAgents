@@ -61,6 +61,15 @@ The transcript header's percentage controls are a separate local viewing prefere
 - Agent-to-agent exchanges stop at the configured maximum follow-up count.
 - Topic changes reset agent sessions and prompt history without deleting the visible room transcript.
 - Runtime transcripts and session IDs live under `.allmyfriendsareagents/`, which is ignored by Git.
+- Every agent generation is journaled locally to `.allmyfriendsareagents/generations.jsonl`. The JSONL includes the full prompt, raw response, CLI output, generation duration, session retry state, parsed visible messages, filtering counts, pacing, delivery, and cancellation outcomes. Because prompts can contain room history and worktree diffs, treat this file as sensitive local diagnostic data.
+
+Review recent generations with:
+
+```bash
+npm run logs:agents
+```
+
+Use `npm run logs:agents -- --limit=50 --verbose` to include full prompts and raw CLI streams.
 
 ## Design reference
 

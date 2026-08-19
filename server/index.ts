@@ -7,6 +7,7 @@ import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
+import { GenerationJournal } from "./generation-journal.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
@@ -19,6 +20,7 @@ const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 4174);
 const app = express();
 const store = await RoomStore.open(projectRoot);
+const generationJournal = await GenerationJournal.open(projectRoot);
 const clients = new Set<Response>();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
@@ -34,13 +36,34 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
   const before = store.snapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
-  const result = await runAgent(agent, before, instruction, includeDiff);
+  const result = await runAgent(agent, before, instruction, includeDiff, generationJournal);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle);
+  await generationJournal.append({
+    type: "generation.interpreted",
+    generationId: result.generationId,
+    agent,
+    visibleMessages: parsed.visibleMessages,
+    visibleMessageCount: parsed.visibleMessages.length,
+    visibleCharacters: parsed.visibleMessages.reduce((total, message) => total + message.length, 0),
+    removedOrProtocolCharacters: Math.max(0, result.text.length - parsed.visibleMessages.reduce((total, message) => total + message.length, 0)),
+    noResponse: parsed.visibleMessages.length === 0,
+    mentionedAgent: parsed.mentionedAgent,
+    styleUpdate: parsed.styleUpdate,
+  });
 
   if (!roomActivity.isCurrent(activityRevision)) {
     await store.clearSession(agent);
+    await generationJournal.append({
+      type: "generation.delivery",
+      generationId: result.generationId,
+      agent,
+      outcome: "cancelled",
+      reason: "room activity changed before delivery",
+      deliveredMessageCount: 0,
+      totalVisibleMessages: parsed.visibleMessages.length,
+    });
     return {};
   }
 
@@ -51,6 +74,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
     ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
     : 0;
   let burstStarted = false;
+  let deliveredMessageCount = 0;
   const completed = await deliverBurst({
     messages: parsed.visibleMessages,
     activity: roomActivity,
@@ -73,24 +97,79 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
         parsed.styleUpdate || currentStyle,
         { burstId, sequence },
       );
+      deliveredMessageCount += 1;
       broadcast();
     },
   });
-  if (!completed) return {};
-  if (!roomActivity.isCurrent(activityRevision)) return {};
+  if (!completed) {
+    await generationJournal.append({
+      type: "generation.delivery",
+      generationId: result.generationId,
+      agent,
+      outcome: "cancelled",
+      reason: "new room activity interrupted a pending burst",
+      deliveredMessageCount,
+      totalVisibleMessages: parsed.visibleMessages.length,
+      firstDelayMs: firstDelay,
+      generationDurationMs: result.durationMs,
+    });
+    return {};
+  }
+  if (!roomActivity.isCurrent(activityRevision)) {
+    await generationJournal.append({
+      type: "generation.delivery",
+      generationId: result.generationId,
+      agent,
+      outcome: "cancelled",
+      reason: "room activity changed after burst delivery",
+      deliveredMessageCount,
+      totalVisibleMessages: parsed.visibleMessages.length,
+      firstDelayMs: firstDelay,
+      generationDurationMs: result.durationMs,
+    });
+    return {};
+  }
   if (!burstStarted) {
     await store.setSession(agent, result.sessionId, permission);
     if (!roomActivity.isCurrent(activityRevision)) {
       await store.clearSession(agent);
+      await generationJournal.append({
+        type: "generation.delivery",
+        generationId: result.generationId,
+        agent,
+        outcome: "cancelled",
+        reason: "room activity changed while saving a silent response",
+        deliveredMessageCount,
+        totalVisibleMessages: parsed.visibleMessages.length,
+      });
       return {};
     }
     if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
     if (!roomActivity.isCurrent(activityRevision)) {
       await store.clearSession(agent);
+      await generationJournal.append({
+        type: "generation.delivery",
+        generationId: result.generationId,
+        agent,
+        outcome: "cancelled",
+        reason: "room activity changed while saving agent preferences",
+        deliveredMessageCount,
+        totalVisibleMessages: parsed.visibleMessages.length,
+      });
       return {};
     }
     broadcast();
   }
+  await generationJournal.append({
+    type: "generation.delivery",
+    generationId: result.generationId,
+    agent,
+    outcome: parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
+    deliveredMessageCount,
+    totalVisibleMessages: parsed.visibleMessages.length,
+    firstDelayMs: firstDelay,
+    generationDurationMs: result.durationMs,
+  });
   return { replyCandidate: parsed.replyCandidate, mentionedAgent: parsed.mentionedAgent };
 }
 

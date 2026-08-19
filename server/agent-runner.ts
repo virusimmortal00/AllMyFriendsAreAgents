@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
+import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
 
@@ -14,11 +15,20 @@ const RUN_TIMEOUT_MS = 12 * 60 * 1000;
 interface RunResult {
   text: string;
   sessionId: string;
+  generationId: string;
+  durationMs: number;
 }
 
 interface ProcessResult {
   stdout: string;
   stderr: string;
+}
+
+class ProcessExecutionError extends Error {
+  constructor(message: string, readonly process: ProcessResult & { exitCode: number | null }) {
+    super(message);
+    this.name = "ProcessExecutionError";
+  }
 }
 
 async function currentDiff(projectPath: string) {
@@ -91,7 +101,11 @@ function runProcess(command: string, args: string[], cwd: string, input?: string
     if (input !== undefined) child.stdin!.end(input);
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error(`${command} timed out after ${RUN_TIMEOUT_MS / 60000} minutes`));
+      reject(new ProcessExecutionError(`${command} timed out after ${RUN_TIMEOUT_MS / 60000} minutes`, {
+        stdout,
+        stderr,
+        exitCode: null,
+      }));
     }, RUN_TIMEOUT_MS);
 
     child.stdout!.on("data", (chunk) => {
@@ -107,7 +121,11 @@ function runProcess(command: string, args: string[], cwd: string, input?: string
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(friendlyProcessError(command, code, stderr.trim() || stdout.trim())));
+      else reject(new ProcessExecutionError(friendlyProcessError(command, code, stderr.trim() || stdout.trim()), {
+        stdout,
+        stderr,
+        exitCode: code,
+      }));
     });
   });
 }
@@ -175,43 +193,112 @@ export async function runAgent(
   state: RoomState,
   instruction: string,
   includeDiff = false,
+  journal?: GenerationJournal,
 ): Promise<RunResult> {
+  const generationId = randomUUID();
+  const startedAt = Date.now();
   const projectPath = state.settings.projectPath;
   const permission = resolvePermission(agent, state, includeDiff);
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
+  await journal?.append({
+    type: "generation.started",
+    generationId,
+    agent,
+    topic: state.settings.topic,
+    instruction,
+    includeDiff,
+    permission,
+    resumedSession: Boolean(existing),
+    sessionId: existing?.id,
+    prompt,
+    promptCharacters: prompt.length,
+  });
 
-  if (agent === "codex") {
-    const args = existing
-      ? ["exec", "resume", existing.id, "-", "--json"]
-      : [
-          "exec",
-          "--json",
-          "--sandbox",
-          permission === "writable" ? "workspace-write" : "read-only",
-          "-C",
-          projectPath,
-          "-",
-        ];
-    const result = await runProcess("codex", args, projectPath, prompt);
-    const parsed = parseCodexOutput(result.stdout);
-    const sessionId = parsed.sessionId || existing?.id;
-    if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
-    return { sessionId, text: parsed.text };
-  }
-
-  let sessionId = existing?.id || randomUUID();
-  let result: ProcessResult;
   try {
-    result = await runProcess("claude", claudeArgs(permission, sessionId, Boolean(existing)), projectPath, prompt);
+    if (agent === "codex") {
+      const args = existing
+        ? ["exec", "resume", existing.id, "-", "--json"]
+        : [
+            "exec",
+            "--json",
+            "--sandbox",
+            permission === "writable" ? "workspace-write" : "read-only",
+            "-C",
+            projectPath,
+            "-",
+          ];
+      const result = await runProcess("codex", args, projectPath, prompt);
+      const parsed = parseCodexOutput(result.stdout);
+      const sessionId = parsed.sessionId || existing?.id;
+      if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
+      const durationMs = Date.now() - startedAt;
+      await journal?.append({
+        type: "generation.completed",
+        generationId,
+        agent,
+        durationMs,
+        sessionId,
+        rawResponse: parsed.text,
+        responseCharacters: parsed.text.length,
+        cliStdout: result.stdout,
+        cliStderr: result.stderr,
+      });
+      return { sessionId, text: parsed.text, generationId, durationMs };
+    }
+
+    let sessionId = existing?.id || randomUUID();
+    let result: ProcessResult;
+    try {
+      result = await runProcess("claude", claudeArgs(permission, sessionId, Boolean(existing)), projectPath, prompt);
+    } catch (error) {
+      if (!existing || !isMissingClaudeSessionError(error)) throw error;
+      await journal?.append({
+        type: "generation.retry",
+        generationId,
+        agent,
+        reason: error instanceof Error ? error.message : String(error),
+        staleSessionId: sessionId,
+        ...(error instanceof ProcessExecutionError ? {
+          exitCode: error.process.exitCode,
+          cliStdout: error.process.stdout,
+          cliStderr: error.process.stderr,
+        } : {}),
+      });
+      sessionId = randomUUID();
+      result = await runProcess("claude", claudeArgs(permission, sessionId), projectPath, prompt);
+    }
+    const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
+    if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
+    sessionId = parsed.session_id || sessionId;
+    const durationMs = Date.now() - startedAt;
+    await journal?.append({
+      type: "generation.completed",
+      generationId,
+      agent,
+      durationMs,
+      sessionId,
+      rawResponse: parsed.result,
+      responseCharacters: parsed.result.length,
+      cliStdout: result.stdout,
+      cliStderr: result.stderr,
+    });
+    return { sessionId, text: parsed.result, generationId, durationMs };
   } catch (error) {
-    if (!existing || !isMissingClaudeSessionError(error)) throw error;
-    sessionId = randomUUID();
-    result = await runProcess("claude", claudeArgs(permission, sessionId), projectPath, prompt);
+    await journal?.append({
+      type: "generation.failed",
+      generationId,
+      agent,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof ProcessExecutionError ? {
+        exitCode: error.process.exitCode,
+        cliStdout: error.process.stdout,
+        cliStderr: error.process.stderr,
+      } : {}),
+    });
+    throw error;
   }
-  const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
-  if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
-  return { sessionId: parsed.session_id || sessionId, text: parsed.result };
 }
 
 export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
