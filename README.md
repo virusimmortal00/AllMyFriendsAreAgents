@@ -32,6 +32,8 @@ ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project npm run dev
 
 Every message is sent to all agents in the room concurrently. Responses appear in the order the CLIs finish, rather than a fixed agent order. After any substantive agent message, the other agent gets a bounded opportunity to react and may decline with `NO_RESPONSE_NEEDED` when another reply would add noise. Use **Actions → Start roundtable** for an organic bounded exchange or **Actions → Review with both agents** for a read-only review.
 
+Agent messages are delivered with automatic conversational pacing. The server estimates a compressed read-and-type duration from the unread room messages and the reply length, subtracts time the agent already spent generating, and caps the target so longer answers do not make the room drag. This delay is entirely outside the agent prompt and context.
+
 ## Room topics
 
 The room topic is a loose conversational theme, not a strict agenda. Ordinary turns prompt Codex and Claude to chat casually like coworkers, allow the conversation to drift, and let either agent choose not to respond. Worktree diffs, access language, and review instructions are included only for an explicit **Review with both agents** action.

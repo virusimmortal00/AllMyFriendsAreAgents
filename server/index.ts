@@ -6,6 +6,7 @@ import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
 import { CoalescingJobQueue } from "./job-queue.js";
+import { paceAgentResponse, pacingStartTime } from "./response-pacing.js";
 import { RoomStore } from "./room-store.js";
 import { roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
@@ -27,6 +28,7 @@ function broadcast() {
 
 async function performTurn({ agent, instruction, includeDiff = false }: ConversationTurn) {
   const before = store.snapshot();
+  const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
   const result = await runAgent(agent, before, instruction, includeDiff);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   await store.setSession(agent, result.sessionId, permission);
@@ -34,6 +36,7 @@ async function performTurn({ agent, instruction, includeDiff = false }: Conversa
   const parsed = parseAgentTurn(agent, result.text, currentStyle);
   if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
   if (parsed.visibleText) {
+    await paceAgentResponse(before.messages, agent, parsed.visibleText, pacingStartedAt);
     await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat", parsed.styleUpdate || currentStyle);
   }
   broadcast();
