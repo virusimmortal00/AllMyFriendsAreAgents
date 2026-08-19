@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
+import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import { AGENT_IDS, isAgentId } from "../shared/participants.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
@@ -32,14 +33,14 @@ function broadcast() {
   roomEvents.broadcast(store.snapshot());
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
   const before = store.snapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
   const result = await runAgent(agent, before, instruction, includeDiff, generationJournal);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   const currentStyle = before.settings.participantStyles[agent];
-  const parsed = parseAgentTurn(agent, result.text, currentStyle);
+  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit);
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
@@ -64,7 +65,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
       deliveredMessageCount: 0,
       totalVisibleMessages: parsed.visibleMessages.length,
     });
-    return {};
+    return { cancelled: true };
   }
 
   const burstId = randomUUID();
@@ -113,7 +114,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
       firstDelayMs: firstDelay,
       generationDurationMs: result.durationMs,
     });
-    return {};
+    return { cancelled: true };
   }
   if (!roomActivity.isCurrent(activityRevision)) {
     await generationJournal.append({
@@ -127,7 +128,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
       firstDelayMs: firstDelay,
       generationDurationMs: result.durationMs,
     });
-    return {};
+    return { cancelled: true };
   }
   if (!burstStarted) {
     await store.setSession(agent, result.sessionId, permission);
@@ -142,7 +143,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
         deliveredMessageCount,
         totalVisibleMessages: parsed.visibleMessages.length,
       });
-      return {};
+      return { cancelled: true };
     }
     if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
     if (!roomActivity.isCurrent(activityRevision)) {
@@ -156,7 +157,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
         deliveredMessageCount,
         totalVisibleMessages: parsed.visibleMessages.length,
       });
-      return {};
+      return { cancelled: true };
     }
     broadcast();
   }
@@ -170,7 +171,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
     firstDelayMs: firstDelay,
     generationDurationMs: result.durationMs,
   });
-  return { replyCandidates: parsed.replyCandidates, mentionedAgents: parsed.mentionedAgents };
+  return {
+    replyCandidates: parsed.replyCandidates,
+    mentionedAgents: parsed.mentionedAgents,
+    visibleMessageCount: parsed.visibleMessageCount,
+    continuationWorthy: parsed.continuationWorthy,
+  };
 }
 
 async function performTurn(turn: ConversationTurn) {
@@ -182,11 +188,17 @@ async function performTurn(turn: ConversationTurn) {
   }
 }
 
-async function performConversation(turns: ConversationTurn[]) {
-  const maxFollowUps = store.snapshot().settings.maxRounds;
+async function performConversation(turns: ConversationTurn[], staged = false) {
+  const snapshot = store.snapshot();
+  const energy = snapshot.settings.conversationEnergy;
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
-  await runAgentConversation(turns, maxFollowUps, performTurn);
+  if (staged) {
+    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot));
+    return;
+  }
+  const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
+  await runAgentConversation(turns, followUpAllowance, performTurn);
 }
 
 async function runJob(job: () => Promise<void>) {
@@ -225,8 +237,8 @@ app.patch("/api/settings", async (request, response) => {
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
     allowed.writableAgent = update.writableAgent;
   }
-  if (Number.isInteger(update.maxRounds) && Number(update.maxRounds) >= 1 && Number(update.maxRounds) <= 8) {
-    allowed.maxRounds = Number(update.maxRounds);
+  if (isConversationEnergy(update.conversationEnergy)) {
+    allowed.conversationEnergy = update.conversationEnergy;
   }
   if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
   broadcast();
@@ -248,7 +260,7 @@ app.post("/api/messages", async (request, response) => {
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
-    await performConversation(roomMessageTurns());
+    await performConversation(roomMessageTurns(store.snapshot()), true);
   }));
   return response.status(202).json(store.snapshot());
 });

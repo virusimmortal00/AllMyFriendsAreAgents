@@ -37,16 +37,19 @@ describe("RoomControls", () => {
       <RoomControls
         topic="Weekend cooking"
         writableAgent="nobody"
-        maxRounds={3}
+        conversationEnergy="balanced"
         disabled={false}
         onTopicChange={() => undefined}
         onWritableChange={() => undefined}
-        onRoundsChange={() => undefined}
+        onConversationEnergyChange={() => undefined}
       />,
     );
 
     expect(html).toContain('value="Weekend cooking"');
     expect(html).toContain("Changing topics starts fresh agent context. Conversation can still wander.");
+    expect(html).toContain("Conversation energy:");
+    expect(html).toContain("Usually one or two agents join in.");
+    expect(html).toContain('<option value="balanced" selected="">Balanced</option>');
   });
 
   it("keeps topic changes available while other room controls are locked", () => {
@@ -54,11 +57,11 @@ describe("RoomControls", () => {
       <RoomControls
         topic="Current topic"
         writableAgent="nobody"
-        maxRounds={3}
+        conversationEnergy="balanced"
         disabled
         onTopicChange={() => undefined}
         onWritableChange={() => undefined}
-        onRoundsChange={() => undefined}
+        onConversationEnergyChange={() => undefined}
       />,
     );
 

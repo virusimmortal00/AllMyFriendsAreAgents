@@ -10,6 +10,7 @@ import {
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
 import { AGENT_IDS, agentScreenName, isAgentId, participantScreenName } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
+import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
 const buddyIds = [...AGENT_IDS, "you"] as const;
@@ -276,21 +277,21 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
 interface RoomControlsProps {
   topic: string;
   writableAgent: WritableAgent;
-  maxRounds: number;
+  conversationEnergy: ConversationEnergy;
   disabled: boolean;
   onTopicChange: (topic: string) => void;
   onWritableChange: (agent: WritableAgent) => void;
-  onRoundsChange: (rounds: number) => void;
+  onConversationEnergyChange: (energy: ConversationEnergy) => void;
 }
 
 export function RoomControls({
   topic,
   writableAgent,
-  maxRounds,
+  conversationEnergy,
   disabled,
   onTopicChange,
   onWritableChange,
-  onRoundsChange,
+  onConversationEnergyChange,
 }: RoomControlsProps) {
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
@@ -335,17 +336,19 @@ export function RoomControls({
       <select id="review-mode" value="read-only" disabled className="classic-select">
         <option value="read-only">Read only</option>
       </select>
-      <label className="field-label" htmlFor="max-rounds">Maximum follow-ups:</label>
-      <input
-        id="max-rounds"
+      <label className="field-label" htmlFor="conversation-energy">Conversation energy:</label>
+      <select
+        id="conversation-energy"
         className="classic-input"
-        type="number"
-        min={1}
-        max={8}
-        value={maxRounds}
+        value={conversationEnergy}
         disabled={disabled}
-        onChange={(event) => onRoundsChange(Math.min(8, Math.max(1, Number(event.target.value))))}
-      />
+        onChange={(event) => onConversationEnergyChange(event.target.value as ConversationEnergy)}
+      >
+        {CONVERSATION_ENERGY_LEVELS.map((energy) => (
+          <option value={energy} key={energy}>{CONVERSATION_ENERGY_POLICIES[energy].label}</option>
+        ))}
+      </select>
+      <p className="field-help">{CONVERSATION_ENERGY_POLICIES[conversationEnergy].description}</p>
     </aside>
   );
 }

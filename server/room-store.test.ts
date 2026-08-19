@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -46,10 +46,14 @@ describe("room style persistence", () => {
       "claude-sonnet": { id: "claude-session", permission: "read-only" },
     });
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
+    expect(snapshot.settings.conversationEnergy).toBe("balanced");
     expect(snapshot.settings.participantStyles["codex-sol"]).toEqual(oldCodexStyle);
     expect(snapshot.settings.participantStyles["claude-sonnet"]).toEqual(oldClaudeStyle);
     expect(snapshot.settings.participantStyles["codex-luna"]).toEqual(DEFAULT_PARTICIPANT_STYLES["codex-luna"]);
     expect(snapshot.settings.participantStyles["codex-terra"]).toEqual(DEFAULT_PARTICIPANT_STYLES["codex-terra"]);
+    const persisted = JSON.parse(await readFile(path.join(stateDirectory, "room.json"), "utf8")) as { settings: Record<string, unknown> };
+    expect(persisted.settings.conversationEnergy).toBe("balanced");
+    expect(persisted.settings).not.toHaveProperty("maxRounds");
   });
 
   it("persists participant preferences while retaining each message's original snapshot", async () => {

@@ -5,6 +5,7 @@ import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
+import type { ConversationEnergy } from "../shared/conversation-energy";
 import { agentScreenName } from "../shared/participants";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
@@ -15,7 +16,7 @@ const EMPTY_ROOM: RoomState = {
     topic: "Open conversation",
     writableAgent: "nobody",
     reviewMode: "read-only",
-    maxRounds: 3,
+    conversationEnergy: "balanced",
     projectPath: "",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
@@ -103,9 +104,9 @@ export default function App() {
     void withErrorHandling(() => updateSettings({ writableAgent: agent }));
   }
 
-  function changeRounds(rounds: number) {
-    setRoom((current) => ({ ...current, settings: { ...current.settings, maxRounds: rounds } }));
-    void withErrorHandling(() => updateSettings({ maxRounds: rounds }));
+  function changeConversationEnergy(conversationEnergy: ConversationEnergy) {
+    setRoom((current) => ({ ...current, settings: { ...current.settings, conversationEnergy } }));
+    void withErrorHandling(() => updateSettings({ conversationEnergy }));
   }
 
   function changeTopic(topic: string) {
@@ -218,11 +219,11 @@ export default function App() {
             <RoomControls
               topic={room.settings.topic}
               writableAgent={room.settings.writableAgent}
-              maxRounds={room.settings.maxRounds}
+              conversationEnergy={room.settings.conversationEnergy}
               disabled={working}
               onTopicChange={changeTopic}
               onWritableChange={changeWritable}
-              onRoundsChange={changeRounds}
+              onConversationEnergyChange={changeConversationEnergy}
             />
           </div>
         </div>

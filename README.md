@@ -2,7 +2,7 @@
 
 A local, chatroom-style collaboration surface for you, three model-specific Codex participants, and Claude Code.
 
-The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster is Codex Luna (`gpt-5.6-luna`), Codex Terra (`gpt-5.6-terra`), Codex Sol (`gpt-5.6-sol`), and Claude (`claude-sonnet-5`). Reviews are read-only by default and automated conversations have a hard follow-up limit.
+The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster is Codex Luna (`gpt-5.6-luna`), Codex Terra (`gpt-5.6-terra`), Codex Sol (`gpt-5.6-sol`), and Claude (`claude-sonnet-5`). Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
 ## Development
 
@@ -30,7 +30,9 @@ By default the agents inspect this repository. To point the room at another proj
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project npm run dev
 ```
 
-Every message is sent to all four agents in the room concurrently. Responses appear in the order the CLIs finish, rather than a fixed agent order. After substantive agent messages, available participants get bounded opportunities to react and may decline with `NO_RESPONSE_NEEDED` when another reply would add noise. Direct mentions use the unique conversational names Luna, Terra, Sol, and Claude. Use **Actions → Start roundtable** for an organic bounded exchange or **Actions → Review with all agents** for a read-only review.
+Normal human messages create a staged set of response opportunities rather than invoking all four agents at once. The server ranks a primary candidate from conversational continuity, recent engagement, quiet time, and deterministic jitter; if that agent declines with `NO_RESPONSE_NEEDED`, the opportunity passes to the next candidate. Depending on the room's conversation-energy setting, a second participant may then see the updated transcript and decide whether it has a distinct contribution. Direct mentions and substantive continuation cues can extend the exchange within progressively tighter soft limits and an absolute ceiling. Explicit **Actions → Review with all agents** still asks all four participants for a read-only review.
+
+Conversation energy has four levels: **Low** usually yields one respondent, **Balanced** usually one or two, **Lively** permits several participants, and **Party** lets the whole room pile in while retaining the emergency ceiling. The mechanism is server-owned and is never included in agent prompts.
 
 Agent messages are delivered with automatic conversational pacing. The server estimates a compressed read-and-type duration from the unread room messages and the reply length, subtracts time the agent already spent generating, and caps the target so longer answers do not make the room drag. This delay is entirely outside the agent prompt and context.
 
@@ -58,7 +60,7 @@ The transcript header's percentage controls are a separate local viewing prefere
 - Ordinary room turns are read-only unless you explicitly choose a writable agent.
 - **Actions → Review with all agents** always runs read-only, even when an agent is selected as writable for ordinary turns.
 - Only one agent can be writable at a time.
-- Agent-to-agent exchanges stop at the configured maximum follow-up count.
+- Agent-to-agent exchanges are governed by the configured conversation energy and always stop at an absolute server ceiling.
 - Topic changes reset agent sessions and prompt history without deleting the visible room transcript.
 - Runtime transcripts and session IDs live under `.allmyfriendsareagents/`, which is ignored by Git.
 - Every agent generation is journaled locally to `.allmyfriendsareagents/generations.jsonl`. The JSONL includes the full prompt, raw response, CLI output, generation duration, session retry state, parsed visible messages, filtering counts, pacing, delivery, and cancellation outcomes. Because prompts can contain room history and worktree diffs, treat this file as sensitive local diagnostic data.

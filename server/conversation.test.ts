@@ -1,7 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
-import type { AgentId } from "./types.js";
+import { parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
+
+function roomState(messages: RoomMessage[]): RoomState {
+  return {
+    messages,
+    sessions: {},
+    settings: {
+      topic: "Open conversation",
+      writableAgent: "nobody",
+      reviewMode: "read-only",
+      conversationEnergy: "balanced",
+      projectPath: process.cwd(),
+      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
+    },
+    status: "idle",
+  };
+}
+
+function candidatesForAllAgents(): ConversationTurn[] {
+  return ["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"].map((agent) => ({
+    agent: agent as AgentId,
+    instruction: "Consider joining.",
+  }));
+}
 
 describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
@@ -9,6 +32,8 @@ describe("agent turn parsing", () => {
       visibleMessages: ["Claude, what do you think?"],
       replyCandidates: ["codex-luna", "codex-terra", "claude-sonnet"],
       mentionedAgents: ["claude-sonnet"],
+      visibleMessageCount: 1,
+      continuationWorthy: true,
     });
   });
 
@@ -17,6 +42,8 @@ describe("agent turn parsing", () => {
       visibleMessages: [],
       replyCandidates: [],
       mentionedAgents: [],
+      visibleMessageCount: 0,
+      continuationWorthy: false,
     });
   });
 
@@ -29,6 +56,8 @@ describe("agent turn parsing", () => {
       visibleMessages: ["A useful answer."],
       replyCandidates: ["codex-luna", "codex-terra", "codex-sol"],
       mentionedAgents: [],
+      visibleMessageCount: 1,
+      continuationWorthy: false,
       styleUpdate: {
         fontFamily: "Comic Sans MS",
         fontSize: 22,
@@ -161,7 +190,8 @@ describe("agent conversations", () => {
       return count === 0 ? initial.get(turn.agent)!.promise : lunaReaction.promise;
     });
 
-    const conversation = runAgentConversation(roomMessageTurns(), 1, performTurn);
+    const concurrentTurns = candidatesForAllAgents();
+    const conversation = runAgentConversation(concurrentTurns, 1, performTurn);
     await vi.waitFor(() => expect(seenAgents).toEqual(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
 
     initial.get("codex-luna")!.resolve({ replyCandidates: ["codex-terra", "codex-sol", "claude-sonnet"] });
@@ -178,10 +208,96 @@ describe("agent conversations", () => {
 });
 
 describe("room message policy", () => {
-  it("sends every normal room message to all configured agents", () => {
-    const turns = roomMessageTurns();
+  it("ranks every configured agent as a staged candidate", () => {
+    const turns = roomMessageTurns(roomState([]));
     expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
     expect(turns[0]?.instruction).toContain("decide whether the message is actually directed at you");
     expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
+  });
+
+  it("prefers conversational continuity while preserving quiet-time and jitter inputs", () => {
+    const state = roomState([
+      { id: "sol", speaker: "codex-sol", text: "I can bring snacks.", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "human", speaker: "you", text: "Please improve those snacks.", timestamp: "2026-08-19T12:00:01Z" },
+    ]);
+    expect(rankRoomAgents(state, () => 0)[0]).toBe("codex-sol");
+  });
+});
+
+describe("conversation energy", () => {
+  const candidates = candidatesForAllAgents();
+
+  it("falls through silent candidates until one agent chooses to respond", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 0 })
+      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "low", performTurn, () => 0);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+  });
+
+  it("stages a second balanced invitation after the first visible response", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1 })
+      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
+  });
+
+  it("sometimes conserves balanced energy after one response", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna"]);
+  });
+
+  it("honors direct invitations across the soft budget but stops at the hard ceiling", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-sol"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] });
+
+    await runEnergyConversation(candidates, "low", performTurn, () => 1);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "claude-sonnet", "codex-sol"]);
+    expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit! <= 3)).toBe(true);
+  });
+
+  it("offers a fresh candidate the floor when a response contains a real continuation cue", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, continuationWorthy: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 0 })
+      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra", "codex-sol"]);
+  });
+
+  it("stops immediately when new human activity cancels the current pulse", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ cancelled: true });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 0);
+
+    expect(performTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("prevents the same pair from recursively inviting each other", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
+      .mockResolvedValue({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 1);
+
+    const speakers = performTurn.mock.calls.map(([turn]) => turn.agent);
+    expect(speakers.slice(0, 3)).toEqual(["codex-luna", "claude-sonnet", "codex-luna"]);
+    expect(speakers.filter((agent) => agent === "claude-sonnet")).toHaveLength(1);
   });
 });

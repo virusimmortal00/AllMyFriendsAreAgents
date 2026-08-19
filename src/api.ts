@@ -1,5 +1,6 @@
 import type { AgentId, RoomState, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
+import type { ConversationEnergy } from "../shared/conversation-energy";
 
 async function request(path: string, options?: RequestInit) {
   const response = await fetch(path, {
@@ -17,7 +18,7 @@ export async function loadRoom(): Promise<RoomState> {
   return request("/api/state").then((response) => response.json());
 }
 
-export async function updateSettings(settings: { topic?: string; writableAgent?: WritableAgent; maxRounds?: number }) {
+export async function updateSettings(settings: { topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy }) {
   return request("/api/settings", {
     method: "PATCH",
     body: JSON.stringify(settings),

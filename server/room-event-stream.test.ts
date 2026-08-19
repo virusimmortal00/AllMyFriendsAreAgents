@@ -12,7 +12,7 @@ function room(text: string): RoomState {
       topic: "Open conversation",
       writableAgent: "nobody",
       reviewMode: "read-only",
-      maxRounds: 3,
+      conversationEnergy: "balanced",
       projectPath: "/tmp",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },

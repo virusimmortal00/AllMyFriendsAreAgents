@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
+import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
 import { isParticipantId, migrateLegacyAgentId } from "../shared/participants.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
@@ -78,7 +79,7 @@ export class RoomStore {
       topic: DEFAULT_ROOM_TOPIC,
       writableAgent: "nobody",
       reviewMode: "read-only",
-      maxRounds: 3,
+      conversationEnergy: "balanced",
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     };
@@ -86,6 +87,11 @@ export class RoomStore {
     try {
       const stored = JSON.parse(await readFile(statePath, "utf8")) as RoomState;
       const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
+      const storedSettings = stored.settings as RoomSettings & { maxRounds?: unknown; conversationEnergy?: unknown };
+      const conversationEnergy = isConversationEnergy(storedSettings.conversationEnergy)
+        ? storedSettings.conversationEnergy
+        : migrateMaxRounds(storedSettings.maxRounds);
+      const { maxRounds: _legacyMaxRounds, ...settingsWithoutLegacyRounds } = storedSettings;
       const storedProjectPathExists = await stat(stored.settings.projectPath)
         .then((entry) => entry.isDirectory())
         .catch(() => false);
@@ -109,8 +115,9 @@ export class RoomStore {
         sessions: topicWasMissing ? {} : migrateSessions(stored.sessions),
         settings: {
           ...defaultSettings,
-          ...stored.settings,
+          ...settingsWithoutLegacyRounds,
           topic: storedTopic,
+          conversationEnergy,
           writableAgent: stored.settings.writableAgent === "nobody"
             ? "nobody"
             : migrateLegacyAgentId(stored.settings.writableAgent) || "nobody",
@@ -125,6 +132,8 @@ export class RoomStore {
       if (topicWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
         || !stored.settings.participantStyles
+        || storedSettings.maxRounds !== undefined
+        || storedSettings.conversationEnergy !== conversationEnergy
         || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
         || state.settings.writableAgent !== stored.settings.writableAgent
         || messages.some((message, index) => message !== stored.messages[index])) {

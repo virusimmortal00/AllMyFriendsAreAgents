@@ -1,4 +1,5 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style";
+import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
@@ -21,7 +22,7 @@ export interface RoomState {
     topic: string;
     writableAgent: WritableAgent;
     reviewMode: "read-only";
-    maxRounds: number;
+    conversationEnergy: ConversationEnergy;
     projectPath: string;
     participantStyles: ParticipantStyles;
   };
