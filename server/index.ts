@@ -8,7 +8,7 @@ import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
-const port = Number(process.env.AGENTWIRE_PORT || 4174);
+const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 4174);
 const app = express();
 const store = await RoomStore.open(projectRoot);
 const clients = new Set<Response>();
@@ -133,5 +133,5 @@ app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
 app.listen(port, "127.0.0.1", () => {
-  console.log(`AgentWire 98 API listening at http://127.0.0.1:${port}`);
+  console.log(`AllMyFriendsAreAgents API listening at http://127.0.0.1:${port}`);
 });

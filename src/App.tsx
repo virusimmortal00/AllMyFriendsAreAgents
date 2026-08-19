@@ -82,10 +82,10 @@ export default function App() {
 
   return (
     <main className="desktop">
-      <section className="app-window" aria-label="AgentWire 98 application">
+      <section className="app-window" aria-label="AllMyFriendsAreAgents application">
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
-          <h1>AgentWire 98 — The Agent Room</h1>
+          <h1>AllMyFriendsAreAgents — The Agent Room</h1>
           <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <nav className="menu-bar" aria-label="Application menu">
@@ -100,7 +100,7 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          <button type="button" title="AgentWire keeps reviews read-only unless you choose a writable agent.">Help</button>
+          <button type="button" title="AllMyFriendsAreAgents keeps reviews read-only unless you choose a writable agent.">Help</button>
         </nav>
 
         <div className="workspace">

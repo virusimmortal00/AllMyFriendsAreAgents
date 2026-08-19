@@ -46,7 +46,7 @@ async function buildPrompt(
 ) {
   const otherAgent = agent === "codex" ? "Claude" : "Codex";
   const diff = includeDiff ? await currentDiff(state.settings.projectPath) : "(Not requested for this turn.)";
-  return `You are ${agent === "codex" ? "Codex" : "Claude Code"} participating in AgentWire 98, a shared room with a human and ${otherAgent}.
+  return `You are ${agent === "codex" ? "Codex" : "Claude Code"} participating in AllMyFriendsAreAgents, a shared room with a human and ${otherAgent}.
 
 ROOM RULES
 - Respond conversationally to the room, not as a standalone report.

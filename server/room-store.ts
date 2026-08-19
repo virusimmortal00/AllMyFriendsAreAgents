@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "./types.js";
@@ -7,7 +7,7 @@ const DEFAULT_MESSAGES: RoomMessage[] = [
   {
     id: randomUUID(),
     speaker: "system",
-    text: "Welcome to AgentWire 98. Both agent CLIs were detected and reviews are read-only.",
+    text: "Welcome to AllMyFriendsAreAgents. Both agent CLIs were detected and reviews are read-only.",
     timestamp: new Date().toISOString(),
     kind: "status",
   },
@@ -24,25 +24,36 @@ export class RoomStore {
     this.state = state;
   }
 
-  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".agentwire")) {
+  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
     await mkdir(stateDirectory, { recursive: true });
     const statePath = path.join(stateDirectory, "room.json");
     const defaultSettings: RoomSettings = {
       writableAgent: "nobody",
       reviewMode: "read-only",
       maxRounds: 3,
-      projectPath: process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
+      projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
     };
 
     try {
       const stored = JSON.parse(await readFile(statePath, "utf8")) as RoomState;
-      return new RoomStore(stateDirectory, {
+      const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
+      const storedProjectPathExists = await stat(stored.settings.projectPath)
+        .then((entry) => entry.isDirectory())
+        .catch(() => false);
+      const state: RoomState = {
         ...stored,
-        settings: { ...defaultSettings, ...stored.settings },
+        settings: {
+          ...defaultSettings,
+          ...stored.settings,
+          projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
+        },
         status: "idle",
         activeAgent: undefined,
         error: undefined,
-      });
+      };
+      const store = new RoomStore(stateDirectory, state);
+      if (state.settings.projectPath !== stored.settings.projectPath) await store.save();
+      return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const store = new RoomStore(stateDirectory, {
