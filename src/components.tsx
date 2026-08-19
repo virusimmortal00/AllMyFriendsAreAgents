@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { visibleAgentText } from "../shared/message-format";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
 const buddyLabels = {
@@ -67,7 +68,7 @@ export function Transcript({ messages, transcriptRef }: { messages: RoomMessage[
           <time>[{formatTime(message.timestamp)}]</time>
           <div>
             <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
-            <span className="message__text">{message.text}</span>
+            <span className="message__text">{visibleAgentText(message.text)}</span>
           </div>
         </article>
       ))}

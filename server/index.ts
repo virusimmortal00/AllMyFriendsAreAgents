@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Response } from "express";
 import { cliAvailability, runAgent } from "./agent-runner.js";
+import { parseAgentTurn, runMentionConversation, type ConversationTurn } from "./conversation.js";
 import { RoomStore } from "./room-store.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
@@ -21,15 +22,22 @@ function broadcast() {
   for (const client of clients) client.write(event);
 }
 
-async function performTurn(agent: AgentId, instruction: string, includeDiff = false) {
+async function performTurn({ agent, instruction, includeDiff = false }: ConversationTurn) {
   await store.setStatus("working", agent);
   broadcast();
   const before = store.snapshot();
   const result = await runAgent(agent, before, instruction, includeDiff);
-  const permission = before.settings.writableAgent === agent ? "writable" : "read-only";
+  const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   await store.setSession(agent, result.sessionId, permission);
-  await store.addMessage(agent, result.text, includeDiff ? "review" : "chat");
+  const parsed = parseAgentTurn(agent, result.text);
+  if (parsed.visibleText) await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat");
   broadcast();
+  return { mentionedAgent: parsed.mentionedAgent };
+}
+
+async function performConversation(turns: ConversationTurn[]) {
+  const maxFollowUps = store.snapshot().settings.maxRounds;
+  await runMentionConversation(turns, maxFollowUps, performTurn);
 }
 
 async function runJob(job: () => Promise<void>) {
@@ -90,7 +98,10 @@ app.post("/api/messages", async (request, response) => {
 
   const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
   void runJob(async () => {
-    for (const agent of agents) await performTurn(agent, "Respond to the latest human message and the current room discussion.");
+    await performConversation(agents.map((agent) => ({
+      agent,
+      instruction: "Respond to the latest human message and the current room discussion.",
+    })));
   });
   return response.status(202).json({ accepted: true });
 });
@@ -112,19 +123,17 @@ app.post("/api/actions", async (request, response) => {
       const rounds = store.snapshot().settings.maxRounds;
       for (let index = 0; index < rounds; index += 1) {
         const agent = index % 2 === 0 ? "codex" : "claude";
-        await performTurn(agent, "Continue the discussion by responding to the other participants. Stop escalating if consensus is clear.");
+        await performTurn({ agent, instruction: "Continue the discussion by responding to the other participants. Stop escalating if consensus is clear." });
       }
       return;
     }
-    for (const agent of agents) {
-      await performTurn(
-        agent,
-        action === "review"
+    await performConversation(agents.map((agent) => ({
+      agent,
+      instruction: action === "review"
           ? "Review the current worktree changes. Focus on correctness, clarity, security, accessibility, and missing tests. Report concrete findings before general observations."
           : "Read the room and contribute the most useful next thought.",
-        action === "review",
-      );
-    }
+      includeDiff: action === "review",
+    })));
   });
   return response.status(202).json({ accepted: true });
 });
