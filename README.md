@@ -32,6 +32,12 @@ ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project npm run dev
 
 Every message is sent to all agents in the room. Use **Actions → Start roundtable** for a bounded alternating exchange or **Actions → Review with both agents** for a read-only review.
 
+## Chat styling
+
+The AIM-style formatting toolbar controls your persistent font, size, text color, background color, bold, italic, and underline preferences. The smiley button inserts classic emoji at the current caret position. Each message stores a snapshot of its author's style, so later profile changes do not rewrite chat history.
+
+Codex and Claude maintain their own profiles. They can optionally change their appearance through a hidden, validated style directive; only the supported font list, 12–28px sizes, six-digit colors, and emphasis flags are accepted, and the directive is never shown in the transcript.
+
 ## Safety model
 
 - The room binds to localhost only.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { loadRoom, runAction, sendMessage, updateSettings } from "./api";
-import { BuddyList, PanelTitle, RoomControls, Transcript } from "./components";
+import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { BuddyList, ChatComposer, PanelTitle, RoomControls, Transcript } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
+import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -12,6 +13,7 @@ const EMPTY_ROOM: RoomState = {
     reviewMode: "read-only",
     maxRounds: 3,
     projectPath: "",
+    participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",
 };
@@ -60,6 +62,18 @@ export default function App() {
     void withErrorHandling(() => updateSettings({ maxRounds: rounds }));
   }
 
+  function changeMyStyle(style: ChatStyle) {
+    const nextStyle = sanitizeChatStyle(style, room.settings.participantStyles.you);
+    setRoom((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        participantStyles: { ...current.settings.participantStyles, you: nextStyle },
+      },
+    }));
+    void withErrorHandling(() => updateMyStyle(nextStyle));
+  }
+
   function submitMessage(event: React.FormEvent) {
     event.preventDefault();
     const message = draft.trim();
@@ -106,23 +120,15 @@ export default function App() {
           <BuddyList availability={room.availability} />
           <section className="chat-panel beveled-inset">
             <PanelTitle>The Agent Room</PanelTitle>
-            <Transcript messages={room.messages} transcriptRef={transcript} />
-            <form className="composer" onSubmit={submitMessage}>
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="Message everyone in this room..."
-                aria-label="Message"
-                disabled={working}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-              />
-              <button className="classic-button send-button" type="submit" disabled={working || !draft.trim()}>Send</button>
-            </form>
+            <Transcript messages={room.messages} participantStyles={room.settings.participantStyles} transcriptRef={transcript} />
+            <ChatComposer
+              draft={draft}
+              style={room.settings.participantStyles.you}
+              disabled={working}
+              onDraftChange={setDraft}
+              onStyleChange={changeMyStyle}
+              onSubmit={submitMessage}
+            />
           </section>
           <RoomControls
             writableAgent={room.settings.writableAgent}

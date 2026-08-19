@@ -1,4 +1,5 @@
-import type { RefObject } from "react";
+import { useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { CHAT_FONT_FAMILIES, type ChatStyle, type ParticipantStyles, type StyledParticipant } from "../shared/chat-style";
 import { visibleAgentText } from "../shared/message-format";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
@@ -7,6 +8,20 @@ const buddyLabels = {
   claude: "Claude",
   you: "You",
 } as const;
+
+const CLASSIC_EMOJIS = ["🙂", "😄", "😉", "😛", "😎", "😂", "😢", "😡", "❤️", "👍", "👎", "🎉"];
+
+function chatStyleProperties(style: ChatStyle): CSSProperties {
+  return {
+    fontFamily: `"${style.fontFamily}", sans-serif`,
+    fontSize: `${style.fontSize}px`,
+    color: style.textColor,
+    backgroundColor: style.backgroundColor,
+    fontWeight: style.bold ? 700 : 400,
+    fontStyle: style.italic ? "italic" : "normal",
+    textDecoration: style.underline ? "underline" : "none",
+  };
+}
 
 export function PixelBuddy({ buddy }: { buddy: "codex" | "claude" | "you" }) {
   return (
@@ -60,19 +75,118 @@ function formatTime(timestamp: string) {
   return new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
-export function Transcript({ messages, transcriptRef }: { messages: RoomMessage[]; transcriptRef: RefObject<HTMLDivElement | null> }) {
+export function Transcript({
+  messages,
+  participantStyles,
+  transcriptRef,
+}: {
+  messages: RoomMessage[];
+  participantStyles: ParticipantStyles;
+  transcriptRef: RefObject<HTMLDivElement | null>;
+}) {
   return (
     <div ref={transcriptRef} className="transcript beveled-inset" role="log" aria-live="polite" aria-label="Room transcript">
-      {messages.map((message) => (
-        <article className={`message message--${message.kind || "chat"}`} key={message.id}>
-          <time>[{formatTime(message.timestamp)}]</time>
-          <div>
-            <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
-            <span className="message__text">{visibleAgentText(message.text)}</span>
-          </div>
-        </article>
-      ))}
+      {messages.map((message) => {
+        const participant = (["you", "codex", "claude"] as const).includes(message.speaker as StyledParticipant)
+          ? message.speaker as StyledParticipant
+          : undefined;
+        const messageStyle = message.style || (participant ? participantStyles[participant] : undefined);
+        return (
+          <article className={`message message--${message.kind || "chat"}`} key={message.id}>
+            <time>[{formatTime(message.timestamp)}]</time>
+            <div>
+              <span className="message__bubble" style={messageStyle ? chatStyleProperties(messageStyle) : undefined}>
+                <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
+                <span className="message__text">{visibleAgentText(message.text)}</span>
+              </span>
+            </div>
+          </article>
+        );
+      })}
     </div>
+  );
+}
+
+interface ChatComposerProps {
+  draft: string;
+  style: ChatStyle;
+  disabled: boolean;
+  onDraftChange: (draft: string) => void;
+  onStyleChange: (style: ChatStyle) => void;
+  onSubmit: (event: FormEvent) => void;
+}
+
+export function ChatComposer({ draft, style, disabled, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+
+  function updateStyle(update: Partial<ChatStyle>) {
+    onStyleChange({ ...style, ...update });
+  }
+
+  function insertEmoji(emoji: string) {
+    const input = textarea.current;
+    const start = input?.selectionStart ?? draft.length;
+    const end = input?.selectionEnd ?? draft.length;
+    onDraftChange(`${draft.slice(0, start)}${emoji}${draft.slice(end)}`);
+    setEmojiOpen(false);
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  }
+
+  return (
+    <form className="composer" onSubmit={onSubmit}>
+      <div className="format-toolbar" role="toolbar" aria-label="Message formatting">
+        <select
+          aria-label="Font family"
+          value={style.fontFamily}
+          disabled={disabled}
+          onChange={(event) => updateStyle({ fontFamily: event.target.value as ChatStyle["fontFamily"] })}
+        >
+          {CHAT_FONT_FAMILIES.map((font) => <option value={font} key={font}>{font}</option>)}
+        </select>
+        <button type="button" aria-label="Decrease text size" title="Smaller text" disabled={disabled || style.fontSize <= 12} onClick={() => updateStyle({ fontSize: style.fontSize - 1 })}>A−</button>
+        <span className="font-size-readout" aria-label={`Text size ${style.fontSize}`}>{style.fontSize}</span>
+        <button type="button" aria-label="Increase text size" title="Larger text" disabled={disabled || style.fontSize >= 28} onClick={() => updateStyle({ fontSize: style.fontSize + 1 })}>A+</button>
+        <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} disabled={disabled} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
+        <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} disabled={disabled} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
+        <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} disabled={disabled} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
+        <label className="color-well color-well--text" title="Text color">
+          <span aria-hidden="true">A</span>
+          <input type="color" aria-label="Text color" value={style.textColor} disabled={disabled} onChange={(event) => updateStyle({ textColor: event.target.value })} />
+        </label>
+        <label className="color-well color-well--background" title="Background color">
+          <span aria-hidden="true">▧</span>
+          <input type="color" aria-label="Background color" value={style.backgroundColor} disabled={disabled} onChange={(event) => updateStyle({ backgroundColor: event.target.value })} />
+        </label>
+        <div className="emoji-control">
+          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} disabled={disabled} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
+          {emojiOpen ? (
+            <div className="emoji-picker" aria-label="Classic emoji picker">
+              {CLASSIC_EMOJIS.map((emoji) => <button type="button" key={emoji} aria-label={`Insert ${emoji}`} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <textarea
+        ref={textarea}
+        value={draft}
+        style={chatStyleProperties(style)}
+        onChange={(event) => onDraftChange(event.target.value)}
+        placeholder="Message everyone in this room..."
+        aria-label="Message"
+        disabled={disabled}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
+      />
+      <button className="classic-button send-button" type="submit" disabled={disabled || !draft.trim()}>Send</button>
+    </form>
   );
 }
 

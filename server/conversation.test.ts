@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId } from "./types.js";
+import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 
 describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
@@ -14,6 +15,26 @@ describe("agent turn parsing", () => {
     expect(parseAgentTurn("claude", "NO_RESPONSE_NEEDED")).toEqual({
       visibleText: "",
       mentionedAgent: undefined,
+    });
+  });
+
+  it("extracts and validates an agent's private style directive", () => {
+    expect(parseAgentTurn(
+      "claude",
+      "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#FF00AA\",\"backgroundColor\":\"#FFFFCC\",\"bold\":true,\"italic\":false,\"underline\":false}",
+      DEFAULT_PARTICIPANT_STYLES.claude,
+    )).toEqual({
+      visibleText: "A useful answer.",
+      mentionedAgent: undefined,
+      styleUpdate: {
+        fontFamily: "Comic Sans MS",
+        fontSize: 22,
+        textColor: "#ff00aa",
+        backgroundColor: "#ffffcc",
+        bold: true,
+        italic: false,
+        underline: false,
+      },
     });
   });
 });

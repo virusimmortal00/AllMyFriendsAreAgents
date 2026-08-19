@@ -1,3 +1,5 @@
+import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
+
 export type AgentId = "codex" | "claude";
 export type SpeakerId = AgentId | "you" | "system";
 export type WritableAgent = AgentId | "nobody";
@@ -8,6 +10,7 @@ export interface RoomMessage {
   text: string;
   timestamp: string;
   kind?: "chat" | "review" | "status";
+  style?: ChatStyle;
 }
 
 export interface AgentSession {
@@ -20,6 +23,7 @@ export interface RoomSettings {
   reviewMode: "read-only";
   maxRounds: number;
   projectPath: string;
+  participantStyles: ParticipantStyles;
 }
 
 export interface RoomState {
@@ -30,4 +34,3 @@ export interface RoomState {
   activeAgent?: AgentId;
   error?: string;
 }
-

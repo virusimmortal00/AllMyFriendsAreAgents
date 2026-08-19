@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Response } from "express";
+import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { parseAgentTurn, roomMessageTurns, runMentionConversation, type ConversationTurn } from "./conversation.js";
 import { RoomStore } from "./room-store.js";
@@ -29,8 +30,12 @@ async function performTurn({ agent, instruction, includeDiff = false }: Conversa
   const result = await runAgent(agent, before, instruction, includeDiff);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   await store.setSession(agent, result.sessionId, permission);
-  const parsed = parseAgentTurn(agent, result.text);
-  if (parsed.visibleText) await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat");
+  const currentStyle = before.settings.participantStyles[agent];
+  const parsed = parseAgentTurn(agent, result.text, currentStyle);
+  if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+  if (parsed.visibleText) {
+    await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat", parsed.styleUpdate || currentStyle);
+  }
   broadcast();
   return { mentionedAgent: parsed.mentionedAgent };
 }
@@ -83,12 +88,19 @@ app.patch("/api/settings", async (request, response) => {
   response.json(store.snapshot());
 });
 
+app.patch("/api/style", async (request, response) => {
+  const currentStyle = store.snapshot().settings.participantStyles.you;
+  await store.updateParticipantStyle("you", sanitizeChatStyle(request.body, currentStyle));
+  broadcast();
+  response.json(store.snapshot());
+});
+
 app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
   if (activeJob) return response.status(409).json({ error: "The room is already working." });
 
-  await store.addMessage("you", text);
+  await store.addMessage("you", text, "chat", store.snapshot().settings.participantStyles.you);
   broadcast();
 
   void runJob(async () => {

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "./types.js";
 
 const DEFAULT_MESSAGES: RoomMessage[] = [
@@ -32,6 +33,7 @@ export class RoomStore {
       reviewMode: "read-only",
       maxRounds: 3,
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
+      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     };
 
     try {
@@ -40,19 +42,28 @@ export class RoomStore {
       const storedProjectPathExists = await stat(stored.settings.projectPath)
         .then((entry) => entry.isDirectory())
         .catch(() => false);
+      const participantStyles = normalizeParticipantStyles(stored.settings.participantStyles);
+      const messages = stored.messages.map((message) => {
+        if (message.style || !(["you", "codex", "claude"] as const).includes(message.speaker as StyledParticipant)) return message;
+        return { ...message, style: participantStyles[message.speaker as StyledParticipant] };
+      });
       const state: RoomState = {
         ...stored,
+        messages,
         settings: {
           ...defaultSettings,
           ...stored.settings,
           projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
+          participantStyles,
         },
         status: "idle",
         activeAgent: undefined,
         error: undefined,
       };
       const store = new RoomStore(stateDirectory, state);
-      if (state.settings.projectPath !== stored.settings.projectPath) await store.save();
+      if (state.settings.projectPath !== stored.settings.projectPath || !stored.settings.participantStyles || messages.some((message, index) => message !== stored.messages[index])) {
+        await store.save();
+      }
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -71,13 +82,14 @@ export class RoomStore {
     return structuredClone(this.state);
   }
 
-  async addMessage(speaker: RoomMessage["speaker"], text: string, kind: RoomMessage["kind"] = "chat") {
+  async addMessage(speaker: RoomMessage["speaker"], text: string, kind: RoomMessage["kind"] = "chat", style?: ChatStyle) {
     const message: RoomMessage = {
       id: randomUUID(),
       speaker,
       text: text.trim(),
       timestamp: new Date().toISOString(),
       kind,
+      ...(style ? { style: sanitizeChatStyle(style, style) } : {}),
     };
     this.state.messages.push(message);
     await this.save();
@@ -86,6 +98,11 @@ export class RoomStore {
 
   async updateSettings(update: Partial<RoomSettings>) {
     this.state.settings = { ...this.state.settings, ...update };
+    await this.save();
+  }
+
+  async updateParticipantStyle(participant: StyledParticipant, style: ChatStyle) {
+    this.state.settings.participantStyles[participant] = sanitizeChatStyle(style, this.state.settings.participantStyles[participant]);
     await this.save();
   }
 

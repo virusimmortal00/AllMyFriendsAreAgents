@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { __testing } from "./agent-runner.js";
 import type { RoomState } from "./types.js";
 
@@ -26,6 +27,7 @@ describe("agent permissions", () => {
       reviewMode: "read-only",
       maxRounds: 3,
       projectPath: "/tmp/project",
+      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
     status: "idle",
   } satisfies RoomState;

@@ -1,4 +1,5 @@
 import type { AgentId } from "./types.js";
+import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { isNoResponseNeeded, visibleAgentText } from "../shared/message-format.js";
 
 export interface ConversationTurn {
@@ -18,14 +19,16 @@ export function roomMessageTurns(): ConversationTurn[] {
   }));
 }
 
-export function parseAgentTurn(agent: AgentId, text: string) {
+export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle) {
   if (isNoResponseNeeded(text)) return { visibleText: "", mentionedAgent: undefined };
   const visibleText = visibleAgentText(text);
   const otherAgent: AgentId = agent === "codex" ? "claude" : "codex";
   const mentionPattern = otherAgent === "claude" ? /\bClaude(?: Code)?\b/i : /\bCodex\b/i;
+  const styleUpdate = currentStyle ? extractStyleDirective(text, currentStyle) : undefined;
   return {
     visibleText,
     mentionedAgent: mentionPattern.test(visibleText) ? otherAgent : undefined,
+    ...(styleUpdate ? { styleUpdate } : {}),
   };
 }
 

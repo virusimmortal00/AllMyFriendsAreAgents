@@ -1,4 +1,5 @@
 import type { AgentId, RoomState, WritableAgent } from "./types";
+import type { ChatStyle } from "../shared/chat-style";
 
 async function request(path: string, options?: RequestInit) {
   const response = await fetch(path, {
@@ -20,6 +21,13 @@ export async function updateSettings(settings: { writableAgent?: WritableAgent; 
   return request("/api/settings", {
     method: "PATCH",
     body: JSON.stringify(settings),
+  });
+}
+
+export async function updateMyStyle(style: ChatStyle) {
+  return request("/api/style", {
+    method: "PATCH",
+    body: JSON.stringify(style),
   });
 }
 
