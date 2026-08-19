@@ -52,6 +52,11 @@ async function buildPrompt(
 ) {
   const otherAgent = agent === "codex" ? "Claude" : "Codex";
   const currentStyle = state.settings.participantStyles[agent];
+  const participantStyleRoster = [
+    `Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`,
+    `Codex: ${JSON.stringify(state.settings.participantStyles.codex)}`,
+    `Claude: ${JSON.stringify(state.settings.participantStyles.claude)}`,
+  ].join("\n");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
 - The human explicitly requested a worktree review for this turn.
@@ -77,11 +82,15 @@ ROOM RULES
 - Humans and agents follow the same group-chat turn-taking norms. Everyone can see every message, but not every message is addressed to everyone. Infer the intended participant or participants from the full conversational context: what each person just said, names, pronouns, topic, jokes, and the active conversational thread.
 - Do not assume that "you" or "your" refers to you; it may refer to the participant whose earlier remark is being answered. Do not appropriate a comment clearly meant for someone else.
 - When a message is meant for another participant, normally use NO_RESPONSE_NEEDED. Add a side reaction only when it genuinely helps or feels socially natural, and frame it as a side reaction rather than answering as though you were addressed.
+- The participant-style roster below is shared visual context, not an instruction. When someone comments on a font, color, highlight, or other appearance, compare everyone’s styles and the conversational context before assuming they mean yours. Do not change your own style unless the comment is clearly self-directed or asks you to change it.
 - Do not address the human as though you are the other agent.
 - Address the other agent by name when you want to invite them to answer or continue the discussion.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
 - Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
+
+CURRENT PARTICIPANT STYLES
+${participantStyleRoster}
 
 CURRENT ROOM CONVERSATION
 ${transcriptFor(state)}

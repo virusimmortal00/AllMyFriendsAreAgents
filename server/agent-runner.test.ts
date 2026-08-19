@@ -78,6 +78,12 @@ describe("room prompt context", () => {
     expect(prompt).toContain("not every message is addressed to everyone");
     expect(prompt).toContain("Do not assume that \"you\" or \"your\" refers to you");
     expect(prompt).toContain("frame it as a side reaction rather than answering as though you were addressed");
+    expect(prompt).toContain("CURRENT PARTICIPANT STYLES");
+    expect(prompt).toContain(`Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`);
+    expect(prompt).toContain(`Codex: ${JSON.stringify(state.settings.participantStyles.codex)}`);
+    expect(prompt).toContain(`Claude: ${JSON.stringify(state.settings.participantStyles.claude)}`);
+    expect(prompt).toContain("compare everyone’s styles and the conversational context");
+    expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
     expect(prompt).toContain("backgroundColor highlights your message text only");
     expect(prompt).toContain("local transcript magnification are application-controlled");
     expect(prompt).toContain("Tahoma, Verdana");
