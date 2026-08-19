@@ -9,6 +9,12 @@ function wordCount(text: string) {
   return text.trim().match(/\S+/g)?.length ?? 0;
 }
 
+export function continuationDelayMs(text: string, sequence: number) {
+  const words = wordCount(text);
+  if (sequence <= 1) return Math.min(2_500, Math.max(800, 800 + words * 70));
+  return Math.min(3_500, Math.max(1_200, 1_200 + words * 80));
+}
+
 export function messagesSinceAgentSpoke(messages: RoomMessage[], agent: AgentId) {
   let lastAgentMessage = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {

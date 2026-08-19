@@ -48,6 +48,22 @@ describe("room style persistence", () => {
     ]);
   });
 
+  it("persists separate messages from one logical agent burst", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+
+    await store.addMessage("codex", "first", "chat", undefined, { burstId: "burst-1", sequence: 0 });
+    await store.addMessage("codex", "second", "chat", undefined, { burstId: "burst-1", sequence: 1 });
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().messages.slice(-2)).toEqual([
+      expect.objectContaining({ text: "first", burstId: "burst-1", sequence: 0, style: DEFAULT_PARTICIPANT_STYLES.codex }),
+      expect.objectContaining({ text: "second", burstId: "burst-1", sequence: 1, style: DEFAULT_PARTICIPANT_STYLES.codex }),
+    ]);
+  });
+
   it("serializes simultaneous message saves without dropping either response", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);

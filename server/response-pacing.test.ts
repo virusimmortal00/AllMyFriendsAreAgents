@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messagesSinceAgentSpoke, pacingStartTime, responseDelayMs } from "./response-pacing.js";
+import { continuationDelayMs, messagesSinceAgentSpoke, pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import type { RoomMessage } from "./types.js";
 
 function message(id: string, speaker: RoomMessage["speaker"], text: string, timestamp = "2026-08-19T12:00:00.000Z"): RoomMessage {
@@ -41,5 +41,13 @@ describe("agent response pacing", () => {
     const messages = [message("human", "you", "Hello", "2026-08-19T12:00:03.000Z")];
     expect(pacingStartTime(messages, "codex", Date.parse("2026-08-19T12:00:05.000Z")))
       .toBe(Date.parse("2026-08-19T12:00:03.000Z"));
+  });
+
+  it("paces later burst units within short length-dependent windows", () => {
+    expect(continuationDelayMs("yep", 1)).toBeGreaterThanOrEqual(800);
+    expect(continuationDelayMs("yep", 1)).toBeLessThan(continuationDelayMs("a longer second thought with more explanation", 1));
+    expect(continuationDelayMs("third", 2)).toBeGreaterThanOrEqual(1_200);
+    expect(continuationDelayMs("word ".repeat(100), 1)).toBe(2_500);
+    expect(continuationDelayMs("word ".repeat(100), 2)).toBe(3_500);
   });
 });

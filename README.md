@@ -34,6 +34,8 @@ Every message is sent to all agents in the room concurrently. Responses appear i
 
 Agent messages are delivered with automatic conversational pacing. The server estimates a compressed read-and-type duration from the unread room messages and the reply length, subtracts time the agent already spent generating, and caps the target so longer answers do not make the room drag. This delay is entirely outside the agent prompt and context.
 
+Agents normally send one compact chat message and may explicitly separate up to three distinct thoughts with `<<<NEXT>>>`. The server stores those as separate messages under one `burstId`, paces continuations, and cancels anything not yet sent when a new human message or topic supersedes it. Future agent context groups consecutive units from the same burst and uses a character budget, so chat-style chunking does not crowd older conversation out of context.
+
 ## Room topics
 
 The room topic is a loose conversational theme, not a strict agenda. Ordinary turns prompt Codex and Claude to chat casually like coworkers, allow the conversation to drift, and let either agent choose not to respond. Worktree diffs, access language, and review instructions are included only for an explicit **Review with both agents** action.

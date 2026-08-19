@@ -44,6 +44,24 @@ describe("RoomControls", () => {
     expect(html).toContain('value="Weekend cooking"');
     expect(html).toContain("Changing topics starts fresh agent context. Conversation can still wander.");
   });
+
+  it("keeps topic changes available while other room controls are locked", () => {
+    const html = renderToStaticMarkup(
+      <RoomControls
+        topic="Current topic"
+        writableAgent="nobody"
+        maxRounds={3}
+        disabled
+        onTopicChange={() => undefined}
+        onWritableChange={() => undefined}
+        onRoundsChange={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/id="room-topic"[^>]+value="Current topic"/);
+    expect(html).not.toMatch(/id="room-topic"[^>]+disabled/);
+    expect(html).toMatch(/<input type="radio" disabled="" name="writable-agent"/);
+  });
 });
 
 describe("ChatComposer", () => {

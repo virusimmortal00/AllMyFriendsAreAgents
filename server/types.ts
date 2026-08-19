@@ -11,6 +11,8 @@ export interface RoomMessage {
   timestamp: string;
   kind?: "chat" | "review" | "status" | "topic";
   style?: ChatStyle;
+  burstId?: string;
+  sequence?: number;
 }
 
 export interface AgentSession {

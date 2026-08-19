@@ -13,6 +13,8 @@ export interface TurnResult {
   mentionedAgent?: AgentId;
 }
 
+const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
+
 export function roomMessageTurns(): ConversationTurn[] {
   return (["codex", "claude"] as const).map((agent) => ({
     agent,
@@ -21,15 +23,20 @@ export function roomMessageTurns(): ConversationTurn[] {
 }
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle) {
-  if (isNoResponseNeeded(text)) return { visibleText: "", replyCandidate: undefined, mentionedAgent: undefined };
-  const visibleText = visibleAgentText(text);
+  if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidate: undefined, mentionedAgent: undefined };
+  const visibleMessages = visibleAgentText(text)
+    .split(NEXT_MESSAGE)
+    .map((message) => message.trim())
+    .filter((message) => message && message !== "NO_RESPONSE_NEEDED")
+    .slice(0, 3);
+  const combinedText = visibleMessages.join("\n");
   const otherAgent: AgentId = agent === "codex" ? "claude" : "codex";
   const mentionPattern = otherAgent === "claude" ? /\bClaude(?: Code)?\b/i : /\bCodex\b/i;
   const styleUpdate = currentStyle ? extractStyleDirective(text, currentStyle) : undefined;
   return {
-    visibleText,
-    replyCandidate: visibleText ? otherAgent : undefined,
-    mentionedAgent: mentionPattern.test(visibleText) ? otherAgent : undefined,
+    visibleMessages,
+    replyCandidate: visibleMessages.length > 0 ? otherAgent : undefined,
+    mentionedAgent: mentionPattern.test(combinedText) ? otherAgent : undefined,
     ...(styleUpdate ? { styleUpdate } : {}),
   };
 }

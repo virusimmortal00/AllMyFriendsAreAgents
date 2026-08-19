@@ -68,6 +68,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("ROOM THEME\nWeekend cooking");
     expect(prompt).toContain("What should we make?");
     expect(prompt).toContain("NO_RESPONSE_NEEDED");
+    expect(prompt).toContain("separate it with <<<NEXT>>>");
+    expect(prompt).toContain("Use at most 3 messages and usually 1");
+    expect(prompt).toContain("Do not split a single sentence merely for effect");
     expect(prompt).toContain("backgroundColor highlights your message text only");
     expect(prompt).toContain("local transcript magnification are application-controlled");
     expect(prompt).toContain("Tahoma, Verdana");

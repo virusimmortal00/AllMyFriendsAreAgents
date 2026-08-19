@@ -6,7 +6,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
-      visibleText: "Claude, what do you think?",
+      visibleMessages: ["Claude, what do you think?"],
       replyCandidate: "claude",
       mentionedAgent: "claude",
     });
@@ -14,7 +14,7 @@ describe("agent turn parsing", () => {
 
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude", "NO_RESPONSE_NEEDED")).toEqual({
-      visibleText: "",
+      visibleMessages: [],
       replyCandidate: undefined,
       mentionedAgent: undefined,
     });
@@ -26,7 +26,7 @@ describe("agent turn parsing", () => {
       "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#ED36FF\",\"backgroundColor\":\"#ECECEC\",\"bold\":true,\"italic\":false,\"underline\":false}",
       DEFAULT_PARTICIPANT_STYLES.claude,
     )).toEqual({
-      visibleText: "A useful answer.",
+      visibleMessages: ["A useful answer."],
       replyCandidate: "codex",
       mentionedAgent: undefined,
       styleUpdate: {
@@ -38,6 +38,28 @@ describe("agent turn parsing", () => {
         italic: false,
         underline: false,
       },
+    });
+  });
+
+  it("splits only explicit burst separators, removes empty units, and caps the burst at three", () => {
+    expect(parseAgentTurn(
+      "codex",
+      "First paragraph. Still one message.\n\n<<<NEXT>>>\n\n\n<<<NEXT>>>\nSecond message.\n<<<NEXT>>>\nThird message.\n<<<NEXT>>>\nDiscarded fourth.",
+    ).visibleMessages).toEqual([
+      "First paragraph. Still one message.",
+      "Second message.",
+      "Third message.",
+    ]);
+  });
+
+  it("keeps private style directives out of every visible burst unit", () => {
+    expect(parseAgentTurn(
+      "claude",
+      "First\n<<<NEXT>>>\nSecond\nSTYLE: {\"fontFamily\":\"Verdana\",\"fontSize\":18}",
+      DEFAULT_PARTICIPANT_STYLES.claude,
+    )).toMatchObject({
+      visibleMessages: ["First", "Second"],
+      styleUpdate: { fontFamily: "Verdana", fontSize: 18 },
     });
   });
 });

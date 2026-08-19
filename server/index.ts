@@ -1,12 +1,15 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Response } from "express";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
+import { deliverBurst } from "./burst-delivery.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
 import { CoalescingJobQueue } from "./job-queue.js";
-import { paceAgentResponse, pacingStartTime } from "./response-pacing.js";
+import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
+import { RoomActivity } from "./room-activity.js";
 import { RoomStore } from "./room-store.js";
 import { roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
@@ -18,6 +21,7 @@ const app = express();
 const store = await RoomStore.open(projectRoot);
 const clients = new Set<Response>();
 const jobs = new CoalescingJobQueue();
+const roomActivity = new RoomActivity();
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -26,21 +30,77 @@ function broadcast() {
   for (const client of clients) client.write(event);
 }
 
-async function performTurn({ agent, instruction, includeDiff = false }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false }: ConversationTurn) {
   const before = store.snapshot();
+  const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
   const result = await runAgent(agent, before, instruction, includeDiff);
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
-  await store.setSession(agent, result.sessionId, permission);
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle);
-  if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-  if (parsed.visibleText) {
-    await paceAgentResponse(before.messages, agent, parsed.visibleText, pacingStartedAt);
-    await store.addMessage(agent, parsed.visibleText, includeDiff ? "review" : "chat", parsed.styleUpdate || currentStyle);
+
+  if (!roomActivity.isCurrent(activityRevision)) {
+    await store.clearSession(agent);
+    return {};
   }
-  broadcast();
+
+  const burstId = randomUUID();
+  const firstMessage = parsed.visibleMessages[0];
+  const generatedElapsed = Date.now() - pacingStartedAt;
+  const firstDelay = firstMessage
+    ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
+    : 0;
+  let burstStarted = false;
+  const completed = await deliverBurst({
+    messages: parsed.visibleMessages,
+    activity: roomActivity,
+    revision: activityRevision,
+    firstDelayMs: firstDelay,
+    cancel: () => store.clearSession(agent),
+    deliver: async (visibleMessage, sequence) => {
+      if (!burstStarted) {
+        await store.setSession(agent, result.sessionId, permission);
+        if (!roomActivity.isCurrent(activityRevision)) return false;
+        if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+        if (!roomActivity.isCurrent(activityRevision)) return false;
+        burstStarted = true;
+      }
+      if (!roomActivity.isCurrent(activityRevision)) return false;
+      await store.addMessage(
+        agent,
+        visibleMessage,
+        includeDiff ? "review" : "chat",
+        parsed.styleUpdate || currentStyle,
+        { burstId, sequence },
+      );
+      broadcast();
+    },
+  });
+  if (!completed) return {};
+  if (!roomActivity.isCurrent(activityRevision)) return {};
+  if (!burstStarted) {
+    await store.setSession(agent, result.sessionId, permission);
+    if (!roomActivity.isCurrent(activityRevision)) {
+      await store.clearSession(agent);
+      return {};
+    }
+    if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+    if (!roomActivity.isCurrent(activityRevision)) {
+      await store.clearSession(agent);
+      return {};
+    }
+    broadcast();
+  }
   return { replyCandidate: parsed.replyCandidate, mentionedAgent: parsed.mentionedAgent };
+}
+
+async function performTurn(turn: ConversationTurn) {
+  try {
+    return await performTurnUnchecked(turn);
+  } catch (error) {
+    roomActivity.interrupt();
+    throw error;
+  }
 }
 
 async function performConversation(turns: ConversationTurn[]) {
@@ -55,6 +115,7 @@ async function runJob(job: () => Promise<void>) {
     await job();
     await store.setStatus("idle");
   } catch (error) {
+    roomActivity.interrupt();
     const message = error instanceof Error ? error.message : String(error);
     await store.addMessage("system", `Agent error: ${message}`, "status");
     await store.setStatus("error", undefined, message);
@@ -80,10 +141,12 @@ app.get("/api/events", (request, response) => {
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;
   if (typeof update.topic === "string") {
-    if (jobs.busy) return response.status(409).json({ error: "Wait for the current conversation to finish before changing the topic." });
     const topic = update.topic.trim().replace(/\s+/g, " ");
     if (!topic || topic.length > 160) return response.status(400).json({ error: "Room topic must be between 1 and 160 characters." });
-    await store.changeTopic(topic);
+    if (topic !== store.snapshot().settings.topic) {
+      roomActivity.interrupt();
+      await store.changeTopic(topic);
+    }
   }
   const allowed: Partial<RoomSettings> = {};
   if (["codex", "claude", "nobody"].includes(update.writableAgent || "")) {
@@ -107,6 +170,7 @@ app.patch("/api/style", async (request, response) => {
 app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
+  roomActivity.interrupt();
   await store.addMessage("you", text, "chat", store.snapshot().settings.participantStyles.you);
   broadcast();
 

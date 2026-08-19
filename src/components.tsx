@@ -303,7 +303,6 @@ export function RoomControls({
         type="text"
         maxLength={160}
         defaultValue={topic}
-        disabled={disabled}
         onBlur={(event) => {
           const nextTopic = event.currentTarget.value.trim() || "Open conversation";
           event.currentTarget.value = nextTopic;

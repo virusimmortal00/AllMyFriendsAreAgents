@@ -122,7 +122,13 @@ export class RoomStore {
     return structuredClone(this.state);
   }
 
-  async addMessage(speaker: RoomMessage["speaker"], text: string, kind: RoomMessage["kind"] = "chat", style?: ChatStyle) {
+  async addMessage(
+    speaker: RoomMessage["speaker"],
+    text: string,
+    kind: RoomMessage["kind"] = "chat",
+    style?: ChatStyle,
+    burst?: { burstId: string; sequence: number },
+  ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
       ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant])
@@ -134,6 +140,7 @@ export class RoomStore {
       timestamp: new Date().toISOString(),
       kind,
       ...(messageStyle ? { style: messageStyle } : {}),
+      ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
     };
     this.state.messages.push(message);
     await this.save();
@@ -160,6 +167,11 @@ export class RoomStore {
 
   async setSession(agent: AgentId, id: string, permission: "read-only" | "writable") {
     this.state.sessions[agent] = { id, permission };
+    await this.save();
+  }
+
+  async clearSession(agent: AgentId) {
+    delete this.state.sessions[agent];
     await this.save();
   }
 
