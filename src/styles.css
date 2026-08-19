@@ -218,7 +218,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .buddy-room span { margin-right: 6px; color: #1ee235; font-size: 9px; vertical-align: 1px; }
 
 .chat-panel { display: grid; grid-template-rows: 38px minmax(0, 1fr) 205px; }
-.transcript { overflow-y: auto; padding: 14px 16px; background: #fff; scroll-behavior: smooth; }
+.transcript { overflow-y: auto; padding: 14px 16px; background: #fff; }
 .message { display: grid; grid-template-columns: calc(92px * var(--transcript-magnification, 1)) 1fr; gap: 5px; margin-bottom: 10px; font-size: calc(17px * var(--transcript-magnification, 1)); line-height: 1.36; }
 .message time { white-space: nowrap; color: #222; font-family: "Courier New", Courier, monospace; font-size: calc(15px * var(--transcript-magnification, 1)); padding-top: 2px; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
