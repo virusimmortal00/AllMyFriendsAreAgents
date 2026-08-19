@@ -1,3 +1,5 @@
+import { AGENT_IDS, type ParticipantId } from "./participants.js";
+
 export const CHAT_FONT_FAMILIES = [
   "Arial",
   "Times New Roman",
@@ -53,7 +55,7 @@ export interface ChatStyle {
   underline: boolean;
 }
 
-export type StyledParticipant = "you" | "codex" | "claude";
+export type StyledParticipant = ParticipantId;
 export type ParticipantStyles = Record<StyledParticipant, ChatStyle>;
 
 export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
@@ -66,7 +68,7 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
-  codex: {
+  "codex-luna": {
     fontFamily: "Trebuchet MS",
     fontSize: 17,
     textColor: "#2a7238",
@@ -75,7 +77,25 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
-  claude: {
+  "codex-terra": {
+    fontFamily: "Tahoma",
+    fontSize: 17,
+    textColor: "#6c1974",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
+  "codex-sol": {
+    fontFamily: "Courier New",
+    fontSize: 18,
+    textColor: "#2d73b7",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
+  "claude-sonnet": {
     fontFamily: "Georgia",
     fontSize: 17,
     textColor: "#f07c1b",
@@ -109,12 +129,15 @@ export function sanitizeChatStyle(input: unknown, fallback: ChatStyle): ChatStyl
 }
 
 export function normalizeParticipantStyles(input: unknown): ParticipantStyles {
-  const value = input && typeof input === "object" ? input as Partial<ParticipantStyles> : {};
-  return {
+  const value = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const normalized = {
     you: sanitizeChatStyle(value.you, DEFAULT_PARTICIPANT_STYLES.you),
-    codex: sanitizeChatStyle(value.codex, DEFAULT_PARTICIPANT_STYLES.codex),
-    claude: sanitizeChatStyle(value.claude, DEFAULT_PARTICIPANT_STYLES.claude),
-  };
+  } as ParticipantStyles;
+  for (const agent of AGENT_IDS) {
+    const legacy = agent === "codex-sol" ? value.codex : agent === "claude-sonnet" ? value.claude : undefined;
+    normalized[agent] = sanitizeChatStyle(value[agent] ?? legacy, DEFAULT_PARTICIPANT_STYLES[agent]);
+  }
+  return normalized;
 }
 
 export function extractStyleDirective(text: string, fallback: ChatStyle): ChatStyle | undefined {

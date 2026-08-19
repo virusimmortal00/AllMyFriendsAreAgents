@@ -5,6 +5,7 @@ import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
+import { agentScreenName } from "../shared/participants";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -162,14 +163,14 @@ export default function App() {
     })();
   }
 
-  function invoke(action: "ask" | "review" | "roundtable", agent: AgentId | "both") {
+  function invoke(action: "ask" | "review" | "roundtable", agent: AgentId | "all") {
     setMenuOpen(false);
     void withErrorHandling(() => runAction(action, agent));
   }
 
   const statusText = working
     ? room.activeAgent
-      ? `${room.activeAgent === "codex" ? "Codex" : "Claude"} is typing...`
+      ? `${agentScreenName(room.activeAgent)} is typing...`
       : "Agents are typing..."
     : room.status === "error"
       ? "Room needs attention"
@@ -192,8 +193,8 @@ export default function App() {
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu">
-                <button type="button" disabled={working} onClick={() => invoke("roundtable", "both")}>Start roundtable</button>
-                <button type="button" disabled={working} onClick={() => invoke("review", "both")}>Review with both agents</button>
+                <button type="button" disabled={working} onClick={() => invoke("roundtable", "all")}>Start roundtable</button>
+                <button type="button" disabled={working} onClick={() => invoke("review", "all")}>Review with all agents</button>
               </div>
             ) : null}
           </div>
@@ -228,7 +229,7 @@ export default function App() {
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">
-          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟</span> 3 participants</div>
+          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> 5 participants</div>
           <div className="status-cell">{statusText}</div>
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> Connected</div>
         </footer>

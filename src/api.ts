@@ -38,7 +38,7 @@ export async function sendMessage(text: string): Promise<RoomState> {
   }).then((response) => response.json());
 }
 
-export async function runAction(action: "ask" | "review" | "roundtable", target: AgentId | "both") {
+export async function runAction(action: "ask" | "review" | "roundtable", target: AgentId | "all") {
   return request("/api/actions", {
     method: "POST",
     body: JSON.stringify({ action, target }),

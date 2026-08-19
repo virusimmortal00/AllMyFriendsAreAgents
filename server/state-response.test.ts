@@ -24,7 +24,7 @@ describe("room state responses", () => {
 
     const response = roomStateWithAvailability(snapshot, async () => {
       await availability;
-      return { codex: true, claude: true };
+      return { "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": true };
     });
     messageText = "after";
     releaseAvailability();

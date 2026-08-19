@@ -16,6 +16,14 @@ describe("Codex JSONL parsing", () => {
       text: "Final",
     });
   });
+
+  it("pins each Codex session to its configured model on start and resume", () => {
+    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-luna")).toContain("gpt-5.6-luna");
+    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-terra", "terra-session")).toEqual([
+      "exec", "resume", "--model", "gpt-5.6-terra", "terra-session", "-", "--json",
+    ]);
+    expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
+  });
 });
 
 describe("agent permissions", () => {
@@ -24,7 +32,7 @@ describe("agent permissions", () => {
     sessions: {},
     settings: {
       topic: "Open conversation",
-      writableAgent: "codex",
+      writableAgent: "codex-sol",
       reviewMode: "read-only",
       maxRounds: 3,
       projectPath: "/tmp/project",
@@ -34,12 +42,12 @@ describe("agent permissions", () => {
   } satisfies RoomState;
 
   it("keeps explicit review turns read-only", () => {
-    expect(__testing.resolvePermission("codex", state, true)).toBe("read-only");
+    expect(__testing.resolvePermission("codex-sol", state, true)).toBe("read-only");
   });
 
   it("allows only the selected agent to write on ordinary turns", () => {
-    expect(__testing.resolvePermission("codex", state, false)).toBe("writable");
-    expect(__testing.resolvePermission("claude", state, false)).toBe("read-only");
+    expect(__testing.resolvePermission("codex-sol", state, false)).toBe("writable");
+    expect(__testing.resolvePermission("claude-sonnet", state, false)).toBe("read-only");
   });
 });
 
@@ -63,7 +71,7 @@ describe("room prompt context", () => {
   } satisfies RoomState;
 
   it("keeps ordinary chat casual and scoped to the latest topic", async () => {
-    const prompt = await __testing.buildPrompt("codex", state, "Join if useful.", false, "read-only");
+    const prompt = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only");
 
     expect(prompt).toContain("ROOM THEME\nWeekend cooking");
     expect(prompt).toContain("What should we make?");
@@ -80,8 +88,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("frame it as a side reaction rather than answering as though you were addressed");
     expect(prompt).toContain("CURRENT PARTICIPANT STYLES");
     expect(prompt).toContain(`Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`);
-    expect(prompt).toContain(`Codex: ${JSON.stringify(state.settings.participantStyles.codex)}`);
-    expect(prompt).toContain(`Claude: ${JSON.stringify(state.settings.participantStyles.claude)}`);
+    expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
+    expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
+    expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
     expect(prompt).toContain("backgroundColor highlights your message text only");
@@ -93,7 +102,7 @@ describe("room prompt context", () => {
   });
 
   it("adds worktree context only for an explicit review turn", async () => {
-    const prompt = await __testing.buildPrompt("claude", state, "Review the changes.", true, "read-only");
+    const prompt = await __testing.buildPrompt("claude-sonnet", state, "Review the changes.", true, "read-only");
 
     expect(prompt).toContain("EXPLICIT REVIEW CONTEXT");
     expect(prompt).toContain("CURRENT WORKTREE DIFF");
@@ -108,10 +117,12 @@ describe("Claude session recovery", () => {
   });
 
   it("restarts a missing read-only session with the original safety policy", () => {
-    expect(__testing.claudeArgs("read-only", "fresh-session")).toEqual([
+    expect(__testing.claudeArgs("read-only", "fresh-session", "claude-sonnet-5")).toEqual([
       "-p",
       "--output-format",
       "json",
+      "--model",
+      "claude-sonnet-5",
       "--permission-mode",
       "plan",
       "--tools",
@@ -124,10 +135,12 @@ describe("Claude session recovery", () => {
   });
 
   it("uses resume only when an existing session is available", () => {
-    expect(__testing.claudeArgs("read-only", "existing-session", true)).toEqual([
+    expect(__testing.claudeArgs("read-only", "existing-session", "claude-sonnet-5", true)).toEqual([
       "-p",
       "--output-format",
       "json",
+      "--model",
+      "claude-sonnet-5",
       "--resume",
       "existing-session",
     ]);

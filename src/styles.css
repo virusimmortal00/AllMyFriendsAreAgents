@@ -10,8 +10,10 @@
   --blue: #000080;
   --blue-bright: #1114ae;
   --teal: #008b8b;
-  --codex: #008d16;
-  --claude: #f06400;
+  --codex-luna: #008d16;
+  --codex-terra: #6c1974;
+  --codex-sol: #174f9c;
+  --claude-sonnet: #f06400;
   --you: #101cda;
 }
 
@@ -231,8 +233,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   font: normal 800 calc(17px * var(--transcript-magnification, 1))/1.36 Arial, Helvetica, sans-serif;
   text-decoration: none;
 }
-.speaker--codex { color: var(--codex); }
-.speaker--claude { color: var(--claude); }
+.speaker--codex-luna { color: var(--codex-luna); }
+.speaker--codex-terra { color: var(--codex-terra); }
+.speaker--codex-sol { color: var(--codex-sol); }
+.speaker--claude-sonnet { color: var(--claude-sonnet); }
 .speaker--you { color: var(--you); }
 .speaker--system, .speaker--nobody { color: #111; }
 
@@ -326,6 +330,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .controls-panel legend, .field-label { display: block; color: var(--blue); font-size: 17px; font-weight: 800; }
 .radio-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; font-size: 17px; }
 .radio-row input { width: 21px; height: 21px; accent-color: #000; }
+.radio-row .speaker { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .controls-panel hr { margin: 16px 20px; border: 0; border-top: 2px groove white; }
 .field-label { margin: 13px 22px 6px; }
 .field-help { margin: 5px 22px 0; color: #555; font: 12px/1.3 Tahoma, Arial, sans-serif; }

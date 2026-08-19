@@ -1,4 +1,5 @@
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format.js";
+import { AGENT_PROFILES, isAgentId } from "../shared/participants.js";
 import type { RoomMessage, RoomState } from "./types.js";
 
 export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
@@ -12,7 +13,7 @@ interface TranscriptEntry {
 function entriesFor(messages: RoomMessage[]) {
   const entries: TranscriptEntry[] = [];
   for (const message of messages) {
-    const text = message.speaker === "codex" || message.speaker === "claude"
+    const text = isAgentId(message.speaker)
       ? visibleAgentChatText(message.text)
       : visibleAgentText(message.text);
     if (!text) continue;
@@ -27,7 +28,10 @@ function entriesFor(messages: RoomMessage[]) {
 }
 
 function formatEntry(entry: TranscriptEntry, text = entry.text) {
-  return `[${entry.speaker.toUpperCase()}]\n${text}`;
+  const speaker = isAgentId(entry.speaker)
+    ? AGENT_PROFILES[entry.speaker].conversationalName.toUpperCase()
+    : entry.speaker.toUpperCase();
+  return `[${speaker}]\n${text}`;
 }
 
 export function transcriptFor(state: RoomState, characterBudget = TRANSCRIPT_CHARACTER_BUDGET) {

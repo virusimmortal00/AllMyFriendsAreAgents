@@ -8,15 +8,11 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
+import { AGENT_IDS, agentScreenName, isAgentId, participantScreenName } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
-const buddyLabels = {
-  codex: "Codex",
-  claude: "Claude",
-  you: "You",
-} as const;
-const buddyIds = ["codex", "claude", "you"] as const;
+const buddyIds = [...AGENT_IDS, "you"] as const;
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -79,7 +75,7 @@ export function BuddyList({ availability }: { availability?: Record<AgentId, boo
           return (
             <div className="buddy-row" role="listitem" key={buddy} title={buddy === "you" ? "Present" : available ? "CLI connected" : "CLI unavailable"}>
               <span className={`buddy-status buddy-status--${available ? "online" : "offline"}`} aria-hidden="true" />
-              <strong className={`speaker speaker--${buddy}`}>{buddyLabels[buddy]}</strong>
+              <strong className={`speaker speaker--${buddy}`}>{participantScreenName(buddy)}</strong>
               <span className="sr-only">{available ? "Online" : "Offline"}</span>
             </div>
           );
@@ -118,10 +114,10 @@ export function Transcript({
           <article className={`message message--${message.kind || "chat"}`} key={message.id}>
             <time>[{formatTime(message.timestamp)}]</time>
             <div>
-              <strong className={`speaker speaker--${message.speaker}`}>{buddyLabels[message.speaker as keyof typeof buddyLabels] || "System"}:</strong>{" "}
+              <strong className={`speaker speaker--${message.speaker}`}>{participantScreenName(message.speaker)}:</strong>{" "}
               <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
                 <span className="message__text">{renderAimSmileys(
-                  message.speaker === "codex" || message.speaker === "claude"
+                  isAgentId(message.speaker)
                     ? visibleAgentChatText(message.text)
                     : visibleAgentText(message.text),
                 )}</span>
@@ -320,7 +316,7 @@ export function RoomControls({
       <hr />
       <fieldset>
         <legend>Writable agent:</legend>
-        {(["codex", "claude", "nobody"] as const).map((agent) => (
+        {([...AGENT_IDS, "nobody"] as const).map((agent) => (
           <label className="radio-row" key={agent}>
             <input
               type="radio"
@@ -330,7 +326,7 @@ export function RoomControls({
               onChange={() => onWritableChange(agent)}
               disabled={disabled}
             />
-            <span className={`speaker speaker--${agent}`}>{agent === "nobody" ? "Nobody" : buddyLabels[agent]}</span>
+            <span className={`speaker speaker--${agent}`}>{agent === "nobody" ? "Nobody" : agentScreenName(agent)}</span>
           </label>
         ))}
       </fieldset>

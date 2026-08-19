@@ -2,13 +2,29 @@ import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
-import type { AgentId, RoomMessage, RoomSettings, RoomState } from "./types.js";
+import { isParticipantId, migrateLegacyAgentId } from "../shared/participants.js";
+import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
-const styledParticipants = ["you", "codex", "claude"] as const;
-
 function styledParticipant(speaker: RoomMessage["speaker"]): StyledParticipant | undefined {
-  return styledParticipants.includes(speaker as StyledParticipant) ? speaker as StyledParticipant : undefined;
+  return isParticipantId(speaker) ? speaker : undefined;
+}
+
+function migrateSpeaker(speaker: unknown): SpeakerId {
+  if (speaker === "you" || speaker === "system") return speaker;
+  return migrateLegacyAgentId(speaker) || "system";
+}
+
+function migrateSessions(input: unknown) {
+  const value = input && typeof input === "object" ? input as Record<string, AgentSession> : {};
+  const sessions: Partial<Record<AgentId, AgentSession>> = {};
+  for (const [rawAgent, session] of Object.entries(value)) {
+    const agent = migrateLegacyAgentId(rawAgent);
+    if (agent && session?.id && (session.permission === "read-only" || session.permission === "writable")) {
+      sessions[agent] = session;
+    }
+  }
+  return sessions;
 }
 
 function sameStyle(left: ChatStyle | undefined, right: ChatStyle) {
@@ -79,20 +95,25 @@ export class RoomStore {
         : DEFAULT_ROOM_TOPIC;
       const topicWasMissing = typeof stored.settings.topic !== "string" || !stored.settings.topic.trim();
       const messages = stored.messages.map((message) => {
-        const participant = styledParticipant(message.speaker);
-        if (!participant) return message;
+        const speaker = migrateSpeaker(message.speaker);
+        const migratedMessage = speaker === message.speaker ? message : { ...message, speaker };
+        const participant = styledParticipant(speaker);
+        if (!participant) return migratedMessage;
         const style = sanitizeChatStyle(message.style, participantStyles[participant]);
-        return sameStyle(message.style, style) ? message : { ...message, style };
+        return sameStyle(message.style, style) ? migratedMessage : { ...migratedMessage, style };
       });
       if (topicWasMissing) messages.push(topicMessage(storedTopic));
       const state: RoomState = {
         ...stored,
         messages,
-        sessions: topicWasMissing ? {} : stored.sessions,
+        sessions: topicWasMissing ? {} : migrateSessions(stored.sessions),
         settings: {
           ...defaultSettings,
           ...stored.settings,
           topic: storedTopic,
+          writableAgent: stored.settings.writableAgent === "nobody"
+            ? "nobody"
+            : migrateLegacyAgentId(stored.settings.writableAgent) || "nobody",
           projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
           participantStyles,
         },
@@ -101,7 +122,12 @@ export class RoomStore {
         error: undefined,
       };
       const store = new RoomStore(stateDirectory, state);
-      if (topicWasMissing || state.settings.projectPath !== stored.settings.projectPath || !stored.settings.participantStyles || messages.some((message, index) => message !== stored.messages[index])) {
+      if (topicWasMissing
+        || state.settings.projectPath !== stored.settings.projectPath
+        || !stored.settings.participantStyles
+        || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
+        || state.settings.writableAgent !== stored.settings.writableAgent
+        || messages.some((message, index) => message !== stored.messages[index])) {
         await store.save();
       }
       return store;

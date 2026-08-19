@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
+import { AGENT_IDS, isAgentId } from "../shared/participants.js";
 import { cliAvailability, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { parseAgentTurn, roomMessageTurns, runAgentConversation, type ConversationTurn } from "./conversation.js";
@@ -48,7 +49,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
     visibleCharacters: parsed.visibleMessages.reduce((total, message) => total + message.length, 0),
     removedOrProtocolCharacters: Math.max(0, result.text.length - parsed.visibleMessages.reduce((total, message) => total + message.length, 0)),
     noResponse: parsed.visibleMessages.length === 0,
-    mentionedAgent: parsed.mentionedAgent,
+    mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
   });
 
@@ -169,7 +170,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false }:
     firstDelayMs: firstDelay,
     generationDurationMs: result.durationMs,
   });
-  return { replyCandidate: parsed.replyCandidate, mentionedAgent: parsed.mentionedAgent };
+  return { replyCandidates: parsed.replyCandidates, mentionedAgents: parsed.mentionedAgents };
 }
 
 async function performTurn(turn: ConversationTurn) {
@@ -221,7 +222,7 @@ app.patch("/api/settings", async (request, response) => {
     }
   }
   const allowed: Partial<RoomSettings> = {};
-  if (["codex", "claude", "nobody"].includes(update.writableAgent || "")) {
+  if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
     allowed.writableAgent = update.writableAgent;
   }
   if (Number.isInteger(update.maxRounds) && Number(update.maxRounds) >= 1 && Number(update.maxRounds) <= 8) {
@@ -254,16 +255,16 @@ app.post("/api/messages", async (request, response) => {
 
 app.post("/api/actions", async (request, response) => {
   const action = request.body?.action as "ask" | "review" | "roundtable";
-  const target = request.body?.target as AgentId | "both";
+  const target = request.body?.target as AgentId | "all" | "both";
   if (jobs.busy) return response.status(409).json({ error: "The room is already working." });
   if (!(["ask", "review", "roundtable"].includes(action))) {
     return response.status(400).json({ error: "Unknown room action." });
   }
-  if (!["codex", "claude", "both"].includes(target)) {
+  if (target !== "all" && target !== "both" && !isAgentId(target)) {
     return response.status(400).json({ error: "Unknown action target." });
   }
 
-  const agents: AgentId[] = target === "both" ? ["codex", "claude"] : [target];
+  const agents: AgentId[] = target === "all" || target === "both" ? AGENT_IDS : [target];
   jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
     await performConversation(agents.map((agent) => ({
       agent,

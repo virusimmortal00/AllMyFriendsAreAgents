@@ -10,19 +10,19 @@ describe("agent response pacing", () => {
   it("bases reading time only on messages since that agent last spoke", () => {
     const messages = [
       message("old", "you", "This older message should not count."),
-      message("codex", "codex", "I replied."),
+      message("codex-sol", "codex-sol", "I replied."),
       message("new-human", "you", "A short follow up"),
-      message("new-agent", "claude", "And another thought"),
+      message("new-agent", "claude-sonnet", "And another thought"),
     ];
 
-    expect(messagesSinceAgentSpoke(messages, "codex").map(({ id }) => id)).toEqual(["new-human", "new-agent"]);
+    expect(messagesSinceAgentSpoke(messages, "codex-sol").map(({ id }) => id)).toEqual(["new-human", "new-agent"]);
   });
 
   it("delivers short exchanges faster than long ones", () => {
-    const shortDelay = responseDelayMs([message("short", "you", "Lunch?")], "codex", "Sure!", 0);
+    const shortDelay = responseDelayMs([message("short", "you", "Lunch?")], "codex-sol", "Sure!", 0);
     const longDelay = responseDelayMs(
       [message("long", "you", "Could you read this longer message and think through the different possibilities with me before answering?")],
-      "codex",
+      "codex-sol",
       "I think the first option is strongest because it keeps the room simple while still leaving enough flexibility for everyone involved.",
       0,
     );
@@ -34,12 +34,12 @@ describe("agent response pacing", () => {
 
   it("subtracts time already spent waiting and generating", () => {
     const messages = [message("human", "you", "What do you think?")];
-    expect(responseDelayMs(messages, "claude", "Sounds good to me.", 20_000)).toBe(0);
+    expect(responseDelayMs(messages, "claude-sonnet", "Sounds good to me.", 20_000)).toBe(0);
   });
 
   it("starts perceived timing from the latest unread room message", () => {
     const messages = [message("human", "you", "Hello", "2026-08-19T12:00:03.000Z")];
-    expect(pacingStartTime(messages, "codex", Date.parse("2026-08-19T12:00:05.000Z")))
+    expect(pacingStartTime(messages, "codex-sol", Date.parse("2026-08-19T12:00:05.000Z")))
       .toBe(Date.parse("2026-08-19T12:00:03.000Z"));
   });
 

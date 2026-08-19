@@ -53,7 +53,8 @@ for (const generation of generations) {
   const status = failed ? "FAILED" : String(delivery?.outcome || (completed ? "generated" : "started"));
   const duration = completed?.durationMs ?? failed?.durationMs ?? "?";
 
-  console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  ${status}  generation=${duration}ms  retries=${retries}`);
+  const model = started?.modelId || "legacy/unknown";
+  console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  model=${model}  ${status}  generation=${duration}ms  retries=${retries}`);
   console.log(`id=${generation[0]?.generationId}  prompt=${started?.promptCharacters ?? "?"} chars  raw=${completed?.responseCharacters ?? "?"} chars  visible=${interpreted?.visibleMessageCount ?? "?"}  removed/protocol=${interpreted?.removedOrProtocolCharacters ?? "?"} chars`);
   if (failed?.error) console.log(`error: ${failed.error}`);
   if (completed?.rawResponse) console.log(`raw response:\n${completed.rawResponse}`);

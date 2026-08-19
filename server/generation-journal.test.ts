@@ -17,8 +17,8 @@ describe("GenerationJournal", () => {
     const journal = await GenerationJournal.open(directory);
 
     await Promise.all([
-      journal.append({ type: "generation.started", generationId: "one", agent: "codex", prompt: "hello" }),
-      journal.append({ type: "generation.completed", generationId: "one", agent: "codex", durationMs: 123, rawResponse: "hi" }),
+      journal.append({ type: "generation.started", generationId: "one", agent: "codex-sol", prompt: "hello" }),
+      journal.append({ type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 123, rawResponse: "hi" }),
     ]);
 
     const entries = (await readFile(journal.path, "utf8"))

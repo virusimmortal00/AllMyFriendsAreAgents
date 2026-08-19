@@ -19,7 +19,7 @@ describe("chat style validation", () => {
   });
 
   it("rejects unsupported fonts, colors, and malformed directives", () => {
-    const fallback = DEFAULT_PARTICIPANT_STYLES.codex;
+    const fallback = DEFAULT_PARTICIPANT_STYLES["codex-sol"];
     expect(sanitizeChatStyle({ fontFamily: "url(evil)", textColor: "#abcdef", backgroundColor: "red" }, fallback)).toEqual(fallback);
     expect(extractStyleDirective("STYLE: not-json", fallback)).toBeUndefined();
   });

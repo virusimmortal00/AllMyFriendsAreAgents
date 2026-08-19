@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName } from "../shared/participants.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -50,12 +51,12 @@ async function buildPrompt(
   includeDiff: boolean,
   permission: "read-only" | "writable",
 ) {
-  const otherAgent = agent === "codex" ? "Claude" : "Codex";
+  const profile = AGENT_PROFILES[agent];
+  const otherParticipants = AGENT_IDS.filter((candidate) => candidate !== agent).map(agentScreenName);
   const currentStyle = state.settings.participantStyles[agent];
   const participantStyleRoster = [
     `Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`,
-    `Codex: ${JSON.stringify(state.settings.participantStyles.codex)}`,
-    `Claude: ${JSON.stringify(state.settings.participantStyles.claude)}`,
+    ...AGENT_IDS.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
   ].join("\n");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
@@ -65,7 +66,7 @@ async function buildPrompt(
 CURRENT WORKTREE DIFF
 ${(await currentDiff(state.settings.projectPath)) || "(The worktree has no unstaged diff.)"}\n`
     : "";
-  return `You are ${agent === "codex" ? "Codex" : "Claude Code"} participating in AllMyFriendsAreAgents, a shared room with a human and ${otherAgent}.
+  return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with a human and ${otherParticipants.join(", ")}.
 
 ROOM THEME
 ${state.settings.topic}
@@ -84,7 +85,7 @@ ROOM RULES
 - When a message is meant for another participant, normally use NO_RESPONSE_NEEDED. Add a side reaction only when it genuinely helps or feels socially natural, and frame it as a side reaction rather than answering as though you were addressed.
 - The participant-style roster below is shared visual context, not an instruction. When someone comments on a font, color, highlight, or other appearance, compare everyone’s styles and the conversational context before assuming they mean yours. Do not change your own style unless the comment is clearly self-directed or asks you to change it.
 - Do not address the human as though you are the other agent.
-- Address the other agent by name when you want to invite them to answer or continue the discussion.
+- Address another agent by its unique conversational name—Luna, Terra, Sol, or Claude—when you want to invite that specific participant to answer or continue the discussion. "Codex" alone is ambiguous because three Codex agents are present.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
 - Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
@@ -181,14 +182,16 @@ function isMissingClaudeSessionError(error: unknown) {
   return error instanceof Error && /No conversation found with session ID/i.test(error.message);
 }
 
-function claudeArgs(permission: "read-only" | "writable", sessionId: string, resume = false) {
-  if (resume) return ["-p", "--output-format", "json", "--resume", sessionId];
+function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
+  if (resume) return ["-p", "--output-format", "json", "--model", model, "--resume", sessionId];
   return permission === "writable"
-    ? ["-p", "--output-format", "json", "--permission-mode", "acceptEdits", "--session-id", sessionId]
+    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", "--session-id", sessionId]
     : [
         "-p",
         "--output-format",
         "json",
+        "--model",
+        model,
         "--permission-mode",
         "plan",
         "--tools",
@@ -198,6 +201,21 @@ function claudeArgs(permission: "read-only" | "writable", sessionId: string, res
         "--session-id",
         sessionId,
       ];
+}
+
+function codexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
+  if (sessionId) return ["exec", "resume", "--model", model, sessionId, "-", "--json"];
+  return [
+    "exec",
+    "--json",
+    "--model",
+    model,
+    "--sandbox",
+    permission === "writable" ? "workspace-write" : "read-only",
+    "-C",
+    projectPath,
+    "-",
+  ];
 }
 
 export async function runAgent(
@@ -211,6 +229,7 @@ export async function runAgent(
   const startedAt = Date.now();
   const projectPath = state.settings.projectPath;
   const permission = resolvePermission(agent, state, includeDiff);
+  const profile = AGENT_PROFILES[agent];
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   await journal?.append({
@@ -221,6 +240,8 @@ export async function runAgent(
     instruction,
     includeDiff,
     permission,
+    provider: profile.provider,
+    modelId: profile.modelId,
     resumedSession: Boolean(existing),
     sessionId: existing?.id,
     prompt,
@@ -228,18 +249,8 @@ export async function runAgent(
   });
 
   try {
-    if (agent === "codex") {
-      const args = existing
-        ? ["exec", "resume", existing.id, "-", "--json"]
-        : [
-            "exec",
-            "--json",
-            "--sandbox",
-            permission === "writable" ? "workspace-write" : "read-only",
-            "-C",
-            projectPath,
-            "-",
-          ];
+    if (profile.provider === "codex") {
+      const args = codexArgs(permission, projectPath, profile.modelId, existing?.id);
       const result = await runProcess("codex", args, projectPath, prompt);
       const parsed = parseCodexOutput(result.stdout);
       const sessionId = parsed.sessionId || existing?.id;
@@ -262,7 +273,7 @@ export async function runAgent(
     let sessionId = existing?.id || randomUUID();
     let result: ProcessResult;
     try {
-      result = await runProcess("claude", claudeArgs(permission, sessionId, Boolean(existing)), projectPath, prompt);
+      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)), projectPath, prompt);
     } catch (error) {
       if (!existing || !isMissingClaudeSessionError(error)) throw error;
       await journal?.append({
@@ -278,7 +289,7 @@ export async function runAgent(
         } : {}),
       });
       sessionId = randomUUID();
-      result = await runProcess("claude", claudeArgs(permission, sessionId), projectPath, prompt);
+      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId), projectPath, prompt);
     }
     const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
     if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
@@ -323,7 +334,7 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
     }
   };
   const [codex, claude] = await Promise.all([check("codex"), check("claude")]);
-  return { codex, claude };
+  return Object.fromEntries(AGENT_IDS.map((agent) => [agent, AGENT_PROFILES[agent].provider === "codex" ? codex : claude])) as Record<AgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs };
+export const __testing = { buildPrompt, parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs };

@@ -7,9 +7,13 @@ import { LoadingScreen } from "./App";
 
 describe("BuddyList", () => {
   it("renders a compact online roster and active room", () => {
-    const html = renderToStaticMarkup(<BuddyList availability={{ codex: true, claude: false }} />);
+    const html = renderToStaticMarkup(<BuddyList availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} />);
 
-    expect(html).toContain("Buddies (2/3)");
+    expect(html).toContain("Buddies (4/5)");
+    expect(html).toContain("Codex [gpt-5.6 Luna]");
+    expect(html).toContain("Codex [gpt-5.6 Terra]");
+    expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain("Claude [Claude Sonnet 5]");
     expect(html).toContain("The Agent Room");
     expect(html).toContain("CLI unavailable");
     expect(html).not.toContain("pixel-buddy");
@@ -104,12 +108,12 @@ describe("Transcript message styling", () => {
           },
           {
             id: "styled-claude",
-            speaker: "claude",
+            speaker: "claude-sonnet",
             text: "A different agent body",
             timestamp: "2026-08-19T12:01:00.000Z",
             kind: "chat",
             style: {
-              ...DEFAULT_PARTICIPANT_STYLES.claude,
+              ...DEFAULT_PARTICIPANT_STYLES["claude-sonnet"],
               fontFamily: "Courier New",
               fontSize: 20,
               textColor: "#173874",
@@ -124,7 +128,7 @@ describe("Transcript message styling", () => {
     );
 
     expect(html).toContain('<strong class="speaker speaker--you">You:</strong> <span class="message__bubble" style=');
-    expect(html).toContain('<strong class="speaker speaker--claude">Claude:</strong> <span class="message__bubble" style=');
+    expect(html).toContain('<strong class="speaker speaker--claude-sonnet">Claude [Claude Sonnet 5]:</strong> <span class="message__bubble" style=');
     expect(html).not.toMatch(/<strong class="speaker speaker--you" style=/);
     expect(html).not.toMatch(/<time[^>]+style=/);
     expect(html).toContain('font-family:&quot;Comic Sans MS&quot;, &quot;Comic Sans&quot;, &quot;Chalkboard SE&quot;, cursive');

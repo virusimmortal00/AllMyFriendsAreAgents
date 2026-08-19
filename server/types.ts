@@ -1,8 +1,7 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
+import type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
-export type AgentId = "codex" | "claude";
-export type SpeakerId = AgentId | "you" | "system";
-export type WritableAgent = AgentId | "nobody";
+export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
 export interface RoomMessage {
   id: string;

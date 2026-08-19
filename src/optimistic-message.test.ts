@@ -34,7 +34,7 @@ describe("optimistic human messages", () => {
     const pending = appendOptimisticHumanMessage(room, "pending-message", "Hello room", "2026-08-19T12:00:00.000Z");
     const withAnotherMessage = {
       ...pending,
-      messages: [...pending.messages, { id: "agent", speaker: "codex" as const, text: "Hi", timestamp: "2026-08-19T12:00:01.000Z" }],
+      messages: [...pending.messages, { id: "agent", speaker: "codex-sol" as const, text: "Hi", timestamp: "2026-08-19T12:00:01.000Z" }],
     };
 
     expect(discardOptimisticMessage(withAnotherMessage, "pending-message").messages.map(({ id }) => id)).toEqual(["agent"]);
