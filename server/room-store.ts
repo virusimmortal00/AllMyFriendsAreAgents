@@ -78,7 +78,6 @@ export class RoomStore {
     const defaultSettings: RoomSettings = {
       topic: DEFAULT_ROOM_TOPIC,
       writableAgent: "nobody",
-      reviewMode: "read-only",
       conversationEnergy: "balanced",
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
@@ -87,11 +86,15 @@ export class RoomStore {
     try {
       const stored = JSON.parse(await readFile(statePath, "utf8")) as RoomState;
       const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
-      const storedSettings = stored.settings as RoomSettings & { maxRounds?: unknown; conversationEnergy?: unknown };
+      const storedSettings = stored.settings as RoomSettings & { maxRounds?: unknown; conversationEnergy?: unknown; reviewMode?: unknown };
       const conversationEnergy = isConversationEnergy(storedSettings.conversationEnergy)
         ? storedSettings.conversationEnergy
         : migrateMaxRounds(storedSettings.maxRounds);
-      const { maxRounds: _legacyMaxRounds, ...settingsWithoutLegacyRounds } = storedSettings;
+      const {
+        maxRounds: _legacyMaxRounds,
+        reviewMode: _legacyReviewMode,
+        ...currentStoredSettings
+      } = storedSettings;
       const storedProjectPathExists = await stat(stored.settings.projectPath)
         .then((entry) => entry.isDirectory())
         .catch(() => false);
@@ -115,7 +118,7 @@ export class RoomStore {
         sessions: topicWasMissing ? {} : migrateSessions(stored.sessions),
         settings: {
           ...defaultSettings,
-          ...settingsWithoutLegacyRounds,
+          ...currentStoredSettings,
           topic: storedTopic,
           conversationEnergy,
           writableAgent: stored.settings.writableAgent === "nobody"
@@ -133,6 +136,7 @@ export class RoomStore {
         || state.settings.projectPath !== stored.settings.projectPath
         || !stored.settings.participantStyles
         || storedSettings.maxRounds !== undefined
+        || storedSettings.reviewMode !== undefined
         || storedSettings.conversationEnergy !== conversationEnergy
         || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
         || state.settings.writableAgent !== stored.settings.writableAgent

@@ -203,21 +203,15 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .transcript-view-controls button:disabled { color: #888; }
 .transcript-view-controls output { width: 48px; text-align: center; text-shadow: 1px 1px #000080; }
 
-.buddy-panel, .controls-panel, .chat-panel, .right-rail { min-height: 0; overflow: hidden; }
-.right-rail { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 9px; }
-.buddy-panel { background: #fff; }
-.buddy-panel .panel-title { height: 31px; padding: 4px 8px; font-size: 16px; line-height: 21px; text-transform: none; }
-.buddy-group { padding: 4px 7px; color: #111; background: #ece9df; border-top: 1px solid #fff; border-bottom: 1px solid #aaa; font: 700 13px/18px Tahoma, Arial, sans-serif; }
-.buddy-group span { display: inline-block; width: 14px; color: #000080; }
-.buddy-list { padding: 3px 0 5px; background: #fff; }
-.buddy-row { display: grid; grid-template-columns: 13px minmax(0, 1fr); align-items: center; gap: 6px; min-height: 25px; padding: 2px 9px 2px 22px; }
-.buddy-row:hover { background: #e6efff; }
-.buddy-row .speaker { overflow: hidden; font: 700 14px/20px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
-.buddy-status { width: 10px; height: 10px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
-.buddy-status--offline { border-color: #777; background: #aaa; }
-.buddy-group--rooms { border-top: 1px solid #aaa; }
-.buddy-room { margin: 3px 5px 6px; padding: 4px 7px 4px 23px; color: #fff; background: var(--blue); font: 700 13px/18px Tahoma, Arial, sans-serif; }
-.buddy-room span { margin-right: 6px; color: #1ee235; font-size: 9px; vertical-align: 1px; }
+.presence-panel, .controls-panel, .chat-panel, .right-rail { min-height: 0; overflow: hidden; }
+.right-rail { display: grid; grid-template-rows: auto auto; align-content: start; gap: 9px; }
+.presence-panel { background: #fff; }
+.presence-panel .panel-title { height: 31px; padding: 4px 8px; font-size: 16px; line-height: 21px; text-transform: none; }
+.presence-summary { margin: 0; padding: 7px 10px; color: #222; background: #ece9df; border-bottom: 1px solid #aaa; font: 13px/18px Tahoma, Arial, sans-serif; }
+.presence-list { padding: 5px 0 7px; background: #fff; }
+.presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr); align-items: center; gap: 7px; min-height: 25px; padding: 2px 9px 2px 15px; }
+.presence-row .speaker { overflow: hidden; font: 700 14px/20px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.presence-status { width: 9px; height: 9px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
 
 .chat-panel { display: grid; grid-template-rows: 38px minmax(0, 1fr) 205px; }
 .transcript { overflow-y: auto; padding: 14px 16px; background: #fff; }
@@ -326,11 +320,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .send-button { grid-column: 2; grid-row: 2; height: auto; }
 
 .controls-panel { padding-bottom: 12px; background: #ededed; }
-.controls-panel fieldset { margin: 15px 20px 8px; padding: 0; border: 0; }
-.controls-panel legend, .field-label { display: block; color: var(--blue); font-size: 17px; font-weight: 800; }
-.radio-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; font-size: 17px; }
-.radio-row input { width: 21px; height: 21px; accent-color: #000; }
-.radio-row .speaker { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field-label { display: block; color: var(--blue); font-size: 17px; font-weight: 800; }
 .controls-panel hr { margin: 16px 20px; border: 0; border-top: 2px groove white; }
 .field-label { margin: 13px 22px 6px; }
 .field-help { margin: 5px 22px 0; color: #555; font: 12px/1.3 Tahoma, Arial, sans-serif; }
@@ -371,10 +361,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .format-toolbar { flex-wrap: wrap; align-content: center; }
   .format-toolbar select { width: 128px; }
   .aim-color-picker, .emoji-picker { right: 0; left: auto; }
-  .right-rail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: start; overflow: visible; }
+  .right-rail { display: grid; grid-template-columns: 1fr; align-items: start; overflow: visible; }
   .controls-panel { display: block; }
-  .controls-panel fieldset { display: flex; flex-wrap: wrap; gap: 14px; }
-  .radio-row { margin: 6px 0; }
   .status-bar { grid-template-columns: 1fr 1fr; }
   .status-cell:first-child { display: none; }
   .status-cell--connection { justify-content: flex-end; }

@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { BuddyList, ChatComposer, RoomControls, Transcript, TranscriptHeader } from "./components";
+import { ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import { agentScreenName } from "../shared/participants";
+import { AGENT_IDS, agentScreenName } from "../shared/participants";
 import type { AgentId, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -15,7 +15,6 @@ const EMPTY_ROOM: RoomState = {
   settings: {
     topic: "Open conversation",
     writableAgent: "nobody",
-    reviewMode: "read-only",
     conversationEnergy: "balanced",
     projectPath: "",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
@@ -176,6 +175,7 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
+  const peopleHere = 1 + AGENT_IDS.filter((agent) => room.availability?.[agent] !== false).length;
 
   if (!ready) return <LoadingScreen error={clientError} />;
 
@@ -215,7 +215,7 @@ export default function App() {
             />
           </section>
           <div className="right-rail">
-            <BuddyList availability={room.availability} />
+            <RoomRoster availability={room.availability} />
             <RoomControls
               topic={room.settings.topic}
               writableAgent={room.settings.writableAgent}
@@ -230,7 +230,7 @@ export default function App() {
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">
-          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> 5 participants</div>
+          <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> Connected</div>
         </footer>

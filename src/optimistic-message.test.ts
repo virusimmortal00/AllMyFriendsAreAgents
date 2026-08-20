@@ -9,7 +9,6 @@ const room: RoomState = {
   settings: {
     topic: "Open conversation",
     writableAgent: "nobody",
-    reviewMode: "read-only",
     conversationEnergy: "balanced",
     projectPath: "/tmp/project",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),

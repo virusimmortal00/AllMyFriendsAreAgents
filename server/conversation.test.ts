@@ -10,7 +10,6 @@ function roomState(messages: RoomMessage[]): RoomState {
     settings: {
       topic: "Open conversation",
       writableAgent: "nobody",
-      reviewMode: "read-only",
       conversationEnergy: "balanced",
       projectPath: process.cwd(),
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),

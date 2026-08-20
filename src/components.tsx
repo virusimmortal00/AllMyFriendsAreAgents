@@ -13,7 +13,7 @@ import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentId, RoomMessage, WritableAgent } from "./types";
 
-const buddyIds = [...AGENT_IDS, "you"] as const;
+const participantIds = [...AGENT_IDS, "you"] as const;
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -62,28 +62,23 @@ export function TranscriptHeader({
   );
 }
 
-export function BuddyList({ availability }: { availability?: Record<AgentId, boolean> }) {
-  const isAvailable = (buddy: typeof buddyIds[number]) => buddy === "you" || availability?.[buddy] !== false;
-  const onlineCount = buddyIds.filter(isAvailable).length;
+export function RoomRoster({ availability }: { availability?: Record<AgentId, boolean> }) {
+  const presentParticipants = participantIds.filter((participant) => participant === "you" || availability?.[participant] !== false);
+  const agentCount = presentParticipants.filter((participant) => participant !== "you").length;
+  const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
 
   return (
-    <aside className="buddy-panel beveled-inset" aria-label="Buddy list">
-      <PanelTitle>Buddy List</PanelTitle>
-      <div className="buddy-group"><span aria-hidden="true">▾</span> Buddies ({onlineCount}/{buddyIds.length})</div>
-      <div className="buddy-list" role="list">
-        {buddyIds.map((buddy) => {
-          const available = isAvailable(buddy);
-          return (
-            <div className="buddy-row" role="listitem" key={buddy} title={buddy === "you" ? "Present" : available ? "CLI connected" : "CLI unavailable"}>
-              <span className={`buddy-status buddy-status--${available ? "online" : "offline"}`} aria-hidden="true" />
-              <strong className={`speaker speaker--${buddy}`}>{participantScreenName(buddy)}</strong>
-              <span className="sr-only">{available ? "Online" : "Offline"}</span>
-            </div>
-          );
-        })}
+    <aside className="presence-panel beveled-inset" aria-label="People in this room">
+      <PanelTitle>Who&apos;s Here</PanelTitle>
+      <p className="presence-summary"><strong>{agentLabel}</strong> and <strong>1 human</strong> are here.</p>
+      <div className="presence-list" role="list">
+        {presentParticipants.map((participant) => (
+          <div className="presence-row" role="listitem" key={participant}>
+            <span className="presence-status" aria-hidden="true" />
+            <strong className={`speaker speaker--${participant}`}>{participantScreenName(participant)}</strong>
+          </div>
+        ))}
       </div>
-      <div className="buddy-group buddy-group--rooms"><span aria-hidden="true">▾</span> Rooms (1)</div>
-      <div className="buddy-room" aria-current="page"><span aria-hidden="true">●</span> The Agent Room</div>
     </aside>
   );
 }
@@ -295,8 +290,8 @@ export function RoomControls({
 }: RoomControlsProps) {
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
-      <PanelTitle>Room Controls</PanelTitle>
-      <label className="field-label" htmlFor="room-topic">Room topic:</label>
+      <PanelTitle>Room Settings</PanelTitle>
+      <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"
         key={topic}
@@ -313,30 +308,9 @@ export function RoomControls({
           if (event.key === "Enter") event.currentTarget.blur();
         }}
       />
-      <p className="field-help">Changing topics starts fresh agent context. Conversation can still wander.</p>
+      <p className="field-help">A starting point, not a boundary. Changing it starts fresh agent context.</p>
       <hr />
-      <fieldset>
-        <legend>Writable agent:</legend>
-        {([...AGENT_IDS, "nobody"] as const).map((agent) => (
-          <label className="radio-row" key={agent}>
-            <input
-              type="radio"
-              name="writable-agent"
-              value={agent}
-              checked={writableAgent === agent}
-              onChange={() => onWritableChange(agent)}
-              disabled={disabled}
-            />
-            <span className={`speaker speaker--${agent}`}>{agent === "nobody" ? "Nobody" : agentScreenName(agent)}</span>
-          </label>
-        ))}
-      </fieldset>
-      <hr />
-      <label className="field-label" htmlFor="review-mode">Review mode:</label>
-      <select id="review-mode" value="read-only" disabled className="classic-select">
-        <option value="read-only">Read only</option>
-      </select>
-      <label className="field-label" htmlFor="conversation-energy">Conversation energy:</label>
+      <label className="field-label" htmlFor="conversation-energy">Conversation energy</label>
       <select
         id="conversation-energy"
         className="classic-input"
@@ -349,6 +323,19 @@ export function RoomControls({
         ))}
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[conversationEnergy].description}</p>
+      <hr />
+      <label className="field-label" htmlFor="project-access">Project access</label>
+      <select
+        id="project-access"
+        className="classic-input"
+        value={writableAgent}
+        disabled={disabled}
+        onChange={(event) => onWritableChange(event.target.value as WritableAgent)}
+      >
+        <option value="nobody">No agent can edit files</option>
+        {AGENT_IDS.map((agent) => <option value={agent} key={agent}>{agentScreenName(agent)}</option>)}
+      </select>
+      <p className="field-help">Only this agent may edit when you explicitly ask. Reviews always stay read-only.</p>
     </aside>
   );
 }

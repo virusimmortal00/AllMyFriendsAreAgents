@@ -36,7 +36,6 @@ describe("agent permissions", () => {
     settings: {
       topic: "Open conversation",
       writableAgent: "codex-sol",
-      reviewMode: "read-only",
       conversationEnergy: "balanced",
       projectPath: "/tmp/project",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
@@ -65,7 +64,6 @@ describe("room prompt context", () => {
     settings: {
       topic: "Weekend cooking",
       writableAgent: "nobody",
-      reviewMode: "read-only",
       conversationEnergy: "balanced",
       projectPath: process.cwd(),
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),

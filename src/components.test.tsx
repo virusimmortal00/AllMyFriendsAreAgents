@@ -2,21 +2,22 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { BuddyList, ChatComposer, RoomControls, Transcript } from "./components";
+import { ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
 import { LoadingScreen } from "./App";
 
-describe("BuddyList", () => {
-  it("renders a compact online roster and active room", () => {
-    const html = renderToStaticMarkup(<BuddyList availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} />);
+describe("RoomRoster", () => {
+  it("renders a simple list of the people currently in the room", () => {
+    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} />);
 
-    expect(html).toContain("Buddies (4/5)");
+    expect(html).toContain("3 agents");
+    expect(html).toContain("1 human");
     expect(html).toContain("Codex [gpt-5.6 Luna]");
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
-    expect(html).toContain("Claude [Claude Sonnet 5]");
-    expect(html).toContain("The Agent Room");
-    expect(html).toContain("CLI unavailable");
-    expect(html).not.toContain("pixel-buddy");
+    expect(html).toContain("You");
+    expect(html).not.toContain("Claude [Claude Sonnet 5]");
+    expect(html).not.toContain("Buddy");
+    expect(html).not.toContain("Rooms (1)");
   });
 });
 
@@ -46,10 +47,13 @@ describe("RoomControls", () => {
     );
 
     expect(html).toContain('value="Weekend cooking"');
-    expect(html).toContain("Changing topics starts fresh agent context. Conversation can still wander.");
-    expect(html).toContain("Conversation energy:");
+    expect(html).toContain("A starting point, not a boundary. Changing it starts fresh agent context.");
+    expect(html).toContain("Conversation energy");
     expect(html).toContain("Usually one or two agents join in.");
     expect(html).toContain('<option value="balanced" selected="">Balanced</option>');
+    expect(html).toContain("Project access");
+    expect(html).toContain("No agent can edit files");
+    expect(html).not.toContain("Review mode");
   });
 
   it("keeps topic changes available while other room controls are locked", () => {
@@ -67,7 +71,7 @@ describe("RoomControls", () => {
 
     expect(html).toMatch(/id="room-topic"[^>]+value="Current topic"/);
     expect(html).not.toMatch(/id="room-topic"[^>]+disabled/);
-    expect(html).toMatch(/<input type="radio" disabled="" name="writable-agent"/);
+    expect(html).toMatch(/id="project-access"[^>]+disabled/);
   });
 });
 

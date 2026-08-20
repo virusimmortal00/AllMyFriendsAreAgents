@@ -54,6 +54,7 @@ describe("room style persistence", () => {
     const persisted = JSON.parse(await readFile(path.join(stateDirectory, "room.json"), "utf8")) as { settings: Record<string, unknown> };
     expect(persisted.settings.conversationEnergy).toBe("balanced");
     expect(persisted.settings).not.toHaveProperty("maxRounds");
+    expect(persisted.settings).not.toHaveProperty("reviewMode");
   });
 
   it("persists participant preferences while retaining each message's original snapshot", async () => {

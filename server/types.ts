@@ -23,7 +23,6 @@ export interface AgentSession {
 export interface RoomSettings {
   topic: string;
   writableAgent: WritableAgent;
-  reviewMode: "read-only";
   conversationEnergy: ConversationEnergy;
   projectPath: string;
   participantStyles: ParticipantStyles;
