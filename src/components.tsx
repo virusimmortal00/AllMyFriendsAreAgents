@@ -62,7 +62,13 @@ export function TranscriptHeader({
   );
 }
 
-export function RoomRoster({ availability }: { availability?: Record<AgentId, boolean> }) {
+export function RoomRoster({
+  availability,
+  onConfigureAgent,
+}: {
+  availability?: Record<AgentId, boolean>;
+  onConfigureAgent: (agent: AgentId) => void;
+}) {
   const presentParticipants = participantIds.filter((participant) => participant === "you" || availability?.[participant] !== false);
   const agentCount = presentParticipants.filter((participant) => participant !== "you").length;
   const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
@@ -76,10 +82,81 @@ export function RoomRoster({ availability }: { availability?: Record<AgentId, bo
           <div className="presence-row" role="listitem" key={participant}>
             <span className="presence-status" aria-hidden="true" />
             <strong className={`speaker speaker--${participant}`}>{participantScreenName(participant)}</strong>
+            {isAgentId(participant) ? (
+              <button
+                type="button"
+                className="agent-settings-button"
+                aria-label={`Configure ${agentScreenName(participant)}`}
+                title={`Settings for ${agentScreenName(participant)}`}
+                onClick={() => onConfigureAgent(participant)}
+              >⚙</button>
+            ) : <span className="presence-row-spacer" aria-hidden="true" />}
           </div>
         ))}
       </div>
     </aside>
+  );
+}
+
+export function AgentSettingsDialog({
+  agent,
+  available,
+  writableAgent,
+  disabled,
+  onWritableChange,
+  onClose,
+}: {
+  agent: AgentId;
+  available: boolean;
+  writableAgent: WritableAgent;
+  disabled: boolean;
+  onWritableChange: (agent: WritableAgent) => void;
+  onClose: () => void;
+}) {
+  const canEdit = writableAgent === agent;
+  const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
+    ? agentScreenName(writableAgent)
+    : "";
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
+    >
+      <section className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title">
+        <header className="agent-settings-titlebar">
+          <h2 id="agent-settings-title">Agent Settings</h2>
+          <button type="button" aria-label="Close agent settings" onClick={onClose}>×</button>
+        </header>
+        <div className="agent-settings-body">
+          <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
+          <div className="agent-connection-status">
+            <span className={`agent-connection-light agent-connection-light--${available ? "online" : "offline"}`} aria-hidden="true" />
+            {available ? "Connected to the room" : "CLI unavailable"}
+          </div>
+          <fieldset>
+            <legend>Project permissions</legend>
+            <label className="agent-permission-toggle">
+              <input
+                type="checkbox"
+                checked={canEdit}
+                disabled={disabled}
+                onChange={(event) => onWritableChange(event.target.checked ? agent : "nobody")}
+              />
+              Allow this agent to edit project files
+            </label>
+            <p>Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only.</p>
+            {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
+            {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
+          </fieldset>
+        </div>
+        <footer className="agent-settings-actions">
+          <button type="button" className="classic-button" onClick={onClose}>Close</button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -271,21 +348,17 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
 
 interface RoomControlsProps {
   topic: string;
-  writableAgent: WritableAgent;
   conversationEnergy: ConversationEnergy;
   disabled: boolean;
   onTopicChange: (topic: string) => void;
-  onWritableChange: (agent: WritableAgent) => void;
   onConversationEnergyChange: (energy: ConversationEnergy) => void;
 }
 
 export function RoomControls({
   topic,
-  writableAgent,
   conversationEnergy,
   disabled,
   onTopicChange,
-  onWritableChange,
   onConversationEnergyChange,
 }: RoomControlsProps) {
   return (
@@ -323,19 +396,6 @@ export function RoomControls({
         ))}
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[conversationEnergy].description}</p>
-      <hr />
-      <label className="field-label" htmlFor="project-access">Project access</label>
-      <select
-        id="project-access"
-        className="classic-input"
-        value={writableAgent}
-        disabled={disabled}
-        onChange={(event) => onWritableChange(event.target.value as WritableAgent)}
-      >
-        <option value="nobody">No agent can edit files</option>
-        {AGENT_IDS.map((agent) => <option value={agent} key={agent}>{agentScreenName(agent)}</option>)}
-      </select>
-      <p className="field-help">Only this agent may edit when you explicitly ask. Reviews always stay read-only.</p>
     </aside>
   );
 }

@@ -2,12 +2,12 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
+import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
 import { LoadingScreen } from "./App";
 
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
-    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} />);
+    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} onConfigureAgent={() => undefined} />);
 
     expect(html).toContain("3 agents");
     expect(html).toContain("1 human");
@@ -18,6 +18,45 @@ describe("RoomRoster", () => {
     expect(html).not.toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
+    expect(html.match(/aria-label="Configure Codex/g)).toHaveLength(3);
+    expect(html).not.toContain("Configure You");
+  });
+});
+
+describe("AgentSettingsDialog", () => {
+  it("shows one agent's connection and project permission away from room settings", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="codex-terra"
+        available
+        writableAgent="codex-sol"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("Codex [gpt-5.6 Terra]");
+    expect(html).toContain("Connected to the room");
+    expect(html).toContain("Allow this agent to edit project files");
+    expect(html).toContain("remove edit access from Codex [gpt-5.6 Sol]");
+    expect(html).not.toMatch(/type="checkbox" checked/);
+  });
+
+  it("shows the selected agent's edit permission as enabled", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="codex-terra"
+        available
+        writableAgent="codex-terra"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/type="checkbox" checked=""/);
   });
 });
 
@@ -37,11 +76,9 @@ describe("RoomControls", () => {
     const html = renderToStaticMarkup(
       <RoomControls
         topic="Weekend cooking"
-        writableAgent="nobody"
         conversationEnergy="balanced"
         disabled={false}
         onTopicChange={() => undefined}
-        onWritableChange={() => undefined}
         onConversationEnergyChange={() => undefined}
       />,
     );
@@ -51,8 +88,7 @@ describe("RoomControls", () => {
     expect(html).toContain("Conversation energy");
     expect(html).toContain("Usually one or two agents join in.");
     expect(html).toContain('<option value="balanced" selected="">Balanced</option>');
-    expect(html).toContain("Project access");
-    expect(html).toContain("No agent can edit files");
+    expect(html).not.toContain("Project access");
     expect(html).not.toContain("Review mode");
   });
 
@@ -60,18 +96,16 @@ describe("RoomControls", () => {
     const html = renderToStaticMarkup(
       <RoomControls
         topic="Current topic"
-        writableAgent="nobody"
         conversationEnergy="balanced"
         disabled
         onTopicChange={() => undefined}
-        onWritableChange={() => undefined}
         onConversationEnergyChange={() => undefined}
       />,
     );
 
     expect(html).toMatch(/id="room-topic"[^>]+value="Current topic"/);
     expect(html).not.toMatch(/id="room-topic"[^>]+disabled/);
-    expect(html).toMatch(/id="project-access"[^>]+disabled/);
+    expect(html).toMatch(/id="conversation-energy"[^>]+disabled/);
   });
 });
 

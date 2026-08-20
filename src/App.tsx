@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
+import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
@@ -46,6 +46,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [draft, setDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [configuredAgent, setConfiguredAgent] = useState<AgentId | null>(null);
   const [clientError, setClientError] = useState("");
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
@@ -78,6 +79,15 @@ export default function App() {
     const timer = window.setTimeout(() => setMinimumLoadingComplete(true), MINIMUM_LOADING_MS);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!configuredAgent) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfiguredAgent(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [configuredAgent]);
 
   const ready = hasInitialState && minimumLoadingComplete;
 
@@ -199,7 +209,7 @@ export default function App() {
               </div>
             ) : null}
           </div>
-          <button type="button" title="Ordinary chat can use the selected writable agent. Explicit reviews are always read-only.">Help</button>
+          <button type="button" title="Agent project permissions are available from the gear beside each agent. Reviews are always read-only.">Help</button>
         </nav>
 
         <div className="workspace">
@@ -215,18 +225,27 @@ export default function App() {
             />
           </section>
           <div className="right-rail">
-            <RoomRoster availability={room.availability} />
+            <RoomRoster availability={room.availability} onConfigureAgent={setConfiguredAgent} />
             <RoomControls
               topic={room.settings.topic}
-              writableAgent={room.settings.writableAgent}
               conversationEnergy={room.settings.conversationEnergy}
               disabled={working}
               onTopicChange={changeTopic}
-              onWritableChange={changeWritable}
               onConversationEnergyChange={changeConversationEnergy}
             />
           </div>
         </div>
+
+        {configuredAgent ? (
+          <AgentSettingsDialog
+            agent={configuredAgent}
+            available={room.availability?.[configuredAgent] !== false}
+            writableAgent={room.settings.writableAgent}
+            disabled={working}
+            onWritableChange={changeWritable}
+            onClose={() => setConfiguredAgent(null)}
+          />
+        ) : null}
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">
