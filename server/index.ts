@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import { AGENT_IDS, isAgentId } from "../shared/participants.js";
-import { cliAvailability, runAgent } from "./agent-runner.js";
+import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { GenerationJournal } from "./generation-journal.js";
@@ -37,7 +37,16 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const before = store.snapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
-  const result = await runAgent(agent, before, instruction, includeDiff, generationJournal);
+  const generationCancellation = roomActivity.abortSignal(activityRevision);
+  let result;
+  try {
+    result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal);
+  } catch (error) {
+    if (isAgentGenerationCancelledError(error)) return { cancelled: true };
+    throw error;
+  } finally {
+    generationCancellation.dispose();
+  }
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit);

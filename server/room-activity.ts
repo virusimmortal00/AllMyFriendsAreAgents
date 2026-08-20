@@ -16,6 +16,21 @@ export class RoomActivity {
     this.interruptions.clear();
   }
 
+  abortSignal(revision: number) {
+    const controller = new AbortController();
+    if (!this.isCurrent(revision)) {
+      controller.abort();
+      return { signal: controller.signal, dispose: () => undefined };
+    }
+
+    const abort = () => controller.abort();
+    this.interruptions.add(abort);
+    return {
+      signal: controller.signal,
+      dispose: () => this.interruptions.delete(abort),
+    };
+  }
+
   wait(milliseconds: number, revision: number): Promise<boolean> {
     if (!this.isCurrent(revision)) return Promise.resolve(false);
     if (milliseconds <= 0) return Promise.resolve(true);

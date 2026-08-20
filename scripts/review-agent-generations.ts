@@ -46,17 +46,19 @@ console.log(`Showing ${generations.length} of ${grouped.size} generations (newes
 for (const generation of generations) {
   const started = generation.find(({ type }) => type === "generation.started");
   const completed = generation.find(({ type }) => type === "generation.completed");
+  const cancelled = generation.find(({ type }) => type === "generation.cancelled");
   const failed = generation.find(({ type }) => type === "generation.failed");
   const interpreted = generation.find(({ type }) => type === "generation.interpreted");
   const delivery = generation.find(({ type }) => type === "generation.delivery");
   const retries = generation.filter(({ type }) => type === "generation.retry").length;
-  const status = failed ? "FAILED" : String(delivery?.outcome || (completed ? "generated" : "started"));
-  const duration = completed?.durationMs ?? failed?.durationMs ?? "?";
+  const status = cancelled ? "CANCELLED" : failed ? "FAILED" : String(delivery?.outcome || (completed ? "generated" : "started"));
+  const duration = completed?.durationMs ?? cancelled?.durationMs ?? failed?.durationMs ?? "?";
 
   const model = started?.modelId || "legacy/unknown";
   console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  model=${model}  ${status}  generation=${duration}ms  retries=${retries}`);
   console.log(`id=${generation[0]?.generationId}  prompt=${started?.promptCharacters ?? "?"} chars  raw=${completed?.responseCharacters ?? "?"} chars  visible=${interpreted?.visibleMessageCount ?? "?"}  removed/protocol=${interpreted?.removedOrProtocolCharacters ?? "?"} chars`);
   if (failed?.error) console.log(`error: ${failed.error}`);
+  if (cancelled?.reason) console.log(`cancelled: ${cancelled.reason}`);
   if (completed?.rawResponse) console.log(`raw response:\n${completed.rawResponse}`);
   if (interpreted?.visibleMessages) console.log(`visible messages:\n${JSON.stringify(interpreted.visibleMessages, null, 2)}`);
   if (verbose && started?.prompt) console.log(`prompt:\n${started.prompt}`);

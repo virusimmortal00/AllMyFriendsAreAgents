@@ -25,4 +25,23 @@ describe("RoomActivity", () => {
     await expect(continuation).resolves.toBe(true);
     vi.useRealTimers();
   });
+
+  it("aborts active work when the room revision changes", () => {
+    const activity = new RoomActivity();
+    const activeWork = activity.abortSignal(activity.current());
+
+    activity.interrupt();
+
+    expect(activeWork.signal.aborted).toBe(true);
+  });
+
+  it("does not abort completed work after its listener is disposed", () => {
+    const activity = new RoomActivity();
+    const activeWork = activity.abortSignal(activity.current());
+    activeWork.dispose();
+
+    activity.interrupt();
+
+    expect(activeWork.signal.aborted).toBe(false);
+  });
 });

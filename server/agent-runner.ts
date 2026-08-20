@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
@@ -11,7 +11,10 @@ import type { AgentId, RoomState } from "./types.js";
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
 const DIFF_LIMIT = 30_000;
-const RUN_TIMEOUT_MS = 12 * 60 * 1000;
+const CHAT_RUN_TIMEOUT_MS = 90_000;
+const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
+const VERSION_CHECK_TIMEOUT_MS = 10_000;
+const TERMINATION_GRACE_MS = 1_500;
 
 interface RunResult {
   text: string;
@@ -30,6 +33,24 @@ class ProcessExecutionError extends Error {
     super(message);
     this.name = "ProcessExecutionError";
   }
+}
+
+class ProcessCancelledError extends Error {
+  constructor(readonly process: ProcessResult & { exitCode: number | null }) {
+    super("Agent generation was cancelled because the room conversation changed.");
+    this.name = "ProcessCancelledError";
+  }
+}
+
+export class AgentGenerationCancelledError extends Error {
+  constructor() {
+    super("Agent generation was cancelled because the room conversation changed.");
+    this.name = "AgentGenerationCancelledError";
+  }
+}
+
+export function isAgentGenerationCancelledError(error: unknown) {
+  return error instanceof AgentGenerationCancelledError;
 }
 
 async function currentDiff(projectPath: string) {
@@ -102,25 +123,77 @@ YOUR TURN
 ${instruction}`;
 }
 
-function runProcess(command: string, args: string[], cwd: string, input?: string): Promise<ProcessResult> {
+interface RunProcessOptions {
+  input?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
+  if (!child.pid) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to signaling the direct child if its process group is already gone.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may have exited between the state check and the signal.
+  }
+}
+
+function terminateProcessTree(child: ChildProcess) {
+  signalProcessTree(child, "SIGTERM");
+  const escalation = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) signalProcessTree(child, "SIGKILL");
+  }, TERMINATION_GRACE_MS);
+  escalation.unref();
+  return escalation;
+}
+
+function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
+    const timeoutMs = options.timeoutMs ?? CHAT_RUN_TIMEOUT_MS;
     const child = spawn(command, args, {
       cwd,
       env: process.env,
       shell: false,
-      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    if (input !== undefined) child.stdin!.end(input);
+    let settled = false;
+    let escalation: NodeJS.Timeout | undefined;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", cancel);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cancel = () => {
+      escalation = terminateProcessTree(child);
+      child.stdin?.destroy();
+      fail(new ProcessCancelledError({ stdout, stderr, exitCode: child.exitCode }));
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new ProcessExecutionError(`${command} timed out after ${RUN_TIMEOUT_MS / 60000} minutes`, {
+      escalation = terminateProcessTree(child);
+      child.stdin?.destroy();
+      fail(new ProcessExecutionError(`${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`, {
         stdout,
         stderr,
         exitCode: null,
       }));
-    }, RUN_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.stdout!.on("data", (chunk) => {
       stdout = (stdout + chunk.toString()).slice(-OUTPUT_LIMIT);
@@ -129,11 +202,13 @@ function runProcess(command: string, args: string[], cwd: string, input?: string
       stderr = (stderr + chunk.toString()).slice(-OUTPUT_LIMIT);
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      fail(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (escalation) clearTimeout(escalation);
+      if (settled) return;
+      settled = true;
+      cleanup();
       if (code === 0) resolve({ stdout, stderr });
       else reject(new ProcessExecutionError(friendlyProcessError(command, code, stderr.trim() || stdout.trim()), {
         stdout,
@@ -141,6 +216,9 @@ function runProcess(command: string, args: string[], cwd: string, input?: string
         exitCode: code,
       }));
     });
+    if (options.input !== undefined) child.stdin!.end(options.input);
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    if (options.signal?.aborted) cancel();
   });
 }
 
@@ -225,6 +303,7 @@ export async function runAgent(
   instruction: string,
   includeDiff = false,
   journal?: GenerationJournal,
+  signal?: AbortSignal,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -252,7 +331,11 @@ export async function runAgent(
   try {
     if (profile.provider === "codex") {
       const args = codexArgs(permission, projectPath, profile.modelId, existing?.id);
-      const result = await runProcess("codex", args, projectPath, prompt);
+      const result = await runProcess("codex", args, projectPath, {
+        input: prompt,
+        signal,
+        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+      });
       const parsed = parseCodexOutput(result.stdout);
       const sessionId = parsed.sessionId || existing?.id;
       if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
@@ -274,7 +357,11 @@ export async function runAgent(
     let sessionId = existing?.id || randomUUID();
     let result: ProcessResult;
     try {
-      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)), projectPath, prompt);
+      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)), projectPath, {
+        input: prompt,
+        signal,
+        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+      });
     } catch (error) {
       if (!existing || !isMissingClaudeSessionError(error)) throw error;
       await journal?.append({
@@ -290,7 +377,11 @@ export async function runAgent(
         } : {}),
       });
       sessionId = randomUUID();
-      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId), projectPath, prompt);
+      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId), projectPath, {
+        input: prompt,
+        signal,
+        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+      });
     }
     const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
     if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
@@ -309,6 +400,19 @@ export async function runAgent(
     });
     return { sessionId, text: parsed.result, generationId, durationMs };
   } catch (error) {
+    if (error instanceof ProcessCancelledError) {
+      await journal?.append({
+        type: "generation.cancelled",
+        generationId,
+        agent,
+        durationMs: Date.now() - startedAt,
+        reason: error.message,
+        exitCode: error.process.exitCode,
+        cliStdout: error.process.stdout,
+        cliStderr: error.process.stderr,
+      });
+      throw new AgentGenerationCancelledError();
+    }
     await journal?.append({
       type: "generation.failed",
       generationId,
@@ -328,7 +432,7 @@ export async function runAgent(
 export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
   const check = async (command: string) => {
     try {
-      await runProcess(command, ["--version"], process.cwd());
+      await runProcess(command, ["--version"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
       return true;
     } catch {
       return false;
@@ -338,4 +442,4 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
   return Object.fromEntries(AGENT_IDS.map((agent) => [agent, AGENT_PROFILES[agent].provider === "codex" ? codex : claude])) as Record<AgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs };
+export const __testing = { buildPrompt, parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs, runProcess };

@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { __testing } from "./agent-runner.js";
@@ -146,5 +149,65 @@ describe("Claude session recovery", () => {
       "--resume",
       "existing-session",
     ]);
+  });
+});
+
+describe("agent process cancellation", () => {
+  it("cancels an active generation promptly", async () => {
+    const controller = new AbortController();
+    const outcome = __testing.runProcess(
+      process.execPath,
+      ["-e", "setInterval(() => undefined, 1000)"],
+      process.cwd(),
+      { signal: controller.signal, timeoutMs: 10_000 },
+    ).catch((error: unknown) => error);
+
+    controller.abort();
+
+    await expect(outcome).resolves.toMatchObject({ name: "ProcessCancelledError" });
+  });
+
+  it.skipIf(process.platform === "win32")("terminates descendants with the cancelled agent process", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "agent-process-tree-"));
+    const pidPath = path.join(directory, "grandchild.pid");
+    const controller = new AbortController();
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: 'ignore' })",
+      "writeFileSync(process.argv[1], String(child.pid))",
+      "setInterval(() => undefined, 1000)",
+    ].join(";");
+    const outcome = __testing.runProcess(
+      process.execPath,
+      ["-e", script, pidPath],
+      process.cwd(),
+      { signal: controller.signal, timeoutMs: 10_000 },
+    ).catch((error: unknown) => error);
+
+    let grandchildPid = 0;
+    for (let attempt = 0; attempt < 100 && grandchildPid === 0; attempt += 1) {
+      try {
+        grandchildPid = Number(await readFile(pidPath, "utf8"));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    expect(grandchildPid).toBeGreaterThan(0);
+
+    controller.abort();
+    await expect(outcome).resolves.toMatchObject({ name: "ProcessCancelledError" });
+
+    let stillRunning = true;
+    for (let attempt = 0; attempt < 100 && stillRunning; attempt += 1) {
+      try {
+        process.kill(grandchildPid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } catch {
+        stillRunning = false;
+      }
+    }
+    expect(stillRunning).toBe(false);
+    await rm(directory, { recursive: true, force: true });
   });
 });
