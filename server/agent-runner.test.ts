@@ -89,6 +89,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("frame it as a side reaction rather than answering as though you were addressed");
     expect(prompt).toContain("do not apologize, agree to comply, accept the correction");
     expect(prompt).toContain("make your observer perspective unmistakable");
+    expect(prompt).toContain("only messages labeled [SOL] are your own history");
+    expect(prompt).toContain("including agents from the same provider");
+    expect(prompt).toContain('Before using continuity language such as "still," "as I said," or "my earlier point,"');
     expect(prompt).toContain("CURRENT PARTICIPANT STYLES");
     expect(prompt).toContain(`Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`);
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
@@ -102,6 +105,18 @@ describe("room prompt context", () => {
     expect(prompt).not.toContain("Please review the implementation.");
     expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
     expect(prompt).not.toContain("DISPOSITION:");
+  });
+
+  it.each([
+    ["codex-luna", "[LUNA]"],
+    ["codex-terra", "[TERRA]"],
+    ["codex-sol", "[SOL]"],
+    ["claude-sonnet", "[CLAUDE]"],
+  ] as const)("anchors %s self-history to its unique transcript label", async (agent, label) => {
+    const prompt = await __testing.buildPrompt(agent, state, "Join if useful.", false, "read-only");
+
+    expect(prompt).toContain(`only messages labeled ${label} are your own history`);
+    expect(prompt).toContain(`only on ${label} messages`);
   });
 
   it("adds worktree context only for an explicit review turn", async () => {
