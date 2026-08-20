@@ -7,7 +7,7 @@ import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/co
 import { AGENT_IDS, isAgentId } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { conversationRandom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
@@ -197,13 +197,13 @@ async function performTurn(turn: ConversationTurn) {
   }
 }
 
-async function performConversation(turns: ConversationTurn[], staged = false) {
+async function performConversation(turns: ConversationTurn[], staged = false, inviteAll = false) {
   const snapshot = store.snapshot();
   const energy = snapshot.settings.conversationEnergy;
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
   if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot));
+    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
@@ -269,7 +269,12 @@ app.post("/api/messages", async (request, response) => {
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
-    await performConversation(roomMessageTurns(store.snapshot()), true);
+    const conversationState = store.snapshot();
+    await performConversation(
+      roomMessageTurns(conversationState),
+      true,
+      latestHumanInvitesWholeRoom(conversationState),
+    );
   }));
   return response.status(202).json(store.snapshot());
 });

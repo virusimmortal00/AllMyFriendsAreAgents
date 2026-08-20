@@ -22,6 +22,8 @@ export interface TurnResult {
 
 const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
+const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
+const WHOLE_ROOM_EXCLUSION = /\b(?:not everyone|not everybody|no need for (?:everyone|everybody|all of you)|(?:everyone|everybody) (?:doesn['’]?t|does not|needn['’]?t|need not) need to)\b/i;
 
 function hashUnit(value: string) {
   let hash = 2166136261;
@@ -75,10 +77,20 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   });
 }
 
+export function latestHumanInvitesWholeRoom(state: RoomState) {
+  const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
+  return Boolean(latestHumanMessage
+    && WHOLE_ROOM_INVITATION.test(latestHumanMessage.text)
+    && !WHOLE_ROOM_EXCLUSION.test(latestHumanMessage.text));
+}
+
 export function roomMessageTurns(state: RoomState): ConversationTurn[] {
+  const wholeRoomInvitation = latestHumanInvitesWholeRoom(state);
   return rankRoomAgents(state).map((agent) => ({
     agent,
-    instruction: "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
+    instruction: wholeRoomInvitation
+      ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
+      : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
   }));
 }
 
@@ -125,8 +137,15 @@ export async function runEnergyConversation(
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
+  options: { inviteAll?: boolean } = {},
 ) {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
+  const hardMessageCeiling = options.inviteAll
+    ? Math.max(policy.hardMessageCeiling, candidates.length)
+    : policy.hardMessageCeiling;
+  const hardTurnCeiling = options.inviteAll
+    ? Math.max(policy.hardTurnCeiling, candidates.length)
+    : policy.hardTurnCeiling;
   const remaining = [...candidates];
   const invited = new Set<AgentId>();
   const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean }> = [];
@@ -140,11 +159,11 @@ export async function runEnergyConversation(
   let nextOutcomeKey = 0;
   let cancelled = false;
 
-  const record = async (turn: ConversationTurn): Promise<EnergyOutcome> => {
+  const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
     invited.add(turn.agent);
     const result = await performTurn({
       ...turn,
-      visibleMessageLimit: Math.min(3, policy.hardMessageCeiling - visibleMessagesDelivered),
+      visibleMessageLimit: Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered),
     });
     if (result.cancelled) cancelled = true;
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
@@ -163,14 +182,19 @@ export async function runEnergyConversation(
     return outcome;
   };
 
-  while (remaining.length > 0 && !lastOutcome && !cancelled) {
-    const turn = remaining.shift()!;
-    await record(turn);
+  if (options.inviteAll) {
+    while (remaining.length > 0 && !cancelled && visibleMessagesDelivered < hardMessageCeiling) {
+      await record(remaining.shift()!, 1);
+    }
+  } else {
+    while (remaining.length > 0 && !lastOutcome && !cancelled) {
+      await record(remaining.shift()!);
+    }
   }
   if (!lastOutcome || cancelled) return;
 
-  while (responseTurns < policy.hardTurnCeiling
-    && visibleMessagesDelivered < policy.hardMessageCeiling
+  while (responseTurns < hardTurnCeiling
+    && visibleMessagesDelivered < hardMessageCeiling
     && !cancelled) {
     const mention = pendingMentions.shift();
     if (mention) {

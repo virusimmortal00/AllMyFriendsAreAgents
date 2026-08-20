@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 
@@ -222,6 +222,41 @@ describe("room message policy", () => {
     ]);
     expect(rankRoomAgents(state, () => 0)[0]).toBe("codex-sol");
   });
+
+  it.each([
+    "How's everyone doing tonight?",
+    "What do you all think?",
+    "How are y'all feeling?",
+    "Hey all, any dinner preferences?",
+    "I'd like to hear from the whole room.",
+  ])("recognizes an explicit whole-room invitation: %s", (text) => {
+    const state = roomState([{ id: "human", speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" }]);
+
+    expect(latestHumanInvitesWholeRoom(state)).toBe(true);
+    expect(roomMessageTurns(state)[0]?.instruction).toContain("explicitly invites the whole room");
+  });
+
+  it("does not treat a generic open question as an invitation to every agent", () => {
+    const state = roomState([{
+      id: "human",
+      speaker: "you",
+      text: "What should we listen to next?",
+      timestamp: "2026-08-19T12:00:00Z",
+    }]);
+
+    expect(latestHumanInvitesWholeRoom(state)).toBe(false);
+  });
+
+  it("respects an explicit statement that the whole room need not answer", () => {
+    const state = roomState([{
+      id: "human",
+      speaker: "you",
+      text: "Not everyone needs to answer, but what should we listen to next?",
+      timestamp: "2026-08-19T12:00:00Z",
+    }]);
+
+    expect(latestHumanInvitesWholeRoom(state)).toBe(false);
+  });
 });
 
 describe("conversation energy", () => {
@@ -254,6 +289,30 @@ describe("conversation energy", () => {
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna"]);
+  });
+
+  it("offers every agent one concise turn when the human invites the whole room", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "low", performTurn, () => 1, { inviteAll: true });
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual([
+      "codex-luna",
+      "codex-terra",
+      "codex-sol",
+      "claude-sonnet",
+    ]);
+    expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
+  });
+
+  it("still offers the whole room a turn when an invited agent stays silent", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 0 })
+      .mockResolvedValue({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 1, { inviteAll: true });
+
+    expect(performTurn).toHaveBeenCalledTimes(4);
   });
 
   it("honors direct invitations across the soft budget but stops at the hard ceiling", async () => {
