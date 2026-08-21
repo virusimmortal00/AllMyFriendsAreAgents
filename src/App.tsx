@@ -482,6 +482,7 @@ export default function App() {
 
   function navigateImprovements(next: ImprovementsRoute | null) {
     if (!next) {
+      if (!improvementsView) return;
       window.history.pushState({}, "", "/");
       setImprovementsView(null);
       return;
@@ -530,8 +531,7 @@ export default function App() {
             onClick={() => { setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
           <button type="button" onClick={() => { changeName(); navigateImprovements(null); }}>Change name</button>
-          <button type="button" onClick={() => navigateImprovements(null)}>Chat</button>
-          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements({ view: "list", scope: "active" })} />
+          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
