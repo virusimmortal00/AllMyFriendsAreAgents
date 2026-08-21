@@ -6,7 +6,7 @@ import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/co
 import { AGENT_IDS, isAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { developerRequestAuthorized, openDeveloperToken } from "./developer-access.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
@@ -24,6 +24,7 @@ const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
+const presenceCandidateLimit = 2;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
 if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE !== "true") {
@@ -270,8 +271,9 @@ async function runJob(job: () => Promise<void>) {
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
   await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
   broadcast();
-  jobs.enqueue(`presence:${event}:${human.id}:${randomUUID()}`, () => runJob(async () => {
-    await performConversation(AGENT_IDS.map((agent) => ({
+  jobs.enqueue("presence-conversation", () => runJob(async () => {
+    const presenceState = roomSnapshot();
+    await performConversation(rankRoomAgents(presenceState).slice(0, presenceCandidateLimit).map((agent) => ({
       agent,
       visibleMessageLimit: 1,
       instruction: humanPresenceInstruction(human.name, event),
