@@ -181,7 +181,7 @@ export function AgentSettingsDialog({
             </label>
             <p>{supportsProjectWrites
               ? "Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only."
-              : "This provider is opinion-only in the initial integration and always runs in read-only ask mode."}</p>
+              : "This provider does not support project write access."}</p>
             {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
             {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
           </fieldset>

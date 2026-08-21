@@ -310,13 +310,12 @@ function codexArgs(permission: "read-only" | "writable", projectPath: string, mo
   ];
 }
 
-function cursorArgs(projectPath: string, model: string, sessionId?: string) {
+function cursorArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
   return [
     "-p",
     "--output-format",
     "json",
-    "--mode",
-    "ask",
+    ...(permission === "read-only" ? ["--mode", "ask"] : ["--force"]),
     "--sandbox",
     "enabled",
     "--trust",
@@ -399,7 +398,7 @@ export async function runAgent(
     }
 
     if (profile.provider === "cursor") {
-      const result = await runProcess(CURSOR_COMMAND, cursorArgs(projectPath, profile.modelId, existing?.id), projectPath, {
+      const result = await runProcess(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id), projectPath, {
         input: prompt,
         signal,
         timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,

@@ -110,7 +110,7 @@ describe("AgentSettingsDialog", () => {
     expect(html).not.toContain("Connected to the room");
   });
 
-  it("shows Cursor agents as opinion-only", () => {
+  it("allows Cursor agents to receive project write access", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
         agent="cursor-grok"
@@ -123,8 +123,9 @@ describe("AgentSettingsDialog", () => {
     );
 
     expect(html).toContain("Cursor [Grok 4.6]");
-    expect(html).toContain("opinion-only");
-    expect(html).toMatch(/type="checkbox" disabled=""/);
+    expect(html).toContain("Reviews always stay read-only");
+    expect(html).toMatch(/type="checkbox"/);
+    expect(html).not.toMatch(/type="checkbox" disabled=""/);
   });
 });
 

@@ -28,12 +28,15 @@ describe("Codex JSONL parsing", () => {
     expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
   });
 
-  it("pins Cursor sessions to a model while enforcing sandboxed ask mode on start and resume", () => {
-    expect(__testing.cursorArgs("/tmp/project", "cursor-grok-4.6-high")).toEqual([
+  it("pins Cursor sessions to a model and maps room permissions to CLI modes", () => {
+    expect(__testing.cursorArgs("read-only", "/tmp/project", "cursor-grok-4.6-high")).toEqual([
       "-p", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled", "--trust",
       "--workspace", "/tmp/project", "--model", "cursor-grok-4.6-high",
     ]);
-    expect(__testing.cursorArgs("/tmp/project", "gemini-3.1-pro", "cursor-session")).toContain("cursor-session");
+    expect(__testing.cursorArgs("writable", "/tmp/project", "gemini-3.1-pro", "cursor-session")).toEqual([
+      "-p", "--output-format", "json", "--force", "--sandbox", "enabled", "--trust",
+      "--workspace", "/tmp/project", "--model", "gemini-3.1-pro", "--resume", "cursor-session",
+    ]);
   });
 
   it("parses Cursor's structured result contract", () => {
@@ -77,9 +80,10 @@ describe("agent permissions", () => {
     expect(__testing.resolvePermission("claude-sonnet", state, false)).toBe("read-only");
   });
 
-  it("keeps Cursor opinion agents read-only even if stale settings select one", () => {
-    const staleState = { ...state, settings: { ...state.settings, writableAgent: "cursor-grok" as const } };
-    expect(__testing.resolvePermission("cursor-grok", staleState, false)).toBe("read-only");
+  it("allows a selected Cursor agent to write while keeping review turns read-only", () => {
+    const cursorState = { ...state, settings: { ...state.settings, writableAgent: "cursor-grok" as const } };
+    expect(__testing.resolvePermission("cursor-grok", cursorState, false)).toBe("writable");
+    expect(__testing.resolvePermission("cursor-grok", cursorState, true)).toBe("read-only");
   });
 });
 

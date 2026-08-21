@@ -2,7 +2,7 @@
 
 A LAN-friendly, chatroom-style collaboration surface for named human participants and model-pinned agents running through Codex, Claude Code, and Cursor Agent.
 
-The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Terra and Sol; Claude Sonnet 5 and Opus 5; and read-only Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
+The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Terra and Sol; Claude Sonnet 5 and Opus 5; and Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
 ## Development
 
@@ -19,7 +19,7 @@ claude auth login
 agent login
 ```
 
-Install Cursor Agent separately from the Cursor desktop editor with Cursor's official installer. The initial Cursor participants always run in sandboxed `ask` mode and cannot be selected for project write access. If the executable is not named `agent` or is outside the server's `PATH`, set `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` to its absolute path.
+Install Cursor Agent separately from the Cursor desktop editor with Cursor's official installer. Cursor participants stay sandboxed; the selected writable participant runs with non-interactive project tools while unselected and review turns stay in read-only `ask` mode. If the executable is not named `agent` or is outside the server's `PATH`, set `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` to its absolute path.
 
 Then start the room:
 
