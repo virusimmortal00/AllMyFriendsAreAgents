@@ -8,7 +8,14 @@ export const WAVE_ONE_IMPROVEMENT_IDS = [
   "source-control-adapter",
 ] as const;
 
+export const DEFERRED_WORKSPACE_FEATURE_IDS = [
+  "interleaved-roster-badges",
+  "transcript-badge-choice",
+  "private-shared-workspaces",
+] as const;
+
 export type WaveOneImprovementId = (typeof WAVE_ONE_IMPROVEMENT_IDS)[number];
+export type DeferredWorkspaceFeatureId = (typeof DEFERRED_WORKSPACE_FEATURE_IDS)[number];
 
 const SEED_ACTOR = "developer-team";
 const SEED_AT = "2026-08-21T00:00:00.000Z";
@@ -18,6 +25,11 @@ interface WaveOneSeed {
   readonly claim: string;
   readonly milestone: string;
   readonly nextAction: string;
+}
+
+interface DeferredSeed {
+  readonly id: DeferredWorkspaceFeatureId;
+  readonly claim: string;
 }
 
 const WAVE_ONE_SEEDS: readonly WaveOneSeed[] = [
@@ -39,6 +51,12 @@ const WAVE_ONE_SEEDS: readonly WaveOneSeed[] = [
     milestone: "Source-control adapter is implemented and independently accepted.",
     nextAction: "Implement and independently accept the source-control adapter.",
   },
+];
+
+const DEFERRED_SEEDS: readonly DeferredSeed[] = [
+  { id: "interleaved-roster-badges", claim: "Deferred interleaved roster badges; explicitly outside Wave 1." },
+  { id: "transcript-badge-choice", claim: "Deferred transcript-badge choice; explicitly outside Wave 1." },
+  { id: "private-shared-workspaces", claim: "Deferred private/shared workspaces; explicitly outside Wave 1." },
 ];
 
 const REPORTED_EVIDENCE = [
@@ -107,6 +125,28 @@ function seedProjection(seed: WaveOneSeed): Improvement {
     statusContract,
     createdAt: SEED_AT,
     updatedAt: SEED_AT,
+  };
+}
+
+function deferredProjection(seed: DeferredSeed): Improvement {
+  const statusContract: ImprovementStatusContract = {
+    schemaVersion: 1,
+    implementation: { state: "UNKNOWN" },
+    deployment: { state: "UNKNOWN" },
+    developerTeamEvidence: { state: "UNKNOWN" },
+    independentAcceptance: { state: "PENDING" },
+    upstreamPublication: { state: "UNPUBLISHED" },
+    nextAction: { state: "BLOCKED", blocker: "Deferred and explicitly outside Wave 1." },
+  };
+  return {
+    id: seed.id, revision: 1, state: "CANCELED", risk: "LOW", authorId: SEED_ACTOR,
+    technicalConsensus: { status: "PENDING", reviews: [] },
+    actionAuthority: { status: "PENDING", grantedBy: null, grantedByHuman: false, improvementRevision: null, allowedActions: [] },
+    claims: [{ id: `${seed.id}-scope`, statement: seed.claim }],
+    workClaim: { fencingToken: 0, holderMemberId: null, leaseExpiresAt: null, status: "UNCLAIMED", manifests: [], history: [] },
+    evidence: [],
+    attribution: [{ actorId: SEED_ACTOR, at: SEED_AT, change: "DEFERRED_OUTSIDE_WAVE_1", revision: 1 }],
+    statusContract, createdAt: SEED_AT, updatedAt: SEED_AT,
   };
 }
 
@@ -182,4 +222,29 @@ export function seedWaveOneImprovements(database: DatabaseSync, roomId: string) 
     database.exec("ROLLBACK");
     throw error;
   }
+}
+
+/** Adds only absent, explicitly deferred features; existing history is untouched. */
+export function seedDeferredWorkspaceFeatures(database: DatabaseSync, roomId: string) {
+  const created: DeferredWorkspaceFeatureId[] = [];
+  const skipped: DeferredWorkspaceFeatureId[] = [];
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const seed of DEFERRED_SEEDS) {
+      if (database.prepare("SELECT 1 FROM canonical_improvements WHERE room_id = ? AND id = ?").get(roomId, seed.id)) {
+        skipped.push(seed.id);
+        continue;
+      }
+      const projection = deferredProjection(seed);
+      const projectionJson = JSON.stringify(projection);
+      const statusJson = JSON.stringify(projection.statusContract);
+      database.prepare(`INSERT INTO canonical_improvements(room_id, id, revision, state, risk, author_id, created_at, updated_at, projection_json, status_contract_json) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`).run(roomId, projection.id, projection.state, projection.risk, projection.authorId, SEED_AT, SEED_AT, projectionJson, statusJson);
+      database.prepare(`INSERT INTO canonical_improvement_events(room_id, improvement_id, revision, actor_id, occurred_at, change_json, snapshot_json) VALUES (?, ?, 1, ?, ?, ?, ?)`).run(roomId, seed.id, SEED_ACTOR, SEED_AT, JSON.stringify("DEFERRED_OUTSIDE_WAVE_1"), projectionJson);
+      database.prepare(`INSERT INTO canonical_improvement_revisions(room_id, improvement_id, revision, lifecycle_state, status_contract_json, snapshot_json, created_at) VALUES (?, ?, 1, ?, ?, ?, ?)`).run(roomId, seed.id, projection.state, statusJson, projectionJson, SEED_AT);
+      database.prepare(`INSERT INTO canonical_improvement_audit_history(room_id, improvement_id, event_id, revision, event_kind, actor_id, occurred_at, details_json) VALUES (?, ?, 'deferred-wave-1', 1, 'DEFERRED', ?, ?, ?)`).run(roomId, seed.id, SEED_ACTOR, SEED_AT, JSON.stringify({ source: "wave-1", deferred: true }));
+      created.push(seed.id);
+    }
+    database.exec("COMMIT");
+    return { created, skipped } as const;
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
 }

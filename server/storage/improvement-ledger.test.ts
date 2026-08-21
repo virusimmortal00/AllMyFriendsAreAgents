@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { seedWaveOneImprovements, WAVE_ONE_IMPROVEMENT_IDS } from "./improvement-ledger.js";
+import { DEFERRED_WORKSPACE_FEATURE_IDS, seedDeferredWorkspaceFeatures, seedWaveOneImprovements, WAVE_ONE_IMPROVEMENT_IDS } from "./improvement-ledger.js";
 import { runSqliteMigrations } from "./sqlite-migrations.js";
 
 const ROOM_ID = "room-ledger-test";
@@ -150,5 +150,21 @@ describe("Wave 1 Improvements ledger seed", () => {
     } finally {
       database.close();
     }
+  });
+});
+
+describe("Deferred workspace feature ledger seed", () => {
+  it("records three distinct deferred items outside Wave 1 and is idempotent", async () => {
+    const database = await databaseWithRoom();
+    try {
+      expect(seedDeferredWorkspaceFeatures(database, ROOM_ID)).toEqual({ created: DEFERRED_WORKSPACE_FEATURE_IDS, skipped: [] });
+      const items = database.prepare("SELECT id, revision, projection_json, status_contract_json FROM canonical_improvements WHERE room_id = ? ORDER BY id").all(ROOM_ID) as Array<{ id: string; revision: number; projection_json: string; status_contract_json: string }>;
+      expect(items.map((item) => item.id)).toEqual([...DEFERRED_WORKSPACE_FEATURE_IDS].sort());
+      expect(items.every((item) => item.revision === 1 && JSON.parse(item.projection_json).claims[0].statement.includes("outside Wave 1"))).toBe(true);
+      expect(items.every((item) => JSON.parse(item.status_contract_json).nextAction.blocker === "Deferred and explicitly outside Wave 1.")).toBe(true);
+      const before = { items: rows(database, "canonical_improvements"), revisions: rows(database, "canonical_improvement_revisions"), audit: rows(database, "canonical_improvement_audit_history") };
+      expect(seedDeferredWorkspaceFeatures(database, ROOM_ID)).toEqual({ created: [], skipped: DEFERRED_WORKSPACE_FEATURE_IDS });
+      expect({ items: rows(database, "canonical_improvements"), revisions: rows(database, "canonical_improvement_revisions"), audit: rows(database, "canonical_improvement_audit_history") }).toEqual(before);
+    } finally { database.close(); }
   });
 });
