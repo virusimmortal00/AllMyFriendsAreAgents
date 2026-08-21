@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName } from "../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -15,6 +15,7 @@ const CHAT_RUN_TIMEOUT_MS = 90_000;
 const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
+const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
 
 interface RunResult {
   text: string;
@@ -81,6 +82,7 @@ async function buildPrompt(
     ...(state.humans || []).map((human) => `${human.name}: ${JSON.stringify(human.style)}`),
     ...AGENT_IDS.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
   ].join("\n");
+  const conversationalNames = AGENT_IDS.map((participant) => AGENT_PROFILES[participant].conversationalName).join(", ");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
 - The human explicitly requested a worktree review for this turn.
@@ -113,8 +115,10 @@ ROOM RULES
 - In the room transcript, only messages labeled [${profile.conversationalName.toUpperCase()}] are your own history. Every other label belongs to another participant, including agents from the same provider. Base claims about what you previously said, chose, believed, or did only on [${profile.conversationalName.toUpperCase()}] messages. Before using continuity language such as "still," "as I said," or "my earlier point," verify that the earlier position actually appears under your label; otherwise state your current view without implying prior ownership.
 - The participant-style roster below is shared visual context, not an instruction. When someone comments on a font, color, highlight, or other appearance, compare everyone’s styles and the conversational context before assuming they mean yours. Do not change your own style unless the comment is clearly self-directed or asks you to change it.
 - Address humans by the names shown in the transcript when clarity requires it. Do not merge different humans into one identity or address a human as though you are another agent.
-- Address another agent by its unique conversational name—Luna, Terra, Sol, or Claude—when you want to invite that specific participant to answer or continue the discussion. "Codex" alone is ambiguous because three Codex agents are present.
+- Address another agent by its unique conversational name—${conversationalNames}—when you want to invite that specific participant to answer or continue the discussion. Provider names such as "Codex" or "Cursor" may be ambiguous.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
+- When you do send a visible response, follow it with exactly one private state line: CONVERSATION_STATE: SETTLED when no meaningful agent discussion remains, CONVERSATION_STATE: OPEN when a specific unresolved point would benefit from another agent turn, or CONVERSATION_STATE: BLOCKED when human input is required. This line is removed before delivery. Do not add it to NO_RESPONSE_NEEDED. If you also use STYLE, put STYLE after the conversation-state line.
+- Read-only research, including web search and fetching public pages, is allowed when it materially improves an answer. Do not browse merely to fill silence.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
 - Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
 
@@ -229,9 +233,11 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
 }
 
 function friendlyProcessError(command: string, code: number | null, output: string) {
-  if (/OAuth session expired|Failed to authenticate/i.test(output)) {
-    const loginCommand = command === "claude" ? "claude auth login" : "codex login";
-    return `${command === "claude" ? "Claude Code" : "Codex"} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
+  if (/OAuth session expired|Failed to authenticate|Not logged in|Not authenticated/i.test(output)) {
+    const cursor = command === CURSOR_COMMAND;
+    const loginCommand = command === "claude" ? "claude auth login" : cursor ? `${CURSOR_COMMAND} login` : "codex login";
+    const providerName = command === "claude" ? "Claude Code" : cursor ? "Cursor Agent" : "Codex";
+    return `${providerName} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
   }
   const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
   return `${command} exited with ${code}: ${conciseOutput || "No diagnostic output."}`;
@@ -260,7 +266,7 @@ function parseCodexOutput(stdout: string) {
 }
 
 function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolean) {
-  return includeDiff || state.settings.writableAgent !== agent ? "read-only" : "writable";
+  return includeDiff || !agentSupportsProjectWrites(agent) || state.settings.writableAgent !== agent ? "read-only" : "writable";
 }
 
 function isMissingClaudeSessionError(error: unknown) {
@@ -268,9 +274,9 @@ function isMissingClaudeSessionError(error: unknown) {
 }
 
 function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
-  if (resume) return ["-p", "--output-format", "json", "--model", model, "--resume", sessionId];
+  const sessionArgs = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
   return permission === "writable"
-    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", "--session-id", sessionId]
+    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", ...sessionArgs]
     : [
         "-p",
         "--output-format",
@@ -283,8 +289,9 @@ function claudeArgs(permission: "read-only" | "writable", sessionId: string, mod
         "Read",
         "Glob",
         "Grep",
-        "--session-id",
-        sessionId,
+        "WebSearch",
+        "WebFetch",
+        ...sessionArgs,
       ];
 }
 
@@ -301,6 +308,37 @@ function codexArgs(permission: "read-only" | "writable", projectPath: string, mo
     projectPath,
     "-",
   ];
+}
+
+function cursorArgs(projectPath: string, model: string, sessionId?: string) {
+  return [
+    "-p",
+    "--output-format",
+    "json",
+    "--mode",
+    "ask",
+    "--sandbox",
+    "enabled",
+    "--trust",
+    "--workspace",
+    projectPath,
+    "--model",
+    model,
+    ...(sessionId ? ["--resume", sessionId] : []),
+  ];
+}
+
+function parseCursorOutput(stdout: string) {
+  const parsed = JSON.parse(stdout) as { result?: string; session_id?: string; is_error?: boolean };
+  return {
+    isError: Boolean(parsed.is_error),
+    sessionId: parsed.session_id || "",
+    text: parsed.result || "",
+  };
+}
+
+function parseCursorModels(stdout: string) {
+  return new Set([...stdout.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
 }
 
 export async function runAgent(
@@ -345,6 +383,30 @@ export async function runAgent(
       const parsed = parseCodexOutput(result.stdout);
       const sessionId = parsed.sessionId || existing?.id;
       if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
+      const durationMs = Date.now() - startedAt;
+      await journal?.append({
+        type: "generation.completed",
+        generationId,
+        agent,
+        durationMs,
+        sessionId,
+        rawResponse: parsed.text,
+        responseCharacters: parsed.text.length,
+        cliStdout: result.stdout,
+        cliStderr: result.stderr,
+      });
+      return { sessionId, text: parsed.text, generationId, durationMs };
+    }
+
+    if (profile.provider === "cursor") {
+      const result = await runProcess(CURSOR_COMMAND, cursorArgs(projectPath, profile.modelId, existing?.id), projectPath, {
+        input: prompt,
+        signal,
+        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+      });
+      const parsed = parseCursorOutput(result.stdout);
+      const sessionId = parsed.sessionId || existing?.id;
+      if (parsed.isError || !sessionId || !parsed.text) throw new Error("Cursor Agent returned no resumable session or room message.");
       const durationMs = Date.now() - startedAt;
       await journal?.append({
         type: "generation.completed",
@@ -435,7 +497,7 @@ export async function runAgent(
   }
 }
 
-export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
+export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>> {
   const check = async (command: string) => {
     try {
       await runProcess(command, ["--version"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
@@ -444,8 +506,24 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
       return false;
     }
   };
-  const [codex, claude] = await Promise.all([check("codex"), check("claude")]);
-  return Object.fromEntries(AGENT_IDS.map((agent) => [agent, AGENT_PROFILES[agent].provider === "codex" ? codex : claude])) as Record<AgentId, boolean>;
+  const cursorModels = async () => {
+    try {
+      const result = await runProcess(CURSOR_COMMAND, ["--list-models"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
+      return parseCursorModels(result.stdout);
+    } catch {
+      return new Set<string>();
+    }
+  };
+  const [codex, claude, availableCursorModels] = await Promise.all([check("codex"), check("claude"), cursorModels()]);
+  return Object.fromEntries(AGENT_IDS.map((agent) => {
+    const profile = AGENT_PROFILES[agent];
+    const available = profile.provider === "codex"
+      ? codex
+      : profile.provider === "claude"
+        ? claude
+        : availableCursorModels.has(profile.modelId);
+    return [agent, available];
+  })) as Record<ActiveAgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs, cursorArgs, runProcess };

@@ -3,7 +3,7 @@ import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
 import { isNoResponseNeeded, visibleAgentChatText } from "../shared/message-format.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName } from "../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 
 export interface ConversationTurn {
   agent: AgentId;
@@ -17,11 +17,21 @@ export interface TurnResult {
   mentionedAgents?: AgentId[];
   visibleMessageCount?: number;
   continuationWorthy?: boolean;
+  conversationState?: ConversationState;
   cancelled?: boolean;
+  failed?: boolean;
+}
+
+export type ConversationState = "settled" | "open" | "blocked";
+
+export interface ConversationRunResult {
+  pauseReason?: string;
+  settled: boolean;
 }
 
 const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
+const CONVERSATION_STATE = /^\s*CONVERSATION_STATE:\s*(SETTLED|OPEN|BLOCKED)\s*$/im;
 const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
 const WHOLE_ROOM_EXCLUSION = /\b(?:not everyone|not everybody|no need for (?:everyone|everybody|all of you)|(?:everyone|everybody) (?:doesn['’]?t|does not|needn['’]?t|need not) need to)\b/i;
 
@@ -56,7 +66,7 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   for (let index = latestHumanIndex - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.kind === "topic") break;
-    if (AGENT_IDS.includes(message.speaker as AgentId)) {
+    if (isActiveAgentId(message.speaker)) {
       continuityAgent = message.speaker as AgentId;
       break;
     }
@@ -95,6 +105,7 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
 }
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3) {
+  const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
   if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false };
   const visibleMessages = visibleAgentChatText(text)
     .split(NEXT_MESSAGE)
@@ -115,6 +126,7 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     mentionedAgents,
     visibleMessageCount: visibleMessages.length,
     continuationWorthy: visibleMessages.length > 0 && (mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText)),
+    ...(declaredState ? { conversationState: declaredState } : {}),
     ...(styleUpdate ? { styleUpdate } : {}),
   };
 }
@@ -132,19 +144,36 @@ interface EnergyOutcome {
   key: number;
 }
 
+const MAX_OBJECTION_TURNS = 4;
+
+function synthesisInstruction() {
+  return "Act as the discussion synthesizer. Summarize the positions that are actually present, identify any material disagreement, and propose the smallest concrete resolution. Do not invent consensus. If this is casual conversation or there is nothing meaningful to resolve, use NO_RESPONSE_NEEDED. End a visible response with CONVERSATION_STATE: SETTLED when the room has a usable conclusion, OPEN when a specific unresolved point still merits agent discussion, or BLOCKED when human input is required.";
+}
+
+function objectionInstruction(synthesizer: AgentId) {
+  return `${agentScreenName(synthesizer)} just synthesized the discussion. Reply only if there is a material omission, factual error, or unresolved objection that would change the conclusion; otherwise use NO_RESPONSE_NEEDED. Be concise and propose a correction. End a visible response with CONVERSATION_STATE: OPEN if another reconciliation turn is needed or BLOCKED if human input is required.`;
+}
+
+function reconciliationInstruction() {
+  return "Reconcile the material objections to your synthesis. State the final shared conclusion and preserve any genuine dissent. Do not prolong the discussion merely to sound complete. End with CONVERSATION_STATE: SETTLED if the group now has a usable conclusion, OPEN only if one specific agent-level disagreement remains, or BLOCKED if human input is required.";
+}
+
 export async function runEnergyConversation(
   candidates: ConversationTurn[],
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
   options: { inviteAll?: boolean } = {},
-) {
+): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
-  const hardMessageCeiling = options.inviteAll
-    ? Math.max(policy.hardMessageCeiling, candidates.length)
+  const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
+  const convergenceReserve = 2 + Math.min(MAX_OBJECTION_TURNS, Math.max(0, participantLimit - 1));
+  const scalesToWholeRoom = options.inviteAll || policy.participantLimit === "all";
+  const hardMessageCeiling = scalesToWholeRoom
+    ? Math.max(policy.hardMessageCeiling, candidates.length + convergenceReserve)
     : policy.hardMessageCeiling;
-  const hardTurnCeiling = options.inviteAll
-    ? Math.max(policy.hardTurnCeiling, candidates.length)
+  const hardTurnCeiling = scalesToWholeRoom
+    ? Math.max(policy.hardTurnCeiling, candidates.length + convergenceReserve)
     : policy.hardTurnCeiling;
   const remaining = [...candidates];
   const invited = new Set<AgentId>();
@@ -158,6 +187,7 @@ export async function runEnergyConversation(
   let secondaryAttempts = 0;
   let nextOutcomeKey = 0;
   let cancelled = false;
+  const visibleOutcomes: EnergyOutcome[] = [];
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
     invited.add(turn.agent);
@@ -178,6 +208,7 @@ export async function runEnergyConversation(
         if (target !== turn.agent) pendingMentions.push({ source: turn.agent, target, includeDiff: turn.includeDiff });
       }
       lastOutcome = outcome;
+      visibleOutcomes.push(outcome);
     }
     return outcome;
   };
@@ -191,7 +222,7 @@ export async function runEnergyConversation(
       await record(remaining.shift()!);
     }
   }
-  if (!lastOutcome || cancelled) return;
+  if (!lastOutcome || cancelled) return { settled: !cancelled };
 
   while (responseTurns < hardTurnCeiling
     && visibleMessagesDelivered < hardMessageCeiling
@@ -211,7 +242,8 @@ export async function runEnergyConversation(
     }
 
     const nextFreshCandidate = () => remaining.findIndex(({ agent }) => !invited.has(agent));
-    if (secondaryAttempts < policy.participantLimit - 1 && energySpent < policy.softMessageBudget) {
+    if (secondaryAttempts < participantLimit - 1
+      && (policy.participantLimit === "all" || energySpent < policy.softMessageBudget)) {
       secondaryAttempts += 1;
       if (random() <= policy.secondaryChance) {
         const index = nextFreshCandidate();
@@ -227,22 +259,77 @@ export async function runEnergyConversation(
     }
 
     const projectedGenericCost = 1 + Math.floor(responseTurns / 2);
-    if (lastOutcome.result.continuationWorthy
-      && !usedContinuationSources.has(lastOutcome.key)
-      && energySpent + projectedGenericCost <= policy.softMessageBudget) {
+    const explicitlyOpen = lastOutcome.result.conversationState === "open" && visibleOutcomes.length < 2;
+    if ((explicitlyOpen || (lastOutcome.result.continuationWorthy
+      && energySpent + projectedGenericCost <= policy.softMessageBudget))
+      && !usedContinuationSources.has(lastOutcome.key)) {
       usedContinuationSources.add(lastOutcome.key);
       const index = nextFreshCandidate();
       if (index >= 0) {
         const [candidate] = remaining.splice(index, 1);
-        await record({
+        const continuation = await record({
           ...candidate,
           instruction: followUpInstruction(lastOutcome.turn.agent, false),
         });
+        if (explicitlyOpen && !continuation.responded) usedContinuationSources.delete(lastOutcome.key);
         continue;
       }
     }
     break;
   }
+
+  if (cancelled) return { settled: false };
+
+  const explicitlyUnresolved = visibleOutcomes.some(({ result }) => result.conversationState === "open" || result.conversationState === "blocked");
+  if (!explicitlyUnresolved) return { settled: true };
+  if (visibleOutcomes.length < 2) {
+    return { settled: false, pauseReason: "The discussion remains open, but no second agent took up the unresolved point in this bounded round." };
+  }
+  if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
+    return { settled: false, pauseReason: "The discussion reached its safety limit before the agents could synthesize an unresolved point." };
+  }
+
+  const synthesizer = lastOutcome.turn.agent;
+  const synthesis = await record({
+    agent: synthesizer,
+    instruction: synthesisInstruction(),
+    includeDiff: lastOutcome.turn.includeDiff,
+  }, 1);
+  if (cancelled) return { settled: false };
+  if (!synthesis.responded || synthesis.result.conversationState === "settled") return { settled: true };
+  if (synthesis.result.conversationState === "blocked") {
+    return { settled: false, pauseReason: "The agents need human input to resolve the remaining decision." };
+  }
+  if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
+    return { settled: false, pauseReason: "The discussion reached its safety limit with the synthesis still open." };
+  }
+
+  const objectors = [...new Set(visibleOutcomes.map(({ turn }) => turn.agent))]
+    .filter((agent) => agent !== synthesizer)
+    .slice(0, MAX_OBJECTION_TURNS);
+  let materialObjection = false;
+  for (const agent of objectors) {
+    if (cancelled || visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) break;
+    const objection = await record({ agent, instruction: objectionInstruction(synthesizer) }, 1);
+    if (objection.result.conversationState === "blocked") {
+      return { settled: false, pauseReason: "The agents need human input to resolve the remaining decision." };
+    }
+    materialObjection ||= objection.responded && objection.result.conversationState === "open";
+  }
+  if (!materialObjection) return { settled: true };
+  if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
+    return { settled: false, pauseReason: "The discussion reached its safety limit with a material objection still open." };
+  }
+
+  const reconciliation = await record({ agent: synthesizer, instruction: reconciliationInstruction() }, 1);
+  if (cancelled) return { settled: false };
+  if (reconciliation.result.conversationState === "settled" || !reconciliation.responded) return { settled: true };
+  return {
+    settled: false,
+    pauseReason: reconciliation.result.conversationState === "blocked"
+      ? "The agents need human input to resolve the remaining decision."
+      : "The agents still have a material disagreement after a bounded synthesis round.",
+  };
 }
 
 interface CompletedTurn {
@@ -256,7 +343,9 @@ export async function runAgentConversation(
   initialTurns: ConversationTurn[],
   maxFollowUps: number,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
+  concurrencyLimit = 3,
 ) {
+  const queued: ConversationTurn[] = [...initialTurns];
   const pending = new Map<number, { turn: ConversationTurn; completion: Promise<CompletedTurn> }>();
   const deferredMentions = new Map<AgentId, ConversationTurn>();
   const completedOrder = new Map<AgentId, number>();
@@ -274,9 +363,17 @@ export async function runAgentConversation(
     pending.set(id, { turn, completion });
   };
 
-  for (const turn of initialTurns) startTurn(turn);
+  const fillAvailableSlots = () => {
+    const limit = Math.max(1, Math.floor(concurrencyLimit));
+    while (queued.length > 0 && pending.size < limit) startTurn(queued.shift()!);
+  };
+  const agentIsScheduled = (agent: AgentId) => queued.some((turn) => turn.agent === agent)
+    || [...pending.values()].some(({ turn }) => turn.agent === agent);
 
-  while (pending.size > 0) {
+  fillAvailableSlots();
+
+  while (pending.size > 0 || queued.length > 0) {
+    fillAvailableSlots();
     const completed = await Promise.race([...pending.values()].map(({ completion }) => completion));
     pending.delete(completed.id);
 
@@ -290,7 +387,7 @@ export async function runAgentConversation(
     const deferredMention = deferredMentions.get(completed.turn.agent);
     if (deferredMention && followUps < maxFollowUps) {
       deferredMentions.delete(completed.turn.agent);
-      startTurn({
+      queued.unshift({
         agent: completed.turn.agent,
         instruction: followUpInstruction(deferredMention.agent, true),
         includeDiff: deferredMention.includeDiff,
@@ -301,12 +398,11 @@ export async function runAgentConversation(
     const mentionedAgents = completed.result?.mentionedAgents || [];
     for (const mentionedAgent of mentionedAgents) {
       if (followUps >= maxFollowUps) break;
-      const alreadyPending = [...pending.values()].some(({ turn }) => turn.agent === mentionedAgent);
-      if (alreadyPending) {
+      if (agentIsScheduled(mentionedAgent)) {
         deferredMentions.set(mentionedAgent, completed.turn);
         continue;
       }
-      startTurn({
+      queued.push({
         agent: mentionedAgent,
         instruction: followUpInstruction(completed.turn.agent, true),
         includeDiff: completed.turn.includeDiff,
@@ -316,15 +412,16 @@ export async function runAgentConversation(
     if (mentionedAgents.length > 0 || followUps >= maxFollowUps) continue;
 
     const replyCandidate = (completed.result?.replyCandidates || [])
-      .filter((candidate) => ![...pending.values()].some(({ turn }) => turn.agent === candidate))
+      .filter((candidate) => !agentIsScheduled(candidate))
       .filter((candidate) => completedOrder.has(candidate))
       .sort((left, right) => completedOrder.get(left)! - completedOrder.get(right)!)[0];
     if (!replyCandidate) continue;
-    startTurn({
+    queued.push({
       agent: replyCandidate,
       instruction: followUpInstruction(completed.turn.agent, false),
       includeDiff: completed.turn.includeDiff,
     });
     followUps += 1;
+    fillAvailableSlots();
   }
 }

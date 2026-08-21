@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import type { PublicRoomState } from "./types.js";
 
-export const ROOM_EVENT_HEARTBEAT_MS = 15_000;
+export const ROOM_EVENT_HEARTBEAT_MS = 3_000;
 
 export class RoomEventStream {
   private readonly clients = new Set<Response>();
@@ -63,7 +63,7 @@ export class RoomEventStream {
   private startHeartbeat() {
     if (this.heartbeat) return;
     this.heartbeat = setInterval(() => {
-      const event = `: keepalive ${new Date().toISOString()}\n\n`;
+      const event = `event: heartbeat\ndata: ${new Date().toISOString()}\n\n`;
       for (const client of [...this.clients]) this.write(client, event);
     }, ROOM_EVENT_HEARTBEAT_MS);
     this.heartbeat.unref();

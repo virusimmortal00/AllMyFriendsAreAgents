@@ -1,19 +1,25 @@
 # AllMyFriendsAreAgents
 
-A LAN-friendly, chatroom-style collaboration surface for named human participants, three model-specific Codex participants, and Claude Code.
+A LAN-friendly, chatroom-style collaboration surface for named human participants and model-pinned agents running through Codex, Claude Code, and Cursor Agent.
 
-The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster is Codex Luna (`gpt-5.6-luna`), Codex Terra (`gpt-5.6-terra`), Codex Sol (`gpt-5.6-sol`), and Claude (`claude-sonnet-5`). Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
+The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Terra and Sol; Claude Sonnet 5 and Opus 5; and read-only Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
 ## Development
+
+Node.js 24 or newer and pnpm are required. The SQLite backend uses Node's built-in `node:sqlite` module and does not require a separately installed SQLite package.
 
 Prerequisites:
 
 ```bash
 codex --version
 claude --version
+agent --version
 codex login
 claude auth login
+agent login
 ```
+
+Install Cursor Agent separately from the Cursor desktop editor with Cursor's official installer. The initial Cursor participants always run in sandboxed `ask` mode and cannot be selected for project write access. If the executable is not named `agent` or is outside the server's `PATH`, set `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` to its absolute path.
 
 Then start the room:
 
@@ -23,6 +29,39 @@ pnpm run dev
 ```
 
 Open <http://127.0.0.1:4173> on the host Mac. Vite runs on `127.0.0.1:4173` and proxies `/api` to `127.0.0.1:53147`.
+
+### Developer-team room bridge
+
+The running server creates a private bearer token in its configured data directory. Local development agents can use the scoped room CLI to inspect the active room, send a clearly attributed message, or wait for the current conversation to settle:
+
+```bash
+pnpm room:tool state --limit=20
+pnpm room:tool send "Please critique the workspace proposal." --wait
+pnpm room:tool wait --timeout=120
+```
+
+The generated compatibility member appears as **Legacy Developer Agent** (or the configured name) and enters the same bounded conversation pipeline as browser messages. Its token exposes room communication only: it does not grant improvement, repository-write, or external-action permissions. Requests require a member token even on loopback, and unauthorized bridge routes deliberately return `404`. Set `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` to change the compatibility member's visible name or `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` to supply its secret explicitly. Additional members and improvement capabilities are configured explicitly as described below.
+
+To run an isolated development copy without touching an existing room process or its data:
+
+```bash
+ALL_MY_FRIENDS_ARE_AGENTS_WEB_PORT=4174 \
+ALL_MY_FRIENDS_ARE_AGENTS_PORT=53148 \
+ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR=.runtime/storage-plumbing \
+pnpm run dev
+```
+
+The existing JSON store remains the default during the storage migration. SQLite is available as an explicit opt-in with `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite`; PostgreSQL remains fail-closed until its adapter is implemented. Configuration examples live in `.env.example`.
+
+To copy an existing JSON room into a new SQLite database without modifying the source file:
+
+```bash
+pnpm run storage:import:sqlite -- \
+  --source=.allmyfriendsareagents \
+  --database=.runtime/import-check/amfaa.sqlite
+```
+
+The importer refuses to replace an existing SQLite room unless `--overwrite` is provided. Verify the imported database through an isolated server before changing the active backend.
 
 To use a trusted LAN tunnel or reverse proxy, explicitly allow its hostname:
 
@@ -42,9 +81,29 @@ By default the agents inspect this repository. To point the room at another proj
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
 ```
 
-Normal human messages create a staged set of response opportunities rather than invoking all four agents at once. The server ranks a primary candidate from conversational continuity, recent engagement, quiet time, and deterministic jitter; if that agent declines with `NO_RESPONSE_NEEDED`, the opportunity passes to the next candidate. Depending on the room's conversation-energy setting, a second participant may then see the updated transcript and decide whether it has a distinct contribution. Direct mentions and substantive continuation cues can extend the exchange within progressively tighter soft limits and an absolute ceiling. Explicit **Actions → Review with all agents** still asks all four participants for a read-only review.
+Normal human messages create a staged set of response opportunities rather than invoking the whole roster at once. The server ranks a primary candidate from conversational continuity, recent engagement, quiet time, and deterministic jitter; if that agent declines with `NO_RESPONSE_NEEDED`, the opportunity passes to the next candidate. Depending on the room's conversation-energy setting, a second participant may then see the updated transcript and decide whether it has a distinct contribution. Direct mentions and substantive continuation cues can extend the exchange within progressively tighter soft limits and an absolute ceiling. Explicit **Actions → Review with all agents** still asks every active agent for a read-only review.
 
-Conversation energy has four levels: **Low** usually yields one respondent, **Balanced** usually one or two, **Lively** permits several participants, and **Party** lets the whole room pile in while retaining the emergency ceiling. The mechanism is server-owned and is never included in agent prompts.
+Claude Code participants retain read-only project access during ordinary and review turns while also receiving Claude Code's `WebSearch` and `WebFetch` tools. The same explicit tool policy is reapplied when a Claude session resumes, so Sonnet and Opus can research current public information without gaining edit or shell permissions.
+
+Conversation energy has four levels: **Low** usually yields one respondent, **Balanced** usually one or two, **Lively** permits several participants, and **Party** scales participation to the configured roster while retaining an emergency ceiling. When agents explicitly mark a discussion unresolved, the server runs a bounded synthesis, objection, and reconciliation phase. A bounded round ends without adding orchestration instructions to the transcript; a human can respond naturally or optionally use **Actions → Continue discussion** to invite another round.
+
+Bulk actions launch at most three agent CLI processes concurrently by default. Self-hosters can tune that resource limit with `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY`; staged human-message conversations remain sequential so each agent sees the latest transcript.
+
+## Developer team bridge
+
+The authenticated developer bridge uses stable team-member IDs rather than a special developer persona. Configure members with `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TEAM_JSON`, an array of objects containing `memberId`, `displayName`, `roles`, `capabilities`, and a token of at least 32 characters. Configuration is persisted as immutable revisions in `.allmyfriendsareagents/developer-team.json`; only token hashes are stored. Removing a capability or rotating a token creates a new revision, and manifests on claimed improvements retain the exact member/config revision, model, harness, prompt reference or hash, tool grants, policy revision, base commit, and environment used for that run.
+
+Existing `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` or `developer-token` installations migrate to the stable `developer-agent` member ID. That compatibility member receives only its historical room-read and room-chat capabilities, so migration preserves attribution without silently granting improvement authority. The existing `room:tool` continues to work during rollout.
+
+Improvement bridge endpoints live under `/api/developer/improvements/:id`. They support authenticated reads, renewable exclusive claims, claim lifecycle operations (`renew`, `handoff`, `release`, `expire`, `complete`, and `manifest`), evidence, independent reviews, and policy-checked transition requests. Every mutation uses the authenticated member as its actor and requires the canonical improvement revision. Worker writes also require the current claim fencing token. Expiry, replacement, handoff, manifest changes, release, and completion remain in append-only claim and repository history; idempotency keys make retries safe. Starting work invokes the shared consensus, authority, risk/reviewer-threshold, bounded-action, and emergency-stop policy.
+
+The optional coordinator heartbeat continues already-authorized bounded work through an external developer-team executor. Configure `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL` to enable it; set `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_HEARTBEAT_ENABLED=false` to opt out explicitly. Its SQLite journal in the data directory holds the singleton lease, stable revision-scoped idempotency keys, attempts, failures, and returned evidence. `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED` and `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED` bound each tick (defaults: 5 and 2). Interval, lease, retry, member identity, and bearer token are configurable with the corresponding `COORDINATOR_*` environment variables. The coordinator only calls the injected HTTP executor; it does not edit the live checkout, merge, deploy, change credentials, or perform destructive operations itself.
+
+Team roster membership is persistent and separate from ephemeral presence (`SLEEPING`, `AVAILABLE`, `WORKING`, `COOLING_DOWN`, or `OFFLINE`). Presence changes are exposed in the authenticated room view and do not create join/leave transcript messages.
+
+Provider quota, authentication, and transient failures are participant-local. The room continues with healthy agents while the affected participant shows a durable cooldown or unavailable status in the roster; provider diagnostics do not enter conversational scrollback. Cooldowns survive an API restart and clear after the participant completes a successful turn.
+
+Connected browsers keep the current transcript and locally saved draft visible if the API restarts. Requests have bounded timeouts, reconnect attempts use capped exponential backoff, and recovery waits for readiness before rejoining and accepting the SSE stream's initial snapshot. Sending stays disabled while disconnected. A message whose POST result is unknown is retained for explicit manual resend with a durable client ID, and the server deduplicates that ID so retrying cannot create a second message.
 
 Agent messages are delivered with automatic conversational pacing. The server estimates a compressed read-and-type duration from the unread room messages and the reply length, subtracts time the agent already spent generating, and caps the target so longer answers do not make the room drag. This delay is entirely outside the agent prompt and context.
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
+import { AGENT_IDS } from "../shared/participants.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
   return {
@@ -20,8 +21,8 @@ function roomState(messages: RoomMessage[]): RoomState {
 }
 
 function candidatesForAllAgents(): ConversationTurn[] {
-  return ["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"].map((agent) => ({
-    agent: agent as AgentId,
+  return AGENT_IDS.map((agent) => ({
+    agent,
     instruction: "Consider joining.",
   }));
 }
@@ -30,10 +31,17 @@ describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex-sol", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
       visibleMessages: ["Claude, what do you think?"],
-      replyCandidates: ["codex-luna", "codex-terra", "claude-sonnet"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
       mentionedAgents: ["claude-sonnet"],
       visibleMessageCount: 1,
       continuationWorthy: true,
+    });
+  });
+
+  it("keeps the declared conversation state private while returning it to the orchestrator", () => {
+    expect(parseAgentTurn("codex-sol", "We should test the migration first.\n\nCONVERSATION_STATE: OPEN")).toMatchObject({
+      visibleMessages: ["We should test the migration first."],
+      conversationState: "open",
     });
   });
 
@@ -54,7 +62,7 @@ describe("agent turn parsing", () => {
       DEFAULT_PARTICIPANT_STYLES["claude-sonnet"],
     )).toEqual({
       visibleMessages: ["A useful answer."],
-      replyCandidates: ["codex-luna", "codex-terra", "codex-sol"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "claude-sonnet"),
       mentionedAgents: [],
       visibleMessageCount: 1,
       continuationWorthy: false,
@@ -98,7 +106,7 @@ describe("agent turn parsing", () => {
       "road trip 🤘🚙🛠️ :-)\n<<<NEXT>>>\n🇺🇸 1️⃣",
     )).toMatchObject({
       visibleMessages: ["road trip :-)"],
-      replyCandidates: ["codex-luna", "codex-terra", "claude-sonnet"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
     });
   });
 
@@ -174,12 +182,9 @@ describe("agent conversations", () => {
       return { promise, resolve };
     }
 
-    const initial = new Map([
-      ["codex-luna", deferred<TurnResult>()],
-      ["codex-terra", deferred<TurnResult>()],
-      ["codex-sol", deferred<TurnResult>()],
-      ["claude-sonnet", deferred<TurnResult>()],
-    ] as const);
+    const initial = new Map<AgentId, ReturnType<typeof deferred<TurnResult>>>(
+      AGENT_IDS.map((agent) => [agent, deferred<TurnResult>()]),
+    );
     const lunaReaction = deferred<TurnResult>();
     const seenAgents: AgentId[] = [];
     const turnCounts = new Map<AgentId, number>();
@@ -191,26 +196,53 @@ describe("agent conversations", () => {
     });
 
     const concurrentTurns = candidatesForAllAgents();
-    const conversation = runAgentConversation(concurrentTurns, 1, performTurn);
-    await vi.waitFor(() => expect(seenAgents).toEqual(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    const conversation = runAgentConversation(concurrentTurns, 1, performTurn, AGENT_IDS.length);
+    await vi.waitFor(() => expect(seenAgents).toEqual(AGENT_IDS));
 
-    initial.get("codex-luna")!.resolve({ replyCandidates: ["codex-terra", "codex-sol", "claude-sonnet"] });
+    initial.get("codex-terra")!.resolve({ replyCandidates: ["codex-sol", "claude-sonnet", "claude-opus"] });
     await Promise.resolve();
-    expect(performTurn).toHaveBeenCalledTimes(4);
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
 
-    initial.get("codex-terra")!.resolve({ replyCandidates: ["codex-luna", "codex-sol", "claude-sonnet"] });
-    await vi.waitFor(() => expect(seenAgents).toEqual(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet", "codex-luna"]));
-    initial.get("codex-sol")!.resolve({});
-    initial.get("claude-sonnet")!.resolve({});
+    initial.get("codex-sol")!.resolve({ replyCandidates: ["codex-terra", "claude-sonnet", "claude-opus"] });
+    await vi.waitFor(() => expect(seenAgents).toEqual([...AGENT_IDS, "codex-terra"]));
+    for (const agent of AGENT_IDS) {
+      if (agent !== "codex-terra" && agent !== "codex-sol") initial.get(agent)!.resolve({});
+    }
     lunaReaction.resolve({});
     await conversation;
+  });
+
+  it("limits concurrent bulk agent launches", async () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((next) => { resolve = next; });
+      return { promise, resolve };
+    }
+    const completions = AGENT_IDS.map(() => deferred<TurnResult>());
+    let active = 0;
+    let maximumActive = 0;
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      const index = AGENT_IDS.findIndex((agent) => agent === turn.agent);
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      return completions[index].promise.finally(() => { active -= 1; });
+    });
+
+    const conversation = runAgentConversation(candidatesForAllAgents(), 0, performTurn, 3);
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    completions[0].resolve({});
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(4));
+    for (const completion of completions) completion.resolve({});
+    await conversation;
+
+    expect(maximumActive).toBe(3);
   });
 });
 
 describe("room message policy", () => {
   it("ranks every configured agent as a staged candidate", () => {
     const turns = roomMessageTurns(roomState([]));
-    expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(AGENT_IDS));
     expect(turns[0]?.instruction).toContain("decide whether the message is actually directed at you");
     expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
   });
@@ -269,7 +301,18 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "low", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
+  });
+
+  it("falls through failed participants without cancelling the room pulse", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ failed: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: true });
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
   });
 
   it("stages a second balanced invitation after the first visible response", async () => {
@@ -279,7 +322,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
     expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
   });
 
@@ -288,7 +331,65 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra"]);
+  });
+
+  it("seeks another participant when an agent explicitly leaves a point open", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValueOnce({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
+
+    expect(performTurn.mock.calls.slice(0, 2).map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
+  });
+
+  it("explains when an open point receives no second participant", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValue({ visibleMessageCount: 0 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 1);
+
+    expect(result.pauseReason).toContain("no second agent");
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
+  });
+
+  it("lets every configured agent participate at party energy", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 0);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
+  });
+
+  it("synthesizes, checks objections, and reconciles an explicitly open discussion", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" });
+
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: true });
+    expect(performTurn).toHaveBeenCalledTimes(5);
+    expect(performTurn.mock.calls[2][0].instruction).toContain("discussion synthesizer");
+    expect(performTurn.mock.calls[3][0].instruction).toContain("material omission");
+    expect(performTurn.mock.calls[4][0].instruction).toContain("Reconcile");
+  });
+
+  it("reports when synthesis is blocked on human input", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "blocked" });
+
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
   });
 
   it("offers every agent one concise turn when the human invites the whole room", async () => {
@@ -296,12 +397,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "low", performTurn, () => 1, { inviteAll: true });
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual([
-      "codex-luna",
-      "codex-terra",
-      "codex-sol",
-      "claude-sonnet",
-    ]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
   });
 
@@ -312,18 +408,18 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 1, { inviteAll: true });
 
-    expect(performTurn).toHaveBeenCalledTimes(4);
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
   });
 
   it("honors direct invitations across the soft budget but stops at the hard ceiling", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-sol"] })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] });
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-opus"] });
 
     await runEnergyConversation(candidates, "low", performTurn, () => 1);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "claude-sonnet", "codex-sol"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "claude-sonnet", "codex-sol"]);
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit! <= 3)).toBe(true);
   });
 
@@ -335,7 +431,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra", "codex-sol"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol", "claude-sonnet"]);
   });
 
   it("stops immediately when new human activity cancels the current pulse", async () => {
@@ -349,14 +445,14 @@ describe("conversation energy", () => {
   it("prevents the same pair from recursively inviting each other", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-terra"] })
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
       .mockResolvedValue({ visibleMessageCount: 0 });
 
     await runEnergyConversation(candidates, "party", performTurn, () => 1);
 
     const speakers = performTurn.mock.calls.map(([turn]) => turn.agent);
-    expect(speakers.slice(0, 3)).toEqual(["codex-luna", "claude-sonnet", "codex-luna"]);
+    expect(speakers.slice(0, 3)).toEqual(["codex-terra", "claude-sonnet", "codex-terra"]);
     expect(speakers.filter((agent) => agent === "claude-sonnet")).toHaveLength(1);
   });
 });

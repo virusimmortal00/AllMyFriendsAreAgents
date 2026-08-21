@@ -52,6 +52,7 @@ describe("room style persistence", () => {
     expect(snapshot.settings.participantStyles["claude-sonnet"]).toEqual(oldClaudeStyle);
     expect(snapshot.settings.participantStyles["codex-luna"]).toEqual(DEFAULT_PARTICIPANT_STYLES["codex-luna"]);
     expect(snapshot.settings.participantStyles["codex-terra"]).toEqual(DEFAULT_PARTICIPANT_STYLES["codex-terra"]);
+    expect(snapshot.settings.participantStyles["claude-opus"]).toEqual(DEFAULT_PARTICIPANT_STYLES["claude-opus"]);
     const persisted = JSON.parse(await readFile(path.join(stateDirectory, "room.json"), "utf8")) as { settings: Record<string, unknown> };
     expect(persisted.settings.conversationEnergy).toBe("balanced");
     expect(persisted.settings).not.toHaveProperty("maxRounds");

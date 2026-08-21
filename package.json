@@ -4,12 +4,17 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
-    "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=53147 tsx watch server/index.ts",
+    "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
+    "room:tool": "tsx scripts/room-tool.ts",
+    "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"
   },
@@ -21,11 +26,14 @@
     "vite": "7.3.6"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.5",
     "@types/express": "5.0.3",
     "@types/node": "24.5.2",
     "@types/react": "19.1.16",
     "@types/react-dom": "19.1.9",
     "concurrently": "9.2.4",
+    "jsdom": "^30.0.1",
     "tsx": "4.20.6",
     "typescript": "5.9.2",
     "vitest": "3.2.7"

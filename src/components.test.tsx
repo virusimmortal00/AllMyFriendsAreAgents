@@ -2,27 +2,50 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
+import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, WorkshopDialog } from "./components";
 import { LoadingScreen, NameEntry } from "./App";
 
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
-    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} humans={[
+    const html = renderToStaticMarkup(<RoomRoster availability={{
+      "codex-terra": true,
+      "codex-sol": true,
+      "claude-sonnet": false,
+      "claude-opus": true,
+      "cursor-grok": true,
+      "cursor-gemini": true,
+      "cursor-composer": true,
+    }} agentHealth={{
+      "claude-opus": {
+        status: "cooldown",
+        reason: "rate_limit",
+        message: "Provider usage limit reached.",
+        since: "2026-08-21T17:00:00.000Z",
+        retryAt: "2026-08-21T17:15:00.000Z",
+      },
+    }} humans={[
       { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("3 agents");
+    expect(html).toContain("6 agents");
     expect(html).toContain("2 humans");
-    expect(html).toContain("Codex [gpt-5.6 Luna]");
+    expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain("Claude [Claude Opus 5]");
+    expect(html).toContain("presence-status--cooldown");
+    expect(html).toContain("Provider usage limit reached.");
+    expect(html).toContain("Cooling down until");
+    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain("Cursor [Gemini 3.1 Pro]");
+    expect(html).toContain("Cursor [Composer 2.5]");
     expect(html).toContain("Alice (You)");
     expect(html).toContain("Bob");
     expect(html).not.toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure Codex/g)).toHaveLength(3);
+    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
     expect(html).not.toContain("Configure You");
   });
 });
@@ -61,6 +84,47 @@ describe("AgentSettingsDialog", () => {
     );
 
     expect(html).toMatch(/type="checkbox" checked=""/);
+  });
+
+  it("explains a participant-local provider cooldown", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="claude-opus"
+        available
+        health={{
+          status: "cooldown",
+          reason: "rate_limit",
+          message: "Provider usage limit reached.",
+          since: "2026-08-21T17:00:00.000Z",
+          retryAt: "2026-08-21T17:15:00.000Z",
+        }}
+        writableAgent="nobody"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-connection-light--cooldown");
+    expect(html).toContain("Provider usage limit reached.");
+    expect(html).not.toContain("Connected to the room");
+  });
+
+  it("shows Cursor agents as opinion-only", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="cursor-grok"
+        available
+        writableAgent="nobody"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain("opinion-only");
+    expect(html).toMatch(/type="checkbox" disabled=""/);
   });
 });
 
@@ -226,5 +290,15 @@ describe("Transcript message styling", () => {
     expect(html).toContain('font-family:Georgia, &quot;Times New Roman&quot;, serif');
     expect(html).toContain("color:#1618fd");
     expect(html).toContain("color:#6c1739");
+  });
+});
+
+describe("workshop references", () => {
+  it("renders stable references as accessible controls and safely presents missing details", () => {
+    const transcript = renderToStaticMarkup(<Transcript messages={[{ id: "ref", speaker: "you", text: "See [[improvement:imp-7]].", timestamp: "2026-08-21T12:00:00Z" }]} magnification={100} transcriptRef={createRef<HTMLDivElement>()} onOpenImprovement={() => undefined} />);
+    const dialog = renderToStaticMarkup(<WorkshopDialog data={null} loading={false} missing onClose={() => undefined} />);
+    expect(transcript).toContain('aria-label="Open Improvement imp-7"');
+    expect(dialog).toContain("unavailable or was deleted");
+    expect(dialog).toContain('aria-label="Close improvement workshop"');
   });
 });

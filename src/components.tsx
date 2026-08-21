@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -8,10 +8,13 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
-import { AGENT_IDS, agentScreenName, isAgentId, participantScreenName } from "../shared/participants";
+import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
+import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
+import { improvementReferences } from "../shared/workshop";
+import type { WorkshopResponse } from "./types";
+import { nextDialogFocusIndex, workshopLayout } from "./workshop-dialog";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -64,15 +67,20 @@ export function TranscriptHeader({
 
 export function RoomRoster({
   availability,
+  agentHealth,
   humans,
   currentHumanId,
   onConfigureAgent,
 }: {
-  availability?: Record<AgentId, boolean>;
+  availability?: Record<ActiveAgentId, boolean>;
+  agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   humans: HumanPresence[];
   currentHumanId: string;
-  onConfigureAgent: (agent: AgentId) => void;
+  onConfigureAgent: (agent: ActiveAgentId) => void;
 }) {
+  const healthText = (health: AgentHealth) => health.status === "cooldown"
+    ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
+    : "Unavailable";
   const presentAgents = AGENT_IDS.filter((agent) => availability?.[agent] !== false);
   const agentCount = presentAgents.length;
   const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
@@ -85,8 +93,15 @@ export function RoomRoster({
       <div className="presence-list" role="list">
         {presentAgents.map((agent) => (
           <div className="presence-row" role="listitem" key={agent}>
-            <span className="presence-status" aria-hidden="true" />
-            <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+            <span
+              className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
+              aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
+              title={agentHealth?.[agent]?.message || "Available"}
+            />
+            <span className="presence-identity">
+              <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+              {agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
+            </span>
             <button
               type="button"
               className="agent-settings-button"
@@ -111,21 +126,28 @@ export function RoomRoster({
 export function AgentSettingsDialog({
   agent,
   available,
+  health,
   writableAgent,
   disabled,
   onWritableChange,
   onClose,
 }: {
-  agent: AgentId;
+  agent: ActiveAgentId;
   available: boolean;
+  health?: AgentHealth;
   writableAgent: WritableAgent;
   disabled: boolean;
   onWritableChange: (agent: WritableAgent) => void;
   onClose: () => void;
 }) {
   const canEdit = writableAgent === agent;
+  const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
     ? agentScreenName(writableAgent)
+    : "";
+  const connectionState = !available ? "offline" : health?.status || "online";
+  const retryDescription = health?.retryAt
+    ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
     : "";
 
   return (
@@ -143,8 +165,8 @@ export function AgentSettingsDialog({
         <div className="agent-settings-body">
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
-            <span className={`agent-connection-light agent-connection-light--${available ? "online" : "offline"}`} aria-hidden="true" />
-            {available ? "Connected to the room" : "CLI unavailable"}
+            <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />
+            {!available ? "CLI unavailable" : health ? `${health.message}${retryDescription}` : "Connected to the room"}
           </div>
           <fieldset>
             <legend>Project permissions</legend>
@@ -152,12 +174,14 @@ export function AgentSettingsDialog({
               <input
                 type="checkbox"
                 checked={canEdit}
-                disabled={disabled}
+                disabled={disabled || !supportsProjectWrites}
                 onChange={(event) => onWritableChange(event.target.checked ? agent : "nobody")}
               />
               Allow this agent to edit project files
             </label>
-            <p>Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only.</p>
+            <p>{supportsProjectWrites
+              ? "Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only."
+              : "This provider is opinion-only in the initial integration and always runs in read-only ask mode."}</p>
             {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
             {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
           </fieldset>
@@ -178,11 +202,26 @@ export function Transcript({
   messages,
   magnification,
   transcriptRef,
+  onOpenImprovement,
 }: {
   messages: RoomMessage[];
   magnification: number;
   transcriptRef: RefObject<HTMLDivElement | null>;
+  onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
+  const messageText = (text: string) => {
+    const references = improvementReferences(text);
+    if (!references.length) return renderAimSmileys(text);
+    const parts: React.ReactNode[] = [];
+    let offset = 0;
+    references.forEach((reference) => {
+      parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
+      parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
+      offset = reference.end;
+    });
+    parts.push(...renderAimSmileys(text.slice(offset)));
+    return parts;
+  };
   return (
     <div
       ref={transcriptRef}
@@ -199,7 +238,7 @@ export function Transcript({
             <div>
               <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
               <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
-                <span className="message__text">{renderAimSmileys(
+                <span className="message__text">{messageText(
                   isAgentId(message.speaker)
                     ? visibleAgentChatText(message.text)
                     : visibleAgentText(message.text),
@@ -213,15 +252,53 @@ export function Transcript({
   );
 }
 
+export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
+  const view = data?.improvement;
+  const dialog = useRef<HTMLElement>(null);
+  const [presentation, setPresentation] = useState(() => workshopLayout(typeof window === "undefined" ? 1024 : window.innerWidth));
+  useEffect(() => {
+    dialog.current?.focus();
+    const updatePresentation = () => setPresentation(workshopLayout(window.innerWidth));
+    window.addEventListener("resize", updatePresentation);
+    return () => {
+      window.removeEventListener("resize", updatePresentation);
+      returnFocusTo?.focus();
+    };
+  }, [returnFocusTo]);
+  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+    if (event.key !== "Tab") return;
+    const focusable = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') || [])];
+    const index = focusable.indexOf(document.activeElement as HTMLElement);
+    const next = nextDialogFocusIndex(index < 0 ? 0 : index, focusable.length, event.shiftKey);
+    if (next >= 0) { event.preventDefault(); focusable[next]?.focus(); }
+  }
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section ref={dialog} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={handleKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
+      <header className="agent-settings-titlebar"><h2 id="workshop-title">Improvement workshop</h2><button type="button" aria-label="Close improvement workshop" onClick={onClose}>×</button></header>
+      <div className="workshop-body" aria-live="polite">
+        {loading ? <p>Loading improvement…</p> : missing || !view ? <p role="status">This improvement is unavailable or was deleted.</p> : <>
+          <p><strong>{view.id}</strong> · revision {view.revision}</p>
+          <dl className="workshop-facts"><dt>Lifecycle</dt><dd>{view.state}</dd><dt>Risk</dt><dd>{view.risk}</dd><dt>Technical consensus</dt><dd>{view.technicalConsensus.status} ({view.technicalConsensus.reviews.length} review{view.technicalConsensus.reviews.length === 1 ? "" : "s"})</dd><dt>Action authority</dt><dd>{view.actionAuthority.status}{view.actionAuthority.grantedByHuman ? " · human granted" : ""}</dd><dt>Current claim</dt><dd>{view.workClaim.status}{view.workClaim.holderMemberId ? ` · ${view.workClaim.holderMemberId}` : ""}</dd><dt>Emergency stop</dt><dd>{data.emergencyStop.active ? `ACTIVE${data.emergencyStop.reason ? ` · ${data.emergencyStop.reason}` : ""}` : "Clear"}</dd></dl>
+          <h3>Active claims</h3><ul>{view.claims.length ? view.claims.map((claim) => <li key={claim.id}>{claim.statement}</li>) : <li>None recorded.</li>}</ul>
+          <h3>Evidence</h3><ul>{view.evidence.length ? view.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.description}</a></li>) : <li>No evidence recorded.</li>}</ul>
+        </>}
+      </div>
+      <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
+    </section>
+  </div>;
+}
+
 interface ChatComposerProps {
   draft: string;
   style: ChatStyle;
+  sendDisabled?: boolean;
   onDraftChange: (draft: string) => void;
   onStyleChange: (style: ChatStyle) => void;
   onSubmit: (event: FormEvent) => void;
 }
 
-export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
+export function ChatComposer({ draft, style, sendDisabled = false, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -351,7 +428,7 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
         value={draft}
         style={chatStyleProperties(style)}
         onChange={(event) => onDraftChange(event.target.value)}
-        placeholder="Message everyone in this room..."
+        placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
         aria-label="Message"
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
@@ -360,7 +437,7 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
           }
         }}
       />
-      <button className="classic-button send-button" type="submit" disabled={!draft.trim()}>Send</button>
+      <button className="classic-button send-button" type="submit" disabled={sendDisabled || !draft.trim()}>Send</button>
     </form>
   );
 }

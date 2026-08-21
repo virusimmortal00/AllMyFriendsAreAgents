@@ -27,6 +27,30 @@ describe("Codex JSONL parsing", () => {
     ]);
     expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
   });
+
+  it("pins Cursor sessions to a model while enforcing sandboxed ask mode on start and resume", () => {
+    expect(__testing.cursorArgs("/tmp/project", "cursor-grok-4.6-high")).toEqual([
+      "-p", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled", "--trust",
+      "--workspace", "/tmp/project", "--model", "cursor-grok-4.6-high",
+    ]);
+    expect(__testing.cursorArgs("/tmp/project", "gemini-3.1-pro", "cursor-session")).toContain("cursor-session");
+  });
+
+  it("parses Cursor's structured result contract", () => {
+    expect(__testing.parseCursorOutput(JSON.stringify({
+      type: "result", is_error: false, result: "A different opinion.", session_id: "cursor-session",
+    }))).toEqual({ isError: false, text: "A different opinion.", sessionId: "cursor-session" });
+  });
+
+  it("extracts exact model identifiers from Cursor's account-specific catalog", () => {
+    expect(__testing.parseCursorModels([
+      "Available models",
+      "cursor-grok-4.6-high - Cursor Grok 4.6",
+      "gemini-3.1-pro - Gemini 3.1 Pro",
+      "",
+      "Tip: use --model <id>",
+    ].join("\n"))).toEqual(new Set(["cursor-grok-4.6-high", "gemini-3.1-pro"]));
+  });
 });
 
 describe("agent permissions", () => {
@@ -51,6 +75,11 @@ describe("agent permissions", () => {
   it("allows only the selected agent to write on ordinary turns", () => {
     expect(__testing.resolvePermission("codex-sol", state, false)).toBe("writable");
     expect(__testing.resolvePermission("claude-sonnet", state, false)).toBe("read-only");
+  });
+
+  it("keeps Cursor opinion agents read-only even if stale settings select one", () => {
+    const staleState = { ...state, settings: { ...state.settings, writableAgent: "cursor-grok" as const } };
+    expect(__testing.resolvePermission("cursor-grok", staleState, false)).toBe("read-only");
   });
 });
 
@@ -105,6 +134,7 @@ describe("room prompt context", () => {
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
+    expect(prompt).toContain(`Claude [Claude Opus 5]: ${JSON.stringify(state.settings.participantStyles["claude-opus"])}`);
     expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
@@ -114,13 +144,17 @@ describe("room prompt context", () => {
     expect(prompt).not.toContain("Please review the implementation.");
     expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
     expect(prompt).not.toContain("DISPOSITION:");
+    expect(prompt).toContain("Read-only research, including web search");
   });
 
   it.each([
-    ["codex-luna", "[LUNA]"],
     ["codex-terra", "[TERRA]"],
     ["codex-sol", "[SOL]"],
     ["claude-sonnet", "[CLAUDE]"],
+    ["claude-opus", "[OPUS]"],
+    ["cursor-grok", "[GROK]"],
+    ["cursor-gemini", "[GEMINI]"],
+    ["cursor-composer", "[COMPOSER]"],
   ] as const)("anchors %s self-history to its unique transcript label", async (agent, label) => {
     const prompt = await __testing.buildPrompt(agent, state, "Join if useful.", false, "read-only");
 
@@ -156,6 +190,8 @@ describe("Claude session recovery", () => {
       "Read",
       "Glob",
       "Grep",
+      "WebSearch",
+      "WebFetch",
       "--session-id",
       "fresh-session",
     ]);
@@ -168,9 +204,28 @@ describe("Claude session recovery", () => {
       "json",
       "--model",
       "claude-sonnet-5",
+      "--permission-mode",
+      "plan",
+      "--tools",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
       "--resume",
       "existing-session",
     ]);
+  });
+
+  it("gives resumed Opus sessions the same read-only web tools", () => {
+    const args = __testing.claudeArgs("read-only", "opus-session", "claude-opus-5", true);
+
+    expect(args).toContain("claude-opus-5");
+    expect(args).toContain("WebSearch");
+    expect(args).toContain("WebFetch");
+    expect(args).toContain("plan");
+    expect(args).toEqual(expect.arrayContaining(["--resume", "opus-session"]));
+    expect(args).not.toContain("acceptEdits");
   });
 });
 

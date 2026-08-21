@@ -64,4 +64,16 @@ describe("agent transcript context", () => {
     expect(transcript).toContain("[ALICE]\nI prefer blue.");
     expect(transcript).toContain("[BOB]\nI prefer orange.");
   });
+
+  it("keeps legacy orchestration instructions out of future agent context", () => {
+    const transcript = transcriptFor(state([
+      { id: "1", speaker: "system", kind: "status", text: "The discussion remains open. Use Actions → Continue discussion to start another bounded round.", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "provider", speaker: "system", kind: "status", text: "Claude [Claude Sonnet 5] is unavailable: Provider usage limit reached. Other agents will keep going.", timestamp: "2026-08-19T12:00:00.500Z" },
+      { id: "2", speaker: "you", text: "Let's talk normally.", timestamp: "2026-08-19T12:00:01Z" },
+    ]));
+
+    expect(transcript).not.toContain("Use Actions");
+    expect(transcript).not.toContain("Provider usage limit");
+    expect(transcript).toContain("Let's talk normally.");
+  });
 });

@@ -1,8 +1,21 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
+import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants";
+import type { ServerIdentity } from "../shared/protocol";
+import type { ImprovementWorkshopView } from "../shared/workshop";
+import type { GovernedImprovementDetail } from "../shared/governed-improvements";
+import type { GovernedImprovementSummary } from "../shared/governed-improvements";
+import type { ImprovementStatusContract } from "../shared/improvement-status";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
+
+export interface AgentHealth {
+  status: "cooldown" | "unavailable";
+  reason: "rate_limit" | "authentication" | "timeout" | "configuration" | "provider_error";
+  message: string;
+  since: string;
+  retryAt?: string;
+}
 
 export interface RoomMessage {
   id: string;
@@ -15,6 +28,7 @@ export interface RoomMessage {
   sequence?: number;
   humanId?: string;
   speakerName?: string;
+  clientMessageId?: string;
 }
 
 export interface HumanPresence {
@@ -35,6 +49,14 @@ export interface RoomState {
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
   error?: string;
-  availability?: Record<AgentId, boolean>;
+  availability?: Record<ActiveAgentId, boolean>;
+  agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  server?: ServerIdentity;
   humans?: HumanPresence[];
 }
+export interface WorkshopResponse extends GovernedImprovementDetail {
+  kind: "found";
+  improvement: ImprovementWorkshopView;
+  emergencyStop: { active: boolean; reason: string | null; activatedAt: string | null };
+}
+export type { GovernedImprovementDetail, GovernedImprovementSummary, ImprovementStatusContract };
