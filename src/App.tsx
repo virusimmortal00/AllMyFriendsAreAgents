@@ -480,7 +480,12 @@ export default function App() {
     setHasInitialState(false);
   }
 
-  function navigateImprovements(next: ImprovementsRoute) {
+  function navigateImprovements(next: ImprovementsRoute | null) {
+    if (!next) {
+      window.history.pushState({}, "", "/");
+      setImprovementsView(null);
+      return;
+    }
     const path = next.view === "list" ? `/improvements${next.scope === "all" ? "?scope=all" : ""}` : `/improvements/${encodeURIComponent(next.id)}`;
     window.history.pushState({}, "", path);
     setImprovementsView(next);
@@ -516,18 +521,19 @@ export default function App() {
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "room"}
-            onClick={() => setMobilePanel((panel) => panel === "room" ? null : "room")}
+            onClick={() => { setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
           >Room</button>
           <button
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "people"}
-            onClick={() => setMobilePanel((panel) => panel === "people" ? null : "people")}
+            onClick={() => { setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
-          <button type="button" onClick={changeName}>Change name</button>
+          <button type="button" onClick={() => { changeName(); navigateImprovements(null); }}>Change name</button>
+          <button type="button" onClick={() => navigateImprovements(null)}>Chat</button>
           <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements({ view: "list", scope: "active" })} />
           <div className="menu-wrap">
-            <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
+            <button type="button" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu">
                 <button type="button" disabled={working || !connected} onClick={() => invoke("continue", "all")}>Continue discussion</button>
