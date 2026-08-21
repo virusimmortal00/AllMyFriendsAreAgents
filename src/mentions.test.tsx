@@ -27,6 +27,22 @@ function MentionFlow() {
   </>;
 }
 
+function DuplicateHumanFlow() {
+  return <ChatComposer
+    draft="@ali"
+    mentions={[]}
+    mentionCandidates={roomMentionCandidates([
+      { id: "human-alice-1", name: "Alice" },
+      { id: "human-alice-2", name: "Alice" },
+    ])}
+    style={DEFAULT_PARTICIPANT_STYLES.you}
+    onDraftChange={() => undefined}
+    onMentionsChange={() => undefined}
+    onStyleChange={() => undefined}
+    onSubmit={(event) => event.preventDefault()}
+  />;
+}
+
 describe("participant mention autocomplete", () => {
   it("supports keyboard selection and keeps the stable target after more typing", async () => {
     const user = userEvent.setup();
@@ -49,5 +65,15 @@ describe("participant mention autocomplete", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect((message as HTMLTextAreaElement).value).toBe("@ali");
+  });
+
+  it("exposes stable disambiguators for humans with the same name", async () => {
+    const user = userEvent.setup();
+    render(<DuplicateHumanFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" });
+    await user.click(message);
+    await user.keyboard("{End}");
+    expect(screen.getByRole("option", { name: /human-alice-1/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /human-alice-2/ })).toBeTruthy();
   });
 });

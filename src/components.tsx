@@ -15,7 +15,7 @@ import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } 
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { nextDialogFocusIndex, workshopLayout } from "./workshop-dialog";
-import { reconcileMessageMentions, type MentionCandidate, type MessageMention } from "../shared/mentions";
+import { reconcileMessageMentions, reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageMention } from "../shared/mentions";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -336,7 +336,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       end: mentionQuery.start + token.length,
     };
     onDraftChange(nextDraft);
-    onMentionsChange([...reconcileMessageMentions(nextDraft, mentions), nextMention]
+    onMentionsChange([...reconcileMessageMentionsAfterEdit(draft, nextDraft, mentions), nextMention]
       .filter((mention, index, all) => all.findIndex(({ start }) => start === mention.start) === index)
       .sort((left, right) => left.start - right.start));
     setMentionQuery(null);
@@ -479,7 +479,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         onChange={(event) => {
           const value = event.target.value;
           onDraftChange(value);
-          onMentionsChange(reconcileMessageMentions(value, mentions));
+          onMentionsChange(reconcileMessageMentionsAfterEdit(draft, value, mentions));
           setMentionQuery(queryAt(value, event.target.selectionStart));
         }}
         onSelect={(event) => setMentionQuery(queryAt(event.currentTarget.value, event.currentTarget.selectionStart))}
