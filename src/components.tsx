@@ -275,7 +275,10 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
           title="Text color"
           aria-label="Text color"
           aria-expanded={colorPicker === "text"}
-          onClick={() => setColorPicker((current) => current === "text" ? null : "text")}
+          onClick={() => {
+            setEmojiOpen(false);
+            setColorPicker((current) => current === "text" ? null : "text");
+          }}
         >
           <span aria-hidden="true">A</span>
           <i aria-hidden="true" style={{ backgroundColor: style.textColor }} />
@@ -286,57 +289,63 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
           title="Message highlight color"
           aria-label="Message highlight color"
           aria-expanded={colorPicker === "background"}
-          onClick={() => setColorPicker((current) => current === "background" ? null : "background")}
+          onClick={() => {
+            setEmojiOpen(false);
+            setColorPicker((current) => current === "background" ? null : "background");
+          }}
         >
           <span aria-hidden="true">▧</span>
           <i aria-hidden="true" style={{ backgroundColor: style.backgroundColor }} />
         </button>
-        {colorPicker ? (
-          <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Message highlight"} color palette`}>
-            <strong>{colorPicker === "text" ? "Text color" : "Message highlight"}</strong>
-            <span>Basic colors:</span>
-            <div className="aim-color-grid">
-              {AIM_5_BASIC_COLORS.map((color, index) => (
-                <button
-                  type="button"
-                  className="aim-color-swatch"
-                  key={`${color}-${index}`}
-                  aria-label={`Select ${color}`}
-                  aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
-                  style={{ backgroundColor: color }}
-                  onClick={() => chooseColor(color)}
-                />
-              ))}
-            </div>
-            <span>Custom colors:</span>
-            <div className="aim-color-grid">
-              {AIM_5_CUSTOM_COLORS.map((color, index) => (
-                <button
-                  type="button"
-                  className="aim-color-swatch"
-                  key={`${color}-${index}`}
-                  aria-label={`Select ${color}`}
-                  aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
-                  style={{ backgroundColor: color }}
-                  onClick={() => chooseColor(color)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
         <div className="emoji-control">
-          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((open) => !open)}>☺</button>
-          {emojiOpen ? (
-            <div className="emoji-picker" aria-label="Classic AIM smiley picker">
-              {AIM_SMILEYS.map((smiley) => (
-                <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
-                  <img src={smiley.src} alt="" aria-hidden="true" />
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} onClick={() => {
+            setColorPicker(null);
+            setEmojiOpen((open) => !open);
+          }}>☺</button>
         </div>
       </div>
+      {colorPicker ? (
+        <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Message highlight"} color palette`}>
+          <strong>{colorPicker === "text" ? "Text color" : "Message highlight"}</strong>
+          <span>Basic colors:</span>
+          <div className="aim-color-grid">
+            {AIM_5_BASIC_COLORS.map((color, index) => (
+              <button
+                type="button"
+                className="aim-color-swatch"
+                key={`${color}-${index}`}
+                aria-label={`Select ${color}`}
+                aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                style={{ backgroundColor: color }}
+                onClick={() => chooseColor(color)}
+              />
+            ))}
+          </div>
+          <span>Custom colors:</span>
+          <div className="aim-color-grid">
+            {AIM_5_CUSTOM_COLORS.map((color, index) => (
+              <button
+                type="button"
+                className="aim-color-swatch"
+                key={`${color}-${index}`}
+                aria-label={`Select ${color}`}
+                aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                style={{ backgroundColor: color }}
+                onClick={() => chooseColor(color)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {emojiOpen ? (
+        <div className="emoji-picker" aria-label="Classic AIM smiley picker">
+          {AIM_SMILEYS.map((smiley) => (
+            <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
+              <img src={smiley.src} alt="" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       <textarea
         ref={textarea}
         value={draft}

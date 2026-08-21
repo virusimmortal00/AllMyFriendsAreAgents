@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const components = readFileSync(new URL("./components.tsx", import.meta.url), "utf8");
 const mobileStyles = styles.slice(styles.indexOf("@media (max-width: 720px) {"));
 
 describe("mobile layout contract", () => {
@@ -21,6 +22,13 @@ describe("mobile layout contract", () => {
   it("uses horizontally scrollable formatting controls instead of wrapping", () => {
     expect(mobileStyles).toMatch(/\.format-toolbar \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;/s);
     expect(mobileStyles).toMatch(/\.format-toolbar button, \.format-toolbar \.color-well \{[^}]*width: 38px;/s);
+  });
+
+  it("places formatting popovers above the toolbar clipping boundary", () => {
+    expect(components).toMatch(/<div className="format-toolbar"[\s\S]*?<\/div>\s*\{colorPicker \? \(/);
+    expect(components).toMatch(/\) : null\}\s*\{emojiOpen \? \(/);
+    expect(mobileStyles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;[^}]*inset:/s);
+    expect(mobileStyles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
   });
 
   it("hides timestamps in the narrow transcript", () => {
