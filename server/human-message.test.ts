@@ -43,4 +43,21 @@ describe("human message idempotency", () => {
       if (store instanceof SqliteRoomRepository) store.close();
     }
   });
+
+  it("preserves stable mention metadata on JSON and SQLite", async () => {
+    const mention = { targetKind: "agent" as const, targetId: "cursor-grok", label: "Grok", revision: 1, start: 6, end: 11 };
+    for (const store of await repositories()) {
+      await addHumanMessageOnce(store, human, "hello @Grok", "message_mentions_1234", [mention]);
+      if (store instanceof SqliteRoomRepository) {
+        const databasePath = store.databasePath;
+        store.close();
+        const reopened = await SqliteRoomRepository.open(path.dirname(path.dirname(databasePath)), databasePath);
+        expect(reopened.snapshot().messages.at(-1)?.mentions).toEqual([mention]);
+        reopened.close();
+      } else {
+        const reopened = await RoomStore.open(path.dirname(store.stateDirectory), store.stateDirectory);
+        expect(reopened.snapshot().messages.at(-1)?.mentions).toEqual([mention]);
+      }
+    }
+  });
 });

@@ -255,6 +255,23 @@ describe("room message policy", () => {
     expect(rankRoomAgents(state, () => 0)[0]).toBe("codex-sol");
   });
 
+  it("treats a structured mention as a strong signal without forcing a response", () => {
+    const state = roomState([{
+      id: "human-mention",
+      speaker: "you",
+      humanId: "alice",
+      speakerName: "Alice",
+      text: "@Gemini any thoughts?",
+      timestamp: "2026-08-21T12:00:00.000Z",
+      mentions: [{ targetKind: "agent", targetId: "cursor-gemini", label: "Gemini", revision: 1, start: 0, end: 7 }],
+    }]);
+
+    expect(rankRoomAgents(state, () => 0)[0]).toBe("cursor-gemini");
+    const turns = roomMessageTurns(state);
+    expect(turns).toHaveLength(AGENT_IDS.length);
+    expect(turns.find(({ agent }) => agent === "cursor-gemini")?.instruction).toContain("use NO_RESPONSE_NEEDED");
+  });
+
   it.each([
     "How's everyone doing tonight?",
     "What do you all think?",

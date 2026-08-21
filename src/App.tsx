@@ -4,7 +4,7 @@ import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
-import { loadDraft, loadPendingSend, saveDraft, savePendingSend, type PendingSend } from "./client-persistence";
+import { loadDraft, loadDraftMentions, loadPendingSend, saveDraft, saveDraftMentions, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
@@ -13,6 +13,7 @@ import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/partic
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
+import { reconcileMessageMentions, roomMentionCandidates, type MessageMention } from "../shared/mentions";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -95,6 +96,11 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [draft, setDraft] = useState(() => typeof window === "undefined" ? "" : loadDraft(window.localStorage, loadHumanProfile()?.id));
+  const [draftMentions, setDraftMentions] = useState<MessageMention[]>(() => {
+    if (typeof window === "undefined") return [];
+    const humanId = loadHumanProfile()?.id;
+    return reconcileMessageMentions(loadDraft(window.localStorage, humanId), loadDraftMentions(window.localStorage, humanId));
+  });
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
@@ -275,14 +281,19 @@ export default function App() {
 
   useEffect(() => {
     if (!human) return;
-    setDraft(loadDraft(window.localStorage, human.id));
+    const restoredDraft = loadDraft(window.localStorage, human.id);
+    setDraft(restoredDraft);
+    setDraftMentions(reconcileMessageMentions(restoredDraft, loadDraftMentions(window.localStorage, human.id)));
     setPendingSend(loadPendingSend(window.localStorage, human.id));
   }, [human?.id]);
 
   useEffect(() => {
     draftRef.current = draft;
-    if (human) saveDraft(window.localStorage, human.id, draft);
-  }, [human?.id, draft]);
+    if (human) {
+      saveDraft(window.localStorage, human.id, draft);
+      saveDraftMentions(window.localStorage, human.id, reconcileMessageMentions(draft, draftMentions));
+    }
+  }, [human?.id, draft, draftMentions]);
 
   useEffect(() => {
     if (human) savePendingSend(window.localStorage, human.id, pendingSend);
@@ -415,14 +426,16 @@ export default function App() {
     event.preventDefault();
     const message = draft.trim();
     if (!message || !human || !connected) return;
+    const mentions = reconcileMessageMentions(message, draftMentions);
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
     setDraft("");
-    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString()));
+    setDraftMentions([]);
+    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions));
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, message, clientMessageId);
+        const next = await sendMessage(human.id, message, clientMessageId, mentions);
         setRoom((current) => {
           const stillPending = current.messages.some(({ id }) => id === optimisticId);
           if (!stillPending && current.messages.length >= next.messages.length) return current;
@@ -431,9 +444,12 @@ export default function App() {
       } catch (error) {
         setRoom((current) => discardOptimisticMessage(current, optimisticId));
         if (error instanceof ApiRequestError && error.outcomeUnknown) {
-          setPendingSend({ clientMessageId, text: message });
+          setPendingSend({ clientMessageId, text: message, mentions });
         } else {
-          setDraft((current) => current || message);
+          if (!draftRef.current) {
+            setDraft(message);
+            setDraftMentions(mentions);
+          }
         }
         setClientError(error instanceof Error ? error.message : String(error));
       }
@@ -446,7 +462,7 @@ export default function App() {
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, pending.text, pending.clientMessageId);
+        const next = await sendMessage(human.id, pending.text, pending.clientMessageId, pending.mentions || []);
         setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
         setPendingSend(null);
       } catch (error) {
@@ -457,7 +473,10 @@ export default function App() {
 
   function returnPendingToDraft() {
     if (!pendingSend) return;
-    setDraft((current) => current || pendingSend.text);
+    if (!draft) {
+      setDraft(pendingSend.text);
+      setDraftMentions(pendingSend.mentions || []);
+    }
     setPendingSend(null);
   }
 
@@ -554,9 +573,12 @@ export default function App() {
             ) : null}
             <ChatComposer
               draft={draft}
+              mentions={draftMentions}
+              mentionCandidates={roomMentionCandidates(room.humans || [])}
               style={human.style}
               sendDisabled={!connected}
               onDraftChange={setDraft}
+              onMentionsChange={setDraftMentions}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}
             />

@@ -78,7 +78,12 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
       const lastSpoke = messages.findLastIndex(({ speaker }) => speaker === agent);
       const quietDistance = lastSpoke < 0 ? 12 : Math.max(0, messages.length - 1 - lastSpoke);
       const recentEngagement = recent.filter(({ speaker }) => speaker === agent).length;
-      return (agent === continuityAgent ? 12 : 0)
+      const latestHuman = messages[latestHumanIndex];
+      const directlyMentioned = latestHuman?.mentions?.some(
+        (mention) => mention.targetKind === "agent" && mention.targetId === agent
+      );
+      return (directlyMentioned ? 100 : 0)
+        + (agent === continuityAgent ? 12 : 0)
         + Math.min(4, recentEngagement) * 1.25
         + Math.min(6, quietDistance * 0.45)
         + jitter(agent) * 4;
@@ -95,13 +100,21 @@ export function latestHumanInvitesWholeRoom(state: RoomState) {
 }
 
 export function roomMessageTurns(state: RoomState): ConversationTurn[] {
+  const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
   const wholeRoomInvitation = latestHumanInvitesWholeRoom(state);
-  return rankRoomAgents(state).map((agent) => ({
-    agent,
-    instruction: wholeRoomInvitation
-      ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
-      : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
-  }));
+  return rankRoomAgents(state).map((agent) => {
+    const isDirectlyMentioned = latestHumanMessage?.mentions?.some(
+      (mention) => mention.targetKind === "agent" && mention.targetId === agent
+    );
+    return {
+      agent,
+      instruction: isDirectlyMentioned
+        ? "You were explicitly mentioned in the latest human message. Read the current room discussion and give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
+        : wholeRoomInvitation
+        ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
+        : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
+    };
+  });
 }
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3) {

@@ -146,7 +146,7 @@ describe("rendered reconnect recovery", () => {
 
     await user.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2));
-    expect(api.sendMessage.mock.calls[1]).toEqual([human.id, "Did this land?", originalClientId]);
+    expect(api.sendMessage.mock.calls[1]).toEqual([human.id, "Did this land?", originalClientId, []]);
     await waitFor(() => expect(screen.queryByText(/Not sent — send now\?/)).toBeNull());
   });
 

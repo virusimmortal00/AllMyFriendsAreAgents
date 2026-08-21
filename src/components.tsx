@@ -15,6 +15,7 @@ import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } 
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { nextDialogFocusIndex, workshopLayout } from "./workshop-dialog";
+import { reconcileMessageMentions, type MentionCandidate, type MessageMention } from "../shared/mentions";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -291,17 +292,60 @@ export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo 
 
 interface ChatComposerProps {
   draft: string;
+  mentions?: MessageMention[];
+  mentionCandidates?: MentionCandidate[];
   style: ChatStyle;
   sendDisabled?: boolean;
   onDraftChange: (draft: string) => void;
+  onMentionsChange?: (mentions: MessageMention[]) => void;
   onStyleChange: (style: ChatStyle) => void;
   onSubmit: (event: FormEvent) => void;
 }
 
-export function ChatComposer({ draft, style, sendDisabled = false, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
+export function ChatComposer({ draft, mentions = [], mentionCandidates = [], style, sendDisabled = false, onDraftChange, onMentionsChange = () => undefined, onStyleChange, onSubmit }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const [mentionQuery, setMentionQuery] = useState<{ start: number; end: number; text: string } | null>(null);
+  const [activeMention, setActiveMention] = useState(0);
+  const matchingMentions = mentionQuery
+    ? mentionCandidates.filter((candidate) => `${candidate.label} ${candidate.description}`.toLowerCase().includes(mentionQuery.text.toLowerCase())).slice(0, 8)
+    : [];
+
+  useEffect(() => setActiveMention(0), [mentionQuery?.text]);
+
+  function queryAt(value: string, cursor: number) {
+    const before = value.slice(0, cursor);
+    const at = before.lastIndexOf("@");
+    if (at < 0 || (at > 0 && !/\s/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) return null;
+    return { start: at, end: cursor, text: before.slice(at + 1) };
+  }
+
+  function chooseMention(candidate: MentionCandidate) {
+    if (!mentionQuery) return;
+    const token = `@${candidate.label}`;
+    const nextDraft = `${draft.slice(0, mentionQuery.start)}${token}${draft.slice(mentionQuery.end)}`;
+    const nextMention: MessageMention = {
+      targetKind: candidate.targetKind,
+      targetId: candidate.targetId,
+      label: candidate.label,
+      providerSnapshot: candidate.providerSnapshot,
+      modelSnapshot: candidate.modelSnapshot,
+      revision: candidate.revision,
+      start: mentionQuery.start,
+      end: mentionQuery.start + token.length,
+    };
+    onDraftChange(nextDraft);
+    onMentionsChange([...reconcileMessageMentions(nextDraft, mentions), nextMention]
+      .filter((mention, index, all) => all.findIndex(({ start }) => start === mention.start) === index)
+      .sort((left, right) => left.start - right.start));
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const cursor = mentionQuery.start + token.length;
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(cursor, cursor);
+    });
+  }
 
   function updateStyle(update: Partial<ChatStyle>) {
     onStyleChange({ ...style, ...update });
@@ -311,7 +355,9 @@ export function ChatComposer({ draft, style, sendDisabled = false, onDraftChange
     const input = textarea.current;
     const start = input?.selectionStart ?? draft.length;
     const end = input?.selectionEnd ?? draft.length;
-    onDraftChange(`${draft.slice(0, start)}${shortcut}${draft.slice(end)}`);
+    const nextDraft = `${draft.slice(0, start)}${shortcut}${draft.slice(end)}`;
+    onDraftChange(nextDraft);
+    onMentionsChange(reconcileMessageMentions(nextDraft, mentions));
     setEmojiOpen(false);
     requestAnimationFrame(() => {
       textarea.current?.focus();
@@ -427,16 +473,62 @@ export function ChatComposer({ draft, style, sendDisabled = false, onDraftChange
         ref={textarea}
         value={draft}
         style={chatStyleProperties(style)}
-        onChange={(event) => onDraftChange(event.target.value)}
+        aria-autocomplete="list"
+        aria-controls={matchingMentions.length ? "mention-suggestions" : undefined}
+        aria-activedescendant={matchingMentions.length ? `mention-option-${activeMention}` : undefined}
+        onChange={(event) => {
+          const value = event.target.value;
+          onDraftChange(value);
+          onMentionsChange(reconcileMessageMentions(value, mentions));
+          setMentionQuery(queryAt(value, event.target.selectionStart));
+        }}
+        onSelect={(event) => setMentionQuery(queryAt(event.currentTarget.value, event.currentTarget.selectionStart))}
         placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
         aria-label="Message"
         onKeyDown={(event) => {
+          if (matchingMentions.length && event.key === "ArrowDown") {
+            event.preventDefault();
+            setActiveMention((current) => (current + 1) % matchingMentions.length);
+            return;
+          }
+          if (matchingMentions.length && event.key === "ArrowUp") {
+            event.preventDefault();
+            setActiveMention((current) => (current - 1 + matchingMentions.length) % matchingMentions.length);
+            return;
+          }
+          if (mentionQuery && event.key === "Escape") {
+            event.preventDefault();
+            setMentionQuery(null);
+            return;
+          }
+          if (matchingMentions.length && (event.key === "Enter" || event.key === "Tab")) {
+            event.preventDefault();
+            chooseMention(matchingMentions[activeMention]);
+            return;
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           }
         }}
       />
+      {matchingMentions.length ? (
+        <div id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant">
+          {matchingMentions.map((candidate, index) => (
+            <button
+              type="button"
+              role="option"
+              id={`mention-option-${index}`}
+              aria-selected={index === activeMention}
+              key={`${candidate.targetKind}:${candidate.targetId}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseMention(candidate)}
+            >
+              <strong>@{candidate.label}</strong><span>{candidate.description}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <button className="classic-button send-button" type="submit" disabled={sendDisabled || !draft.trim()}>Send</button>
     </form>
   );

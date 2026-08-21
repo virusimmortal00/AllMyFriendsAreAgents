@@ -26,6 +26,7 @@ import { openRoomRepository } from "./storage/open-room-repository.js";
 import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-api.js";
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
+import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -492,7 +493,17 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  const accepted = await addHumanMessageOnce(store, human, text, clientMessageId);
+  const duplicate = store.snapshot().messages.some((message) =>
+    message.humanId === human.id && message.clientMessageId === clientMessageId
+  );
+  if (duplicate) return response.status(200).json(publicRoomSnapshot());
+  let mentions;
+  try {
+    mentions = validateMessageMentions(request.body?.mentions, text, roomMentionCandidates(humans.list()));
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : "Message mentions are invalid." });
+  }
+  const accepted = await addHumanMessageOnce(store, human, text, clientMessageId, mentions);
   if (!accepted.inserted) return response.status(200).json(publicRoomSnapshot());
   roomActivity.interrupt();
   broadcast();

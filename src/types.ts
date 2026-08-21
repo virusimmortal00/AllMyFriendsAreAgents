@@ -6,6 +6,7 @@ import type { ImprovementWorkshopView } from "../shared/workshop";
 import type { GovernedImprovementDetail } from "../shared/governed-improvements";
 import type { GovernedImprovementSummary } from "../shared/governed-improvements";
 import type { ImprovementStatusContract } from "../shared/improvement-status";
+import type { MessageMention } from "../shared/mentions";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
@@ -29,6 +30,7 @@ export interface RoomMessage {
   humanId?: string;
   speakerName?: string;
   clientMessageId?: string;
+  mentions?: MessageMention[];
 }
 
 export interface HumanPresence {
