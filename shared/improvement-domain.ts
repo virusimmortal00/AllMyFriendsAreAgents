@@ -114,6 +114,30 @@ export interface AttributionEntry {
   readonly revision: number;
 }
 
+/** Species-neutral identity captured at the proposal boundary. */
+export interface ImprovementParticipantIdentity {
+  readonly id: string;
+  readonly kind: string;
+  readonly capabilities: readonly string[];
+}
+
+export interface ImprovementProposalRecord {
+  readonly idempotencyKey: string;
+  readonly proposer: ImprovementParticipantIdentity;
+  readonly proposedAt: string;
+  readonly rationale: string;
+  readonly requestedOutcome: string;
+}
+
+export interface ImprovementGovernanceDecision {
+  readonly decisionId: string;
+  readonly decidedBy: ImprovementParticipantIdentity;
+  readonly authorityId: string;
+  readonly evidence: readonly string[];
+  readonly priorState: ImprovementState;
+  readonly to: ImprovementState;
+}
+
 export interface Improvement {
   readonly id: string;
   readonly revision: number;
@@ -127,12 +151,14 @@ export interface Improvement {
   readonly evidence: readonly EvidenceReference[];
   readonly attribution: readonly AttributionEntry[];
   readonly statusContract: ImprovementStatusContract;
+  readonly proposal?: ImprovementProposalRecord;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 export type ImprovementChange =
   | { readonly kind: "TRANSITION"; readonly to: ImprovementState }
+  | { readonly kind: "GOVERNANCE_ADVANCE"; readonly decision: ImprovementGovernanceDecision }
   | { readonly kind: "SET_RISK"; readonly risk: ImprovementRisk }
   | { readonly kind: "ADD_CLAIM"; readonly claim: ImprovementClaim }
   | { readonly kind: "ADD_EVIDENCE"; readonly evidence: Omit<EvidenceReference, "addedBy" | "addedAt"> }
@@ -195,6 +221,18 @@ const TRANSITION_ROLES: Readonly<Record<ImprovementState, readonly ActorRole[]>>
   BLOCKED: ["REVIEWER", "OPERATOR", "ADMIN"],
   CANCELED: ["AUTHOR", "OPERATOR", "ADMIN"],
   COMPLETED: ["OPERATOR", "ADMIN"],
+};
+
+const GOVERNED_PROPOSAL_TRANSITIONS: Readonly<Record<ImprovementState, readonly ImprovementState[]>> = {
+  DRAFT: [],
+  PROPOSED: ["IN_REVIEW", "BLOCKED", "CANCELED"],
+  IN_REVIEW: ["PROPOSED", "APPROVED", "BLOCKED", "CANCELED"],
+  APPROVED: ["IN_REVIEW", "CANCELED"],
+  IN_PROGRESS: [],
+  PAUSED: [],
+  BLOCKED: ["PROPOSED", "IN_REVIEW", "CANCELED"],
+  CANCELED: [],
+  COMPLETED: [],
 };
 
 export function createImprovement(input: {
@@ -293,6 +331,23 @@ export function applyImprovementChange(
     const invalid = validateTransition(improvement, expectedRevision, change.to, actor);
     if (invalid) return invalid;
   }
+  if (change.kind === "GOVERNANCE_ADVANCE") {
+    const { decision } = change;
+    if (!improvement.proposal) return { kind: "rejected", reason: "Only governed proposals use governance advancement" };
+    if (actor.role !== "ADMIN" || actor.id !== decision.decidedBy.id) {
+      return { kind: "rejected", reason: "The persisted governance actor must match the authorized decision identity" };
+    }
+    if (decision.priorState !== improvement.state) {
+      return { kind: "rejected", reason: `Governance decision prior state ${decision.priorState} is stale` };
+    }
+    if (!decision.decisionId.trim() || !decision.authorityId.trim() || decision.evidence.length === 0
+      || decision.evidence.some((item) => !item.trim())) {
+      return { kind: "rejected", reason: "Governance decision identity, authority, and evidence are required" };
+    }
+    if (!GOVERNED_PROPOSAL_TRANSITIONS[improvement.state].includes(decision.to)) {
+      return { kind: "rejected", reason: `Governed proposal transition ${improvement.state} -> ${decision.to} is not allowed` };
+    }
+  }
   if (change.kind === "SET_ACTION_AUTHORITY" && !["OPERATOR", "ADMIN"].includes(actor.role)) {
     return { kind: "rejected", reason: `${actor.role} cannot set action authority` };
   }
@@ -338,6 +393,9 @@ export function applyImprovementChange(
   switch (change.kind) {
     case "TRANSITION":
       next = { ...next, state: change.to };
+      break;
+    case "GOVERNANCE_ADVANCE":
+      next = { ...next, state: change.decision.to };
       break;
     case "SET_RISK":
       next = { ...next, risk: change.risk };
@@ -457,6 +515,7 @@ export function applyImprovementChange(
 function describeChange(change: ImprovementChange): string {
   switch (change.kind) {
     case "TRANSITION": return `TRANSITION:${change.to}`;
+    case "GOVERNANCE_ADVANCE": return `GOVERNANCE:${change.decision.decisionId}:${change.decision.to}`;
     case "SET_RISK": return `SET_RISK:${change.risk}`;
     case "ADD_CLAIM": return `ADD_CLAIM:${change.claim.id}`;
     case "ADD_EVIDENCE": return `ADD_EVIDENCE:${change.evidence.id}`;

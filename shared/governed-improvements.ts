@@ -48,6 +48,16 @@ export interface GovernedImprovementDetail extends GovernedImprovementSummary {
   readonly evidence: readonly QualifiedImprovementEvidence[];
   readonly revisions: readonly GovernedImprovementRevision[];
   readonly milestones: readonly ImprovementMilestone[];
+  readonly audit: readonly ImprovementAuditRecord[];
+}
+
+export interface ImprovementAuditRecord {
+  readonly eventId: string;
+  readonly revision: number;
+  readonly eventKind: string;
+  readonly actorId: string;
+  readonly occurredAt: string;
+  readonly details: unknown;
 }
 
 export interface StoredImprovementMilestone {
@@ -63,6 +73,7 @@ export interface ImprovementLedgerRecords {
   readonly evidence: readonly Omit<QualifiedImprovementEvidence, "revisionLabel">[];
   readonly revisions: readonly Omit<GovernedImprovementRevision, "revisionLabel">[];
   readonly milestones: readonly StoredImprovementMilestone[];
+  readonly audit: readonly ImprovementAuditRecord[];
 }
 
 export type AddImprovementMilestoneResult =

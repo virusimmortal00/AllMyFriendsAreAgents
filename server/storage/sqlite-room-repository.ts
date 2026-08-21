@@ -117,6 +117,15 @@ interface LedgerMilestoneRow {
   recorded_at: string;
 }
 
+interface LedgerAuditRow {
+  event_id: string;
+  revision: number;
+  event_kind: string;
+  actor_id: string;
+  occurred_at: string;
+  details_json: string;
+}
+
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -526,6 +535,11 @@ export class SqliteRoomRepository implements RoomRepository {
       FROM canonical_improvement_milestone_records
       WHERE room_id = ? AND improvement_id = ? ORDER BY introduced_revision, milestone_id
     `).all(DEFAULT_ROOM_ID, id) as unknown as LedgerMilestoneRow[];
+    const audit = this.database.prepare(`
+      SELECT event_id, revision, event_kind, actor_id, occurred_at, details_json
+      FROM canonical_improvement_audit_history
+      WHERE room_id = ? AND improvement_id = ? ORDER BY revision, event_id
+    `).all(DEFAULT_ROOM_ID, id) as unknown as LedgerAuditRow[];
     return {
       revisions: revisions.map((row) => ({
         revision: row.revision,
@@ -549,6 +563,14 @@ export class SqliteRoomRepository implements RoomRepository {
         state: row.state,
         summary: row.summary,
         recordedAt: row.recorded_at,
+      })),
+      audit: audit.map((row) => ({
+        eventId: row.event_id,
+        revision: row.revision,
+        eventKind: row.event_kind,
+        actorId: row.actor_id,
+        occurredAt: row.occurred_at,
+        details: parseJson<unknown>(row.details_json, null),
       })),
     };
   }

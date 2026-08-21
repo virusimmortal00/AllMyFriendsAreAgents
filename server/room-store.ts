@@ -384,6 +384,14 @@ export class RoomStore implements RoomRepository {
         recordedAt: evidence.addedAt,
       })),
       milestones: structuredClone(this.improvementState.milestones.filter((milestone) => milestone.improvementId === id)),
+      audit: events.map((event) => ({
+        eventId: `revision-${event.revision}`,
+        revision: event.revision,
+        eventKind: event.revision === 1 ? "CREATED" : "REVISED",
+        actorId: event.actorId,
+        occurredAt: event.at,
+        details: structuredClone(event.change),
+      })),
     };
   }
 
