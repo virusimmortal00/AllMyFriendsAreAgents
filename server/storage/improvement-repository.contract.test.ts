@@ -181,6 +181,35 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
     }
   });
 
+  it("records semantic milestones idempotently as revision-linked records", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-improvement-contract-"));
+    temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      expect(await fixture.repository.addImprovementMilestone(
+        "missing", 1, { id: "delivery", state: "PENDING", summary: "Ship" }, author, "2026-08-21T12:01:00.000Z",
+      )).toEqual({ kind: "missing_item", canonicalId: "missing" });
+      await fixture.repository.createImprovement(initial("imp-milestone"));
+      expect(await fixture.repository.addImprovementMilestone(
+        "imp-milestone", 1, { id: "delivery", state: "PENDING", summary: "Ship safely" }, author, "2026-08-21T12:01:00.000Z",
+      )).toMatchObject({ kind: "accepted", created: true, revision: 2, milestone: { introducedRevision: 2 } });
+      expect(await fixture.repository.addImprovementMilestone(
+        "imp-milestone", 1, { id: " delivery ", state: "PENDING", summary: " Ship   safely " }, author, "2026-08-21T12:02:00.000Z",
+      )).toMatchObject({ kind: "accepted", created: false, revision: 2 });
+      expect(await fixture.repository.addImprovementMilestone(
+        "imp-milestone", 2, { id: "delivery", state: "ACHIEVED", summary: "Ship safely" }, author, "2026-08-21T12:03:00.000Z",
+      )).toMatchObject({ kind: "accepted", created: true, revision: 3, milestone: { introducedRevision: 3 } });
+      const ledger = await fixture.repository.getImprovementLedgerRecords("imp-milestone");
+      expect(ledger?.milestones.map(({ introducedRevision, state }) => ({ introducedRevision, state }))).toEqual([
+        { introducedRevision: 2, state: "PENDING" },
+        { introducedRevision: 3, state: "ACHIEVED" },
+      ]);
+      expect(ledger?.revisions.map(({ revision }) => revision)).toEqual([1, 2, 3]);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("survives reopen with history and emergency-stop state without changing room data", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-improvement-contract-"));
     temporaryDirectories.push(root);

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
-import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, normalizeWritableAgent } from "../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
@@ -24,6 +24,7 @@ import { resolveStorageConfiguration } from "./storage/config.js";
 import { openRoomRepository } from "./storage/open-room-repository.js";
 import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-api.js";
 import type { AgentId, RoomSettings } from "./types.js";
+import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -321,12 +322,42 @@ app.get("/api/ready", (_request, response) => {
 // developer credentials, manifests, fencing tokens, and private payloads.
 app.get("/api/improvements", async (request, response) => {
   const requestedLimit = Number(request.query.limit || 20);
-  response.set("Cache-Control", "no-store").json(await listWorkshopImprovements(store, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+  const scope = request.query.scope === "all" ? "all" : "active";
+  response.set("Cache-Control", "no-store").json(await listWorkshopImprovements(store, Number.isFinite(requestedLimit) ? requestedLimit : 20, scope));
+});
+
+app.post("/api/improvements/references", async (request, response) => {
+  const text = request.body?.text;
+  if (typeof text !== "string" || text.length > 16_000) {
+    return response.status(400).json({ error: "Reference text must be a string of at most 16,000 characters." });
+  }
+  response.set("Cache-Control", "no-store").json(await resolveImprovementReferences(store, text));
+});
+
+app.post("/api/improvements/manifest", async (request, response) => {
+  const text = request.body?.text;
+  const addressedParticipants = Array.isArray(request.body?.addressedParticipants)
+    ? request.body.addressedParticipants.filter(isParticipantId)
+    : undefined;
+  if (typeof text !== "string" || text.length > 16_000 || !addressedParticipants) {
+    return response.status(400).json({ error: "Manifest projection requires bounded text and addressed participants." });
+  }
+  const explicitRetrievals = Array.isArray(request.body?.explicitRetrievals)
+    ? request.body.explicitRetrievals.filter((entry: unknown): entry is { participantId: import("../shared/participants.js").ParticipantId; canonicalId: string } => {
+      if (!entry || typeof entry !== "object") return false;
+      const value = entry as Record<string, unknown>;
+      return isParticipantId(value.participantId) && typeof value.canonicalId === "string" && value.canonicalId.length <= 120;
+    })
+    : [];
+  response.set("Cache-Control", "no-store").json(await projectParticipantImprovementManifest(store, {
+    interaction: { text, addressedParticipants },
+    explicitRetrievals,
+  }));
 });
 
 app.get("/api/improvements/:id", async (request, response) => {
   const view = await readWorkshopImprovement(store, request.params.id);
-  if (!view) return response.status(404).json({ error: "Improvement not found." });
+  if (!view) return response.status(404).json({ kind: "missing_item", canonicalId: request.params.id, error: "Improvement not found." });
   response.set("Cache-Control", "no-store").json(view);
 });
 

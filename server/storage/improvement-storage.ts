@@ -6,6 +6,7 @@ import type {
   ImprovementListQuery,
   ImprovementPage,
 } from "./room-repository.js";
+import type { StoredImprovementMilestone } from "../../shared/governed-improvements.js";
 
 export const CLEAR_EMERGENCY_STOP: EmergencyStopProjection = {
   revision: 0,
@@ -28,6 +29,7 @@ export interface JsonImprovementState {
   readonly events: readonly ImprovementEvent[];
   readonly emergencyStop: EmergencyStopProjection;
   readonly emergencyStopEvents: readonly EmergencyStopEvent[];
+  readonly milestones: readonly StoredImprovementMilestone[];
 }
 
 export function emptyJsonImprovementState(): JsonImprovementState {
@@ -37,6 +39,7 @@ export function emptyJsonImprovementState(): JsonImprovementState {
     events: [],
     emergencyStop: { ...CLEAR_EMERGENCY_STOP },
     emergencyStopEvents: [],
+    milestones: [],
   };
 }
 
@@ -55,6 +58,7 @@ export function normalizeJsonImprovementState(value: unknown): JsonImprovementSt
       ? { ...CLEAR_EMERGENCY_STOP, ...stored.emergencyStop }
       : { ...CLEAR_EMERGENCY_STOP },
     emergencyStopEvents: Array.isArray(stored.emergencyStopEvents) ? stored.emergencyStopEvents : [],
+    milestones: Array.isArray(stored.milestones) ? stored.milestones : [],
   };
 }
 

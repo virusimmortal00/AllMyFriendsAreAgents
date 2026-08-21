@@ -6,6 +6,11 @@ const improvement = createImprovement({ id: "room-safe", risk: "GUARDED", author
 const repository = {
   listImprovements: async () => ({ items: [improvement], nextCursor: null }),
   getImprovement: async (id: string) => id === improvement.id ? improvement : undefined,
+  getImprovementLedgerRecords: async (id: string) => id === improvement.id ? ({
+    revisions: [{ revision: 1, state: improvement.state, status: improvement.statusContract, createdAt: improvement.createdAt }],
+    evidence: [],
+    milestones: [],
+  }) : undefined,
   getEmergencyStop: async () => ({ revision: 4, active: true, activatedBy: "admin", activatedAt: "2026-08-21T13:00:00Z", reason: "Investigating" }),
 };
 
@@ -13,19 +18,24 @@ describe("room workshop API", () => {
   it("returns bounded read-only views without execution payloads", async () => {
     const page = await listWorkshopImprovements(repository as never, 500);
     expect(page.items).toHaveLength(1);
-    expect(page.items[0]).toMatchObject({ id: "room-safe", revision: 1, state: "DRAFT", risk: "GUARDED" });
-    expect(page.items[0]?.statusContract).toMatchObject({
-      schemaVersion: 1,
-      implementation: { state: "UNKNOWN" },
-      deployment: { state: "UNKNOWN" },
-      independentAcceptance: { state: "UNKNOWN" },
-      upstreamPublication: { state: "UNKNOWN" },
-    });
+    expect(page).toMatchObject({ scope: "active" });
+    expect(page.items[0]).toMatchObject({ canonicalId: "room-safe", revisionLabel: "r1", state: "DRAFT", risk: "GUARDED" });
     expect(JSON.stringify(page)).not.toContain("attribution");
     expect(JSON.stringify(page)).not.toContain("fencingToken");
     expect(page.emergencyStop).toEqual({ active: true, reason: "Investigating", activatedAt: "2026-08-21T13:00:00Z" });
   });
   it("handles unknown improvement references safely", async () => {
     await expect(readWorkshopImprovement(repository as never, "gone")).resolves.toBeUndefined();
+  });
+  it("returns canonical governance detail at the detail boundary", async () => {
+    await expect(readWorkshopImprovement(repository as never, "room-safe")).resolves.toMatchObject({
+      kind: "found",
+      canonicalId: "room-safe",
+      revisionLabel: "r1",
+      status: { implementation: { state: "UNKNOWN" } },
+      evidence: [],
+      revisions: [{ revisionLabel: "r1" }],
+      milestones: [],
+    });
   });
 });

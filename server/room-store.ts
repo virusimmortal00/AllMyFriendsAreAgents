@@ -26,6 +26,12 @@ import type {
   RoomRepository,
 } from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
+import type {
+  AddImprovementMilestoneResult,
+  ImprovementLedgerRecords,
+  ImprovementMilestoneState,
+  StoredImprovementMilestone,
+} from "../shared/governed-improvements.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -348,6 +354,86 @@ export class RoomStore implements RoomRepository {
       .slice(0, limit));
   }
 
+  async getImprovementLedgerRecords(id: string): Promise<ImprovementLedgerRecords | undefined> {
+    await this.improvementQueue;
+    const improvement = this.improvementState.improvements[id];
+    if (!improvement) return undefined;
+    const events = this.improvementState.events
+      .filter((event) => event.improvementId === id)
+      .sort((left, right) => left.revision - right.revision);
+    const introducedEvidence = new Map<string, number>();
+    for (const event of events) {
+      for (const evidence of event.snapshot.evidence) {
+        if (!introducedEvidence.has(evidence.id)) introducedEvidence.set(evidence.id, event.revision);
+      }
+    }
+    return {
+      revisions: events.map((event) => ({
+        revision: event.revision,
+        state: event.snapshot.state,
+        status: structuredClone(event.snapshot.statusContract),
+        createdAt: event.at,
+      })),
+      evidence: improvement.evidence.map((evidence) => ({
+        id: evidence.id,
+        introducedRevision: introducedEvidence.get(evidence.id) ?? improvement.revision,
+        sourceClass: "UNQUALIFIED" as const,
+        kind: "REFERENCE",
+        uri: evidence.uri,
+        summary: evidence.description,
+        recordedAt: evidence.addedAt,
+      })),
+      milestones: structuredClone(this.improvementState.milestones.filter((milestone) => milestone.improvementId === id)),
+    };
+  }
+
+  async addImprovementMilestone(
+    id: string,
+    expectedRevision: number,
+    milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string },
+    actor: DomainActor,
+    now: string,
+  ): Promise<AddImprovementMilestoneResult> {
+    const normalized = normalizeMilestoneInput(milestone);
+    if (!normalized || !actor.id.trim()) return { kind: "rejected", reason: "A milestone ID, state, summary, and actor are required" };
+    return this.mutateImprovements<AddImprovementMilestoneResult>(async (state) => {
+      const current = state.improvements[id];
+      if (!current) return { result: { kind: "missing_item", canonicalId: id } };
+      const previous = state.milestones.findLast((entry) => entry.improvementId === id && entry.id === normalized.id);
+      if (previous && previous.state === normalized.state && previous.summary === normalized.summary) {
+        return { result: { kind: "accepted", created: false, revision: current.revision, milestone: structuredClone(previous) } };
+      }
+      if (current.revision !== expectedRevision) {
+        return { result: { kind: "conflict", expectedRevision, actualRevision: current.revision } };
+      }
+      const revision = current.revision + 1;
+      const snapshot: Improvement = {
+        ...current,
+        revision,
+        updatedAt: now,
+        attribution: [...current.attribution, { actorId: actor.id, at: now, change: `RECORD_MILESTONE:${normalized.id}`, revision }],
+      };
+      const stored: StoredImprovementMilestone = { improvementId: id, ...normalized, introducedRevision: revision, recordedAt: now };
+      const event: ImprovementEvent = {
+        improvementId: id,
+        revision,
+        actorId: actor.id,
+        at: now,
+        change: { kind: "RECORD_MILESTONE", milestoneId: normalized.id, state: normalized.state, summary: normalized.summary },
+        snapshot,
+      };
+      return {
+        next: {
+          ...state,
+          improvements: { ...state.improvements, [id]: snapshot },
+          events: [...state.events, event],
+          milestones: [...state.milestones, stored],
+        },
+        result: { kind: "accepted", created: true, revision, milestone: structuredClone(stored) },
+      };
+    });
+  }
+
   async getEmergencyStop() {
     await this.improvementQueue;
     return structuredClone(this.improvementState.emergencyStop);
@@ -418,4 +504,11 @@ export class RoomStore implements RoomRepository {
     this.saveQueue = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {
+  const id = milestone.id.trim();
+  const summary = milestone.summary.trim().replace(/\s+/g, " ");
+  if (!id || !summary || !["PENDING", "ACHIEVED", "BLOCKED", "CANCELED"].includes(milestone.state)) return undefined;
+  return { id, state: milestone.state, summary } as const;
 }

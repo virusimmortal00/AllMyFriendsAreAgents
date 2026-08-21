@@ -169,6 +169,11 @@ export function seedWaveOneImprovements(database: DatabaseSync, roomId: string) 
           room_id, improvement_id, milestone_id, introduced_revision, state, summary, recorded_at
         ) VALUES (?, ?, 'wave-1-acceptance', 1, 'PENDING', ?, ?)
       `).run(roomId, projection.id, seed.milestone, SEED_AT);
+      database.prepare(`
+        INSERT INTO canonical_improvement_milestone_records(
+          room_id, improvement_id, milestone_id, introduced_revision, state, summary, recorded_at
+        ) VALUES (?, ?, 'wave-1-acceptance', 1, 'PENDING', ?, ?)
+      `).run(roomId, projection.id, seed.milestone, SEED_AT);
       created.push(seed.id);
     }
     database.exec("COMMIT");

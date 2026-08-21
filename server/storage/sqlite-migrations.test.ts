@@ -26,11 +26,12 @@ describe("SQLite migrations", () => {
         "canonical_improvement_revisions",
         "canonical_improvement_evidence",
         "canonical_improvement_milestones",
+        "canonical_improvement_milestone_records",
         "canonical_improvement_audit_history",
         "emergency_stops",
         "emergency_stop_events",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 4 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 5 });
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(messageColumns).toContain("client_message_id");
     } finally {

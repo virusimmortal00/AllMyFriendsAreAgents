@@ -24,6 +24,14 @@ import type {
   RoomRepository,
 } from "./room-repository.js";
 import { runSqliteMigrations } from "./sqlite-migrations.js";
+import type {
+  AddImprovementMilestoneResult,
+  EvidenceSourceClass,
+  ImprovementLedgerRecords,
+  ImprovementMilestoneState,
+  StoredImprovementMilestone,
+} from "../../shared/governed-improvements.js";
+import type { ImprovementStatusContract } from "../../shared/improvement-status.js";
 
 export const DEFAULT_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -82,6 +90,31 @@ interface ImprovementEventRow {
   occurred_at: string;
   change_json: string;
   snapshot_json: string;
+}
+
+interface LedgerRevisionRow {
+  revision: number;
+  lifecycle_state: Improvement["state"];
+  status_contract_json: string;
+  created_at: string;
+}
+
+interface LedgerEvidenceRow {
+  evidence_id: string;
+  introduced_revision: number;
+  qualification: EvidenceSourceClass;
+  evidence_kind: string;
+  uri: string;
+  summary: string;
+  recorded_at: string;
+}
+
+interface LedgerMilestoneRow {
+  milestone_id: string;
+  introduced_revision: number;
+  state: ImprovementMilestoneState;
+  summary: string;
+  recorded_at: string;
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -439,6 +472,14 @@ export class SqliteRoomRepository implements RoomRepository {
       }
       this.insertImprovementEvent({ improvementId: id, revision: snapshot.revision, actorId: actor.id, at: now, change, snapshot });
       this.insertImprovementLedgerRevision(snapshot, actor.id, "REVISED", `revision-${snapshot.revision}`, change);
+      if (change.kind === "ADD_EVIDENCE") {
+        this.database.prepare(`
+          INSERT INTO canonical_improvement_evidence(
+            room_id, improvement_id, evidence_id, introduced_revision, qualification,
+            evidence_kind, uri, summary, recorded_at
+          ) VALUES (?, ?, ?, ?, 'UNQUALIFIED', 'REFERENCE', ?, ?, ?)
+        `).run(DEFAULT_ROOM_ID, id, change.evidence.id, snapshot.revision, change.evidence.uri, change.evidence.description, now);
+      }
       this.database.exec("COMMIT");
       return { kind: "accepted" as const, improvement: structuredClone(snapshot) };
     } catch (error) {
@@ -464,6 +505,128 @@ export class SqliteRoomRepository implements RoomRepository {
       change: parseJson(row.change_json, "CREATE"),
       snapshot: normalizeStoredImprovement(parseJson<Improvement>(row.snapshot_json, undefined as never)),
     }));
+  }
+
+  async getImprovementLedgerRecords(id: string): Promise<ImprovementLedgerRecords | undefined> {
+    if (!this.database.prepare("SELECT 1 FROM canonical_improvements WHERE room_id = ? AND id = ?").get(DEFAULT_ROOM_ID, id)) {
+      return undefined;
+    }
+    const revisions = this.database.prepare(`
+      SELECT revision, lifecycle_state, status_contract_json, created_at
+      FROM canonical_improvement_revisions
+      WHERE room_id = ? AND improvement_id = ? ORDER BY revision
+    `).all(DEFAULT_ROOM_ID, id) as unknown as LedgerRevisionRow[];
+    const evidence = this.database.prepare(`
+      SELECT evidence_id, introduced_revision, qualification, evidence_kind, uri, summary, recorded_at
+      FROM canonical_improvement_evidence
+      WHERE room_id = ? AND improvement_id = ? ORDER BY introduced_revision, evidence_id
+    `).all(DEFAULT_ROOM_ID, id) as unknown as LedgerEvidenceRow[];
+    const milestones = this.database.prepare(`
+      SELECT milestone_id, introduced_revision, state, summary, recorded_at
+      FROM canonical_improvement_milestone_records
+      WHERE room_id = ? AND improvement_id = ? ORDER BY introduced_revision, milestone_id
+    `).all(DEFAULT_ROOM_ID, id) as unknown as LedgerMilestoneRow[];
+    return {
+      revisions: revisions.map((row) => ({
+        revision: row.revision,
+        state: row.lifecycle_state,
+        status: parseJson<ImprovementStatusContract>(row.status_contract_json, undefined as never),
+        createdAt: row.created_at,
+      })),
+      evidence: evidence.map((row) => ({
+        id: row.evidence_id,
+        introducedRevision: row.introduced_revision,
+        sourceClass: row.qualification,
+        kind: row.evidence_kind,
+        uri: row.uri,
+        summary: row.summary,
+        recordedAt: row.recorded_at,
+      })),
+      milestones: milestones.map((row) => ({
+        improvementId: id,
+        id: row.milestone_id,
+        introducedRevision: row.introduced_revision,
+        state: row.state,
+        summary: row.summary,
+        recordedAt: row.recorded_at,
+      })),
+    };
+  }
+
+  async addImprovementMilestone(
+    id: string,
+    expectedRevision: number,
+    milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string },
+    actor: DomainActor,
+    now: string,
+  ): Promise<AddImprovementMilestoneResult> {
+    const normalized = normalizeMilestoneInput(milestone);
+    if (!normalized || !actor.id.trim()) return { kind: "rejected", reason: "A milestone ID, state, summary, and actor are required" };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.database.prepare(`
+        SELECT projection_json FROM canonical_improvements WHERE room_id = ? AND id = ?
+      `).get(DEFAULT_ROOM_ID, id) as unknown as ImprovementRow | undefined;
+      if (!row) {
+        this.database.exec("ROLLBACK");
+        return { kind: "missing_item", canonicalId: id };
+      }
+      const current = normalizeStoredImprovement(parseJson<Improvement>(row.projection_json, undefined as never));
+      const prior = this.database.prepare(`
+        SELECT milestone_id, introduced_revision, state, summary, recorded_at
+        FROM canonical_improvement_milestone_records
+        WHERE room_id = ? AND improvement_id = ? AND milestone_id = ?
+        ORDER BY introduced_revision DESC LIMIT 1
+      `).get(DEFAULT_ROOM_ID, id, normalized.id) as unknown as LedgerMilestoneRow | undefined;
+      if (prior && prior.state === normalized.state && prior.summary === normalized.summary) {
+        this.database.exec("ROLLBACK");
+        return {
+          kind: "accepted",
+          created: false,
+          revision: current.revision,
+          milestone: milestoneFromRow(id, prior),
+        };
+      }
+      if (current.revision !== expectedRevision) {
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", expectedRevision, actualRevision: current.revision };
+      }
+      const revision = current.revision + 1;
+      const snapshot: Improvement = {
+        ...current,
+        revision,
+        updatedAt: now,
+        attribution: [...current.attribution, { actorId: actor.id, at: now, change: `RECORD_MILESTONE:${normalized.id}`, revision }],
+      };
+      const change = { kind: "RECORD_MILESTONE" as const, milestoneId: normalized.id, state: normalized.state, summary: normalized.summary };
+      const updated = this.database.prepare(`
+        UPDATE canonical_improvements SET revision = ?, updated_at = ?, projection_json = ?
+        WHERE room_id = ? AND id = ? AND revision = ?
+      `).run(revision, now, JSON.stringify(snapshot), DEFAULT_ROOM_ID, id, expectedRevision);
+      if (updated.changes !== 1) {
+        const actual = this.database.prepare("SELECT revision FROM canonical_improvements WHERE room_id = ? AND id = ?")
+          .get(DEFAULT_ROOM_ID, id) as { revision: number };
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", expectedRevision, actualRevision: actual.revision };
+      }
+      this.insertImprovementEvent({ improvementId: id, revision, actorId: actor.id, at: now, change, snapshot });
+      this.insertImprovementLedgerRevision(snapshot, actor.id, "REVISED", `revision-${revision}`, change);
+      this.database.prepare(`
+        INSERT INTO canonical_improvement_milestone_records(
+          room_id, improvement_id, milestone_id, introduced_revision, state, summary, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(DEFAULT_ROOM_ID, id, normalized.id, revision, normalized.state, normalized.summary, now);
+      this.database.exec("COMMIT");
+      return {
+        kind: "accepted",
+        created: true,
+        revision,
+        milestone: { improvementId: id, ...normalized, introducedRevision: revision, recordedAt: now },
+      };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async getEmergencyStop(): Promise<EmergencyStopProjection> {
@@ -673,4 +836,22 @@ export class SqliteRoomRepository implements RoomRepository {
       JSON.stringify(details),
     );
   }
+}
+
+function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {
+  const id = milestone.id.trim();
+  const summary = milestone.summary.trim().replace(/\s+/g, " ");
+  if (!id || !summary || !["PENDING", "ACHIEVED", "BLOCKED", "CANCELED"].includes(milestone.state)) return undefined;
+  return { id, state: milestone.state, summary } as const;
+}
+
+function milestoneFromRow(improvementId: string, row: LedgerMilestoneRow): StoredImprovementMilestone {
+  return {
+    improvementId,
+    id: row.milestone_id,
+    introducedRevision: row.introduced_revision,
+    state: row.state,
+    summary: row.summary,
+    recordedAt: row.recorded_at,
+  };
 }

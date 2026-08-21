@@ -9,6 +9,11 @@ import type {
   ImprovementState,
 } from "../../shared/improvement-domain.js";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "../types.js";
+import type {
+  AddImprovementMilestoneResult,
+  ImprovementLedgerRecords,
+  ImprovementMilestoneState,
+} from "../../shared/governed-improvements.js";
 
 export interface RevisionConflict {
   readonly kind: "conflict";
@@ -25,7 +30,12 @@ export interface ImprovementEvent {
   readonly revision: number;
   readonly actorId: string;
   readonly at: string;
-  readonly change: "CREATE" | ImprovementChange;
+  readonly change: "CREATE" | ImprovementChange | {
+    readonly kind: "RECORD_MILESTONE";
+    readonly milestoneId: string;
+    readonly state: ImprovementMilestoneState;
+    readonly summary: string;
+  };
   readonly snapshot: Improvement;
 }
 
@@ -84,6 +94,14 @@ export interface RoomRepository {
     id: string,
     options?: { readonly afterRevision?: number; readonly limit?: number },
   ): Promise<readonly ImprovementEvent[]>;
+  getImprovementLedgerRecords(id: string): Promise<ImprovementLedgerRecords | undefined>;
+  addImprovementMilestone(
+    id: string,
+    expectedRevision: number,
+    milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string },
+    actor: DomainActor,
+    now: string,
+  ): Promise<AddImprovementMilestoneResult>;
   getEmergencyStop(): Promise<EmergencyStopProjection>;
   updateEmergencyStop(
     expectedRevision: number,
