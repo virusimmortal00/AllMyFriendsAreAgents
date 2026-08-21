@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { reconcileMessageMentions, roomMentionCandidates, validateMessageMentions } from "./mentions.js";
+import { reconcileMessageMentions, reconcileMessageMentionsAfterEdit, roomMentionCandidates, validateMessageMentions } from "./mentions.js";
 
 describe("message mentions", () => {
   it("uses stable participant IDs while retaining selected labels", () => {
     const candidates = roomMentionCandidates([{ id: "human-alice", name: "Alice" }]);
     expect(candidates.find(({ targetId }) => targetId === "cursor-grok")).toMatchObject({ label: "Grok", revision: 1 });
     expect(candidates.find(({ targetId }) => targetId === "human-alice")).toMatchObject({ label: "Alice", targetKind: "human" });
+  });
+
+  it("disambiguates humans with duplicate display names", () => {
+    const candidates = roomMentionCandidates([
+      { id: "human-alice-1", name: "Alice" },
+      { id: "human-alice-2", name: "Alice" },
+    ]).filter(({ targetKind }) => targetKind === "human");
+    expect(candidates.map(({ description }) => description)).toEqual([
+      "Human participant · human-alice-1",
+      "Human participant · human-alice-2",
+    ]);
   });
 
   it("reconciles offsets after ordinary typing and drops deleted labels", () => {
@@ -21,6 +32,18 @@ describe("message mentions", () => {
     expect(reconcileMessageMentions("@Alice", [first, second])).toEqual([]);
   });
 
+  it("shifts an existing same-label binding when text is inserted before it", () => {
+    const mention = { targetKind: "human" as const, targetId: "alice-2", label: "Alice", revision: 1, start: 13, end: 19 };
+    expect(reconcileMessageMentionsAfterEdit("say @ali and @Alice", "say @Alice and @Alice", [mention]))
+      .toEqual([{ ...mention, start: 15, end: 21 }]);
+  });
+
+  it("uses the actual edit range when identical pasted text makes textual diffing ambiguous", () => {
+    const mention = { targetKind: "human" as const, targetId: "alice-2", label: "Alice", revision: 1, start: 0, end: 6 };
+    expect(reconcileMessageMentionsAfterEdit("@Alice", "@Alice @Alice", [mention], { start: 0, end: 0 }))
+      .toEqual([{ ...mention, start: 7, end: 13 }]);
+  });
+
   it("rejects forged, stale, and text-mismatched targets", () => {
     const candidates = roomMentionCandidates([]);
     const mention = { targetKind: "agent" as const, targetId: "cursor-grok", label: "Grok", revision: 1, start: 0, end: 5 };
@@ -30,5 +53,15 @@ describe("message mentions", () => {
     expect(() => validateMessageMentions([mention], "Grok hello", candidates)).toThrow();
     expect(() => validateMessageMentions([{ ...mention, start: -1 }], "@Grok hello", candidates)).toThrow();
     expect(() => validateMessageMentions([{ ...mention, end: 99 }], "@Grok hello", candidates)).toThrow();
+  });
+
+  it("rejects duplicate and overlapping mention spans", () => {
+    const candidates = roomMentionCandidates([
+      { id: "alice-1", name: "Alice" },
+      { id: "alice-2", name: "Alice" },
+    ]);
+    const first = { targetKind: "human" as const, targetId: "alice-1", label: "Alice", revision: 1, start: 0, end: 6 };
+    const second = { ...first, targetId: "alice-2" };
+    expect(() => validateMessageMentions([first, second], "@Alice", candidates)).toThrow("cannot overlap");
   });
 });

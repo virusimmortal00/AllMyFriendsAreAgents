@@ -34,14 +34,45 @@ export function roomMentionCandidates(humans: readonly { id: string; name: strin
       revision: 1,
     };
   });
+  const humanNameCounts = new Map<string, number>();
+  for (const { name } of humans) humanNameCounts.set(name, (humanNameCounts.get(name) ?? 0) + 1);
   const people = humans.map(({ id, name }) => ({
     targetKind: "human" as const,
     targetId: id,
     label: name,
-    description: name,
+    description: humanNameCounts.get(name) === 1 ? "Human participant" : `Human participant · ${id}`,
     revision: 1,
   }));
   return [...agents, ...people];
+}
+
+export function reconcileMessageMentionsAfterEdit(
+  previousText: string,
+  nextText: string,
+  mentions: readonly MessageMention[],
+  editRange?: Readonly<{ start: number; end: number }>,
+) {
+  let prefixLength = editRange?.start ?? 0;
+  let previousEditEnd = editRange?.end ?? previousText.length;
+  let nextEditEnd: number;
+  if (editRange) {
+    nextEditEnd = prefixLength + nextText.length - (previousText.length - (previousEditEnd - prefixLength));
+  } else {
+    while (prefixLength < previousText.length && prefixLength < nextText.length
+      && previousText[prefixLength] === nextText[prefixLength]) prefixLength += 1;
+    let suffixLength = 0;
+    while (suffixLength < previousText.length - prefixLength && suffixLength < nextText.length - prefixLength
+      && previousText[previousText.length - suffixLength - 1] === nextText[nextText.length - suffixLength - 1]) suffixLength += 1;
+    previousEditEnd = previousText.length - suffixLength;
+    nextEditEnd = nextText.length - suffixLength;
+  }
+  const delta = nextEditEnd - previousEditEnd;
+  const remapped = mentions.flatMap((mention) => {
+    if (mention.end <= prefixLength) return [mention];
+    if (mention.start >= previousEditEnd) return [{ ...mention, start: mention.start + delta, end: mention.end + delta }];
+    return [];
+  });
+  return reconcileMessageMentions(nextText, remapped);
 }
 
 export function reconcileMessageMentions(text: string, mentions: readonly MessageMention[]) {
@@ -95,5 +126,9 @@ export function validateMessageMentions(
     }
     return normalized;
   });
-  return mentions.sort((left, right) => left.start - right.start);
+  const sorted = mentions.sort((left, right) => left.start - right.start);
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index].start < sorted[index - 1].end) throw new Error("Message mentions cannot overlap.");
+  }
+  return sorted;
 }
