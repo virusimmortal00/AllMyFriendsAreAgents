@@ -8,7 +8,7 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
-import { AGENT_IDS, agentScreenName, isAgentId, participantScreenName } from "../shared/participants";
+import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
@@ -124,6 +124,7 @@ export function AgentSettingsDialog({
   onClose: () => void;
 }) {
   const canEdit = writableAgent === agent;
+  const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
     ? agentScreenName(writableAgent)
     : "";
@@ -152,12 +153,14 @@ export function AgentSettingsDialog({
               <input
                 type="checkbox"
                 checked={canEdit}
-                disabled={disabled}
+                disabled={disabled || !supportsProjectWrites}
                 onChange={(event) => onWritableChange(event.target.checked ? agent : "nobody")}
               />
               Allow this agent to edit project files
             </label>
-            <p>Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only.</p>
+            <p>{supportsProjectWrites
+              ? "Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only."
+              : "This provider is opinion-only in the initial integration and always runs in read-only ask mode."}</p>
             {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
             {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
           </fieldset>

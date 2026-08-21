@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
+import { AGENT_IDS } from "../shared/participants.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
   return {
@@ -20,8 +21,8 @@ function roomState(messages: RoomMessage[]): RoomState {
 }
 
 function candidatesForAllAgents(): ConversationTurn[] {
-  return ["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"].map((agent) => ({
-    agent: agent as AgentId,
+  return AGENT_IDS.map((agent) => ({
+    agent,
     instruction: "Consider joining.",
   }));
 }
@@ -30,7 +31,7 @@ describe("agent turn parsing", () => {
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex-sol", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
       visibleMessages: ["Claude, what do you think?"],
-      replyCandidates: ["codex-luna", "codex-terra", "claude-sonnet"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
       mentionedAgents: ["claude-sonnet"],
       visibleMessageCount: 1,
       continuationWorthy: true,
@@ -54,7 +55,7 @@ describe("agent turn parsing", () => {
       DEFAULT_PARTICIPANT_STYLES["claude-sonnet"],
     )).toEqual({
       visibleMessages: ["A useful answer."],
-      replyCandidates: ["codex-luna", "codex-terra", "codex-sol"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "claude-sonnet"),
       mentionedAgents: [],
       visibleMessageCount: 1,
       continuationWorthy: false,
@@ -98,7 +99,7 @@ describe("agent turn parsing", () => {
       "road trip 🤘🚙🛠️ :-)\n<<<NEXT>>>\n🇺🇸 1️⃣",
     )).toMatchObject({
       visibleMessages: ["road trip :-)"],
-      replyCandidates: ["codex-luna", "codex-terra", "claude-sonnet"],
+      replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
     });
   });
 
@@ -174,12 +175,9 @@ describe("agent conversations", () => {
       return { promise, resolve };
     }
 
-    const initial = new Map([
-      ["codex-luna", deferred<TurnResult>()],
-      ["codex-terra", deferred<TurnResult>()],
-      ["codex-sol", deferred<TurnResult>()],
-      ["claude-sonnet", deferred<TurnResult>()],
-    ] as const);
+    const initial = new Map<AgentId, ReturnType<typeof deferred<TurnResult>>>(
+      AGENT_IDS.map((agent) => [agent, deferred<TurnResult>()]),
+    );
     const lunaReaction = deferred<TurnResult>();
     const seenAgents: AgentId[] = [];
     const turnCounts = new Map<AgentId, number>();
@@ -192,16 +190,17 @@ describe("agent conversations", () => {
 
     const concurrentTurns = candidatesForAllAgents();
     const conversation = runAgentConversation(concurrentTurns, 1, performTurn);
-    await vi.waitFor(() => expect(seenAgents).toEqual(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    await vi.waitFor(() => expect(seenAgents).toEqual(AGENT_IDS));
 
     initial.get("codex-luna")!.resolve({ replyCandidates: ["codex-terra", "codex-sol", "claude-sonnet"] });
     await Promise.resolve();
-    expect(performTurn).toHaveBeenCalledTimes(4);
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
 
     initial.get("codex-terra")!.resolve({ replyCandidates: ["codex-luna", "codex-sol", "claude-sonnet"] });
-    await vi.waitFor(() => expect(seenAgents).toEqual(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet", "codex-luna"]));
-    initial.get("codex-sol")!.resolve({});
-    initial.get("claude-sonnet")!.resolve({});
+    await vi.waitFor(() => expect(seenAgents).toEqual([...AGENT_IDS, "codex-luna"]));
+    for (const agent of AGENT_IDS) {
+      if (agent !== "codex-luna" && agent !== "codex-terra") initial.get(agent)!.resolve({});
+    }
     lunaReaction.resolve({});
     await conversation;
   });
@@ -210,7 +209,7 @@ describe("agent conversations", () => {
 describe("room message policy", () => {
   it("ranks every configured agent as a staged candidate", () => {
     const turns = roomMessageTurns(roomState([]));
-    expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(["codex-luna", "codex-terra", "codex-sol", "claude-sonnet"]));
+    expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(AGENT_IDS));
     expect(turns[0]?.instruction).toContain("decide whether the message is actually directed at you");
     expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
   });
@@ -296,12 +295,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "low", performTurn, () => 1, { inviteAll: true });
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual([
-      "codex-luna",
-      "codex-terra",
-      "codex-sol",
-      "claude-sonnet",
-    ]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
   });
 
@@ -312,7 +306,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 1, { inviteAll: true });
 
-    expect(performTurn).toHaveBeenCalledTimes(4);
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
   });
 
   it("honors direct invitations across the soft budget but stops at the hard ceiling", async () => {

@@ -1,8 +1,8 @@
 # AllMyFriendsAreAgents
 
-A LAN-friendly, chatroom-style collaboration surface for named human participants, three model-specific Codex participants, and Claude Code.
+A LAN-friendly, chatroom-style collaboration surface for named human participants and model-pinned agents running through Codex, Claude Code, and Cursor Agent.
 
-The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster is Codex Luna (`gpt-5.6-luna`), Codex Terra (`gpt-5.6-terra`), Codex Sol (`gpt-5.6-sol`), and Claude (`claude-sonnet-5`). Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
+The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Luna, Terra, and Sol; Claude Sonnet; and read-only Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
 ## Development
 
@@ -13,9 +13,13 @@ Prerequisites:
 ```bash
 codex --version
 claude --version
+agent --version
 codex login
 claude auth login
+agent login
 ```
+
+Install Cursor Agent separately from the Cursor desktop editor with Cursor's official installer. The initial Cursor participants always run in sandboxed `ask` mode and cannot be selected for project write access. If the executable is not named `agent` or is outside the server's `PATH`, set `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` to its absolute path.
 
 Then start the room:
 

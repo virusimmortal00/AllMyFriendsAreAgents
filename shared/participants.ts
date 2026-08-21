@@ -6,6 +6,7 @@ export const AGENT_PROFILES = {
     modelId: "gpt-5.6-luna",
     modelLabel: "gpt-5.6 Luna",
     conversationalName: "Luna",
+    supportsProjectWrites: true,
   },
   "codex-terra": {
     id: "codex-terra",
@@ -14,6 +15,7 @@ export const AGENT_PROFILES = {
     modelId: "gpt-5.6-terra",
     modelLabel: "gpt-5.6 Terra",
     conversationalName: "Terra",
+    supportsProjectWrites: true,
   },
   "codex-sol": {
     id: "codex-sol",
@@ -22,6 +24,7 @@ export const AGENT_PROFILES = {
     modelId: "gpt-5.6-sol",
     modelLabel: "gpt-5.6 Sol",
     conversationalName: "Sol",
+    supportsProjectWrites: true,
   },
   "claude-sonnet": {
     id: "claude-sonnet",
@@ -30,6 +33,34 @@ export const AGENT_PROFILES = {
     modelId: "claude-sonnet-5",
     modelLabel: "Claude Sonnet 5",
     conversationalName: "Claude",
+    supportsProjectWrites: true,
+  },
+  "cursor-grok": {
+    id: "cursor-grok",
+    provider: "cursor",
+    displayName: "Cursor",
+    modelId: "cursor-grok-4.6-high",
+    modelLabel: "Grok 4.6",
+    conversationalName: "Grok",
+    supportsProjectWrites: false,
+  },
+  "cursor-gemini": {
+    id: "cursor-gemini",
+    provider: "cursor",
+    displayName: "Cursor",
+    modelId: "gemini-3.1-pro",
+    modelLabel: "Gemini 3.1 Pro",
+    conversationalName: "Gemini",
+    supportsProjectWrites: false,
+  },
+  "cursor-composer": {
+    id: "cursor-composer",
+    provider: "cursor",
+    displayName: "Cursor",
+    modelId: "composer-2.5",
+    modelLabel: "Composer 2.5",
+    conversationalName: "Composer",
+    supportsProjectWrites: false,
   },
 } as const;
 
@@ -48,6 +79,15 @@ export function isAgentId(value: unknown): value is AgentId {
 
 export function isParticipantId(value: unknown): value is ParticipantId {
   return value === "you" || isAgentId(value);
+}
+
+export function agentSupportsProjectWrites(agent: AgentId) {
+  return AGENT_PROFILES[agent].supportsProjectWrites;
+}
+
+export function normalizeWritableAgent(value: unknown): WritableAgent {
+  if (value === "nobody") return "nobody";
+  return isAgentId(value) && agentSupportsProjectWrites(value) ? value : "nobody";
 }
 
 export function agentScreenName(agent: AgentId) {

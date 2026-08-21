@@ -7,22 +7,33 @@ import { LoadingScreen, NameEntry } from "./App";
 
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
-    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} humans={[
+    const html = renderToStaticMarkup(<RoomRoster availability={{
+      "codex-luna": true,
+      "codex-terra": true,
+      "codex-sol": true,
+      "claude-sonnet": false,
+      "cursor-grok": true,
+      "cursor-gemini": true,
+      "cursor-composer": true,
+    }} humans={[
       { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("3 agents");
+    expect(html).toContain("6 agents");
     expect(html).toContain("2 humans");
     expect(html).toContain("Codex [gpt-5.6 Luna]");
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain("Cursor [Gemini 3.1 Pro]");
+    expect(html).toContain("Cursor [Composer 2.5]");
     expect(html).toContain("Alice (You)");
     expect(html).toContain("Bob");
     expect(html).not.toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure Codex/g)).toHaveLength(3);
+    expect(html.match(/aria-label="Configure (?:Codex|Cursor)/g)).toHaveLength(6);
     expect(html).not.toContain("Configure You");
   });
 });
@@ -61,6 +72,23 @@ describe("AgentSettingsDialog", () => {
     );
 
     expect(html).toMatch(/type="checkbox" checked=""/);
+  });
+
+  it("shows Cursor agents as opinion-only", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="cursor-grok"
+        available
+        writableAgent="nobody"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain("opinion-only");
+    expect(html).toMatch(/type="checkbox" disabled=""/);
   });
 });
 

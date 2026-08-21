@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
-import { isParticipantId, migrateLegacyAgentId } from "../shared/participants.js";
+import { isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
@@ -138,9 +138,7 @@ export class RoomStore implements RoomRepository {
           roomName: storedRoomName,
           topic: storedTopic,
           conversationEnergy,
-          writableAgent: stored.settings.writableAgent === "nobody"
-            ? "nobody"
-            : migrateLegacyAgentId(stored.settings.writableAgent) || "nobody",
+          writableAgent: normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent),
           projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
           participantStyles,
         },

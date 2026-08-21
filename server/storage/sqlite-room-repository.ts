@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../../shared/chat-style.js";
 import { isConversationEnergy } from "../../shared/conversation-energy.js";
-import { AGENT_IDS, AGENT_PROFILES, isAgentId, isParticipantId } from "../../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
 import type { RoomRepository } from "./room-repository.js";
@@ -327,7 +327,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const settings: RoomSettings = {
       roomName: row.name,
       topic: row.topic,
-      writableAgent: row.writable_agent === "nobody" ? "nobody" : isAgentId(row.writable_agent) ? row.writable_agent : "nobody",
+      writableAgent: normalizeWritableAgent(row.writable_agent),
       conversationEnergy: isConversationEnergy(row.conversation_energy) ? row.conversation_energy : "balanced",
       projectPath: configuredProjectPath || row.project_path || this.projectRoot,
       participantStyles,

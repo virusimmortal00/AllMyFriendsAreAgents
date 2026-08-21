@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
-import { AGENT_IDS, isAgentId } from "../shared/participants.js";
+import { AGENT_IDS, isAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
@@ -320,7 +320,7 @@ app.patch("/api/settings", async (request, response) => {
     allowed.roomName = roomName;
   }
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
-    allowed.writableAgent = update.writableAgent;
+    allowed.writableAgent = normalizeWritableAgent(update.writableAgent);
   }
   if (isConversationEnergy(update.conversationEnergy)) {
     allowed.conversationEnergy = update.conversationEnergy;

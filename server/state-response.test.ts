@@ -24,7 +24,15 @@ describe("room state responses", () => {
 
     const response = roomStateWithAvailability(snapshot, async () => {
       await availability;
-      return { "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": true };
+      return {
+        "codex-luna": true,
+        "codex-terra": true,
+        "codex-sol": true,
+        "claude-sonnet": true,
+        "cursor-grok": true,
+        "cursor-gemini": true,
+        "cursor-composer": true,
+      };
     });
     messageText = "after";
     releaseAvailability();

@@ -104,6 +104,33 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
+  "cursor-grok": {
+    fontFamily: "Comic Sans MS",
+    fontSize: 17,
+    textColor: "#ec301a",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
+  "cursor-gemini": {
+    fontFamily: "Verdana",
+    fontSize: 16,
+    textColor: "#2b7274",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
+  "cursor-composer": {
+    fontFamily: "Times New Roman",
+    fontSize: 18,
+    textColor: "#6e3b0a",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
 };
 
 function sanitizePaletteColor(value: unknown, fallback: string, safeDefault: string) {
