@@ -1,4 +1,12 @@
+import { createHash } from "node:crypto";
 import type { ParticipantId } from "../shared/participants.js";
+import {
+  createImprovement,
+  type ImprovementGovernanceDecision,
+  type ImprovementParticipantIdentity,
+  type ImprovementState,
+} from "../shared/improvement-domain.js";
+import { emptyImprovementStatus } from "../shared/improvement-status.js";
 import { improvementReferences } from "../shared/workshop.js";
 import {
   improvementRevisionLabel,
@@ -51,8 +59,141 @@ export async function readGovernedImprovement(repository: RoomRepository, canoni
       ...entry,
       revisionLabel: improvementRevisionLabel(entry.introducedRevision),
     })),
+    audit: structuredClone(ledger.audit),
   };
   return { kind: "found", item: detail } as const;
+}
+
+export const IMPROVEMENT_PROPOSE_CAPABILITY = "IMPROVEMENT_PROPOSE" as const;
+
+export interface ImprovementProposeCommand {
+  readonly proposer: ImprovementParticipantIdentity;
+  readonly idempotencyKey: string;
+  readonly rationale: string;
+  readonly requestedOutcome: string;
+  readonly risk?: "LOW" | "GUARDED" | "RESTRICTED";
+}
+
+export interface ImprovementAdvanceCommand {
+  readonly canonicalId: string;
+  readonly expectedRevision: number;
+  readonly to: ImprovementState;
+  readonly decision: Omit<ImprovementGovernanceDecision, "priorState" | "to">;
+  /** Execution is deliberately not part of lifecycle advancement. */
+  readonly requestedAction?: string;
+}
+
+export type GovernanceAuthorizer = (
+  decision: ImprovementAdvanceCommand["decision"],
+  canonicalId: string,
+) => boolean | Promise<boolean>;
+
+export async function improvementPropose(
+  repository: RoomRepository,
+  command: ImprovementProposeCommand,
+  now = new Date().toISOString(),
+) {
+  const invalid = validateProposeCommand(command, now);
+  if (invalid) return { kind: "rejected", reason: invalid } as const;
+
+  const canonicalId = governedCanonicalId(command.idempotencyKey.trim());
+  const rationale = normalizeText(command.rationale);
+  const requestedOutcome = normalizeText(command.requestedOutcome);
+  const base = createImprovement({
+    id: canonicalId,
+    risk: command.risk ?? "LOW",
+    author: { id: command.proposer.id.trim(), role: "AUTHOR", human: false },
+    claims: [{ id: `${canonicalId}-requested-outcome`, statement: requestedOutcome }],
+    now,
+  });
+  const proposal = {
+    ...base,
+    state: "PROPOSED" as const,
+    proposal: {
+      idempotencyKey: command.idempotencyKey.trim(),
+      proposer: {
+        id: command.proposer.id.trim(),
+        kind: command.proposer.kind.trim(),
+        capabilities: [...command.proposer.capabilities],
+      },
+      proposedAt: now,
+      rationale,
+      requestedOutcome,
+    },
+    statusContract: {
+      ...emptyImprovementStatus(),
+      nextAction: { state: "ACTION_REQUIRED" as const, action: "Await an explicit authorized governance decision." },
+    },
+    attribution: [{ actorId: command.proposer.id.trim(), at: now, change: "IMPROVEMENT_PROPOSE", revision: 1 }],
+  };
+  const result = await repository.createImprovement(proposal);
+  if (result.kind === "created") return { kind: "accepted", created: true, proposal: result.improvement } as const;
+
+  const existing = await repository.getImprovement(canonicalId);
+  if (existing?.proposal?.idempotencyKey === command.idempotencyKey.trim()) {
+    return { kind: "accepted", created: false, proposal: existing } as const;
+  }
+  return { kind: "rejected", reason: "Canonical proposal identity collision" } as const;
+}
+
+export async function advanceImprovementProposal(
+  repository: RoomRepository,
+  command: ImprovementAdvanceCommand,
+  authorize: GovernanceAuthorizer,
+  now = new Date().toISOString(),
+) {
+  if (command.requestedAction) {
+    return { kind: "rejected", reason: "Lifecycle advancement cannot request or perform execution" } as const;
+  }
+  if (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 1) {
+    return { kind: "rejected", reason: "A positive expected revision is required" } as const;
+  }
+  const current = await repository.getImprovement(command.canonicalId);
+  if (!current?.proposal) return { kind: "rejected", reason: "Governed proposal not found" } as const;
+  if (current.revision !== command.expectedRevision) {
+    return { kind: "conflict", expectedRevision: command.expectedRevision, actualRevision: current.revision } as const;
+  }
+  if (!validIdentity(command.decision.decidedBy) || !command.decision.decisionId.trim()
+    || !command.decision.authorityId.trim() || command.decision.evidence.length === 0
+    || command.decision.evidence.some((entry) => !entry.trim())) {
+    return { kind: "rejected", reason: "Decision identity, authority, and evidence are required" } as const;
+  }
+  if (!await authorize(command.decision, command.canonicalId)) {
+    return { kind: "rejected", reason: "Governance authority was not independently authorized" } as const;
+  }
+
+  return repository.applyImprovementChange(
+    command.canonicalId,
+    command.expectedRevision,
+    {
+      kind: "GOVERNANCE_ADVANCE",
+      decision: { ...command.decision, priorState: current.state, to: command.to },
+    },
+    { id: command.decision.decidedBy.id, role: "ADMIN", human: false },
+    now,
+  );
+}
+
+function validateProposeCommand(command: ImprovementProposeCommand, now: string) {
+  if (!validIdentity(command.proposer)) return "A capability-bearing participant identity is required";
+  if (!command.proposer.capabilities.includes(IMPROVEMENT_PROPOSE_CAPABILITY)) return "Participant lacks IMPROVEMENT_PROPOSE capability";
+  if (!command.idempotencyKey.trim() || command.idempotencyKey.length > 240) return "A bounded idempotency key is required";
+  if (!normalizeText(command.rationale) || !normalizeText(command.requestedOutcome)) return "Rationale and requested outcome are required";
+  if (!Number.isFinite(Date.parse(now))) return "Proposal time must be an ISO-compatible timestamp";
+  return null;
+}
+
+function validIdentity(identity: ImprovementParticipantIdentity) {
+  return Boolean(identity && identity.id?.trim() && identity.kind?.trim()
+    && Array.isArray(identity.capabilities) && identity.capabilities.every((capability) => typeof capability === "string" && capability.trim()));
+}
+
+function normalizeText(value: string) {
+  return value?.trim().replace(/\s+/g, " ") ?? "";
+}
+
+function governedCanonicalId(idempotencyKey: string) {
+  return `improvement-${createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 20)}`;
 }
 
 export async function resolveImprovementReferences(repository: RoomRepository, text: string) {

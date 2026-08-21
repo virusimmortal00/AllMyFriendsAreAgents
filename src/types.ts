@@ -59,4 +59,11 @@ export interface WorkshopResponse extends GovernedImprovementDetail {
   improvement: ImprovementWorkshopView;
   emergencyStop: { active: boolean; reason: string | null; activatedAt: string | null };
 }
+export interface HeartbeatStatus {
+  configured: boolean;
+  active: boolean;
+  runtime: { revision: number; enabled: boolean; emergencyStopped: boolean; changedBy: string | null; changedAt: string | null; reason: string | null };
+  policy: { version: string; cadenceMs: number; maxConcurrency: number; maxSelectedPerRun: number; maxDispatchedPerRun: number; maxAttemptsPerRevision: number; retryAfterMs: number; timeBudgetMs: number; permittedCapabilities: readonly string[]; prohibitedCapabilities: readonly string[]; eligibleStates: readonly string[]; governedProposalRequired: boolean };
+  audit: readonly { revision: number; kind: "AUTHORIZED" | "EMERGENCY_STOPPED"; actorId: string; at: string; reason: string }[];
+}
 export type { GovernedImprovementDetail, GovernedImprovementSummary, ImprovementStatusContract };

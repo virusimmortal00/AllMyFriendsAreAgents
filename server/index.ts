@@ -53,6 +53,30 @@ const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDire
 const humans = new HumanPresenceRegistry();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
+const coordinatorConfigured = coordinatorEnabled();
+const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
+const coordinatorHeartbeat = new CoordinatorHeartbeat(
+  store,
+  coordinatorState,
+  new HttpDeveloperTeamExecutor(
+    process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL?.trim() || "http://127.0.0.1/heartbeat-disabled",
+    process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN
+      ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN}`
+      : undefined,
+  ),
+  {
+    enabled: coordinatorConfigured,
+    workerMemberId: process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MEMBER_ID?.trim() || "coordinator",
+    intervalMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_INTERVAL_MS"),
+    leaseMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_LEASE_MS"),
+    retryAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_RETRY_AFTER_MS"),
+    maxSelectedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED"),
+    maxDispatchedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED"),
+    maxAttempts: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_ATTEMPTS"),
+    timeBudgetMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_TIME_BUDGET_MS"),
+    onError: (error) => console.error("Coordinator heartbeat failed", error),
+  },
+);
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -362,6 +386,31 @@ app.get("/api/improvements/:id", async (request, response) => {
   response.set("Cache-Control", "no-store").json(view);
 });
 
+app.get("/api/heartbeat", (_request, response) => {
+  response.set("Cache-Control", "no-store").json({ configured: coordinatorConfigured, ...coordinatorHeartbeat.status() });
+});
+
+app.post("/api/heartbeat/authorize", (request, response) => {
+  if (!coordinatorConfigured) return response.status(503).json({ error: "The bounded heartbeat executor is not configured." });
+  const { expectedRevision, actorId, reason } = request.body ?? {};
+  if (!Number.isSafeInteger(expectedRevision) || typeof actorId !== "string" || typeof reason !== "string") {
+    return response.status(400).json({ error: "Expected revision, actor identity, and authorization reason are required." });
+  }
+  const runtime = coordinatorHeartbeat.authorize(expectedRevision, actorId, reason);
+  if (!runtime) return response.status(409).json({ error: "Heartbeat state changed or authorization evidence was invalid.", runtime: coordinatorHeartbeat.status().runtime });
+  response.json({ configured: true, ...coordinatorHeartbeat.status() });
+});
+
+app.post("/api/heartbeat/emergency-stop", (request, response) => {
+  const { expectedRevision, actorId, reason } = request.body ?? {};
+  if (!Number.isSafeInteger(expectedRevision) || typeof actorId !== "string" || typeof reason !== "string") {
+    return response.status(400).json({ error: "Expected revision, actor identity, and stop reason are required." });
+  }
+  const runtime = coordinatorHeartbeat.emergencyStop(expectedRevision, actorId, reason);
+  if (!runtime) return response.status(409).json({ error: "Heartbeat state changed or stop evidence was invalid.", runtime: coordinatorHeartbeat.status().runtime });
+  response.json({ configured: coordinatorConfigured, ...coordinatorHeartbeat.status() });
+});
+
 app.get("/api/events", (request, response) => {
   const humanId = request.query.humanId;
   const connection = humans.connect(humanId);
@@ -585,29 +634,7 @@ const httpServer = app.listen(port, host, () => {
   console.log(`Developer team bridge: ${developerTeam.roster().length} configured member(s)`);
 });
 
-let coordinatorHeartbeat: CoordinatorHeartbeat | undefined;
-if (coordinatorEnabled()) {
-  const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
-  coordinatorHeartbeat = new CoordinatorHeartbeat(
-    store,
-    coordinatorState,
-    new HttpDeveloperTeamExecutor(
-      process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL!,
-      process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN
-        ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN}`
-        : undefined,
-    ),
-    {
-      workerMemberId: process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MEMBER_ID?.trim() || "coordinator",
-      intervalMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_INTERVAL_MS"),
-      leaseMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_LEASE_MS"),
-      retryAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_RETRY_AFTER_MS"),
-      maxSelectedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED"),
-      maxDispatchedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED"),
-      onError: (error) => console.error("Coordinator heartbeat failed", error),
-    },
-  );
-  coordinatorHeartbeat.start();
+if (coordinatorHeartbeat.start()) {
   console.log("Bounded coordinator heartbeat enabled");
 }
 
@@ -622,7 +649,7 @@ let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  coordinatorHeartbeat?.close();
+  coordinatorHeartbeat.close();
   httpServer.close((error) => {
     if (error) {
       console.error(`Server shutdown after ${signal} failed`, error);
