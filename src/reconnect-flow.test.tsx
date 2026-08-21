@@ -86,11 +86,11 @@ function room(instanceId: string, messages: RoomState["messages"] = []): RoomSta
   };
 }
 
-async function renderConnected() {
+async function renderConnected(messages: RoomState["messages"] = []) {
   window.localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(human));
   render(<App />);
   await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(1));
-  act(() => ControlledEventSource.instances[0].emit(room("server-before")));
+  act(() => ControlledEventSource.instances[0].emit(room("server-before", messages)));
   return screen.findByRole("textbox", { name: "Message" });
 }
 
@@ -152,7 +152,9 @@ describe("rendered reconnect recovery", () => {
 
   it("preserves a draft while disconnected and enables sending only after the reconnect SSE snapshot", async () => {
     const user = userEvent.setup();
-    const composer = await renderConnected();
+    const before = { id: "before", speaker: "you" as const, text: "Before outage", timestamp: "2026-08-21T12:00:00.000Z" };
+    const during = { id: "during", speaker: "codex-sol" as const, text: "Arrived during recovery", timestamp: "2026-08-21T12:00:01.000Z" };
+    const composer = await renderConnected([before]);
     await user.type(composer, "Keep this draft");
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
 
@@ -160,14 +162,17 @@ describe("rendered reconnect recovery", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(window.localStorage.getItem(`all-my-friends-are-agents-draft:${human.id}`)).toBe("Keep this draft");
+    expect(screen.getByText("Before outage")).not.toBeNull();
 
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
 
-    act(() => ControlledEventSource.instances[1].emit(room("server-after")));
+    act(() => ControlledEventSource.instances[1].emit(room("server-after", [before, during])));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
+    expect(screen.getByText("Before outage")).not.toBeNull();
+    expect(screen.getByText("Arrived during recovery")).not.toBeNull();
     expect(api.sendMessage).not.toHaveBeenCalled();
   });
 });
