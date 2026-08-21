@@ -12,7 +12,7 @@ import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
-import { Improvements, improvementsRoute as readImprovementsRoute, type ImprovementsRoute } from "./improvements";
+import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -299,11 +299,13 @@ export default function App() {
       const alias = window.location.hash.slice(1);
       if (!alias || readImprovementsRoute()) return;
       // Hash aliases are accepted only after the API verifies the exact canonical ID.
-      void loadImprovement(alias).then((item) => {
-        if (item.canonicalId !== alias) return;
-        window.history.replaceState({}, "", `/improvements/${encodeURIComponent(alias)}`);
-        updateRoute();
-      }).catch(() => setImprovementsView({ view: "missing", id: alias }));
+      void resolveImprovementsAlias(alias, loadImprovement).then((resolved) => {
+        if (!resolved) return;
+        if (resolved.view === "detail") {
+          window.history.replaceState({}, "", `/improvements/${encodeURIComponent(alias)}`);
+          updateRoute();
+        } else setImprovementsView(resolved);
+      });
     };
     const onClick = (event: MouseEvent) => {
       const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="/improvements"]');
@@ -522,7 +524,7 @@ export default function App() {
             onClick={() => setMobilePanel((panel) => panel === "people" ? null : "people")}
           >People</button>
           <button type="button" onClick={changeName}>Change name</button>
-          <button type="button" aria-current={improvementsView ? "page" : undefined} onClick={() => navigateImprovements({ view: "list", scope: "active" })}>Improvements</button>
+          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements({ view: "list", scope: "active" })} />
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (

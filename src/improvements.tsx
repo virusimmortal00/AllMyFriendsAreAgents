@@ -4,11 +4,29 @@ import type { GovernedImprovementDetail, GovernedImprovementSummary, Improvement
 
 export type ImprovementsRoute = { view: "list"; scope: "active" | "all" } | { view: "detail"; id: string } | { view: "missing"; id: string };
 
+export function ImprovementsMenuControl({ active = false, onOpen }: { active?: boolean; onOpen: () => void }) {
+  return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Improvements</button>;
+}
+
 export function improvementsRoute(location = window.location): ImprovementsRoute | null {
   const match = location.pathname.match(/^\/improvements\/([^/]+)$/);
   if (match) return { view: "detail", id: decodeURIComponent(match[1]) };
   if (location.pathname === "/improvements") return { view: "list", scope: location.search === "?scope=all" ? "all" : "active" };
   return null;
+}
+
+/** A hash is only an alias after an exact canonical read succeeds. */
+export async function resolveImprovementsAlias(
+  alias: string,
+  read: (id: string) => Promise<Pick<GovernedImprovementDetail, "canonicalId">>,
+): Promise<ImprovementsRoute | null> {
+  if (!alias) return null;
+  try {
+    const item = await read(alias);
+    return item.canonicalId === alias ? { view: "detail", id: alias } : { view: "missing", id: alias };
+  } catch {
+    return { view: "missing", id: alias };
+  }
 }
 
 function describe(value: Record<string, unknown>) {
@@ -32,7 +50,7 @@ function Detail({ item }: { item: GovernedImprovementDetail }) {
     <h3>Qualified evidence</h3>
     {item.evidence.length ? <ul>{item.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.summary}</a> <small>{evidence.sourceClass} · {evidence.revisionLabel}</small></li>)}</ul> : <p>No qualified evidence is recorded for this item.</p>}
     <h3>Milestones</h3>
-    {item.milestones.length ? <ul>{item.milestones.map((milestone) => <li key={milestone.id}><strong>{milestone.state}</strong> · {milestone.summary} <small>{milestone.revisionLabel}</small></li>)}</ul> : <p>No milestones have been recorded yet.</p>}
+    {item.milestones.length ? <ul>{item.milestones.map((milestone) => <li key={`${milestone.revisionLabel}:${milestone.id}`}><strong>{milestone.state}</strong> · {milestone.summary} <small>{milestone.revisionLabel}</small></li>)}</ul> : <p>No milestones have been recorded yet.</p>}
   </article>;
 }
 

@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Improvements, improvementsRoute } from "./improvements";
+import { Improvements, ImprovementsMenuControl, improvementsRoute, resolveImprovementsAlias } from "./improvements";
+import { loadImprovement } from "./api";
 
 vi.mock("./api", () => ({
   loadImprovements: vi.fn(async (scope: string) => ({ scope, items: [{ canonicalId: "known-id", revisionLabel: "r2", state: "IN_PROGRESS", risk: "GUARDED", updatedAt: "2026-08-21T12:00:00Z" }] })),
@@ -40,10 +41,33 @@ describe("Improvements interface", () => {
     expect(navigate).toHaveBeenNthCalledWith(2, { view: "list", scope: "all" });
   });
 
+  it("turns a direct detail 404 into missing guidance", async () => {
+    const navigate = vi.fn();
+    vi.mocked(loadImprovement).mockRejectedValueOnce(new Error("Improvement not found"));
+    render(<Improvements route={{ view: "detail", id: "gone" }} onNavigate={navigate} />);
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ view: "missing", id: "gone" }));
+  });
+
   it("recognizes only formal Improvements paths; hashes remain aliases to verify", () => {
     window.history.replaceState({}, "", "/improvements/known-id");
     expect(improvementsRoute()).toEqual({ view: "detail", id: "known-id" });
     window.history.replaceState({}, "", "/#unknown-id");
     expect(improvementsRoute()).toBeNull();
+  });
+
+  it("verifies known hash aliases exactly and never creates or redirects unknown aliases", async () => {
+    const read = vi.fn(async (id: string) => ({ canonicalId: id }));
+    await expect(resolveImprovementsAlias("known-id", read)).resolves.toEqual({ view: "detail", id: "known-id" });
+    expect(read).toHaveBeenCalledWith("known-id");
+    await expect(resolveImprovementsAlias("unknown-id", async () => { throw new Error("404"); })).resolves.toEqual({ view: "missing", id: "unknown-id" });
+    await expect(resolveImprovementsAlias("alias", async () => ({ canonicalId: "different-id" }))).resolves.toEqual({ view: "missing", id: "alias" });
+  });
+
+  it.each([1024, 390])("offers the exact Improvements control at %ipx", async (width) => {
+    const user = userEvent.setup(); const onOpen = vi.fn();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    render(<ImprovementsMenuControl onOpen={onOpen} />);
+    await user.click(screen.getByRole("button", { name: "Improvements" }));
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 });
