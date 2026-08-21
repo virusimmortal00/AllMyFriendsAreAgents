@@ -92,6 +92,7 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [clientError, setClientError] = useState("");
+  const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
@@ -118,25 +119,81 @@ export default function App() {
 
   useEffect(() => {
     if (!human) return;
-    receivedLiveState.current = false;
-    setHasInitialState(false);
-    void loadRoom().then((next) => {
+    const currentHuman = human;
+    let cancelled = false;
+    let events: EventSource | undefined;
+    let retryTimer: number | undefined;
+
+    const loadLatestRoom = () => loadRoom().then((next) => {
+      if (cancelled) return;
       setRoom((current) => receivedLiveState.current
         ? { ...current, availability: next.availability || current.availability }
         : next);
       setHasInitialState(true);
-    }).catch((error: Error) => setClientError(error.message));
-    const events = new EventSource(`/api/events?humanId=${encodeURIComponent(human.id)}`);
-    events.onmessage = (event) => {
-      const next = JSON.parse(event.data) as RoomState;
-      receivedLiveState.current = true;
-      setRoom((current) => ({ ...next, availability: current.availability }));
-      setHasInitialState(true);
-      setClientError("");
+    });
+
+    const scheduleReconnect = () => {
+      if (cancelled || retryTimer !== undefined) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void reconnect();
+      }, 1_000);
     };
-    events.onopen = () => setClientError("");
-    events.onerror = () => setClientError("The local room server disconnected. Retrying...");
-    return () => events.close();
+
+    const connectEvents = () => {
+      if (cancelled) return;
+      events?.close();
+      const source = new EventSource(`/api/events?humanId=${encodeURIComponent(currentHuman.id)}`);
+      events = source;
+      source.onmessage = (event) => {
+        if (source !== events) return;
+        const next = JSON.parse(event.data) as RoomState;
+        receivedLiveState.current = true;
+        setRoom((current) => ({ ...next, availability: current.availability }));
+        setHasInitialState(true);
+        setConnected(true);
+        setClientError("");
+      };
+      source.onopen = () => {
+        if (source !== events) return;
+        setConnected(true);
+        setClientError("");
+      };
+      source.onerror = () => {
+        if (source !== events) return;
+        source.close();
+        setConnected(false);
+        setClientError("The local room server disconnected. Reconnecting...");
+        scheduleReconnect();
+      };
+    };
+
+    async function reconnect() {
+      try {
+        await joinRoom(currentHuman);
+        if (cancelled) return;
+        receivedLiveState.current = false;
+        connectEvents();
+        await loadLatestRoom();
+      } catch (error) {
+        if (cancelled) return;
+        setClientError(error instanceof Error ? error.message : String(error));
+        scheduleReconnect();
+      }
+    }
+
+    receivedLiveState.current = false;
+    setConnected(false);
+    setHasInitialState(false);
+    connectEvents();
+    void loadLatestRoom().catch((error: Error) => {
+      if (!cancelled) setClientError(error.message);
+    });
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      events?.close();
+    };
   }, [human?.id]);
 
   useEffect(() => {
@@ -370,7 +427,7 @@ export default function App() {
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
-          <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> Connected</div>
+          <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>
     </main>
