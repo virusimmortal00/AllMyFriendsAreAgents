@@ -36,6 +36,7 @@ describe("RoomRoster", () => {
     expect(html).toContain("Claude [Claude Opus 5]");
     expect(html).toContain("presence-status--cooldown");
     expect(html).toContain("Provider usage limit reached.");
+    expect(html).toContain("Cooling down until");
     expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Cursor [Gemini 3.1 Pro]");
     expect(html).toContain("Cursor [Composer 2.5]");

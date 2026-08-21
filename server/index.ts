@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, normalizeWritableAgent } from "../shared/participants.js";
+import { ROOM_PROTOCOL_VERSION } from "../shared/protocol.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
 import { deliverBurst } from "./burst-delivery.js";
@@ -25,6 +26,7 @@ const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
+const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCOL_VERSION };
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
@@ -41,7 +43,7 @@ const generationJournal = await GenerationJournal.open(projectRoot, storageConfi
 const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
-const agentHealth = new AgentHealthRegistry();
+const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const developerAccess = await openDeveloperToken(storageConfiguration.dataDirectory);
 const developerHuman = {
@@ -56,7 +58,7 @@ function roomSnapshot() {
 }
 
 function publicRoomSnapshot() {
-  return { ...publicRoomState(roomSnapshot()), agentHealth: agentHealth.snapshot() };
+  return { ...publicRoomState(roomSnapshot()), agentHealth: agentHealth.snapshot(), server: serverIdentity };
 }
 
 function broadcast() {
@@ -91,20 +93,14 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
     if (!activeAgent) throw error;
-    const failure = agentHealth.recordFailure(activeAgent, error);
+    await agentHealth.recordFailure(activeAgent, error);
     console.error(`Agent command failed for ${agent}`, error);
-    if (failure.announce) {
-      await store.addMessage("system", agentHealth.failureNotice(activeAgent, failure.health), "status");
-      broadcast();
-    }
+    broadcast();
     return { failed: true };
   } finally {
     generationCancellation.dispose();
   }
-  if (activeAgent && agentHealth.recordSuccess(activeAgent)) {
-    await store.addMessage("system", agentHealth.recoveryNotice(activeAgent), "status");
-    broadcast();
-  }
+  if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit);
@@ -308,7 +304,11 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 }
 
 app.get("/api/state", async (_request, response) => {
-  response.json({ ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)), agentHealth: agentHealth.snapshot() });
+  response.json({ ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)), agentHealth: agentHealth.snapshot(), server: serverIdentity });
+});
+
+app.get("/api/ready", (_request, response) => {
+  response.set("Cache-Control", "no-store").json({ ready: true, ...serverIdentity });
 });
 
 app.get("/api/events", (request, response) => {
@@ -376,8 +376,14 @@ app.post("/api/messages", async (request, response) => {
   if (!text) return response.status(400).json({ error: "Message text is required." });
   const human = humans.get(request.body?.humanId);
   if (!human) return response.status(400).json({ error: "Join the room before sending a message." });
+  const clientMessageId = typeof request.body?.clientMessageId === "string" ? request.body.clientMessageId.trim() : "";
+  if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
+    return response.status(400).json({ error: "A valid client message ID is required." });
+  }
+  const duplicate = roomSnapshot().messages.find((message) => message.humanId === human.id && message.clientMessageId === clientMessageId);
+  if (duplicate) return response.status(200).json(publicRoomSnapshot());
   roomActivity.interrupt();
-  await store.addMessage("you", text, "chat", human.style, undefined, human);
+  await store.addMessage("you", text, "chat", human.style, undefined, { ...human, clientMessageId });
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {

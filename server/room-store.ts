@@ -178,7 +178,7 @@ export class RoomStore implements RoomRepository {
     kind: RoomMessage["kind"] = "chat",
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string },
+    human?: { id: string; name: string; clientMessageId?: string },
   ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
@@ -193,6 +193,7 @@ export class RoomStore implements RoomRepository {
       ...(messageStyle ? { style: messageStyle } : {}),
       ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
       ...(human ? { humanId: human.id, speakerName: human.name } : {}),
+      ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
     };
     this.state.messages.push(message);
     await this.save();

@@ -89,6 +89,10 @@ Conversation energy has four levels: **Low** usually yields one respondent, **Ba
 
 Bulk actions launch at most three agent CLI processes concurrently by default. Self-hosters can tune that resource limit with `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY`; staged human-message conversations remain sequential so each agent sees the latest transcript.
 
+Provider quota, authentication, and transient failures are participant-local. The room continues with healthy agents while the affected participant shows a durable cooldown or unavailable status in the roster; provider diagnostics do not enter conversational scrollback. Cooldowns survive an API restart and clear after the participant completes a successful turn.
+
+Connected browsers keep the current transcript and locally saved draft visible if the API restarts. Requests have bounded timeouts, reconnect attempts use capped exponential backoff, and recovery waits for readiness before rejoining and accepting the SSE stream's initial snapshot. Sending stays disabled while disconnected. A message whose POST result is unknown is retained for explicit manual resend with a durable client ID, and the server deduplicates that ID so retrying cannot create a second message.
+
 Agent messages are delivered with automatic conversational pacing. The server estimates a compressed read-and-type duration from the unread room messages and the reply length, subtracts time the agent already spent generating, and caps the target so longer answers do not make the room drag. This delay is entirely outside the agent prompt and context.
 
 Agents normally send one compact chat message and may explicitly separate up to three distinct thoughts with `<<<NEXT>>>`. The server stores those as separate messages under one `burstId`, paces continuations, and cancels anything not yet sent when a new human message or topic supersedes it. Future agent context groups consecutive units from the same burst and uses a character budget, so chat-style chunking does not crowd older conversation out of context.

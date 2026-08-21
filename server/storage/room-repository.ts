@@ -9,7 +9,7 @@ export interface RoomRepository {
     kind?: RoomMessage["kind"],
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string },
+    human?: { id: string; name: string; clientMessageId?: string },
   ): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
   changeTopic(topic: string): Promise<void>;

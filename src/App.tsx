@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { joinRoom, loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { ApiRequestError, checkReady, joinRoom, loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
+import { loadDraft, loadPendingSend, saveDraft, savePendingSend, type PendingSend } from "./client-persistence";
+import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
+import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -87,34 +90,52 @@ export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (nam
 
 export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
-  const [draft, setDraft] = useState("");
+  const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
+  const [draft, setDraft] = useState(() => typeof window === "undefined" ? "" : loadDraft(window.localStorage, loadHumanProfile()?.id));
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [clientError, setClientError] = useState("");
+  const [connectionNotice, setConnectionNotice] = useState("");
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
-  const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [human, setHuman] = useState<HumanPresence | null>(null);
   const [joinError, setJoinError] = useState("");
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
-  const receivedLiveState = useRef(false);
   const roomRevealed = useRef(false);
+  const draftRef = useRef(draft);
+  const serverInstance = useRef<string | undefined>(undefined);
+  const restoreDistance = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!savedHuman) return;
     let cancelled = false;
-    void joinRoom(savedHuman).then((joined) => {
-      if (cancelled) return;
-      setHuman(joined);
-      saveHumanProfile(joined);
-      setJoinError("");
-    }).catch((error: Error) => {
-      if (!cancelled) setJoinError(error.message);
-    });
-    return () => { cancelled = true; };
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const connect = async () => {
+      try {
+        await checkReady();
+        const joined = await joinRoom(savedHuman);
+        if (cancelled) return;
+        setHuman(joined);
+        saveHumanProfile(joined);
+        setJoinError("");
+      } catch (error) {
+        if (cancelled) return;
+        setJoinError(error instanceof Error ? `${error.message} Retrying…` : "Connection lost. Retrying…");
+        retryTimer = window.setTimeout(() => void connect(), reconnectDelayMs(attempt));
+        attempt += 1;
+      }
+    };
+    void connect();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
   }, [savedHuman?.id, savedHuman?.name]);
 
   useEffect(() => {
@@ -123,21 +144,23 @@ export default function App() {
     let cancelled = false;
     let events: EventSource | undefined;
     let retryTimer: number | undefined;
+    let reconnectAttempt = 0;
+    let disconnected = false;
+    let noticeTimer: number | undefined;
 
-    const loadLatestRoom = () => loadRoom().then((next) => {
-      if (cancelled) return;
-      setRoom((current) => receivedLiveState.current
-        ? { ...current, availability: next.availability || current.availability, agentHealth: next.agentHealth || current.agentHealth }
-        : next);
-      setHasInitialState(true);
-    });
+    const showTemporaryNotice = (notice: string) => {
+      setConnectionNotice(notice);
+      if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
+      noticeTimer = window.setTimeout(() => setConnectionNotice(""), 4_000);
+    };
 
     const scheduleReconnect = () => {
       if (cancelled || retryTimer !== undefined) return;
       retryTimer = window.setTimeout(() => {
         retryTimer = undefined;
         void reconnect();
-      }, 1_000);
+      }, reconnectDelayMs(reconnectAttempt));
+      reconnectAttempt += 1;
     };
 
     const connectEvents = () => {
@@ -148,53 +171,93 @@ export default function App() {
       source.onmessage = (event) => {
         if (source !== events) return;
         const next = JSON.parse(event.data) as RoomState;
-        receivedLiveState.current = true;
+        if (next.server && next.server.protocolVersion !== ROOM_PROTOCOL_VERSION) {
+          saveDraft(window.localStorage, currentHuman.id, draftRef.current);
+          const reloadMarker = `${next.server.instanceId}:${next.server.protocolVersion}`;
+          const reloadKey = "all-my-friends-are-agents-protocol-reload";
+          if (window.sessionStorage.getItem(reloadKey) !== reloadMarker) {
+            window.sessionStorage.setItem(reloadKey, reloadMarker);
+            window.location.reload();
+            return;
+          }
+          setClientError("The room updated to an incompatible version. Reload after the server and web client finish updating.");
+          source.close();
+          return;
+        }
+        window.sessionStorage.removeItem("all-my-friends-are-agents-protocol-reload");
+        const previousInstance = serverInstance.current;
+        if (next.server?.instanceId) serverInstance.current = next.server.instanceId;
         setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
+        setPendingSend((current) => current && next.messages.some((message) => message.clientMessageId === current.clientMessageId) ? null : current);
         setHasInitialState(true);
         setConnected(true);
         setClientError("");
-      };
-      source.onopen = () => {
-        if (source !== events) return;
-        setConnected(true);
-        setClientError("");
+        reconnectAttempt = 0;
+        if (disconnected) {
+          setConnectionEpoch((current) => current + 1);
+          if (previousInstance && next.server?.instanceId && previousInstance !== next.server.instanceId) {
+            showTemporaryNotice("Server updated — reconnected.");
+          } else {
+            showTemporaryNotice("Reconnected.");
+          }
+        }
+        disconnected = false;
       };
       source.onerror = () => {
         if (source !== events) return;
         source.close();
+        if (!disconnected) restoreDistance.current = scrollDistanceFromBottom(transcript.current);
+        disconnected = true;
         setConnected(false);
-        setClientError("The local room server disconnected. Reconnecting...");
+        setConnectionNotice("Connection lost — reconnecting…");
         scheduleReconnect();
       };
     };
 
     async function reconnect() {
       try {
+        await checkReady();
+        if (cancelled) return;
         await joinRoom(currentHuman);
         if (cancelled) return;
-        receivedLiveState.current = false;
         connectEvents();
-        await loadLatestRoom();
       } catch (error) {
         if (cancelled) return;
-        setClientError(error instanceof Error ? error.message : String(error));
+        setConnectionNotice("Connection lost — reconnecting…");
         scheduleReconnect();
       }
     }
 
-    receivedLiveState.current = false;
     setConnected(false);
     setHasInitialState(false);
     connectEvents();
-    void loadLatestRoom().catch((error: Error) => {
-      if (!cancelled) setClientError(error.message);
+    void loadRoom().then((next) => {
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability }));
+    }).catch(() => {
+      // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
     return () => {
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
       events?.close();
     };
   }, [human?.id]);
+
+  useEffect(() => {
+    if (!human) return;
+    setDraft(loadDraft(window.localStorage, human.id));
+    setPendingSend(loadPendingSend(window.localStorage, human.id));
+  }, [human?.id]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+    if (human) saveDraft(window.localStorage, human.id, draft);
+  }, [human?.id, draft]);
+
+  useEffect(() => {
+    if (human) savePendingSend(window.localStorage, human.id, pendingSend);
+  }, [human?.id, pendingSend]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setMinimumLoadingComplete(true), MINIMUM_LOADING_MS);
@@ -216,9 +279,15 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!ready) return;
+    if (restoreDistance.current !== undefined) {
+      restoreScrollDistance(transcript.current, restoreDistance.current);
+      restoreDistance.current = undefined;
+      roomRevealed.current = true;
+      return;
+    }
     scrollTranscriptToEnd(transcript.current, roomRevealed.current ? "smooth" : "auto");
     roomRevealed.current = true;
-  }, [ready, room.messages.length]);
+  }, [ready, room.messages.length, connectionEpoch]);
 
   const working = room.status === "working";
 
@@ -278,14 +347,15 @@ export default function App() {
   function submitMessage(event: React.FormEvent) {
     event.preventDefault();
     const message = draft.trim();
-    if (!message || !human) return;
-    const optimisticId = `pending-${crypto.randomUUID()}`;
+    if (!message || !human || !connected) return;
+    const clientMessageId = `message_${crypto.randomUUID()}`;
+    const optimisticId = `pending-${clientMessageId}`;
     setDraft("");
     setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString()));
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, message);
+        const next = await sendMessage(human.id, message, clientMessageId);
         setRoom((current) => {
           const stillPending = current.messages.some(({ id }) => id === optimisticId);
           if (!stillPending && current.messages.length >= next.messages.length) return current;
@@ -293,10 +363,35 @@ export default function App() {
         });
       } catch (error) {
         setRoom((current) => discardOptimisticMessage(current, optimisticId));
-        setDraft((current) => current || message);
+        if (error instanceof ApiRequestError && error.outcomeUnknown) {
+          setPendingSend({ clientMessageId, text: message });
+        } else {
+          setDraft((current) => current || message);
+        }
         setClientError(error instanceof Error ? error.message : String(error));
       }
     })();
+  }
+
+  function resendPending() {
+    if (!pendingSend || !human || !connected) return;
+    const pending = pendingSend;
+    void (async () => {
+      try {
+        setClientError("");
+        const next = await sendMessage(human.id, pending.text, pending.clientMessageId);
+        setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
+        setPendingSend(null);
+      } catch (error) {
+        setClientError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  }
+
+  function returnPendingToDraft() {
+    if (!pendingSend) return;
+    setDraft((current) => current || pendingSend.text);
+    setPendingSend(null);
   }
 
   function invoke(action: "ask" | "review" | "roundtable" | "continue", agent: AgentId | "all") {
@@ -361,22 +456,31 @@ export default function App() {
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu">
-                <button type="button" disabled={working} onClick={() => invoke("continue", "all")}>Continue discussion</button>
-                <button type="button" disabled={working} onClick={() => invoke("roundtable", "all")}>Start roundtable</button>
-                <button type="button" disabled={working} onClick={() => invoke("review", "all")}>Review with all agents</button>
+                <button type="button" disabled={working || !connected} onClick={() => invoke("continue", "all")}>Continue discussion</button>
+                <button type="button" disabled={working || !connected} onClick={() => invoke("roundtable", "all")}>Start roundtable</button>
+                <button type="button" disabled={working || !connected} onClick={() => invoke("review", "all")}>Review with all agents</button>
               </div>
             ) : null}
           </div>
           <button type="button" title="Agent project permissions are available from the gear beside each agent. Reviews are always read-only.">Help</button>
         </nav>
 
+        {connectionNotice ? <div className="connection-banner" role="status">{connectionNotice}</div> : null}
         <div className="workspace">
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} />
+            {pendingSend ? (
+              <div className="pending-send" role="status">
+                <span><strong>Not sent — send now?</strong> {pendingSend.text}</span>
+                <button type="button" className="classic-button" disabled={!connected} onClick={resendPending}>Send now</button>
+                <button type="button" className="classic-button" onClick={returnPendingToDraft}>Keep as draft</button>
+              </div>
+            ) : null}
             <ChatComposer
               draft={draft}
               style={human.style}
+              sendDisabled={!connected}
               onDraftChange={setDraft}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}
@@ -404,7 +508,7 @@ export default function App() {
               roomName={room.settings.roomName}
               topic={room.settings.topic}
               conversationEnergy={room.settings.conversationEnergy}
-              disabled={working}
+              disabled={working || !connected}
               onRoomNameChange={changeRoomName}
               onTopicChange={changeTopic}
               onConversationEnergyChange={changeConversationEnergy}
@@ -418,7 +522,7 @@ export default function App() {
             available={room.availability?.[configuredAgent] !== false}
             health={room.agentHealth?.[configuredAgent]}
             writableAgent={room.settings.writableAgent}
-            disabled={working}
+            disabled={working || !connected}
             onWritableChange={changeWritable}
             onClose={() => setConfiguredAgent(null)}
           />

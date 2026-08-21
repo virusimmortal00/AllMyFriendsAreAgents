@@ -20,7 +20,9 @@ describe("SQLite migrations", () => {
         "agent_sessions",
         "generation_runs",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 1 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 2 });
+      const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
+      expect(messageColumns).toContain("client_message_id");
     } finally {
       database.close();
     }

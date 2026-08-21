@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentHealthRegistry, classifyAgentFailure } from "./agent-health.js";
 
@@ -42,20 +45,38 @@ describe("agent failure classification", () => {
 });
 
 describe("AgentHealthRegistry", () => {
-  it("coalesces repeated failures and announces one recovery", () => {
-    const registry = new AgentHealthRegistry();
-    expect(registry.recordFailure("claude-opus", new Error("HTTP 429"), 1_000).announce).toBe(true);
-    expect(registry.recordFailure("claude-opus", new Error("HTTP 429"), 2_000).announce).toBe(false);
+  it("coalesces repeated failures and announces one recovery", async () => {
+    const registry = AgentHealthRegistry.memory();
+    await registry.recordFailure("claude-opus", new Error("HTTP 429"), 1_000);
+    await registry.recordFailure("claude-opus", new Error("HTTP 429"), 2_000);
     expect(registry.canAttempt("claude-opus", 2_001)).toBe(false);
-    expect(registry.recordSuccess("claude-opus")).toBe(true);
-    expect(registry.recordSuccess("claude-opus")).toBe(false);
+    expect(await registry.recordSuccess("claude-opus")).toBe(true);
+    expect(await registry.recordSuccess("claude-opus")).toBe(false);
     expect(registry.snapshot()).toEqual({});
   });
 
-  it("allows one new attempt after a cooldown expires", () => {
-    const registry = new AgentHealthRegistry();
-    registry.recordFailure("codex-sol", new Error("request timed out"), 1_000);
+  it("allows one new attempt after a cooldown expires", async () => {
+    const registry = AgentHealthRegistry.memory();
+    await registry.recordFailure("codex-sol", new Error("request timed out"), 1_000);
     expect(registry.canAttempt("codex-sol", 30_999)).toBe(false);
     expect(registry.canAttempt("codex-sol", 31_000)).toBe(true);
+  });
+
+  it("preserves cooldowns across server restarts", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-agent-health-"));
+    try {
+      const registry = await AgentHealthRegistry.open(directory);
+      await registry.recordFailure("claude-sonnet", new Error("HTTP 429 retry-after 2 minutes"), 1_000);
+
+      const reopened = await AgentHealthRegistry.open(directory);
+      expect(reopened.snapshot()["claude-sonnet"]).toMatchObject({
+        status: "cooldown",
+        reason: "rate_limit",
+        retryAt: new Date(121_000).toISOString(),
+      });
+      expect(reopened.canAttempt("claude-sonnet", 120_999)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

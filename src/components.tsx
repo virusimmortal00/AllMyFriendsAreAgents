@@ -75,6 +75,9 @@ export function RoomRoster({
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
 }) {
+  const healthText = (health: AgentHealth) => health.status === "cooldown"
+    ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
+    : "Unavailable";
   const presentAgents = AGENT_IDS.filter((agent) => availability?.[agent] !== false);
   const agentCount = presentAgents.length;
   const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
@@ -92,7 +95,10 @@ export function RoomRoster({
               aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
               title={agentHealth?.[agent]?.message || "Available"}
             />
-            <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+            <span className="presence-identity">
+              <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+              {agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
+            </span>
             <button
               type="button"
               className="agent-settings-button"
@@ -231,12 +237,13 @@ export function Transcript({
 interface ChatComposerProps {
   draft: string;
   style: ChatStyle;
+  sendDisabled?: boolean;
   onDraftChange: (draft: string) => void;
   onStyleChange: (style: ChatStyle) => void;
   onSubmit: (event: FormEvent) => void;
 }
 
-export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
+export function ChatComposer({ draft, style, sendDisabled = false, onDraftChange, onStyleChange, onSubmit }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -366,7 +373,7 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
         value={draft}
         style={chatStyleProperties(style)}
         onChange={(event) => onDraftChange(event.target.value)}
-        placeholder="Message everyone in this room..."
+        placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
         aria-label="Message"
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
@@ -375,7 +382,7 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
           }
         }}
       />
-      <button className="classic-button send-button" type="submit" disabled={!draft.trim()}>Send</button>
+      <button className="classic-button send-button" type="submit" disabled={sendDisabled || !draft.trim()}>Send</button>
     </form>
   );
 }

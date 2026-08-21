@@ -1,6 +1,7 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants";
+import type { ServerIdentity } from "../shared/protocol";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
@@ -23,6 +24,7 @@ export interface RoomMessage {
   sequence?: number;
   humanId?: string;
   speakerName?: string;
+  clientMessageId?: string;
 }
 
 export interface HumanPresence {
@@ -45,5 +47,6 @@ export interface RoomState {
   error?: string;
   availability?: Record<ActiveAgentId, boolean>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  server?: ServerIdentity;
   humans?: HumanPresence[];
 }

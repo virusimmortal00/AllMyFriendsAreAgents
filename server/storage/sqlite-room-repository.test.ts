@@ -24,6 +24,7 @@ describe("SQLite room repository", () => {
     await store.addMessage("you", "Durable hello", "chat", humanStyle, { burstId: "human-burst", sequence: 0 }, {
       id: "human-12345678",
       name: "Robby",
+      clientMessageId: "message-12345678",
     });
     await store.setSession("codex-sol", "sqlite-session", "writable");
     store.close();
@@ -38,6 +39,7 @@ describe("SQLite room repository", () => {
       speaker: "you",
       speakerName: "Robby",
       humanId: "human-12345678",
+      clientMessageId: "message-12345678",
       text: "Durable hello",
       burstId: "human-burst",
       sequence: 0,

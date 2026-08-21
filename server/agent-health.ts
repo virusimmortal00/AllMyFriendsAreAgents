@@ -1,4 +1,6 @@
-import { agentScreenName, type ActiveAgentId } from "../shared/participants.js";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { isActiveAgentId, type ActiveAgentId } from "../shared/participants.js";
 
 export type AgentFailureReason = "rate_limit" | "authentication" | "timeout" | "configuration" | "provider_error";
 export type AgentHealthStatus = "cooldown" | "unavailable";
@@ -77,22 +79,51 @@ export function classifyAgentFailure(error: unknown, now = Date.now()): Omit<Sto
 
 export class AgentHealthRegistry {
   private readonly states = new Map<ActiveAgentId, StoredAgentHealth>();
+  private saveQueue: Promise<void> = Promise.resolve();
+
+  private constructor(private readonly statePath?: string) {}
+
+  static async open(dataDirectory?: string) {
+    const registry = new AgentHealthRegistry(dataDirectory ? path.join(dataDirectory, "agent-health.json") : undefined);
+    if (!registry.statePath) return registry;
+    await mkdir(dataDirectory!, { recursive: true, mode: 0o700 });
+    try {
+      const stored = JSON.parse(await readFile(registry.statePath, "utf8")) as Record<string, StoredAgentHealth>;
+      for (const [agent, health] of Object.entries(stored)) {
+        if (!isActiveAgentId(agent) || !health?.status || !health.reason || !health.since) continue;
+        registry.states.set(agent, {
+          ...health,
+          ...(health.retryAt ? { retryAtMs: new Date(health.retryAt).getTime() } : {}),
+        });
+      }
+      await chmod(registry.statePath, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return registry;
+  }
+
+  static memory() {
+    return new AgentHealthRegistry();
+  }
 
   canAttempt(agent: ActiveAgentId, now = Date.now()) {
     const health = this.states.get(agent);
     return !health || (health.status === "cooldown" && (health.retryAtMs || 0) <= now);
   }
 
-  recordFailure(agent: ActiveAgentId, error: unknown, now = Date.now()) {
+  async recordFailure(agent: ActiveAgentId, error: unknown, now = Date.now()) {
     const previous = this.states.get(agent);
     const classified = classifyAgentFailure(error, now);
     const health: StoredAgentHealth = { ...classified, since: previous?.since || new Date(now).toISOString() };
     this.states.set(agent, health);
-    return { health: this.publicHealth(health), announce: !previous || previous.reason !== health.reason };
+    await this.save();
+    return this.publicHealth(health);
   }
 
-  recordSuccess(agent: ActiveAgentId) {
+  async recordSuccess(agent: ActiveAgentId) {
     const recovered = this.states.delete(agent);
+    if (recovered) await this.save();
     return recovered;
   }
 
@@ -100,18 +131,19 @@ export class AgentHealthRegistry {
     return Object.fromEntries([...this.states].map(([agent, health]) => [agent, this.publicHealth(health)])) as Partial<Record<ActiveAgentId, AgentHealth>>;
   }
 
-  failureNotice(agent: ActiveAgentId, health: AgentHealth) {
-    const retry = health.retryAt
-      ? ` It can be tried again after ${new Date(health.retryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-      : "";
-    return `${agentScreenName(agent)} is unavailable: ${health.message}${retry} Other agents will keep going.`;
-  }
-
-  recoveryNotice(agent: ActiveAgentId) {
-    return `${agentScreenName(agent)} is available again.`;
-  }
-
   private publicHealth({ retryAtMs: _retryAtMs, ...health }: StoredAgentHealth): AgentHealth {
     return health;
+  }
+
+  private async save() {
+    if (!this.statePath) return;
+    const operation = this.saveQueue.then(async () => {
+      const temporaryPath = `${this.statePath}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(this.snapshot(), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(temporaryPath, this.statePath!);
+      await chmod(this.statePath!, 0o600);
+    });
+    this.saveQueue = operation.catch(() => undefined);
+    await operation;
   }
 }

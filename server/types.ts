@@ -2,6 +2,7 @@ import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 import type { AgentHealth } from "./agent-health.js";
+import type { ServerIdentity } from "../shared/protocol.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -16,6 +17,7 @@ export interface RoomMessage {
   sequence?: number;
   humanId?: string;
   speakerName?: string;
+  clientMessageId?: string;
 }
 
 export interface HumanPresence {
@@ -52,4 +54,5 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   settings: Omit<RoomSettings, "projectPath">;
   availability?: Record<ActiveAgentId, boolean>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  server?: ServerIdentity;
 }

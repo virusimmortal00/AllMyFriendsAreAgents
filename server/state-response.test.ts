@@ -8,6 +8,7 @@ describe("room state responses", () => {
     const snapshot: RoomState = {
       messages: [
         { id: "legacy", speaker: "system", kind: "status", text: "The discussion remains open. Use Actions → Continue discussion to start another bounded round.", timestamp: "2026-08-19T12:00:00.000Z" },
+        { id: "provider", speaker: "system", kind: "status", text: "Claude [Claude Opus 5] is unavailable: Provider usage limit reached. It can be tried again after 5:20 PM. Other agents will keep going.", timestamp: "2026-08-19T12:00:00.500Z" },
         { id: "presence", speaker: "system", kind: "status", text: "Alice joined the room.", timestamp: "2026-08-19T12:00:01.000Z" },
       ],
       sessions: {},

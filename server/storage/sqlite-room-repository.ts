@@ -41,6 +41,7 @@ interface MessageRow {
   speaker: string;
   speaker_name: string | null;
   human_id: string | null;
+  client_message_id: string | null;
   text: string;
   kind: string | null;
   style_json: string | null;
@@ -91,6 +92,7 @@ function messageFromRow(row: MessageRow, participantStyles: RoomSettings["partic
     ...(row.burst_sequence !== null ? { sequence: row.burst_sequence } : {}),
     ...(row.human_id ? { humanId: row.human_id } : {}),
     ...(row.speaker_name ? { speakerName: row.speaker_name } : {}),
+    ...(row.client_message_id ? { clientMessageId: row.client_message_id } : {}),
   };
 }
 
@@ -101,7 +103,7 @@ function messageFor(
   kind: RoomMessage["kind"] = "chat",
   style?: ChatStyle,
   burst?: { burstId: string; sequence: number },
-  human?: { id: string; name: string },
+  human?: { id: string; name: string; clientMessageId?: string },
 ): RoomMessage {
   const participant = isParticipantId(speaker) ? speaker : undefined;
   const messageStyle = participant
@@ -116,6 +118,7 @@ function messageFor(
     ...(messageStyle ? { style: messageStyle } : {}),
     ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
     ...(human ? { humanId: human.id, speakerName: human.name } : {}),
+    ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
   };
 }
 
@@ -229,7 +232,7 @@ export class SqliteRoomRepository implements RoomRepository {
     kind: RoomMessage["kind"] = "chat",
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string },
+    human?: { id: string; name: string; clientMessageId?: string },
   ) {
     const state = this.snapshot();
     const message = messageFor(state, speaker, text, kind, style, burst, human);
@@ -354,8 +357,8 @@ export class SqliteRoomRepository implements RoomRepository {
     this.database.prepare(`
       INSERT INTO messages(
         id, room_id, speaker, speaker_name, human_id, text, kind, style_json,
-        burst_id, burst_sequence, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        burst_id, burst_sequence, client_message_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       message.id,
       DEFAULT_ROOM_ID,
@@ -367,6 +370,7 @@ export class SqliteRoomRepository implements RoomRepository {
       message.style ? JSON.stringify(message.style) : null,
       message.burstId || null,
       message.sequence ?? null,
+      message.clientMessageId || null,
       message.timestamp,
     );
   }
