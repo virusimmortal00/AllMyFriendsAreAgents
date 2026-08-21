@@ -1,6 +1,7 @@
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format.js";
 import { AGENT_PROFILES, isAgentId } from "../shared/participants.js";
 import type { RoomMessage, RoomState } from "./types.js";
+import { isVisibleRoomMessage } from "./message-visibility.js";
 
 export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
 
@@ -14,6 +15,7 @@ interface TranscriptEntry {
 function entriesFor(messages: RoomMessage[]) {
   const entries: TranscriptEntry[] = [];
   for (const message of messages) {
+    if (!isVisibleRoomMessage(message)) continue;
     const text = isAgentId(message.speaker)
       ? visibleAgentChatText(message.text)
       : visibleAgentText(message.text);

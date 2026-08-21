@@ -64,4 +64,14 @@ describe("agent transcript context", () => {
     expect(transcript).toContain("[ALICE]\nI prefer blue.");
     expect(transcript).toContain("[BOB]\nI prefer orange.");
   });
+
+  it("keeps legacy orchestration instructions out of future agent context", () => {
+    const transcript = transcriptFor(state([
+      { id: "1", speaker: "system", kind: "status", text: "The discussion remains open. Use Actions → Continue discussion to start another bounded round.", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "2", speaker: "you", text: "Let's talk normally.", timestamp: "2026-08-19T12:00:01Z" },
+    ]));
+
+    expect(transcript).not.toContain("Use Actions");
+    expect(transcript).toContain("Let's talk normally.");
+  });
 });
