@@ -19,17 +19,21 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
   const normalizationDirectory = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-"));
   try {
     await copyFile(sourcePath, path.join(normalizationDirectory, "room.json"));
+    await copyFile(path.join(options.sourceStateDirectory, "assignments.json"), path.join(normalizationDirectory, "assignments.json"))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     const legacyStore = await RoomStore.open(options.projectRoot, normalizationDirectory);
     const state = legacyStore.snapshot();
+    const assignments = await legacyStore.listAssignments();
     const sqliteStore = await SqliteRoomRepository.open(options.projectRoot, options.databasePath, {
       initializeDefaultRoom: false,
     });
     try {
       sqliteStore.replaceState(state, { overwrite: options.overwrite });
+      for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
     } finally {
       sqliteStore.close();
     }
-    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length };
+    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length };
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }
@@ -45,7 +49,7 @@ async function main() {
   const databasePath = path.resolve(argument("database") || path.join(sourceStateDirectory, "amfaa.sqlite"));
   const overwrite = process.argv.includes("--overwrite");
   const imported = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite });
-  console.log(`Imported ${imported.messages} messages and ${imported.sessions} agent sessions into ${databasePath}`);
+  console.log(`Imported ${imported.messages} messages, ${imported.sessions} agent sessions, and ${imported.assignments} assignments into ${databasePath}`);
   console.log("The source JSON file was not modified. Set ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite only after verification.");
 }
 

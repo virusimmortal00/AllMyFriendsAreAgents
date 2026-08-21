@@ -27,6 +27,7 @@ import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-ap
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
+import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -54,6 +55,14 @@ const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDire
 const humans = new HumanPresenceRegistry();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
+const assignmentLifecycle = new AssignmentLifecycleService(
+  store,
+  store,
+  developerTeam,
+  store.snapshot().settings.projectPath,
+  path.join(storageConfiguration.dataDirectory, "assignment-worktrees"),
+);
+await assignmentLifecycle.reconcile();
 const coordinatorConfigured = coordinatorEnabled();
 const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
 const coordinatorHeartbeat = new CoordinatorHeartbeat(
@@ -122,7 +131,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const generationCancellation = roomActivity.abortSignal(activityRevision);
   let result;
   try {
-    result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal);
+    const assignmentWorkspace = includeDiff ? undefined : await assignmentLifecycle.workspaceForAgent(agent);
+    result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal, assignmentWorkspace);
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
     if (!activeAgent) throw error;
@@ -552,6 +562,32 @@ app.post("/api/developer/messages", async (request, response) => {
 
 app.get("/api/developer/improvements/:id", async (request, response) => {
   return sendBridgeResult(response, await developerBridge.readImprovement(request.header("authorization"), request.params.id));
+});
+
+app.get("/api/developer/assignments", async (request, response) => {
+  if (!developerTeam.authenticate(request.header("authorization"), "IMPROVEMENT_READ")) return response.status(404).json({ error: "Not found." });
+  response.set("Cache-Control", "no-store").json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.list() });
+});
+
+app.post("/api/developer/assignments", async (request, response) => {
+  return sendBridgeResult(response, await assignmentLifecycle.create(request.header("authorization"), {
+    assignmentId: request.body?.assignmentId,
+    improvementId: request.body?.improvementId,
+    agent: request.body?.agent,
+    baseRef: request.body?.baseRef,
+    fencingToken: request.body?.fencingToken,
+    manifestRevision: request.body?.manifestRevision,
+  }));
+});
+
+app.post("/api/developer/assignments/reconcile", async (request, response) => {
+  if (!developerTeam.authenticate(request.header("authorization"), "ASSIGNMENT_WRITE")) return response.status(404).json({ error: "Not found." });
+  response.json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.reconcile() });
+});
+
+app.post("/api/developer/assignments/cleanup", async (request, response) => {
+  if (!developerTeam.authenticate(request.header("authorization"), "ASSIGNMENT_WRITE")) return response.status(404).json({ error: "Not found." });
+  response.json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.cleanup() });
 });
 
 app.post("/api/developer/improvements/:id/claims", async (request, response) => {

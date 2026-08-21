@@ -269,6 +269,11 @@ function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolea
   return includeDiff || !agentSupportsProjectWrites(agent) || state.settings.writableAgent !== agent ? "read-only" : "writable";
 }
 
+function resolveExecutionProjectPath(permission: "read-only" | "writable", projectPath: string, assignmentWorkspace?: string) {
+  if (permission === "writable" && !assignmentWorkspace) throw new Error("Writable execution requires an active trusted assignment workspace.");
+  return permission === "writable" ? assignmentWorkspace! : projectPath;
+}
+
 function isMissingClaudeSessionError(error: unknown) {
   return error instanceof Error && /No conversation found with session ID/i.test(error.message);
 }
@@ -347,11 +352,15 @@ export async function runAgent(
   includeDiff = false,
   journal?: GenerationJournal,
   signal?: AbortSignal,
+  assignmentWorkspace?: string,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
-  const projectPath = state.settings.projectPath;
   const permission = resolvePermission(agent, state, includeDiff);
+  // Review turns deliberately stay rooted at the configured project and retain
+  // the existing read-only source-control behavior. Only a writable generation
+  // can receive the assignment worktree as its cwd.
+  const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
   const profile = AGENT_PROFILES[agent];
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
@@ -525,4 +534,4 @@ export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>>
   })) as Record<ActiveAgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs, cursorArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, claudeArgs, codexArgs, cursorArgs, runProcess };

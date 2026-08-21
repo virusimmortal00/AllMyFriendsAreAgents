@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RoomStore } from "../room-store.js";
 import { importJsonRoomToSqlite } from "./import-json-to-sqlite.js";
 import { SqliteRoomRepository } from "./sqlite-room-repository.js";
+import type { AssignmentRecord } from "../assignment-record.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -25,6 +26,14 @@ describe("JSON to SQLite import", () => {
       name: "Importer",
     });
     await legacyStore.setSession("codex-terra", "imported-session", "read-only");
+    const assignment: AssignmentRecord = {
+      assignmentId: "imported-assignment", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 1,
+      agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/imported",
+      observedHeadSha: "b".repeat(40), workspacePath: path.join(projectRoot, "assignment-worktree"), lifecycleStatus: "RECOVERABLE",
+      recovery: { classification: "dirty", reconciledAt: "2026-08-21T00:00:00.000Z", previousStatus: "ACTIVE", detail: "preserve" },
+      createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z",
+    };
+    await legacyStore.putAssignment(assignment);
     const sourcePath = path.join(sourceStateDirectory, "room.json");
     const sourceBefore = await readFile(sourcePath, "utf8");
 
@@ -32,6 +41,7 @@ describe("JSON to SQLite import", () => {
 
     expect(result.messages).toBe(3);
     expect(result.sessions).toBe(1);
+    expect(result.assignments).toBe(1);
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
     const importedStore = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
@@ -40,6 +50,7 @@ describe("JSON to SQLite import", () => {
       text: "Keep this transcript",
       speakerName: "Importer",
     });
+    expect(await importedStore.getAssignment("imported-assignment")).toEqual(assignment);
     importedStore.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
