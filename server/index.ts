@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
+import { AgentHealthRegistry } from "./agent-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { developerRequestAuthorized, openDeveloperToken } from "./developer-access.js";
@@ -40,6 +41,7 @@ const generationJournal = await GenerationJournal.open(projectRoot, storageConfi
 const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
+const agentHealth = new AgentHealthRegistry();
 const humans = new HumanPresenceRegistry();
 const developerAccess = await openDeveloperToken(storageConfiguration.dataDirectory);
 const developerHuman = {
@@ -53,12 +55,16 @@ function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
 }
 
+function publicRoomSnapshot() {
+  return { ...publicRoomState(roomSnapshot()), agentHealth: agentHealth.snapshot() };
+}
+
 function broadcast() {
-  roomEvents.broadcast(publicRoomState(roomSnapshot()));
+  roomEvents.broadcast(publicRoomSnapshot());
 }
 
 function developerRoomView(limit = 50) {
-  const state = publicRoomState(roomSnapshot());
+  const state = publicRoomSnapshot();
   const messages = state.messages.slice(-limit);
   return {
     ...state,
@@ -73,6 +79,8 @@ function developerAuthorized(authorization: string | undefined) {
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
+  const activeAgent = isActiveAgentId(agent) ? agent : undefined;
+  if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
@@ -82,9 +90,20 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal);
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
-    throw error;
+    if (!activeAgent) throw error;
+    const failure = agentHealth.recordFailure(activeAgent, error);
+    console.error(`Agent command failed for ${agent}`, error);
+    if (failure.announce) {
+      await store.addMessage("system", agentHealth.failureNotice(activeAgent, failure.health), "status");
+      broadcast();
+    }
+    return { failed: true };
   } finally {
     generationCancellation.dispose();
+  }
+  if (activeAgent && agentHealth.recordSuccess(activeAgent)) {
+    await store.addMessage("system", agentHealth.recoveryNotice(activeAgent), "status");
+    broadcast();
   }
   const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
   const currentStyle = before.settings.participantStyles[agent];
@@ -293,14 +312,14 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 }
 
 app.get("/api/state", async (_request, response) => {
-  response.json(await roomStateWithAvailability(roomSnapshot, cliAvailability));
+  response.json({ ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)), agentHealth: agentHealth.snapshot() });
 });
 
 app.get("/api/events", (request, response) => {
   const humanId = request.query.humanId;
   const connection = humans.connect(humanId);
   if (!connection) return response.status(400).json({ error: "Join the room before connecting." });
-  roomEvents.connect(request, response, publicRoomState(roomSnapshot()), () => {
+  roomEvents.connect(request, response, publicRoomSnapshot(), () => {
     const departure = humans.disconnect(humanId);
     if (departure?.becameAbsent) {
       void announceHumanPresence(departure.human, "left").catch((error) => console.error("Failed to announce room departure", error));
@@ -346,7 +365,7 @@ app.patch("/api/settings", async (request, response) => {
   }
   if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
   broadcast();
-  response.json(publicRoomState(roomSnapshot()));
+  response.json(publicRoomSnapshot());
 });
 
 app.patch("/api/style", async (request, response) => {
@@ -373,7 +392,7 @@ app.post("/api/messages", async (request, response) => {
       latestHumanInvitesWholeRoom(conversationState),
     );
   }));
-  return response.status(202).json(publicRoomState(roomSnapshot()));
+  return response.status(202).json(publicRoomSnapshot());
 });
 
 app.get("/api/developer/room", (request, response) => {

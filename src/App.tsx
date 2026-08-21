@@ -127,7 +127,7 @@ export default function App() {
     const loadLatestRoom = () => loadRoom().then((next) => {
       if (cancelled) return;
       setRoom((current) => receivedLiveState.current
-        ? { ...current, availability: next.availability || current.availability }
+        ? { ...current, availability: next.availability || current.availability, agentHealth: next.agentHealth || current.agentHealth }
         : next);
       setHasInitialState(true);
     });
@@ -149,7 +149,7 @@ export default function App() {
         if (source !== events) return;
         const next = JSON.parse(event.data) as RoomState;
         receivedLiveState.current = true;
-        setRoom((current) => ({ ...next, availability: current.availability }));
+        setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
         setHasInitialState(true);
         setConnected(true);
         setClientError("");
@@ -289,7 +289,7 @@ export default function App() {
         setRoom((current) => {
           const stillPending = current.messages.some(({ id }) => id === optimisticId);
           if (!stillPending && current.messages.length >= next.messages.length) return current;
-          return { ...next, availability: current.availability };
+          return { ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth };
         });
       } catch (error) {
         setRoom((current) => discardOptimisticMessage(current, optimisticId));
@@ -399,7 +399,7 @@ export default function App() {
               <strong>{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
               <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
             </header>
-            <RoomRoster availability={room.availability} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} />
+            <RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} />
             <RoomControls
               roomName={room.settings.roomName}
               topic={room.settings.topic}
@@ -416,6 +416,7 @@ export default function App() {
           <AgentSettingsDialog
             agent={configuredAgent}
             available={room.availability?.[configuredAgent] !== false}
+            health={room.agentHealth?.[configuredAgent]}
             writableAgent={room.settings.writableAgent}
             disabled={working}
             onWritableChange={changeWritable}

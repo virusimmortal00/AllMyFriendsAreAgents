@@ -4,6 +4,14 @@ import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
+export interface AgentHealth {
+  status: "cooldown" | "unavailable";
+  reason: "rate_limit" | "authentication" | "timeout" | "configuration" | "provider_error";
+  message: string;
+  since: string;
+  retryAt?: string;
+}
+
 export interface RoomMessage {
   id: string;
   speaker: SpeakerId;
@@ -36,5 +44,6 @@ export interface RoomState {
   activeAgent?: AgentId;
   error?: string;
   availability?: Record<ActiveAgentId, boolean>;
+  agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   humans?: HumanPresence[];
 }

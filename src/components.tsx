@@ -11,7 +11,7 @@ import { visibleAgentChatText, visibleAgentText } from "../shared/message-format
 import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
+import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -64,11 +64,13 @@ export function TranscriptHeader({
 
 export function RoomRoster({
   availability,
+  agentHealth,
   humans,
   currentHumanId,
   onConfigureAgent,
 }: {
   availability?: Record<ActiveAgentId, boolean>;
+  agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   humans: HumanPresence[];
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
@@ -85,7 +87,11 @@ export function RoomRoster({
       <div className="presence-list" role="list">
         {presentAgents.map((agent) => (
           <div className="presence-row" role="listitem" key={agent}>
-            <span className="presence-status" aria-hidden="true" />
+            <span
+              className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
+              aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
+              title={agentHealth?.[agent]?.message || "Available"}
+            />
             <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
             <button
               type="button"
@@ -111,6 +117,7 @@ export function RoomRoster({
 export function AgentSettingsDialog({
   agent,
   available,
+  health,
   writableAgent,
   disabled,
   onWritableChange,
@@ -118,6 +125,7 @@ export function AgentSettingsDialog({
 }: {
   agent: ActiveAgentId;
   available: boolean;
+  health?: AgentHealth;
   writableAgent: WritableAgent;
   disabled: boolean;
   onWritableChange: (agent: WritableAgent) => void;
@@ -127,6 +135,10 @@ export function AgentSettingsDialog({
   const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
     ? agentScreenName(writableAgent)
+    : "";
+  const connectionState = !available ? "offline" : health?.status || "online";
+  const retryDescription = health?.retryAt
+    ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
     : "";
 
   return (
@@ -144,8 +156,8 @@ export function AgentSettingsDialog({
         <div className="agent-settings-body">
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
-            <span className={`agent-connection-light agent-connection-light--${available ? "online" : "offline"}`} aria-hidden="true" />
-            {available ? "Connected to the room" : "CLI unavailable"}
+            <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />
+            {!available ? "CLI unavailable" : health ? `${health.message}${retryDescription}` : "Connected to the room"}
           </div>
           <fieldset>
             <legend>Project permissions</legend>

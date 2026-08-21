@@ -233,6 +233,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr) 25px; align-items: center; gap: 7px; min-height: 29px; padding: 2px 7px 2px 15px; }
 .presence-row .speaker { overflow: hidden; font: 700 14px/20px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-status { width: 9px; height: 9px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
+.presence-status--cooldown { border-color: #8a5700; background: #ffb000; }
+.presence-status--unavailable { border-color: #700; background: #c72a2a; }
 .agent-settings-button { width: 25px; height: 23px; padding: 0; border: 2px outset white; background: var(--chrome); color: #222; font: 15px/1 Arial, sans-serif; }
 .agent-settings-button:active { border-style: inset; }
 .presence-row-spacer { width: 25px; }
@@ -263,6 +265,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .agent-connection-status { display: flex; align-items: center; gap: 7px; margin-bottom: 19px; color: #444; font: 13px Tahoma, Arial, sans-serif; }
 .agent-connection-light { width: 10px; height: 10px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; }
 .agent-connection-light--offline { border-color: #777; background: #aaa; }
+.agent-connection-light--cooldown { border-color: #8a5700; background: #ffb000; }
+.agent-connection-light--unavailable { border-color: #700; background: #c72a2a; }
 .agent-settings-body fieldset { margin: 0; padding: 13px; border: 2px groove white; }
 .agent-settings-body legend { padding: 0 6px; color: var(--blue); font-size: 16px; font-weight: 800; }
 .agent-permission-toggle { display: grid; grid-template-columns: 22px 1fr; align-items: start; gap: 8px; font-weight: 700; line-height: 1.35; }

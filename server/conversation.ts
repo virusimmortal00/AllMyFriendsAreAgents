@@ -19,6 +19,7 @@ export interface TurnResult {
   continuationWorthy?: boolean;
   conversationState?: ConversationState;
   cancelled?: boolean;
+  failed?: boolean;
 }
 
 export type ConversationState = "settled" | "open" | "blocked";

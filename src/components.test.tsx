@@ -15,6 +15,14 @@ describe("RoomRoster", () => {
       "cursor-grok": true,
       "cursor-gemini": true,
       "cursor-composer": true,
+    }} agentHealth={{
+      "claude-opus": {
+        status: "cooldown",
+        reason: "rate_limit",
+        message: "Provider usage limit reached.",
+        since: "2026-08-21T17:00:00.000Z",
+        retryAt: "2026-08-21T17:15:00.000Z",
+      },
     }} humans={[
       { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
@@ -26,6 +34,8 @@ describe("RoomRoster", () => {
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
     expect(html).toContain("Claude [Claude Opus 5]");
+    expect(html).toContain("presence-status--cooldown");
+    expect(html).toContain("Provider usage limit reached.");
     expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Cursor [Gemini 3.1 Pro]");
     expect(html).toContain("Cursor [Composer 2.5]");
@@ -73,6 +83,30 @@ describe("AgentSettingsDialog", () => {
     );
 
     expect(html).toMatch(/type="checkbox" checked=""/);
+  });
+
+  it("explains a participant-local provider cooldown", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="claude-opus"
+        available
+        health={{
+          status: "cooldown",
+          reason: "rate_limit",
+          message: "Provider usage limit reached.",
+          since: "2026-08-21T17:00:00.000Z",
+          retryAt: "2026-08-21T17:15:00.000Z",
+        }}
+        writableAgent="nobody"
+        disabled={false}
+        onWritableChange={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-connection-light--cooldown");
+    expect(html).toContain("Provider usage limit reached.");
+    expect(html).not.toContain("Connected to the room");
   });
 
   it("shows Cursor agents as opinion-only", () => {

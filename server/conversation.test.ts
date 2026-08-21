@@ -304,6 +304,17 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
   });
 
+  it("falls through failed participants without cancelling the room pulse", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ failed: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: true });
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
+  });
+
   it("stages a second balanced invitation after the first visible response", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1 })

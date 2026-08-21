@@ -1,6 +1,7 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
+import type { AgentHealth } from "./agent-health.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -50,4 +51,5 @@ export interface RoomState {
 export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
   settings: Omit<RoomSettings, "projectPath">;
   availability?: Record<ActiveAgentId, boolean>;
+  agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
 }
