@@ -50,17 +50,22 @@ export function reconcileMessageMentionsAfterEdit(
   previousText: string,
   nextText: string,
   mentions: readonly MessageMention[],
+  editRange?: Readonly<{ start: number; end: number }>,
 ) {
-  let prefixLength = 0;
-  while (prefixLength < previousText.length && prefixLength < nextText.length
-    && previousText[prefixLength] === nextText[prefixLength]) prefixLength += 1;
-
-  let suffixLength = 0;
-  while (suffixLength < previousText.length - prefixLength && suffixLength < nextText.length - prefixLength
-    && previousText[previousText.length - suffixLength - 1] === nextText[nextText.length - suffixLength - 1]) suffixLength += 1;
-
-  const previousEditEnd = previousText.length - suffixLength;
-  const nextEditEnd = nextText.length - suffixLength;
+  let prefixLength = editRange?.start ?? 0;
+  let previousEditEnd = editRange?.end ?? previousText.length;
+  let nextEditEnd: number;
+  if (editRange) {
+    nextEditEnd = prefixLength + nextText.length - (previousText.length - (previousEditEnd - prefixLength));
+  } else {
+    while (prefixLength < previousText.length && prefixLength < nextText.length
+      && previousText[prefixLength] === nextText[prefixLength]) prefixLength += 1;
+    let suffixLength = 0;
+    while (suffixLength < previousText.length - prefixLength && suffixLength < nextText.length - prefixLength
+      && previousText[previousText.length - suffixLength - 1] === nextText[nextText.length - suffixLength - 1]) suffixLength += 1;
+    previousEditEnd = previousText.length - suffixLength;
+    nextEditEnd = nextText.length - suffixLength;
+  }
   const delta = nextEditEnd - previousEditEnd;
   const remapped = mentions.flatMap((mention) => {
     if (mention.end <= prefixLength) return [mention];

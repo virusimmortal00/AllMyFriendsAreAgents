@@ -38,6 +38,12 @@ describe("message mentions", () => {
       .toEqual([{ ...mention, start: 15, end: 21 }]);
   });
 
+  it("uses the actual edit range when identical pasted text makes textual diffing ambiguous", () => {
+    const mention = { targetKind: "human" as const, targetId: "alice-2", label: "Alice", revision: 1, start: 0, end: 6 };
+    expect(reconcileMessageMentionsAfterEdit("@Alice", "@Alice @Alice", [mention], { start: 0, end: 0 }))
+      .toEqual([{ ...mention, start: 7, end: 13 }]);
+  });
+
   it("rejects forged, stale, and text-mismatched targets", () => {
     const candidates = roomMentionCandidates([]);
     const mention = { targetKind: "agent" as const, targetId: "cursor-grok", label: "Grok", revision: 1, start: 0, end: 5 };
