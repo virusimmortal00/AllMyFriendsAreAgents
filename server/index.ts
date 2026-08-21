@@ -9,6 +9,7 @@ import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./ag
 import { AgentHealthRegistry } from "./agent-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
+import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
@@ -521,7 +522,56 @@ app.post("/api/actions", async (request, response) => {
 app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
-app.listen(port, host, () => {
+const httpServer = app.listen(port, host, () => {
   console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
   console.log(`Developer team bridge: ${developerTeam.roster().length} configured member(s)`);
 });
+
+let coordinatorHeartbeat: CoordinatorHeartbeat | undefined;
+if (coordinatorEnabled()) {
+  const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
+  coordinatorHeartbeat = new CoordinatorHeartbeat(
+    store,
+    coordinatorState,
+    new HttpDeveloperTeamExecutor(
+      process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL!,
+      process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN
+        ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN}`
+        : undefined,
+    ),
+    {
+      workerMemberId: process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MEMBER_ID?.trim() || "coordinator",
+      intervalMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_INTERVAL_MS"),
+      leaseMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_LEASE_MS"),
+      retryAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_RETRY_AFTER_MS"),
+      maxSelectedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED"),
+      maxDispatchedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED"),
+      onError: (error) => console.error("Coordinator heartbeat failed", error),
+    },
+  );
+  coordinatorHeartbeat.start();
+  console.log("Bounded coordinator heartbeat enabled");
+}
+
+function configuredPositiveInteger(name: string) {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+let shuttingDown = false;
+function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  coordinatorHeartbeat?.close();
+  httpServer.close((error) => {
+    if (error) {
+      console.error(`Server shutdown after ${signal} failed`, error);
+      process.exitCode = 1;
+    }
+  });
+}
+
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
