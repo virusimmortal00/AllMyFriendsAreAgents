@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
@@ -74,7 +74,8 @@ export class RoomStore {
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
-    await mkdir(stateDirectory, { recursive: true });
+    await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+    await chmod(stateDirectory, 0o700);
     const statePath = path.join(stateDirectory, "room.json");
     const defaultSettings: RoomSettings = {
       roomName: DEFAULT_ROOM_NAME,
@@ -86,6 +87,7 @@ export class RoomStore {
     };
 
     try {
+      await chmod(statePath, 0o600);
       const stored = JSON.parse(await readFile(statePath, "utf8")) as RoomState;
       const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
       const storedSettings = stored.settings as RoomSettings & { maxRounds?: unknown; conversationEnergy?: unknown; reviewMode?: unknown };
@@ -234,8 +236,9 @@ export class RoomStore {
   private async save() {
     const operation = this.saveQueue.then(async () => {
       const temporaryPath = `${this.statePath}.tmp`;
-      await writeFile(temporaryPath, `${JSON.stringify(this.state, null, 2)}\n`, "utf8");
+      await writeFile(temporaryPath, `${JSON.stringify(this.state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
       await rename(temporaryPath, this.statePath);
+      await chmod(this.statePath, 0o600);
     });
     this.saveQueue = operation.catch(() => undefined);
     await operation;

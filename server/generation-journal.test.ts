@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -28,5 +28,7 @@ describe("GenerationJournal", () => {
     expect(entries).toHaveLength(2);
     expect(entries.map(({ type }) => type)).toEqual(["generation.started", "generation.completed"]);
     expect(entries.every(({ timestamp }) => typeof timestamp === "string")).toBe(true);
+    expect((await stat(path.dirname(journal.path))).mode & 0o777).toBe(0o700);
+    expect((await stat(journal.path)).mode & 0o777).toBe(0o600);
   });
 });

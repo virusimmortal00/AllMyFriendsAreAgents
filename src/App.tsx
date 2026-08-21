@@ -11,13 +11,11 @@ import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
-  sessions: {},
   settings: {
     roomName: "The Agent Room",
     topic: "Open conversation",
     writableAgent: "nobody",
     conversationEnergy: "balanced",
-    projectPath: "",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",
@@ -191,7 +189,6 @@ export default function App() {
     if (nextTopic === room.settings.topic) return;
     setRoom((current) => ({
       ...current,
-      sessions: {},
       settings: { ...current.settings, topic: nextTopic },
     }));
     void withErrorHandling(() => updateSettings({ topic: nextTopic }));

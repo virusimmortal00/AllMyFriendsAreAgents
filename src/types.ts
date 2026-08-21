@@ -25,13 +25,11 @@ export interface HumanPresence {
 
 export interface RoomState {
   messages: RoomMessage[];
-  sessions: Partial<Record<AgentId, { id: string; permission: "read-only" | "writable" }>>;
   settings: {
     roomName: string;
     topic: string;
     writableAgent: WritableAgent;
     conversationEnergy: ConversationEnergy;
-    projectPath: string;
     participantStyles: ParticipantStyles;
   };
   status: "idle" | "working" | "error";

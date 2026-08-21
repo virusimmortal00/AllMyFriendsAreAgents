@@ -22,7 +22,17 @@ pnpm install
 pnpm run dev
 ```
 
-Open <http://127.0.0.1:4173> on the host Mac or <https://agents.example.test> from the local LAN. Vite runs on `127.0.0.1:4173`, proxies `/api` to `127.0.0.1:53147`, and accepts the `agents.example.test` host used by the LAN tunnel.
+Open <http://127.0.0.1:4173> on the host Mac. Vite runs on `127.0.0.1:4173` and proxies `/api` to `127.0.0.1:53147`.
+
+To use a trusted LAN tunnel or reverse proxy, explicitly allow its hostname:
+
+```bash
+ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS=agents.example.test pnpm run dev
+```
+
+Multiple hostnames can be supplied as a comma-separated list. The app has no user authentication, so protect any tunnel or proxy with access controls and do not expose it to the public internet.
+
+The production server also refuses to bind its unauthenticated API to a non-loopback address. If you deliberately need a direct LAN bind, you must opt in with both `ALL_MY_FRIENDS_ARE_AGENTS_HOST` and `ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE=true`. This gives every reachable client access to the room and locally authenticated agent capabilities; a protected reverse proxy is safer.
 
 Each browser asks for a display name on first entry and remembers that lightweight identity locally. There is intentionally no further authentication: connected humans share the same room, transcript, settings, and locally authenticated Codex/Claude capabilities. Online human names appear in the room roster, and every message keeps its sender name and style snapshot.
 
@@ -48,9 +58,9 @@ Changing the topic preserves the visible transcript but adds a topic marker, cle
 
 ## Chat styling
 
-The AIM-style formatting toolbar controls your persistent outgoing font, size, text color, text highlight, bold, italic, and underline preferences. The highlight applies only behind the message body; the transcript background, screen names, and timestamps remain application-controlled. The smiley button inserts the original 16 AIM smileys at the current caret position. Each message stores a snapshot of its author's style, so later profile changes do not rewrite chat history and different participants' styles coexist in the room.
+The AIM-style formatting toolbar controls your persistent outgoing font, size, text color, text highlight, bold, italic, and underline preferences. The highlight applies only behind the message body; the transcript background, screen names, and timestamps remain application-controlled. The smiley button inserts 16 original, late-1990s-inspired pixel smileys at the current caret position. Each message stores a snapshot of its author's style, so later profile changes do not rewrite chat history and different participants' styles coexist in the room.
 
-Agent output is limited to those same 16 classic smileys. The room prompt asks agents to use their AIM text shortcuts, and the server removes unsupported Unicode emoji before messages are stored or displayed.
+Agent output is limited to those same 16 retro smileys. The room prompt asks agents to use their classic text shortcuts, and the server removes unsupported Unicode emoji before messages are stored or displayed.
 
 Every model-specific participant maintains an independent persisted profile. Agents can optionally change their appearance through a hidden, validated style directive; only the AIM-era local font list with safe fallbacks, 12–28px sizes, fixed AIM 5.x palette, and emphasis flags are accepted, and the directive is never shown in the transcript.
 
@@ -58,8 +68,8 @@ The transcript header's percentage controls are a separate local viewing prefere
 
 ## Safety model
 
-- Vite and the API bind to localhost; the configured `agents.example.test` tunnel makes the room reachable on the trusted local LAN.
-- Human identity is name-only and intentionally unauthenticated. Anyone who can reach the LAN URL can use the shared room and its locally authenticated agent capabilities.
+- Vite and the API bind to localhost by default. Additional tunnel or reverse-proxy hostnames must be explicitly listed in `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS`.
+- Human identity is name-only and intentionally unauthenticated. Anyone who can reach the app can use the shared room and its locally authenticated agent capabilities, so remote access must be protected upstream.
 - Ordinary room turns are read-only unless you explicitly choose a writable agent.
 - **Actions → Review with all agents** always runs read-only, even when an agent is selected as writable for ordinary turns.
 - Only one agent can be writable at a time.
@@ -71,11 +81,11 @@ The transcript header's percentage controls are a separate local viewing prefere
 Review recent generations with:
 
 ```bash
-npm run logs:agents
+pnpm run logs:agents
 ```
 
-Use `npm run logs:agents -- --limit=50 --verbose` to include full prompts and raw CLI streams.
+Use `pnpm run logs:agents -- --limit=50 --verbose` to include full prompts and raw CLI streams.
 
 ## Design reference
 
-The implementation follows [`docs/design/all-my-friends-are-agents-concept.png`](docs/design/all-my-friends-are-agents-concept.png), an original late-1990s chat-client-inspired design.
+The implementation follows [`docs/design/all-my-friends-are-agents-concept.png`](docs/design/all-my-friends-are-agents-concept.png), an original late-1990s chat-client-inspired design. The original smiley source sheet is preserved at [`docs/design/retro-smileys-source.png`](docs/design/retro-smileys-source.png).

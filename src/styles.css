@@ -274,7 +274,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message time { white-space: nowrap; color: #222; font-family: "Courier New", Courier, monospace; font-size: calc(15px * var(--transcript-magnification, 1)); padding-top: 2px; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: auto; }
+.aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: pixelated; }
 .message--status { color: #555; font-style: italic; }
 .speaker {
   color: #111;

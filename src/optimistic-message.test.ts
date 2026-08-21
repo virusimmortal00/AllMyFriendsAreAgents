@@ -5,13 +5,11 @@ import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimi
 
 const room: RoomState = {
   messages: [],
-  sessions: {},
   settings: {
     roomName: "The Agent Room",
     topic: "Open conversation",
     writableAgent: "nobody",
     conversationEnergy: "balanced",
-    projectPath: "/tmp/project",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",

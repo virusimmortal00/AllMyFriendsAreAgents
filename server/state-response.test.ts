@@ -10,7 +10,7 @@ describe("room state responses", () => {
     const availability = new Promise<void>((resolve) => { releaseAvailability = resolve; });
     const snapshot = (): RoomState => ({
       messages: [{ id: "message", speaker: "you", text: messageText, timestamp: "2026-08-19T12:00:00.000Z" }],
-      sessions: {},
+      sessions: { "codex-sol": { id: "private-session-id", permission: "read-only" } },
       settings: {
         roomName: "The Agent Room",
         topic: "Open conversation",
@@ -29,6 +29,10 @@ describe("room state responses", () => {
     messageText = "after";
     releaseAvailability();
 
-    expect((await response).messages[0].text).toBe("after");
+    const resolved = await response;
+    expect(resolved.messages[0].text).toBe("after");
+    expect(resolved).not.toHaveProperty("sessions");
+    expect(resolved).not.toHaveProperty("error");
+    expect(resolved.settings).not.toHaveProperty("projectPath");
   });
 });

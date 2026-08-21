@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, chmod, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentId } from "./types.js";
 
@@ -19,13 +19,17 @@ export class GenerationJournal {
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
-    await mkdir(stateDirectory, { recursive: true });
+    await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+    await chmod(stateDirectory, 0o700);
     return new GenerationJournal(path.join(stateDirectory, "generations.jsonl"));
   }
 
   async append(event: GenerationJournalEvent) {
     const line = `${JSON.stringify({ ...event, timestamp: event.timestamp || new Date().toISOString() })}\n`;
-    const operation = this.queue.then(() => appendFile(this.path, line, "utf8"));
+    const operation = this.queue.then(async () => {
+      await appendFile(this.path, line, { encoding: "utf8", mode: 0o600 });
+      await chmod(this.path, 0o600);
+    });
     this.queue = operation.catch((error) => {
       console.error(`Could not write agent generation journal: ${error instanceof Error ? error.message : String(error)}`);
     });

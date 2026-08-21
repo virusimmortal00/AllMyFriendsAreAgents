@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import type { RoomState } from "./types.js";
+import type { PublicRoomState } from "./types.js";
 
 export const ROOM_EVENT_HEARTBEAT_MS = 15_000;
 
@@ -7,7 +7,7 @@ export class RoomEventStream {
   private readonly clients = new Set<Response>();
   private heartbeat?: NodeJS.Timeout;
 
-  connect(request: Request, response: Response, initialState: RoomState, onDisconnect?: () => void) {
+  connect(request: Request, response: Response, initialState: PublicRoomState, onDisconnect?: () => void) {
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
@@ -35,7 +35,7 @@ export class RoomEventStream {
     response.once("error", disconnect);
   }
 
-  broadcast(state: RoomState) {
+  broadcast(state: PublicRoomState) {
     const event = this.stateEvent(state);
     for (const client of [...this.clients]) this.write(client, event);
   }
@@ -44,7 +44,7 @@ export class RoomEventStream {
     return this.clients.size;
   }
 
-  private stateEvent(state: RoomState) {
+  private stateEvent(state: PublicRoomState) {
     return `data: ${JSON.stringify(state)}\n\n`;
   }
 

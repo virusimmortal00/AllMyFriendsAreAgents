@@ -14,12 +14,21 @@ import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
 import { RoomStore } from "./room-store.js";
-import { roomStateWithAvailability } from "./state-response.js";
+import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
+const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
+const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
+const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
+if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE !== "true") {
+  throw new Error(
+    "Refusing to bind the unauthenticated room API to a non-loopback host. "
+    + "Use a protected reverse proxy, or explicitly set ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE=true.",
+  );
+}
 const app = express();
 const store = await RoomStore.open(projectRoot);
 const generationJournal = await GenerationJournal.open(projectRoot);
@@ -35,7 +44,7 @@ function roomSnapshot() {
 }
 
 function broadcast() {
-  roomEvents.broadcast(roomSnapshot());
+  roomEvents.broadcast(publicRoomState(roomSnapshot()));
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
@@ -221,9 +230,9 @@ async function runJob(job: () => Promise<void>) {
     await store.setStatus("idle");
   } catch (error) {
     roomActivity.interrupt();
-    const message = error instanceof Error ? error.message : String(error);
-    await store.addMessage("system", `Agent error: ${message}`, "status");
-    await store.setStatus("error", undefined, message);
+    console.error("Agent command failed", error);
+    await store.addMessage("system", "An agent command failed. Check the server log for details.", "status");
+    await store.setStatus("error", undefined, "An agent command failed.");
   } finally {
     broadcast();
   }
@@ -249,7 +258,7 @@ app.get("/api/events", (request, response) => {
   const humanId = request.query.humanId;
   const connection = humans.connect(humanId);
   if (!connection) return response.status(400).json({ error: "Join the room before connecting." });
-  roomEvents.connect(request, response, roomSnapshot(), () => {
+  roomEvents.connect(request, response, publicRoomState(roomSnapshot()), () => {
     const departure = humans.disconnect(humanId);
     if (departure?.becameAbsent) {
       void announceHumanPresence(departure.human, "left").catch((error) => console.error("Failed to announce room departure", error));
@@ -295,7 +304,7 @@ app.patch("/api/settings", async (request, response) => {
   }
   if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
   broadcast();
-  response.json(roomSnapshot());
+  response.json(publicRoomState(roomSnapshot()));
 });
 
 app.patch("/api/style", async (request, response) => {
@@ -322,7 +331,7 @@ app.post("/api/messages", async (request, response) => {
       latestHumanInvitesWholeRoom(conversationState),
     );
   }));
-  return response.status(202).json(roomSnapshot());
+  return response.status(202).json(publicRoomState(roomSnapshot()));
 });
 
 app.post("/api/actions", async (request, response) => {
@@ -354,7 +363,6 @@ app.post("/api/actions", async (request, response) => {
 app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
-const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 app.listen(port, host, () => {
   console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
 });

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -165,5 +165,16 @@ describe("room style persistence", () => {
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
     expect(reopened.snapshot().settings.roomName).toBe("Friday Night Agents");
     expect(reopened.snapshot().sessions["codex-sol"]?.id).toBe("existing-session");
+  });
+
+  it("restricts persisted room state to the current OS user", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+
+    expect((await stat(stateDirectory)).mode & 0o777).toBe(0o700);
+    expect((await stat(store.statePath)).mode & 0o777).toBe(0o600);
   });
 });

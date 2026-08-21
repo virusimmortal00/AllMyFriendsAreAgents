@@ -46,3 +46,8 @@ export interface RoomState {
   error?: string;
   humans?: HumanPresence[];
 }
+
+export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
+  settings: Omit<RoomSettings, "projectPath">;
+  availability?: Record<AgentId, boolean>;
+}

@@ -2,18 +2,16 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { ROOM_EVENT_HEARTBEAT_MS, RoomEventStream } from "./room-event-stream.js";
-import type { RoomState } from "./types.js";
+import type { PublicRoomState } from "./types.js";
 
-function room(text: string): RoomState {
+function room(text: string): PublicRoomState {
   return {
     messages: [{ id: text, speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" }],
-    sessions: {},
     settings: {
       roomName: "The Agent Room",
       topic: "Open conversation",
       writableAgent: "nobody",
       conversationEnergy: "balanced",
-      projectPath: "/tmp",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
     status: "idle",
