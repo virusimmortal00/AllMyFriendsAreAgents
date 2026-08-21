@@ -15,6 +15,7 @@ import type {
   ImprovementLedgerRecords,
   ImprovementMilestoneState,
 } from "../../shared/governed-improvements.js";
+import type { AssignmentRecordStore } from "../assignment-record.js";
 
 export interface RevisionConflict {
   readonly kind: "conflict";
@@ -65,7 +66,7 @@ export type EmergencyStopChangeResult =
   | { readonly kind: "accepted"; readonly emergencyStop: EmergencyStopProjection }
   | RevisionConflict;
 
-export interface RoomRepository {
+export interface RoomRepository extends AssignmentRecordStore {
   snapshot(): RoomState;
   addMessage(
     speaker: RoomMessage["speaker"],

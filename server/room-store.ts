@@ -33,6 +33,7 @@ import type {
   ImprovementMilestoneState,
   StoredImprovementMilestone,
 } from "../shared/governed-improvements.js";
+import { normalizeAssignmentRecord, type AssignmentRecord } from "./assignment-record.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -107,17 +108,22 @@ export class RoomStore implements RoomRepository {
   readonly stateDirectory: string;
   readonly statePath: string;
   readonly improvementsPath: string;
+  readonly assignmentsPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
   private improvementQueue: Promise<void> = Promise.resolve();
+  private assignmentQueue: Promise<void> = Promise.resolve();
+  private assignments: AssignmentRecord[];
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[]) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
+    this.assignmentsPath = path.join(stateDirectory, "assignments.json");
     this.state = state;
     this.improvementState = improvementState;
+    this.assignments = assignments;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -125,11 +131,22 @@ export class RoomStore implements RoomRepository {
     await chmod(stateDirectory, 0o700);
     const statePath = path.join(stateDirectory, "room.json");
     const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
+    const assignmentsPath = path.join(stateDirectory, "assignments.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
       .catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return emptyJsonImprovementState();
+        throw error;
+      });
+    const assignments = await readFile(assignmentsPath, "utf8")
+      .then((contents) => {
+        const parsed = JSON.parse(contents) as { schemaVersion?: unknown; assignments?: unknown } | unknown[];
+        const values = Array.isArray(parsed) ? parsed : parsed.schemaVersion === 1 && Array.isArray(parsed.assignments) ? parsed.assignments : [];
+        return values.map(normalizeAssignmentRecord).filter((record): record is AssignmentRecord => Boolean(record));
+      })
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
         throw error;
       });
 
@@ -185,7 +202,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state, improvementState);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -201,7 +218,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments);
       await store.save();
       return store;
     }
@@ -473,6 +490,33 @@ export class RoomStore implements RoomRepository {
         result: { kind: "accepted", emergencyStop: structuredClone(emergencyStop) },
       };
     });
+  }
+
+  async listAssignments() {
+    await this.assignmentQueue;
+    return structuredClone(this.assignments);
+  }
+
+  async getAssignment(assignmentId: string) {
+    await this.assignmentQueue;
+    const assignment = this.assignments.find((candidate) => candidate.assignmentId === assignmentId);
+    return assignment ? structuredClone(assignment) : undefined;
+  }
+
+  async putAssignment(assignment: AssignmentRecord) {
+    const normalized = normalizeAssignmentRecord(assignment);
+    if (!normalized) throw new Error("Invalid assignment record");
+    const operation = this.assignmentQueue.then(async () => {
+      const next = this.assignments.filter((candidate) => candidate.assignmentId !== normalized.assignmentId);
+      next.push(normalized);
+      const temporaryPath = `${this.assignmentsPath}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify({ schemaVersion: 1, assignments: next }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(temporaryPath, this.assignmentsPath);
+      await chmod(this.assignmentsPath, 0o600);
+      this.assignments = next;
+    });
+    this.assignmentQueue = operation.catch(() => undefined);
+    await operation;
   }
 
   private async mutateImprovements<T>(

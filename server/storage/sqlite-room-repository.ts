@@ -32,6 +32,7 @@ import type {
   StoredImprovementMilestone,
 } from "../../shared/governed-improvements.js";
 import type { ImprovementStatusContract } from "../../shared/improvement-status.js";
+import { normalizeAssignmentRecord, type AssignmentRecord } from "../assignment-record.js";
 
 export const DEFAULT_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -701,6 +702,36 @@ export class SqliteRoomRepository implements RoomRepository {
     }
   }
 
+  async listAssignments() {
+    const rows = this.database.prepare("SELECT * FROM assignment_records WHERE room_id = ? ORDER BY created_at, assignment_id").all(DEFAULT_ROOM_ID) as unknown as Array<Record<string, unknown>>;
+    return rows.map(assignmentFromRow).filter((record): record is AssignmentRecord => Boolean(record));
+  }
+
+  async getAssignment(assignmentId: string) {
+    const row = this.database.prepare("SELECT * FROM assignment_records WHERE room_id = ? AND assignment_id = ?").get(DEFAULT_ROOM_ID, assignmentId) as unknown as Record<string, unknown> | undefined;
+    return row ? assignmentFromRow(row) : undefined;
+  }
+
+  async putAssignment(assignment: AssignmentRecord) {
+    const value = normalizeAssignmentRecord(assignment);
+    if (!value) throw new Error("Invalid assignment record");
+    this.database.prepare(`
+      INSERT INTO assignment_records(
+        room_id, assignment_id, improvement_id, developer_member_id, developer_member_config_revision,
+        agent_id, fencing_token, manifest_revision, pinned_base_sha, branch_name, observed_head_sha,
+        workspace_path, lifecycle_status, recovery_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(room_id, assignment_id) DO UPDATE SET
+        observed_head_sha = excluded.observed_head_sha,
+        lifecycle_status = excluded.lifecycle_status,
+        recovery_json = excluded.recovery_json,
+        updated_at = excluded.updated_at
+    `).run(DEFAULT_ROOM_ID, value.assignmentId, value.improvementId, value.developerMemberId,
+      value.developerMemberConfigRevision, value.agent, value.fencingToken, value.manifestRevision,
+      value.pinnedBaseSha, value.branch, value.observedHeadSha, value.workspacePath,
+      value.lifecycleStatus, JSON.stringify(value.recovery), value.createdAt, value.updatedAt);
+  }
+
   private setStatusSync(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
     this.database.prepare("UPDATE rooms SET status = ?, active_agent = ?, error = ?, updated_at = ? WHERE id = ?")
       .run(status, activeAgent || null, error || null, new Date().toISOString(), DEFAULT_ROOM_ID);
@@ -863,6 +894,26 @@ export class SqliteRoomRepository implements RoomRepository {
       JSON.stringify(details),
     );
   }
+}
+
+function assignmentFromRow(row: Record<string, unknown>) {
+  return normalizeAssignmentRecord({
+    assignmentId: row.assignment_id,
+    improvementId: row.improvement_id,
+    developerMemberId: row.developer_member_id,
+    developerMemberConfigRevision: Number(row.developer_member_config_revision),
+    agent: row.agent_id,
+    fencingToken: Number(row.fencing_token),
+    manifestRevision: Number(row.manifest_revision),
+    pinnedBaseSha: row.pinned_base_sha,
+    branch: row.branch_name,
+    observedHeadSha: row.observed_head_sha,
+    workspacePath: row.workspace_path,
+    lifecycleStatus: row.lifecycle_status,
+    recovery: parseJson(row.recovery_json as string, undefined),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
 }
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {

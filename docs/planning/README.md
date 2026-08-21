@@ -10,6 +10,7 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 - [AIM window controls](aim-window-controls.md)
 - [Cross-provider project write toggle](project-permissions-toggle.md)
 - [Participant mentions and autocomplete](participant-mentions.md)
+- [Governed assignment-scoped developer workspaces](9-governed-assignment-workspaces.md)
 
 ## Working rules
 
