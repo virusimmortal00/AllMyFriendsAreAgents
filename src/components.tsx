@@ -477,6 +477,18 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         aria-autocomplete="list"
         aria-controls={matchingMentions.length ? "mention-suggestions" : undefined}
         aria-activedescendant={matchingMentions.length ? `mention-option-${activeMention}` : undefined}
+        onPasteCapture={(event) => {
+          pendingEditRange.current = {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          };
+        }}
+        onCutCapture={(event) => {
+          pendingEditRange.current = {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          };
+        }}
         onBeforeInput={(event) => {
           pendingEditRange.current = {
             start: event.currentTarget.selectionStart,

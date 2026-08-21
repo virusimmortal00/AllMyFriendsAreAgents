@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
@@ -43,6 +43,26 @@ function DuplicateHumanFlow() {
   />;
 }
 
+function PasteMentionFlow() {
+  const [draft, setDraft] = useState("@Alice");
+  const [mentions, setMentions] = useState<MessageMention[]>([
+    { targetKind: "human", targetId: "human-alice-2", label: "Alice", revision: 1, start: 0, end: 6 },
+  ]);
+  return <>
+    <ChatComposer
+      draft={draft}
+      mentions={mentions}
+      mentionCandidates={roomMentionCandidates([{ id: "human-alice-2", name: "Alice" }])}
+      style={DEFAULT_PARTICIPANT_STYLES.you}
+      onDraftChange={setDraft}
+      onMentionsChange={setMentions}
+      onStyleChange={() => undefined}
+      onSubmit={(event) => event.preventDefault()}
+    />
+    <output aria-label="Paste mention metadata">{JSON.stringify(mentions)}</output>
+  </>;
+}
+
 describe("participant mention autocomplete", () => {
   it("supports keyboard selection and keeps the stable target after more typing", async () => {
     const user = userEvent.setup();
@@ -75,5 +95,14 @@ describe("participant mention autocomplete", () => {
     await user.keyboard("{End}");
     expect(screen.getByRole("option", { name: /human-alice-1/ })).toBeTruthy();
     expect(screen.getByRole("option", { name: /human-alice-2/ })).toBeTruthy();
+  });
+
+  it("preserves an existing stable target when an identical token is pasted before it", () => {
+    render(<PasteMentionFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    message.setSelectionRange(0, 0);
+    fireEvent.paste(message, { clipboardData: { getData: () => "@Alice " } });
+    fireEvent.change(message, { target: { value: "@Alice @Alice" } });
+    expect(screen.getByLabelText("Paste mention metadata").textContent).toContain('"start":7,"end":13');
   });
 });
