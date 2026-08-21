@@ -11,9 +11,7 @@ import { visibleAgentChatText, visibleAgentText } from "../shared/message-format
 import { AGENT_IDS, agentScreenName, isAgentId, participantScreenName } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentId, RoomMessage, WritableAgent } from "./types";
-
-const participantIds = [...AGENT_IDS, "you"] as const;
+import type { AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -32,15 +30,17 @@ export function PanelTitle({ children }: { children: React.ReactNode }) {
 }
 
 export function TranscriptHeader({
+  roomName,
   magnification,
   onMagnificationChange,
 }: {
+  roomName: string;
   magnification: number;
   onMagnificationChange: (direction: -1 | 1) => void;
 }) {
   return (
     <header className="transcript-header">
-      <PanelTitle>The Agent Room</PanelTitle>
+      <PanelTitle>{roomName}</PanelTitle>
       <div className="transcript-view-controls" aria-label="Local transcript magnification">
         <button
           type="button"
@@ -64,33 +64,43 @@ export function TranscriptHeader({
 
 export function RoomRoster({
   availability,
+  humans,
+  currentHumanId,
   onConfigureAgent,
 }: {
   availability?: Record<AgentId, boolean>;
+  humans: HumanPresence[];
+  currentHumanId: string;
   onConfigureAgent: (agent: AgentId) => void;
 }) {
-  const presentParticipants = participantIds.filter((participant) => participant === "you" || availability?.[participant] !== false);
-  const agentCount = presentParticipants.filter((participant) => participant !== "you").length;
+  const presentAgents = AGENT_IDS.filter((agent) => availability?.[agent] !== false);
+  const agentCount = presentAgents.length;
   const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
+  const humanLabel = `${humans.length} ${humans.length === 1 ? "human" : "humans"}`;
 
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
       <PanelTitle>Who&apos;s Here</PanelTitle>
-      <p className="presence-summary"><strong>{agentLabel}</strong> and <strong>1 human</strong> are here.</p>
+      <p className="presence-summary"><strong>{agentLabel}</strong> and <strong>{humanLabel}</strong> are here.</p>
       <div className="presence-list" role="list">
-        {presentParticipants.map((participant) => (
-          <div className="presence-row" role="listitem" key={participant}>
+        {presentAgents.map((agent) => (
+          <div className="presence-row" role="listitem" key={agent}>
             <span className="presence-status" aria-hidden="true" />
-            <strong className={`speaker speaker--${participant}`}>{participantScreenName(participant)}</strong>
-            {isAgentId(participant) ? (
-              <button
-                type="button"
-                className="agent-settings-button"
-                aria-label={`Configure ${agentScreenName(participant)}`}
-                title={`Settings for ${agentScreenName(participant)}`}
-                onClick={() => onConfigureAgent(participant)}
-              >⚙</button>
-            ) : <span className="presence-row-spacer" aria-hidden="true" />}
+            <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+            <button
+              type="button"
+              className="agent-settings-button"
+              aria-label={`Configure ${agentScreenName(agent)}`}
+              title={`Settings for ${agentScreenName(agent)}`}
+              onClick={() => onConfigureAgent(agent)}
+            >⚙</button>
+          </div>
+        ))}
+        {humans.map((human) => (
+          <div className="presence-row" role="listitem" key={human.id}>
+            <span className="presence-status" aria-hidden="true" />
+            <strong className="speaker speaker--you">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
+            <span className="presence-row-spacer" aria-hidden="true" />
           </div>
         ))}
       </div>
@@ -187,7 +197,7 @@ export function Transcript({
           <article className={`message message--${message.kind || "chat"}`} key={message.id}>
             <time>[{formatTime(message.timestamp)}]</time>
             <div>
-              <strong className={`speaker speaker--${message.speaker}`}>{participantScreenName(message.speaker)}:</strong>{" "}
+              <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
               <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
                 <span className="message__text">{renderAimSmileys(
                   isAgentId(message.speaker)
@@ -347,23 +357,45 @@ export function ChatComposer({ draft, style, onDraftChange, onStyleChange, onSub
 }
 
 interface RoomControlsProps {
+  roomName: string;
   topic: string;
   conversationEnergy: ConversationEnergy;
   disabled: boolean;
+  onRoomNameChange: (roomName: string) => void;
   onTopicChange: (topic: string) => void;
   onConversationEnergyChange: (energy: ConversationEnergy) => void;
 }
 
 export function RoomControls({
+  roomName,
   topic,
   conversationEnergy,
   disabled,
+  onRoomNameChange,
   onTopicChange,
   onConversationEnergyChange,
 }: RoomControlsProps) {
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
       <PanelTitle>Room Settings</PanelTitle>
+      <label className="field-label" htmlFor="room-name">Room name</label>
+      <input
+        id="room-name"
+        key={roomName}
+        className="classic-input"
+        type="text"
+        maxLength={80}
+        defaultValue={roomName}
+        onBlur={(event) => {
+          const nextRoomName = event.currentTarget.value.trim() || "The Agent Room";
+          event.currentTarget.value = nextRoomName;
+          onRoomNameChange(nextRoomName);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      <p className="field-help">Shown in the room window and transcript header.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"

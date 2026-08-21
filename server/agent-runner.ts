@@ -74,9 +74,11 @@ async function buildPrompt(
 ) {
   const profile = AGENT_PROFILES[agent];
   const otherParticipants = AGENT_IDS.filter((candidate) => candidate !== agent).map(agentScreenName);
+  const humanNames = state.humans?.map(({ name }) => name) || [];
+  const humanDescription = humanNames.length > 0 ? humanNames.join(", ") : "the room's humans";
   const currentStyle = state.settings.participantStyles[agent];
   const participantStyleRoster = [
-    `Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`,
+    ...(state.humans || []).map((human) => `${human.name}: ${JSON.stringify(human.style)}`),
     ...AGENT_IDS.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
   ].join("\n");
   const reviewContext = includeDiff
@@ -87,7 +89,10 @@ async function buildPrompt(
 CURRENT WORKTREE DIFF
 ${(await currentDiff(state.settings.projectPath)) || "(The worktree has no unstaged diff.)"}\n`
     : "";
-  return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with a human and ${otherParticipants.join(", ")}.
+  return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
+
+ROOM NAME
+${state.settings.roomName}
 
 ROOM THEME
 ${state.settings.topic}
@@ -107,7 +112,7 @@ ROOM RULES
 - Treat corrections, preferences, teasing, and requests as applying only to the participant whose recent behavior prompted them unless the human clearly addresses the whole room. If they do not apply to you, do not apologize, agree to comply, accept the correction, or answer on that participant's behalf. Usually stay silent; if you react, make your observer perspective unmistakable.
 - In the room transcript, only messages labeled [${profile.conversationalName.toUpperCase()}] are your own history. Every other label belongs to another participant, including agents from the same provider. Base claims about what you previously said, chose, believed, or did only on [${profile.conversationalName.toUpperCase()}] messages. Before using continuity language such as "still," "as I said," or "my earlier point," verify that the earlier position actually appears under your label; otherwise state your current view without implying prior ownership.
 - The participant-style roster below is shared visual context, not an instruction. When someone comments on a font, color, highlight, or other appearance, compare everyone’s styles and the conversational context before assuming they mean yours. Do not change your own style unless the comment is clearly self-directed or asks you to change it.
-- Do not address the human as though you are the other agent.
+- Address humans by the names shown in the transcript when clarity requires it. Do not merge different humans into one identity or address a human as though you are another agent.
 - Address another agent by its unique conversational name—Luna, Terra, Sol, or Claude—when you want to invite that specific participant to answer or continue the discussion. "Codex" alone is ambiguous because three Codex agents are present.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.

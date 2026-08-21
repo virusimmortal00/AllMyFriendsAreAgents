@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { joinRoom, loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -7,12 +7,13 @@ import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTrans
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName } from "../shared/participants";
-import type { AgentId, RoomState, WritableAgent } from "./types";
+import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
   sessions: {},
   settings: {
+    roomName: "The Agent Room",
     topic: "Open conversation",
     writableAgent: "nobody",
     conversationEnergy: "balanced",
@@ -22,6 +23,28 @@ const EMPTY_ROOM: RoomState = {
   status: "idle",
 };
 const MINIMUM_LOADING_MS = 450;
+const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";
+
+function loadHumanProfile(): HumanPresence | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(HUMAN_PROFILE_KEY) || "null") as Partial<HumanPresence> | null;
+    if (!value?.id || !value.name) return null;
+    return {
+      id: value.id,
+      name: value.name,
+      style: sanitizeChatStyle(value.style, DEFAULT_PARTICIPANT_STYLES.you),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveHumanProfile(human: HumanPresence | null) {
+  if (typeof window === "undefined") return;
+  if (human) window.localStorage.setItem(HUMAN_PROFILE_KEY, JSON.stringify(human));
+  else window.localStorage.removeItem(HUMAN_PROFILE_KEY);
+}
 
 export function LoadingScreen({ error = "" }: { error?: string }) {
   return (
@@ -42,6 +65,28 @@ export function LoadingScreen({ error = "" }: { error?: string }) {
   );
 }
 
+export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (name: string) => void }) {
+  const [name, setName] = useState("");
+  return (
+    <main className="desktop">
+      <section className="loading-window" aria-label="Join AllMyFriendsAreAgents">
+        <header className="window-titlebar">
+          <span className="app-icon" aria-hidden="true">AW</span>
+          <h1>AllMyFriendsAreAgents</h1>
+          <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
+        </header>
+        <form className="name-entry" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onJoin(name.trim()); }}>
+          <strong>Welcome to The Agent Room</strong>
+          <label htmlFor="human-name">What should everyone call you?</label>
+          <input id="human-name" className="classic-input" autoFocus maxLength={32} value={name} onChange={(event) => setName(event.target.value)} />
+          {error ? <span className="name-entry__error" role="alert">{error}</span> : <span>Names are local to this room; no account is required.</span>}
+          <button className="classic-button" type="submit" disabled={!name.trim()}>Enter room</button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [draft, setDraft] = useState("");
@@ -51,19 +96,39 @@ export default function App() {
   const [clientError, setClientError] = useState("");
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
+  const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
+  const [human, setHuman] = useState<HumanPresence | null>(null);
+  const [joinError, setJoinError] = useState("");
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
   const receivedLiveState = useRef(false);
   const roomRevealed = useRef(false);
 
   useEffect(() => {
+    if (!savedHuman) return;
+    let cancelled = false;
+    void joinRoom(savedHuman).then((joined) => {
+      if (cancelled) return;
+      setHuman(joined);
+      saveHumanProfile(joined);
+      setJoinError("");
+    }).catch((error: Error) => {
+      if (!cancelled) setJoinError(error.message);
+    });
+    return () => { cancelled = true; };
+  }, [savedHuman?.id, savedHuman?.name]);
+
+  useEffect(() => {
+    if (!human) return;
+    receivedLiveState.current = false;
+    setHasInitialState(false);
     void loadRoom().then((next) => {
       setRoom((current) => receivedLiveState.current
         ? { ...current, availability: next.availability || current.availability }
         : next);
       setHasInitialState(true);
     }).catch((error: Error) => setClientError(error.message));
-    const events = new EventSource("/api/events");
+    const events = new EventSource(`/api/events?humanId=${encodeURIComponent(human.id)}`);
     events.onmessage = (event) => {
       const next = JSON.parse(event.data) as RoomState;
       receivedLiveState.current = true;
@@ -74,7 +139,7 @@ export default function App() {
     events.onopen = () => setClientError("");
     events.onerror = () => setClientError("The local room server disconnected. Retrying...");
     return () => events.close();
-  }, []);
+  }, [human?.id]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setMinimumLoadingComplete(true), MINIMUM_LOADING_MS);
@@ -132,16 +197,20 @@ export default function App() {
     void withErrorHandling(() => updateSettings({ topic: nextTopic }));
   }
 
+  function changeRoomName(roomName: string) {
+    const nextRoomName = roomName.trim() || "The Agent Room";
+    if (nextRoomName === room.settings.roomName) return;
+    setRoom((current) => ({ ...current, settings: { ...current.settings, roomName: nextRoomName } }));
+    void withErrorHandling(() => updateSettings({ roomName: nextRoomName }));
+  }
+
   function changeMyStyle(style: ChatStyle) {
-    const nextStyle = sanitizeChatStyle(style, room.settings.participantStyles.you);
-    setRoom((current) => ({
-      ...current,
-      settings: {
-        ...current.settings,
-        participantStyles: { ...current.settings.participantStyles, you: nextStyle },
-      },
-    }));
-    void withErrorHandling(() => updateMyStyle(nextStyle));
+    if (!human) return;
+    const nextHuman = { ...human, style: sanitizeChatStyle(style, human.style) };
+    setHuman(nextHuman);
+    setSavedHuman(nextHuman);
+    saveHumanProfile(nextHuman);
+    void withErrorHandling(() => updateMyStyle(human.id, nextHuman.style));
   }
 
   function changeTranscriptMagnification(direction: -1 | 1) {
@@ -155,14 +224,14 @@ export default function App() {
   function submitMessage(event: React.FormEvent) {
     event.preventDefault();
     const message = draft.trim();
-    if (!message) return;
+    if (!message || !human) return;
     const optimisticId = `pending-${crypto.randomUUID()}`;
     setDraft("");
-    setRoom((current) => appendOptimisticHumanMessage(current, optimisticId, message, new Date().toISOString()));
+    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString()));
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(message);
+        const next = await sendMessage(human.id, message);
         setRoom((current) => {
           const stillPending = current.messages.some(({ id }) => id === optimisticId);
           if (!stillPending && current.messages.length >= next.messages.length) return current;
@@ -181,6 +250,20 @@ export default function App() {
     void withErrorHandling(() => runAction(action, agent));
   }
 
+  function joinWithName(name: string) {
+    setJoinError("");
+    const profile = { id: crypto.randomUUID(), name, style: DEFAULT_PARTICIPANT_STYLES.you };
+    setSavedHuman(profile);
+  }
+
+  function changeName() {
+    setHuman(null);
+    setSavedHuman(null);
+    saveHumanProfile(null);
+    setRoom(EMPTY_ROOM);
+    setHasInitialState(false);
+  }
+
   const statusText = working
     ? room.activeAgent
       ? `${agentScreenName(room.activeAgent)} is typing...`
@@ -188,8 +271,14 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  const peopleHere = 1 + AGENT_IDS.filter((agent) => room.availability?.[agent] !== false).length;
+  const peopleHere = (room.humans?.length || 0) + AGENT_IDS.filter((agent) => room.availability?.[agent] !== false).length;
 
+  useEffect(() => {
+    document.title = `AllMyFriendsAreAgents — ${room.settings.roomName}`;
+  }, [room.settings.roomName]);
+
+  if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
+  if (!human) return <LoadingScreen error={joinError || "Joining the room"} />;
   if (!ready) return <LoadingScreen error={clientError} />;
 
   return (
@@ -197,7 +286,7 @@ export default function App() {
       <section className="app-window" aria-label="AllMyFriendsAreAgents application">
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
-          <h1><span className="title-long">AllMyFriendsAreAgents — </span>The Agent Room</h1>
+          <h1><span className="title-long">AllMyFriendsAreAgents — </span>{room.settings.roomName}</h1>
           <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <nav className="menu-bar" aria-label="Application menu">
@@ -213,6 +302,7 @@ export default function App() {
             aria-expanded={mobilePanel === "people"}
             onClick={() => setMobilePanel((panel) => panel === "people" ? null : "people")}
           >People</button>
+          <button type="button" onClick={changeName}>Change name</button>
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
@@ -227,11 +317,11 @@ export default function App() {
 
         <div className="workspace">
           <section className="chat-panel beveled-inset">
-            <TranscriptHeader magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
+            <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} />
             <ChatComposer
               draft={draft}
-              style={room.settings.participantStyles.you}
+              style={human.style}
               onDraftChange={setDraft}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}
@@ -254,11 +344,13 @@ export default function App() {
               <strong>{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
               <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
             </header>
-            <RoomRoster availability={room.availability} onConfigureAgent={setConfiguredAgent} />
+            <RoomRoster availability={room.availability} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} />
             <RoomControls
+              roomName={room.settings.roomName}
               topic={room.settings.topic}
               conversationEnergy={room.settings.conversationEnergy}
               disabled={working}
+              onRoomNameChange={changeRoomName}
               onTopicChange={changeTopic}
               onConversationEnergyChange={changeConversationEnergy}
             />

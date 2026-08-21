@@ -7,6 +7,7 @@ import { isParticipantId, migrateLegacyAgentId } from "../shared/participants.js
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
+export const DEFAULT_ROOM_NAME = "The Agent Room";
 function styledParticipant(speaker: RoomMessage["speaker"]): StyledParticipant | undefined {
   return isParticipantId(speaker) ? speaker : undefined;
 }
@@ -76,6 +77,7 @@ export class RoomStore {
     await mkdir(stateDirectory, { recursive: true });
     const statePath = path.join(stateDirectory, "room.json");
     const defaultSettings: RoomSettings = {
+      roomName: DEFAULT_ROOM_NAME,
       topic: DEFAULT_ROOM_TOPIC,
       writableAgent: "nobody",
       conversationEnergy: "balanced",
@@ -99,6 +101,10 @@ export class RoomStore {
         .then((entry) => entry.isDirectory())
         .catch(() => false);
       const participantStyles = normalizeParticipantStyles(stored.settings.participantStyles);
+      const storedRoomName = typeof stored.settings.roomName === "string" && stored.settings.roomName.trim()
+        ? stored.settings.roomName.trim()
+        : DEFAULT_ROOM_NAME;
+      const roomNameWasMissing = typeof stored.settings.roomName !== "string" || !stored.settings.roomName.trim();
       const storedTopic = typeof stored.settings.topic === "string" && stored.settings.topic.trim()
         ? stored.settings.topic.trim()
         : DEFAULT_ROOM_TOPIC;
@@ -119,6 +125,7 @@ export class RoomStore {
         settings: {
           ...defaultSettings,
           ...currentStoredSettings,
+          roomName: storedRoomName,
           topic: storedTopic,
           conversationEnergy,
           writableAgent: stored.settings.writableAgent === "nobody"
@@ -133,6 +140,7 @@ export class RoomStore {
       };
       const store = new RoomStore(stateDirectory, state);
       if (topicWasMissing
+        || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
         || !stored.settings.participantStyles
         || storedSettings.maxRounds !== undefined
@@ -167,6 +175,7 @@ export class RoomStore {
     kind: RoomMessage["kind"] = "chat",
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
+    human?: { id: string; name: string },
   ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
@@ -180,6 +189,7 @@ export class RoomStore {
       kind,
       ...(messageStyle ? { style: messageStyle } : {}),
       ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
+      ...(human ? { humanId: human.id, speakerName: human.name } : {}),
     };
     this.state.messages.push(message);
     await this.save();

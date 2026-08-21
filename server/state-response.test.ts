@@ -12,6 +12,7 @@ describe("room state responses", () => {
       messages: [{ id: "message", speaker: "you", text: messageText, timestamp: "2026-08-19T12:00:00.000Z" }],
       sessions: {},
       settings: {
+        roomName: "The Agent Room",
         topic: "Open conversation",
         writableAgent: "nobody",
         conversationEnergy: "balanced",
