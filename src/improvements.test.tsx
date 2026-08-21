@@ -82,4 +82,12 @@ describe("Improvements interface", () => {
     await user.click(screen.getByRole("button", { name: "Improvements" }));
     expect(onOpen).toHaveBeenCalledOnce();
   });
+
+  it("turns the same compact navigation control into Chat while Improvements is active", async () => {
+    const user = userEvent.setup(); const onOpen = vi.fn();
+    render(<ImprovementsMenuControl active onOpen={onOpen} />);
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+    expect(screen.queryByRole("button", { name: "Improvements" })).toBeNull();
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
 });

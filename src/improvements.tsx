@@ -5,7 +5,7 @@ import type { GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatSt
 export type ImprovementsRoute = { view: "list"; scope: "active" | "all" } | { view: "detail"; id: string } | { view: "missing"; id: string };
 
 export function ImprovementsMenuControl({ active = false, onOpen }: { active?: boolean; onOpen: () => void }) {
-  return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Improvements</button>;
+  return <button type="button" onClick={onOpen}>{active ? "Chat" : "Improvements"}</button>;
 }
 
 export function improvementsRoute(location = window.location): ImprovementsRoute | null {

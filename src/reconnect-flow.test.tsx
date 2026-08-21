@@ -95,6 +95,7 @@ async function renderConnected(messages: RoomState["messages"] = []) {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   Object.defineProperty(window, "localStorage", { configurable: true, value: memoryStorage() });
   Object.defineProperty(window, "sessionStorage", { configurable: true, value: memoryStorage() });
   Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: vi.fn() });
@@ -119,6 +120,26 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("uses one compact Improvements/Chat toggle without polluting history from chat menus", async () => {
+    const user = userEvent.setup();
+    const pushState = vi.spyOn(window.history, "pushState");
+    await renderConnected();
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(pushState).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Improvements" }));
+    expect(window.location.pathname).toBe("/improvements");
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+    expect(window.location.pathname).toBe("/");
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    expect(pushState.mock.calls.map(([, , path]) => path)).toEqual(["/improvements", "/"]);
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(pushState).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps an ambiguous POST pending across reconnect and resends only after an explicit click with the same client ID", async () => {
     const user = userEvent.setup();
     api.sendMessage
