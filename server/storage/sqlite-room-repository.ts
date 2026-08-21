@@ -13,7 +13,7 @@ import {
 import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
-import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, paginateImprovements } from "./improvement-storage.js";
+import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, normalizeStoredImprovement, paginateImprovements } from "./improvement-storage.js";
 import type {
   CreateImprovementResult,
   EmergencyStopChangeResult,
@@ -369,14 +369,14 @@ export class SqliteRoomRepository implements RoomRepository {
     const row = this.database.prepare(`
       SELECT projection_json FROM canonical_improvements WHERE room_id = ? AND id = ?
     `).get(DEFAULT_ROOM_ID, id) as unknown as ImprovementRow | undefined;
-    return row ? parseJson<Improvement>(row.projection_json, undefined as never) : undefined;
+    return row ? normalizeStoredImprovement(parseJson<Improvement>(row.projection_json, undefined as never)) : undefined;
   }
 
   async listImprovements(query: ImprovementListQuery = {}) {
     const rows = this.database.prepare(`
       SELECT projection_json FROM canonical_improvements WHERE room_id = ?
     `).all(DEFAULT_ROOM_ID) as unknown as ImprovementRow[];
-    return paginateImprovements(rows.map((row) => parseJson<Improvement>(row.projection_json, undefined as never)), query);
+    return paginateImprovements(rows.map((row) => normalizeStoredImprovement(parseJson<Improvement>(row.projection_json, undefined as never))), query);
   }
 
   async applyImprovementChange(
@@ -395,7 +395,7 @@ export class SqliteRoomRepository implements RoomRepository {
         this.database.exec("ROLLBACK");
         return { kind: "rejected" as const, reason: `Improvement ${id} does not exist` };
       }
-      const current = parseJson<Improvement>(row.projection_json, undefined as never);
+      const current = normalizeStoredImprovement(parseJson<Improvement>(row.projection_json, undefined as never));
       const result = applyDomainImprovementChange(current, expectedRevision, change, actor, now);
       if (result.kind !== "accepted") {
         this.database.exec("ROLLBACK");
@@ -448,7 +448,7 @@ export class SqliteRoomRepository implements RoomRepository {
       actorId: row.actor_id,
       at: row.occurred_at,
       change: parseJson(row.change_json, "CREATE"),
-      snapshot: parseJson<Improvement>(row.snapshot_json, undefined as never),
+      snapshot: normalizeStoredImprovement(parseJson<Improvement>(row.snapshot_json, undefined as never)),
     }));
   }
 

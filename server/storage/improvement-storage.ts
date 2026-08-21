@@ -1,4 +1,5 @@
 import type { EmergencyStop, Improvement } from "../../shared/improvement-domain.js";
+import { emptyImprovementStatus } from "../../shared/improvement-status.js";
 import type {
   EmergencyStopProjection,
   ImprovementEvent,
@@ -44,13 +45,24 @@ export function normalizeJsonImprovementState(value: unknown): JsonImprovementSt
   const stored = value as Partial<JsonImprovementState>;
   return {
     schemaVersion: 1,
-    improvements: stored.improvements && typeof stored.improvements === "object" ? stored.improvements : {},
-    events: Array.isArray(stored.events) ? stored.events : [],
+    improvements: stored.improvements && typeof stored.improvements === "object"
+      ? Object.fromEntries(Object.entries(stored.improvements).map(([id, improvement]) => [id, normalizeStoredImprovement(improvement)]))
+      : {},
+    events: Array.isArray(stored.events)
+      ? stored.events.map((event) => ({ ...event, snapshot: normalizeStoredImprovement(event.snapshot) }))
+      : [],
     emergencyStop: stored.emergencyStop && typeof stored.emergencyStop === "object"
       ? { ...CLEAR_EMERGENCY_STOP, ...stored.emergencyStop }
       : { ...CLEAR_EMERGENCY_STOP },
     emergencyStopEvents: Array.isArray(stored.emergencyStopEvents) ? stored.emergencyStopEvents : [],
   };
+}
+
+/** Backfills the v1 status contract on projections written before it existed. */
+export function normalizeStoredImprovement(improvement: Improvement): Improvement {
+  return improvement.statusContract
+    ? improvement
+    : { ...improvement, statusContract: emptyImprovementStatus() };
 }
 
 export function paginateImprovements(

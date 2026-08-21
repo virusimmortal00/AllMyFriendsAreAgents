@@ -14,6 +14,13 @@ describe("room workshop API", () => {
     const page = await listWorkshopImprovements(repository as never, 500);
     expect(page.items).toHaveLength(1);
     expect(page.items[0]).toMatchObject({ id: "room-safe", revision: 1, state: "DRAFT", risk: "GUARDED" });
+    expect(page.items[0]?.statusContract).toMatchObject({
+      schemaVersion: 1,
+      implementation: { state: "UNKNOWN" },
+      deployment: { state: "UNKNOWN" },
+      independentAcceptance: { state: "UNKNOWN" },
+      upstreamPublication: { state: "UNKNOWN" },
+    });
     expect(JSON.stringify(page)).not.toContain("attribution");
     expect(JSON.stringify(page)).not.toContain("fencingToken");
     expect(page.emergencyStop).toEqual({ active: true, reason: "Investigating", activatedAt: "2026-08-21T13:00:00Z" });

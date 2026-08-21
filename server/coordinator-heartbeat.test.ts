@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AutonomousAction, Improvement } from "../shared/improvement-domain.js";
+import { emptyImprovementStatus } from "../shared/improvement-status.js";
 import {
   CoordinatorHeartbeat,
   SqliteCoordinatorStateStore,
@@ -68,6 +69,7 @@ function improvement(id: string, revision = 7, action: AutonomousAction = "ANALY
     workClaim: { fencingToken: 0, holderMemberId: null, leaseExpiresAt: null, status: "UNCLAIMED", manifests: [], history: [] },
     evidence: [],
     attribution: [],
+    statusContract: emptyImprovementStatus(),
     createdAt: "2026-08-21T11:00:00.000Z",
     updatedAt: "2026-08-21T11:00:00.000Z",
   };

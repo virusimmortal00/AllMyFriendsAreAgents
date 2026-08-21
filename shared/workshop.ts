@@ -10,6 +10,7 @@ export interface ImprovementWorkshopView {
   actionAuthority: Pick<Improvement["actionAuthority"], "status" | "grantedByHuman" | "allowedActions">;
   claims: readonly Improvement["claims"][number][];
   workClaim: Pick<Improvement["workClaim"], "holderMemberId" | "leaseExpiresAt" | "status">;
+  statusContract: Improvement["statusContract"];
   evidence: readonly Pick<Improvement["evidence"][number], "id" | "uri" | "description" | "addedAt">[];
   updatedAt: string;
 }
@@ -21,6 +22,7 @@ export function workshopView(improvement: Improvement): ImprovementWorkshopView 
     actionAuthority: { status: improvement.actionAuthority.status, grantedByHuman: improvement.actionAuthority.grantedByHuman, allowedActions: improvement.actionAuthority.allowedActions },
     claims: improvement.claims.map(({ id, statement }) => ({ id, statement })),
     workClaim: { holderMemberId: improvement.workClaim.holderMemberId, leaseExpiresAt: improvement.workClaim.leaseExpiresAt, status: improvement.workClaim.status },
+    statusContract: structuredClone(improvement.statusContract),
     evidence: improvement.evidence.map(({ id, uri, description, addedAt }) => ({ id, uri, description, addedAt })),
     updatedAt: improvement.updatedAt,
   };

@@ -191,4 +191,51 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
       fixture.close();
     }
   });
+
+  it("persists independent status fields and their immutable code location across reopen", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-improvement-contract-"));
+    temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      await fixture.repository.createImprovement(initial("imp-status"));
+      const implemented = await fixture.repository.applyImprovementChange(
+        "imp-status",
+        1,
+        {
+          kind: "SET_STATUS_FIELD",
+          transition: {
+            field: "implementation",
+            value: {
+              state: "IMPLEMENTED",
+              codeLocation: {
+                immutableRevision: "9d7a4c1",
+                repository: "https://example.test/friends/agents.git",
+                branch: "codex/status-contract",
+                worktree: null,
+              },
+            },
+          },
+        },
+        operator,
+        "2026-08-21T12:04:00.000Z",
+      );
+      expect(implemented.kind).toBe("accepted");
+      if (implemented.kind !== "accepted") throw new Error("status update was not accepted");
+      expect(implemented.improvement.statusContract.deployment).toEqual({ state: "UNKNOWN" });
+
+      const reopened = await fixture.reopen();
+      expect((await reopened.getImprovement("imp-status"))?.statusContract).toMatchObject({
+        schemaVersion: 1,
+        implementation: {
+          state: "IMPLEMENTED",
+          codeLocation: { immutableRevision: "9d7a4c1", repository: "https://example.test/friends/agents.git" },
+        },
+        deployment: { state: "UNKNOWN" },
+        independentAcceptance: { state: "UNKNOWN" },
+        upstreamPublication: { state: "UNKNOWN" },
+      });
+    } finally {
+      fixture.close();
+    }
+  });
 });

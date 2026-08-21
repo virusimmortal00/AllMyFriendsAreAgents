@@ -1,3 +1,10 @@
+import {
+  applyImprovementStatusTransition,
+  emptyImprovementStatus,
+  type ImprovementStatusContract,
+  type ImprovementStatusTransition,
+} from "./improvement-status.js";
+
 export const IMPROVEMENT_RISK_LEVELS = ["LOW", "GUARDED", "RESTRICTED"] as const;
 export type ImprovementRisk = (typeof IMPROVEMENT_RISK_LEVELS)[number];
 
@@ -119,6 +126,7 @@ export interface Improvement {
   readonly workClaim: ImprovementWorkClaim;
   readonly evidence: readonly EvidenceReference[];
   readonly attribution: readonly AttributionEntry[];
+  readonly statusContract: ImprovementStatusContract;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -128,6 +136,7 @@ export type ImprovementChange =
   | { readonly kind: "SET_RISK"; readonly risk: ImprovementRisk }
   | { readonly kind: "ADD_CLAIM"; readonly claim: ImprovementClaim }
   | { readonly kind: "ADD_EVIDENCE"; readonly evidence: Omit<EvidenceReference, "addedBy" | "addedAt"> }
+  | { readonly kind: "SET_STATUS_FIELD"; readonly transition: ImprovementStatusTransition }
   | { readonly kind: "RECORD_TECHNICAL_REVIEW"; readonly decision: TechnicalReview["decision"] }
   | {
       readonly kind: "ACQUIRE_WORK_CLAIM";
@@ -222,6 +231,7 @@ export function createImprovement(input: {
     },
     evidence: [],
     attribution: [{ actorId: input.author.id, at: input.now, change: "CREATE", revision: 1 }],
+    statusContract: emptyImprovementStatus(),
     createdAt: input.now,
     updatedAt: input.now,
   };
@@ -261,6 +271,7 @@ export function applyImprovementChange(
   if (!actor.id.trim()) return { kind: "rejected", reason: "Actor ID must not be empty" };
 
   const workClaim = normalizeWorkClaim(improvement.workClaim);
+  const statusContract = improvement.statusContract ?? emptyImprovementStatus();
   if ("idempotencyKey" in change && workClaim.history.some((event) => event.idempotencyKey === change.idempotencyKey)) {
     return { kind: "accepted", improvement };
   }
@@ -326,6 +337,13 @@ export function applyImprovementChange(
         ...next,
         evidence: [...improvement.evidence, { ...change.evidence, addedBy: actor.id, addedAt: now }],
       };
+      break;
+    case "SET_STATUS_FIELD":
+      try {
+        next = { ...next, statusContract: applyImprovementStatusTransition(statusContract, change.transition) };
+      } catch (error) {
+        return { kind: "rejected", reason: error instanceof Error ? error.message : "Invalid status transition" };
+      }
       break;
     case "RECORD_TECHNICAL_REVIEW": {
       const reviews = [
@@ -429,6 +447,7 @@ function describeChange(change: ImprovementChange): string {
     case "SET_RISK": return `SET_RISK:${change.risk}`;
     case "ADD_CLAIM": return `ADD_CLAIM:${change.claim.id}`;
     case "ADD_EVIDENCE": return `ADD_EVIDENCE:${change.evidence.id}`;
+    case "SET_STATUS_FIELD": return `STATUS:${change.transition.field}`;
     case "RECORD_TECHNICAL_REVIEW": return `TECHNICAL_REVIEW:${change.decision}`;
     case "ACQUIRE_WORK_CLAIM": return `WORK_CLAIM:ACQUIRE:${change.idempotencyKey}`;
     case "RENEW_WORK_CLAIM": return `WORK_CLAIM:RENEW:${change.idempotencyKey}`;
