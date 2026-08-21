@@ -4,7 +4,7 @@ import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
-import { loadDraft, loadPendingSend, saveDraft, savePendingSend, type PendingSend } from "./client-persistence";
+import { loadDraft, loadDraftMentions, loadPendingSend, saveDraft, saveDraftMentions, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
@@ -96,7 +96,11 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [draft, setDraft] = useState(() => typeof window === "undefined" ? "" : loadDraft(window.localStorage, loadHumanProfile()?.id));
-  const [draftMentions, setDraftMentions] = useState<MessageMention[]>([]);
+  const [draftMentions, setDraftMentions] = useState<MessageMention[]>(() => {
+    if (typeof window === "undefined") return [];
+    const humanId = loadHumanProfile()?.id;
+    return reconcileMessageMentions(loadDraft(window.localStorage, humanId), loadDraftMentions(window.localStorage, humanId));
+  });
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
@@ -277,15 +281,19 @@ export default function App() {
 
   useEffect(() => {
     if (!human) return;
-    setDraft(loadDraft(window.localStorage, human.id));
-    setDraftMentions([]);
+    const restoredDraft = loadDraft(window.localStorage, human.id);
+    setDraft(restoredDraft);
+    setDraftMentions(reconcileMessageMentions(restoredDraft, loadDraftMentions(window.localStorage, human.id)));
     setPendingSend(loadPendingSend(window.localStorage, human.id));
   }, [human?.id]);
 
   useEffect(() => {
     draftRef.current = draft;
-    if (human) saveDraft(window.localStorage, human.id, draft);
-  }, [human?.id, draft]);
+    if (human) {
+      saveDraft(window.localStorage, human.id, draft);
+      saveDraftMentions(window.localStorage, human.id, reconcileMessageMentions(draft, draftMentions));
+    }
+  }, [human?.id, draft, draftMentions]);
 
   useEffect(() => {
     if (human) savePendingSend(window.localStorage, human.id, pendingSend);

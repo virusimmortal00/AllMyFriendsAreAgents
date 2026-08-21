@@ -14,6 +14,13 @@ describe("message mentions", () => {
     expect(reconcileMessageMentions("hello Grok", [mention])).toEqual([]);
   });
 
+  it("drops ambiguous duplicate labels instead of rebinding stable IDs", () => {
+    const first = { targetKind: "human" as const, targetId: "alice-1", label: "Alice", revision: 1, start: 0, end: 6 };
+    const second = { ...first, targetId: "alice-2", start: 11, end: 17 };
+    expect(reconcileMessageMentions("@Alice and @Alice", [first, second]).map(({ targetId }) => targetId)).toEqual(["alice-1", "alice-2"]);
+    expect(reconcileMessageMentions("@Alice", [first, second])).toEqual([]);
+  });
+
   it("rejects forged, stale, and text-mismatched targets", () => {
     const candidates = roomMentionCandidates([]);
     const mention = { targetKind: "agent" as const, targetId: "cursor-grok", label: "Grok", revision: 1, start: 0, end: 5 };
@@ -21,5 +28,7 @@ describe("message mentions", () => {
     expect(validateMessageMentions([mention], "@Grok hello", candidates)).toEqual([expectedMention]);
     expect(() => validateMessageMentions([{ ...mention, targetId: "missing" }], "@Grok hello", candidates)).toThrow();
     expect(() => validateMessageMentions([mention], "Grok hello", candidates)).toThrow();
+    expect(() => validateMessageMentions([{ ...mention, start: -1 }], "@Grok hello", candidates)).toThrow();
+    expect(() => validateMessageMentions([{ ...mention, end: 99 }], "@Grok hello", candidates)).toThrow();
   });
 });

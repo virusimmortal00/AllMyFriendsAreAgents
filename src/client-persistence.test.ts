@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadDraft, loadPendingSend, saveDraft, savePendingSend } from "./client-persistence";
+import { loadDraft, loadDraftMentions, loadPendingSend, saveDraft, saveDraftMentions, savePendingSend } from "./client-persistence";
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -25,5 +25,15 @@ describe("client reconnect persistence", () => {
     expect(loadPendingSend(storage, "alice")).toEqual(pending);
     savePendingSend(storage, "alice", null);
     expect(loadPendingSend(storage, "alice")).toBeNull();
+  });
+
+  it("persists stable mention metadata alongside a draft", () => {
+    const storage = memoryStorage();
+    const mention = { targetKind: "agent" as const, targetId: "cursor-grok", label: "Grok", revision: 1, start: 0, end: 5 };
+    saveDraft(storage, "alice", "@Grok hello");
+    saveDraftMentions(storage, "alice", [mention]);
+    expect(loadDraftMentions(storage, "alice")).toEqual([mention]);
+    saveDraftMentions(storage, "alice", []);
+    expect(loadDraftMentions(storage, "alice")).toEqual([]);
   });
 });

@@ -45,15 +45,22 @@ export function roomMentionCandidates(humans: readonly { id: string; name: strin
 }
 
 export function reconcileMessageMentions(text: string, mentions: readonly MessageMention[]) {
-  const claimed = new Set<number>();
-  return mentions.flatMap((mention) => {
-    const token = `@${mention.label}`;
-    let start = text.indexOf(token);
-    while (start >= 0 && claimed.has(start)) start = text.indexOf(token, start + 1);
-    if (start < 0) return [];
-    claimed.add(start);
-    return [{ ...mention, start, end: start + token.length }];
-  });
+  const groups = new Map<string, MessageMention[]>();
+  for (const mention of mentions) groups.set(mention.label, [...(groups.get(mention.label) || []), mention]);
+  return [...groups.entries()].flatMap(([label, labelMentions]) => {
+    const token = `@${label}`;
+    const occurrences: number[] = [];
+    for (let start = text.indexOf(token); start >= 0; start = text.indexOf(token, start + 1)) occurrences.push(start);
+    if (labelMentions.length === 1) {
+      if (occurrences.length === 1) return [{ ...labelMentions[0], start: occurrences[0], end: occurrences[0] + token.length }];
+      const exact = occurrences.filter((start) => start === labelMentions[0].start);
+      return exact.length === 1 ? [{ ...labelMentions[0], start: exact[0], end: exact[0] + token.length }] : [];
+    }
+    if (occurrences.length !== labelMentions.length) return [];
+    return [...labelMentions]
+      .sort((left, right) => left.start - right.start)
+      .map((mention, index) => ({ ...mention, start: occurrences[index], end: occurrences[index] + token.length }));
+  }).sort((left, right) => left.start - right.start);
 }
 
 export function validateMessageMentions(
@@ -69,7 +76,8 @@ export function validateMessageMentions(
     const mention = value as Partial<MessageMention>;
     const candidate = allowed.get(`${mention.targetKind}:${mention.targetId}`);
     if (!candidate || mention.label !== candidate.label || mention.revision !== candidate.revision
-      || !Number.isInteger(mention.start) || !Number.isInteger(mention.end)) {
+      || !Number.isInteger(mention.start) || !Number.isInteger(mention.end)
+      || mention.start! < 0 || mention.end! <= mention.start! || mention.end! > text.length) {
       throw new Error("Message mentions are invalid.");
     }
     const normalized: MessageMention = {
