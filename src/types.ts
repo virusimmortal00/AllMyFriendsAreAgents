@@ -4,6 +4,8 @@ import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared
 import type { ServerIdentity } from "../shared/protocol";
 import type { ImprovementWorkshopView } from "../shared/workshop";
 import type { GovernedImprovementDetail } from "../shared/governed-improvements";
+import type { GovernedImprovementSummary } from "../shared/governed-improvements";
+import type { ImprovementStatusContract } from "../shared/improvement-status";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
@@ -57,3 +59,4 @@ export interface WorkshopResponse extends GovernedImprovementDetail {
   improvement: ImprovementWorkshopView;
   emergencyStop: { active: boolean; reason: string | null; activatedAt: string | null };
 }
+export type { GovernedImprovementDetail, GovernedImprovementSummary, ImprovementStatusContract };

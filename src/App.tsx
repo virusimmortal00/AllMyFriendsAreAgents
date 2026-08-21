@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -12,6 +12,7 @@ import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
+import { Improvements, improvementsRoute as readImprovementsRoute, type ImprovementsRoute } from "./improvements";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -102,6 +103,7 @@ export default function App() {
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
   const [workshopLoading, setWorkshopLoading] = useState(false);
   const [workshopMissing, setWorkshopMissing] = useState(false);
+  const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -292,6 +294,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const updateRoute = () => setImprovementsView(readImprovementsRoute());
+    const resolveAlias = () => {
+      const alias = window.location.hash.slice(1);
+      if (!alias || readImprovementsRoute()) return;
+      // Hash aliases are accepted only after the API verifies the exact canonical ID.
+      void loadImprovement(alias).then((item) => {
+        if (item.canonicalId !== alias) return;
+        window.history.replaceState({}, "", `/improvements/${encodeURIComponent(alias)}`);
+        updateRoute();
+      }).catch(() => setImprovementsView({ view: "missing", id: alias }));
+    };
+    const onClick = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="/improvements"]');
+      if (!anchor || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      window.history.pushState({}, "", anchor.href);
+      updateRoute();
+    };
+    resolveAlias();
+    window.addEventListener("popstate", updateRoute);
+    window.addEventListener("hashchange", resolveAlias);
+    document.addEventListener("click", onClick);
+    return () => { window.removeEventListener("popstate", updateRoute); window.removeEventListener("hashchange", resolveAlias); document.removeEventListener("click", onClick); };
+  }, []);
+
+  useEffect(() => {
     if (!configuredAgent && !mobilePanel && !workshopId) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -449,6 +477,12 @@ export default function App() {
     setHasInitialState(false);
   }
 
+  function navigateImprovements(next: ImprovementsRoute) {
+    const path = next.view === "list" ? `/improvements${next.scope === "all" ? "?scope=all" : ""}` : `/improvements/${encodeURIComponent(next.id)}`;
+    window.history.pushState({}, "", path);
+    setImprovementsView(next);
+  }
+
   const statusText = working
     ? room.activeAgent
       ? `${agentScreenName(room.activeAgent)} is typing...`
@@ -488,6 +522,7 @@ export default function App() {
             onClick={() => setMobilePanel((panel) => panel === "people" ? null : "people")}
           >People</button>
           <button type="button" onClick={changeName}>Change name</button>
+          <button type="button" aria-current={improvementsView ? "page" : undefined} onClick={() => navigateImprovements({ view: "list", scope: "active" })}>Improvements</button>
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
@@ -503,6 +538,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status">{connectionNotice}</div> : null}
         <div className="workspace">
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={(id, trigger) => { workshopTrigger.current = trigger; setWorkshopId((current) => nextWorkshopId(current, { type: "open", id })); }} />
@@ -550,6 +586,7 @@ export default function App() {
               onConversationEnergyChange={changeConversationEnergy}
             />
           </div>
+          </>}
         </div>
 
         {configuredAgent ? (

@@ -298,6 +298,22 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .workshop-body ul { margin: 5px 0; padding-left: 22px; }
 .workshop-facts { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 5px 10px; margin: 14px 0; }
 .workshop-facts dt { font-weight: 700; } .workshop-facts dd { margin: 0; overflow-wrap: anywhere; }
+.improvements-panel { min-width: 0; overflow: auto; padding: 8px; background: #f5f5f5; }
+.improvements-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; color: #fff; background: linear-gradient(90deg, var(--blue), var(--blue-bright)); }
+.improvements-header h2 { margin: 0; font: 700 20px/1.2 "Trebuchet MS", Arial, sans-serif; }
+.improvements-header button { min-height: 29px; padding: 3px 12px; color: #111; border: 2px outset #fff; background: var(--chrome); }
+.improvements-header button[aria-selected="true"] { border-style: inset; background: #fff; font-weight: 700; }
+.improvements-body { max-width: 960px; margin: 8px auto; padding: 16px; border: 2px inset #fff; background: #fff; font: 14px/1.42 Tahoma, Arial, sans-serif; }
+.improvements-body h2 { margin: 0 0 8px; color: var(--blue); font-size: 21px; }
+.improvements-body h3 { margin: 20px 0 7px; color: var(--blue); font-size: 16px; }
+.improvements-list { display: grid; gap: 7px; padding: 0; list-style: none; }
+.improvements-list li { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(220px, 1.4fr) auto; gap: 8px; align-items: center; padding: 8px; border: 1px solid #999; background: #f5f5f5; }
+.improvements-list a, .improvements-breadcrumb a, .improvements-detail a { color: #0000b0; overflow-wrap: anywhere; }
+.improvements-list small, .improvements-detail small { color: #555; overflow-wrap: anywhere; }
+.improvements-breadcrumb { margin-top: 0; }
+.improvements-status { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 7px 12px; }
+.improvements-status dt { font-weight: 700; }.improvements-status dd { margin: 0; overflow-wrap: anywhere; }
+.improvements-missing { max-width: 600px; padding: 8px 0; }
 .aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: pixelated; }
 .message--status { color: #555; font-style: italic; }
 .speaker {
@@ -556,6 +572,14 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .agent-settings-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
   .workshop-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
   .workshop-body { padding: 13px; } .workshop-facts { grid-template-columns: 115px minmax(0, 1fr); }
+  .improvements-panel { padding: 5px; }
+  .improvements-header { align-items: stretch; flex-direction: column; gap: 7px; }
+  .improvements-header [role="tablist"] { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .improvements-header button { min-height: 42px; }
+  .improvements-body { margin: 5px 0; padding: 12px; }
+  .improvements-list li { grid-template-columns: 1fr; gap: 3px; }
+  .improvements-status { grid-template-columns: 1fr; gap: 2px; }
+  .improvements-status dd { margin-bottom: 8px; }
   .agent-settings-titlebar { min-height: 44px; }
   .agent-settings-titlebar button { width: 36px; height: 34px; }
   .agent-settings-body { padding: 14px; }

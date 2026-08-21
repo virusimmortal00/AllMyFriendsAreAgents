@@ -1,4 +1,4 @@
-import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
+import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ServerIdentity } from "../shared/protocol";
@@ -83,5 +83,13 @@ export async function runAction(action: "ask" | "review" | "roundtable" | "conti
 }
 
 export async function loadWorkshop(id: string): Promise<WorkshopResponse> {
+  return request(`/api/improvements/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadImprovements(scope: "active" | "all"): Promise<{ scope: string; items: GovernedImprovementSummary[] }> {
+  return request(`/api/improvements?scope=${scope}&limit=50`, { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadImprovement(id: string): Promise<GovernedImprovementDetail> {
   return request(`/api/improvements/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
 }
