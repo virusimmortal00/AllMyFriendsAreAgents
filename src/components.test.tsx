@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
+import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, WorkshopDialog } from "./components";
 import { LoadingScreen, NameEntry } from "./App";
 
 describe("RoomRoster", () => {
@@ -290,5 +290,15 @@ describe("Transcript message styling", () => {
     expect(html).toContain('font-family:Georgia, &quot;Times New Roman&quot;, serif');
     expect(html).toContain("color:#1618fd");
     expect(html).toContain("color:#6c1739");
+  });
+});
+
+describe("workshop references", () => {
+  it("renders stable references as accessible controls and safely presents missing details", () => {
+    const transcript = renderToStaticMarkup(<Transcript messages={[{ id: "ref", speaker: "you", text: "See [[improvement:imp-7]].", timestamp: "2026-08-21T12:00:00Z" }]} magnification={100} transcriptRef={createRef<HTMLDivElement>()} onOpenImprovement={() => undefined} />);
+    const dialog = renderToStaticMarkup(<WorkshopDialog data={null} loading={false} missing onClose={() => undefined} />);
+    expect(transcript).toContain('aria-label="Open Improvement imp-7"');
+    expect(dialog).toContain("unavailable or was deleted");
+    expect(dialog).toContain('aria-label="Close improvement workshop"');
   });
 });

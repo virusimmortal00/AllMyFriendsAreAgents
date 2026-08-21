@@ -21,6 +21,7 @@ import { RoomEventStream } from "./room-event-stream.js";
 import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
 import { resolveStorageConfiguration } from "./storage/config.js";
 import { openRoomRepository } from "./storage/open-room-repository.js";
+import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-api.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -313,6 +314,19 @@ app.get("/api/state", async (_request, response) => {
 
 app.get("/api/ready", (_request, response) => {
   response.set("Cache-Control", "no-store").json({ ready: true, ...serverIdentity });
+});
+
+// Room-facing workshop routes are intentionally read-only and project away
+// developer credentials, manifests, fencing tokens, and private payloads.
+app.get("/api/improvements", async (request, response) => {
+  const requestedLimit = Number(request.query.limit || 20);
+  response.set("Cache-Control", "no-store").json(await listWorkshopImprovements(store, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+});
+
+app.get("/api/improvements/:id", async (request, response) => {
+  const view = await readWorkshopImprovement(store, request.params.id);
+  if (!view) return response.status(404).json({ error: "Improvement not found." });
+  response.set("Cache-Control", "no-store").json(view);
 });
 
 app.get("/api/events", (request, response) => {

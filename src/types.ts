@@ -2,6 +2,7 @@ import type { ChatStyle, ParticipantStyles } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 import type { ServerIdentity } from "../shared/protocol";
+import type { ImprovementWorkshopView } from "../shared/workshop";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
@@ -50,3 +51,4 @@ export interface RoomState {
   server?: ServerIdentity;
   humans?: HumanPresence[];
 }
+export interface WorkshopResponse { improvement: ImprovementWorkshopView; emergencyStop: { active: boolean; reason: string | null; activatedAt: string | null }; }

@@ -1,4 +1,4 @@
-import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
+import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ServerIdentity } from "../shared/protocol";
@@ -80,4 +80,8 @@ export async function runAction(action: "ask" | "review" | "roundtable" | "conti
     method: "POST",
     body: JSON.stringify({ action, target }),
   });
+}
+
+export async function loadWorkshop(id: string): Promise<WorkshopResponse> {
+  return request(`/api/improvements/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
 }

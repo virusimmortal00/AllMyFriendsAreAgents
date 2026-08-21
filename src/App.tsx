@@ -1,16 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadRoom, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader } from "./components";
+import { ApiRequestError, checkReady, joinRoom, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { loadDraft, loadPendingSend, saveDraft, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
+import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
-import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
+import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -97,6 +98,10 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
+  const [workshopId, setWorkshopId] = useState<string | null>(null);
+  const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
+  const [workshopLoading, setWorkshopLoading] = useState(false);
+  const [workshopMissing, setWorkshopMissing] = useState(false);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -107,6 +112,7 @@ export default function App() {
   const [joinError, setJoinError] = useState("");
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
+  const workshopTrigger = useRef<HTMLButtonElement | null>(null);
   const roomRevealed = useRef(false);
   const draftRef = useRef(draft);
   const serverInstance = useRef<string | undefined>(undefined);
@@ -286,15 +292,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!configuredAgent && !mobilePanel) return;
+    if (!configuredAgent && !mobilePanel && !workshopId) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setConfiguredAgent(null);
       setMobilePanel(null);
+      setWorkshopId((current) => nextWorkshopId(current, { type: "escape" }));
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [configuredAgent, mobilePanel]);
+  }, [configuredAgent, mobilePanel, workshopId]);
+
+  useEffect(() => {
+    if (!workshopId) return;
+    let cancelled = false;
+    setWorkshop(null); setWorkshopMissing(false); setWorkshopLoading(true);
+    void loadWorkshop(workshopId).then((data) => { if (!cancelled) setWorkshop(data); }).catch(() => { if (!cancelled) setWorkshopMissing(true); }).finally(() => { if (!cancelled) setWorkshopLoading(false); });
+    return () => { cancelled = true; };
+  }, [workshopId]);
 
   const ready = hasInitialState && minimumLoadingComplete;
 
@@ -490,7 +505,7 @@ export default function App() {
         <div className="workspace">
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
-            <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} />
+            <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={(id, trigger) => { workshopTrigger.current = trigger; setWorkshopId((current) => nextWorkshopId(current, { type: "open", id })); }} />
             {pendingSend ? (
               <div className="pending-send" role="status">
                 <span><strong>Not sent — send now?</strong> {pendingSend.text}</span>
@@ -548,6 +563,7 @@ export default function App() {
             onClose={() => setConfiguredAgent(null)}
           />
         ) : null}
+        {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} returnFocusTo={workshopTrigger.current} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">

@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -12,6 +12,9 @@ import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, part
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
+import { improvementReferences } from "../shared/workshop";
+import type { WorkshopResponse } from "./types";
+import { nextDialogFocusIndex, workshopLayout } from "./workshop-dialog";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -199,11 +202,26 @@ export function Transcript({
   messages,
   magnification,
   transcriptRef,
+  onOpenImprovement,
 }: {
   messages: RoomMessage[];
   magnification: number;
   transcriptRef: RefObject<HTMLDivElement | null>;
+  onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
+  const messageText = (text: string) => {
+    const references = improvementReferences(text);
+    if (!references.length) return renderAimSmileys(text);
+    const parts: React.ReactNode[] = [];
+    let offset = 0;
+    references.forEach((reference) => {
+      parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
+      parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
+      offset = reference.end;
+    });
+    parts.push(...renderAimSmileys(text.slice(offset)));
+    return parts;
+  };
   return (
     <div
       ref={transcriptRef}
@@ -220,7 +238,7 @@ export function Transcript({
             <div>
               <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
               <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
-                <span className="message__text">{renderAimSmileys(
+                <span className="message__text">{messageText(
                   isAgentId(message.speaker)
                     ? visibleAgentChatText(message.text)
                     : visibleAgentText(message.text),
@@ -232,6 +250,43 @@ export function Transcript({
       })}
     </div>
   );
+}
+
+export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
+  const view = data?.improvement;
+  const dialog = useRef<HTMLElement>(null);
+  const [presentation, setPresentation] = useState(() => workshopLayout(typeof window === "undefined" ? 1024 : window.innerWidth));
+  useEffect(() => {
+    dialog.current?.focus();
+    const updatePresentation = () => setPresentation(workshopLayout(window.innerWidth));
+    window.addEventListener("resize", updatePresentation);
+    return () => {
+      window.removeEventListener("resize", updatePresentation);
+      returnFocusTo?.focus();
+    };
+  }, [returnFocusTo]);
+  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+    if (event.key !== "Tab") return;
+    const focusable = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') || [])];
+    const index = focusable.indexOf(document.activeElement as HTMLElement);
+    const next = nextDialogFocusIndex(index < 0 ? 0 : index, focusable.length, event.shiftKey);
+    if (next >= 0) { event.preventDefault(); focusable[next]?.focus(); }
+  }
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section ref={dialog} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={handleKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
+      <header className="agent-settings-titlebar"><h2 id="workshop-title">Improvement workshop</h2><button type="button" aria-label="Close improvement workshop" onClick={onClose}>×</button></header>
+      <div className="workshop-body" aria-live="polite">
+        {loading ? <p>Loading improvement…</p> : missing || !view ? <p role="status">This improvement is unavailable or was deleted.</p> : <>
+          <p><strong>{view.id}</strong> · revision {view.revision}</p>
+          <dl className="workshop-facts"><dt>Lifecycle</dt><dd>{view.state}</dd><dt>Risk</dt><dd>{view.risk}</dd><dt>Technical consensus</dt><dd>{view.technicalConsensus.status} ({view.technicalConsensus.reviews.length} review{view.technicalConsensus.reviews.length === 1 ? "" : "s"})</dd><dt>Action authority</dt><dd>{view.actionAuthority.status}{view.actionAuthority.grantedByHuman ? " · human granted" : ""}</dd><dt>Current claim</dt><dd>{view.workClaim.status}{view.workClaim.holderMemberId ? ` · ${view.workClaim.holderMemberId}` : ""}</dd><dt>Emergency stop</dt><dd>{data.emergencyStop.active ? `ACTIVE${data.emergencyStop.reason ? ` · ${data.emergencyStop.reason}` : ""}` : "Clear"}</dd></dl>
+          <h3>Active claims</h3><ul>{view.claims.length ? view.claims.map((claim) => <li key={claim.id}>{claim.statement}</li>) : <li>None recorded.</li>}</ul>
+          <h3>Evidence</h3><ul>{view.evidence.length ? view.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.description}</a></li>) : <li>No evidence recorded.</li>}</ul>
+        </>}
+      </div>
+      <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
+    </section>
+  </div>;
 }
 
 interface ChatComposerProps {

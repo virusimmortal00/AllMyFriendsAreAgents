@@ -290,6 +290,14 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message time { white-space: nowrap; color: #222; font-family: "Courier New", Courier, monospace; font-size: calc(15px * var(--transcript-magnification, 1)); padding-top: 2px; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.improvement-reference { padding: 0; border: 0; color: #0000b0; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.improvement-reference:focus-visible { outline: 2px solid #ffb000; outline-offset: 2px; }
+.workshop-window { width: min(620px, calc(100vw - 28px)); max-height: calc(100vh - 28px); overflow: auto; color: #111; background: var(--chrome); border: 3px outset white; box-shadow: 6px 7px 0 rgba(0,0,0,.35); }
+.workshop-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.4 Tahoma, Arial, sans-serif; }
+.workshop-body h3 { margin: 18px 0 5px; color: var(--blue); font-size: 15px; }
+.workshop-body ul { margin: 5px 0; padding-left: 22px; }
+.workshop-facts { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 5px 10px; margin: 14px 0; }
+.workshop-facts dt { font-weight: 700; } .workshop-facts dd { margin: 0; overflow-wrap: anywhere; }
 .aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: pixelated; }
 .message--status { color: #555; font-style: italic; }
 .speaker {
@@ -546,6 +554,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .controls-panel hr { margin: 20px 16px; }
   .modal-backdrop { padding: 7px; align-items: end; }
   .agent-settings-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
+  .workshop-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
+  .workshop-body { padding: 13px; } .workshop-facts { grid-template-columns: 115px minmax(0, 1fr); }
   .agent-settings-titlebar { min-height: 44px; }
   .agent-settings-titlebar button { width: 36px; height: 34px; }
   .agent-settings-body { padding: 14px; }
