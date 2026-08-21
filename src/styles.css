@@ -314,6 +314,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .improvements-status { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 7px 12px; }
 .improvements-status dt { font-weight: 700; }.improvements-status dd { margin: 0; overflow-wrap: anywhere; }
 .improvements-missing { max-width: 600px; padding: 8px 0; }
+.heartbeat-control { display: grid; gap: 6px; margin-bottom: 14px; padding: 10px; border: 2px inset #fff; background: #fffbe6; }
+.heartbeat-control small { overflow-wrap: anywhere; color: #444; }
+.heartbeat-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.heartbeat-stop { color: #7a0000; font-weight: 700; }
 .aim-smiley { display: inline-block; width: calc(18px * var(--transcript-magnification, 1)); height: calc(18px * var(--transcript-magnification, 1)); margin: 0 1px; vertical-align: -3px; image-rendering: pixelated; }
 .message--status { color: #555; font-style: italic; }
 .speaker {

@@ -68,8 +68,9 @@ function improvement(id: string, revision = 7, action: AutonomousAction = "ANALY
     claims: [],
     workClaim: { fencingToken: 0, holderMemberId: null, leaseExpiresAt: null, status: "UNCLAIMED", manifests: [], history: [] },
     evidence: [],
-    attribution: [],
     statusContract: emptyImprovementStatus(),
+    proposal: { idempotencyKey: `proposal:${id}`, proposer: { id: "proposer", kind: "agent", capabilities: ["IMPROVEMENT_PROPOSE"] }, proposedAt: "2026-08-21T10:00:00.000Z", rationale: "bounded improvement", requestedOutcome: "verified outcome" },
+    attribution: [{ actorId: "governor", at: "2026-08-21T10:30:00.000Z", change: "GOVERNANCE:decision-1:APPROVED", revision }],
     createdAt: "2026-08-21T11:00:00.000Z",
     updatedAt: "2026-08-21T11:00:00.000Z",
   };
@@ -82,16 +83,38 @@ async function stateFixture() {
   return { directory, databasePath, state: await SqliteCoordinatorStateStore.open(directory, databasePath) };
 }
 
-function heartbeat(repository: FakeRepository, state: SqliteCoordinatorStateStore, executor: FakeExecutor, clock: FakeClock, options: Record<string, unknown> = {}) {
+function heartbeat(repository: FakeRepository, state: SqliteCoordinatorStateStore, executor: CoordinatorExecutor, clock: FakeClock, options: Record<string, unknown> = {}) {
+  const runtimeEnabled = options.runtimeEnabled !== false;
+  if (runtimeEnabled && !state.runtimeState().enabled) state.authorize(state.runtimeState().revision, "operator", "test authorization", clock.now().toISOString());
+  const { runtimeEnabled: _runtimeEnabled, ...heartbeatOptions } = options;
   return new CoordinatorHeartbeat(repository, state, executor, {
+    enabled: true,
     ownerId: "coordinator-a",
     workerMemberId: "builder",
     now: clock.now,
-    ...options,
+    ...heartbeatOptions,
   });
 }
 
 describe("bounded coordinator heartbeat", () => {
+  it("ships disabled and remains disabled across restart until a new authorized action", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    const executor = new FakeExecutor();
+    const first = heartbeat(new FakeRepository([improvement("off")]), fixture.state, executor, clock, { runtimeEnabled: false });
+    expect(first.start()).toBe(false);
+    expect(await first.tick()).toMatchObject({ acquiredLease: false, dispatched: 0 });
+    fixture.state.close();
+
+    const reopened = await SqliteCoordinatorStateStore.open(fixture.directory, fixture.databasePath);
+    const second = heartbeat(new FakeRepository([improvement("off")]), reopened, executor, clock, { runtimeEnabled: false });
+    expect(second.status().runtime).toMatchObject({ enabled: false, emergencyStopped: false });
+    expect(second.authorize(0, "operator", "approved bounded heartbeat")).toMatchObject({ enabled: true, revision: 1 });
+    await vi.waitFor(() => expect(executor.calls).toHaveLength(1));
+    second.stop();
+    reopened.close();
+  });
+
   it("selects only gate-authorized canonical work and obeys both per-tick bounds", async () => {
     const { state } = await stateFixture();
     const clock = new FakeClock();
@@ -140,6 +163,19 @@ describe("bounded coordinator heartbeat", () => {
     competing.close();
   });
 
+  it("rejects overlapping runs from the same owner and enforces the time budget", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    const executor: CoordinatorExecutor = { dispatch: async () => new Promise(() => undefined) };
+    const coordinator = heartbeat(new FakeRepository([improvement("bounded-time")]), fixture.state, executor, clock, { timeBudgetMs: 500 });
+    const first = coordinator.tick();
+    await vi.waitFor(() => expect(coordinator.status().attempts.some((attempt) => attempt.outcome === "STARTED")).toBe(true));
+    expect(await coordinator.tick()).toMatchObject({ acquiredLease: false, dispatched: 0 });
+    expect(await first).toMatchObject({ acquiredLease: true, dispatched: 1 });
+    expect(coordinator.status().attempts[0]).toMatchObject({ outcome: "FAILED", blocker: "Heartbeat time budget exceeded" });
+    fixture.state.close();
+  });
+
   it("recovers an interrupted dispatch after lease and retry expiry without changing its idempotency key", async () => {
     const fixture = await stateFixture();
     const clock = new FakeClock();
@@ -164,7 +200,7 @@ describe("bounded coordinator heartbeat", () => {
     reopened.close();
   });
 
-  it("allows expired claims, rejects stale revisions, and records failed then successful retry evidence", async () => {
+  it("allows expired claims, rejects stale revision evidence, and records failed then successful retry evidence", async () => {
     const fixture = await stateFixture();
     const clock = new FakeClock();
     const baseExpired = improvement("expired");
@@ -190,6 +226,21 @@ describe("bounded coordinator heartbeat", () => {
     fixture.state.close();
   });
 
+  it("caps retry storms at the policy attempt limit", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    const executor = new FakeExecutor();
+    executor.failures = 10;
+    const coordinator = heartbeat(new FakeRepository([improvement("storm")]), fixture.state, executor, clock, { maxAttempts: 2, retryAfterMs: 1 });
+    await coordinator.tick();
+    clock.advance(2);
+    await coordinator.tick();
+    clock.advance(2);
+    await coordinator.tick();
+    expect(executor.calls).toHaveLength(2);
+    fixture.state.close();
+  });
+
   it("starts immediately, cleans up its timer, and supports explicit opt-out", async () => {
     const fixture = await stateFixture();
     const setTimer = vi.fn(() => 42 as unknown as ReturnType<typeof setInterval>);
@@ -202,6 +253,57 @@ describe("bounded coordinator heartbeat", () => {
     const optedOut = heartbeat(new FakeRepository([]), fixture.state, new FakeExecutor(), new FakeClock(), { enabled: false, setInterval: setTimer });
     expect(optedOut.start()).toBe(false);
     expect(coordinatorEnabled({ ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL: "https://executor.invalid", ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_HEARTBEAT_ENABLED: "false" })).toBe(false);
+    expect(coordinatorEnabled({ ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL: "https://executor.invalid" })).toBe(false);
     fixture.state.close();
+  });
+
+  it("requires governed proposal advancement and current authority", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    const plain = { ...improvement("plain"), proposal: undefined };
+    const unadvanced = { ...improvement("unadvanced"), attribution: [] };
+    const denied = { ...improvement("denied"), actionAuthority: { ...improvement("denied").actionAuthority, status: "DENIED" as const } };
+    const executor = new FakeExecutor();
+    expect(await heartbeat(new FakeRepository([plain, unadvanced, denied]), fixture.state, executor, clock).tick()).toMatchObject({ selected: 0, dispatched: 0 });
+    expect(executor.calls).toHaveLength(0);
+    fixture.state.close();
+  });
+
+  it("exposes policy and audit evidence while withholding prohibited capabilities", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    const executor = new FakeExecutor();
+    const coordinator = heartbeat(new FakeRepository([improvement("audited")]), fixture.state, executor, clock, { maxSelectedPerTick: 1, maxAttempts: 2, timeBudgetMs: 5000 });
+    expect(await coordinator.tick()).toMatchObject({ dispatched: 1 });
+    expect(coordinator.status().policy).toMatchObject({ version: "heartbeat-policy-v1", maxConcurrency: 1, maxSelectedPerRun: 1, maxDispatchedPerRun: 2, maxAttemptsPerRevision: 2, timeBudgetMs: 5000 });
+    expect(coordinator.status().policy.prohibitedCapabilities).toEqual(expect.arrayContaining(["COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH_UPSTREAM", "BYPASS_GOVERNED_EXECUTOR"]));
+    expect(executor.calls[0].policy.permittedCapabilities).toEqual(["ANALYZE", "EDIT_SANDBOX", "RUN_TESTS"]);
+    expect(executor.calls[0]).not.toHaveProperty("commit");
+    const completed = coordinator.status().attempts.find((attempt) => attempt.outcome === "SUCCEEDED");
+    expect(completed).toMatchObject({ policyVersion: "heartbeat-policy-v1", authorityDecision: "AUTHORIZED", improvementId: "audited", selectedRevision: 7, nextAction: expect.any(String) });
+    expect(completed?.inputEvidence).toEqual(expect.arrayContaining(["proposal:proposal:audited", "GOVERNANCE:decision-1:APPROVED@r7"]));
+    fixture.state.close();
+  });
+
+  it("persists emergency stop, aborts active work, and requires reauthorization", async () => {
+    const fixture = await stateFixture();
+    const clock = new FakeClock();
+    let observedAbort = false;
+    const executor: CoordinatorExecutor = { dispatch: async (input) => new Promise((_resolve, reject) => input.signal.addEventListener("abort", () => { observedAbort = true; reject(input.signal.reason); }, { once: true })) };
+    const coordinator = heartbeat(new FakeRepository([improvement("halt")]), fixture.state, executor, clock);
+    const running = coordinator.tick();
+    await vi.waitFor(() => expect(coordinator.status().active || coordinator.status().attempts.some((attempt) => attempt.outcome === "STARTED")).toBe(true));
+    expect(coordinator.emergencyStop(1, "operator", "unsafe behavior")).toMatchObject({ enabled: false, emergencyStopped: true, revision: 2 });
+    await running;
+    expect(observedAbort).toBe(true);
+    expect(coordinator.status().audit[0]).toMatchObject({ revision: 2, kind: "EMERGENCY_STOPPED", actorId: "operator", reason: "unsafe behavior" });
+    fixture.state.close();
+
+    const reopened = await SqliteCoordinatorStateStore.open(fixture.directory, fixture.databasePath);
+    const restarted = heartbeat(new FakeRepository([improvement("halt", 8)]), reopened, new FakeExecutor(), clock, { runtimeEnabled: false });
+    expect(restarted.status().runtime).toMatchObject({ enabled: false, emergencyStopped: true });
+    expect(await restarted.tick()).toMatchObject({ stopped: true, dispatched: 0 });
+    expect(restarted.authorize(2, "operator", "new review authorizes resumption")).toMatchObject({ enabled: true, emergencyStopped: false, revision: 3 });
+    reopened.close();
   });
 });
