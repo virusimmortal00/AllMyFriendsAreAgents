@@ -19,6 +19,19 @@ describe("agent failure classification", () => {
     });
   });
 
+  it("understands Claude's absolute local reset time", () => {
+    const now = new Date();
+    now.setHours(13, 44, 0, 0);
+    const expected = new Date(now);
+    expected.setHours(17, 20, 0, 0);
+
+    expect(classifyAgentFailure(new Error("HTTP 429: session limit · resets 5:20pm (America/New_York)"), now.getTime())).toMatchObject({
+      status: "cooldown",
+      reason: "rate_limit",
+      retryAt: expected.toISOString(),
+    });
+  });
+
   it("briefly cools down timed-out providers", () => {
     expect(classifyAgentFailure(new Error("claude timed out after 90 seconds"), 1_000)).toMatchObject({
       status: "cooldown",

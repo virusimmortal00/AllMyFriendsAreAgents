@@ -22,7 +22,16 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function retryDelayMs(text: string) {
+function retryDelayMs(text: string, now: number) {
+  const absoluteReset = text.match(/resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (absoluteReset) {
+    const target = new Date(now);
+    let hour = Number(absoluteReset[1]) % 12;
+    if (absoluteReset[3].toLowerCase() === "pm") hour += 12;
+    target.setHours(hour, Number(absoluteReset[2] || 0), 0, 0);
+    if (target.getTime() <= now) target.setDate(target.getDate() + 1);
+    return target.getTime() - now;
+  }
   const retryAfter = text.match(/retry[- ]after[^\d]*(\d+)\s*(seconds?|minutes?)/i);
   if (retryAfter) return Number(retryAfter[1]) * (/minute/i.test(retryAfter[2]) ? MINUTE : SECOND);
   const tryAgain = text.match(/(?:try again|resets?)[^\d]*(\d+)\s*(seconds?|minutes?)/i);
@@ -39,7 +48,7 @@ export function classifyAgentFailure(error: unknown, now = Date.now()): Omit<Sto
     return { status: "unavailable", reason: "configuration", message: "Provider configuration needs attention." };
   }
   if (/\b429\b|rate.?limit|quota|usage limit|too many requests|capacity/i.test(text)) {
-    const delay = retryDelayMs(text);
+    const delay = retryDelayMs(text, now);
     return {
       status: "cooldown",
       reason: "rate_limit",
