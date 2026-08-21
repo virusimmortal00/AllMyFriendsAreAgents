@@ -9,7 +9,8 @@ import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./ag
 import { AgentHealthRegistry } from "./agent-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
-import { developerRequestAuthorized, openDeveloperToken } from "./developer-access.js";
+import { DeveloperBridgeService } from "./developer-bridge.js";
+import { openDeveloperTeamRegistry } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { CoalescingJobQueue } from "./job-queue.js";
@@ -45,11 +46,8 @@ const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
-const developerAccess = await openDeveloperToken(storageConfiguration.dataDirectory);
-const developerHuman = {
-  id: "developer-agent",
-  name: process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME?.trim() || "Developer Agent",
-};
+const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
+const developerBridge = new DeveloperBridgeService(store, developerTeam);
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -73,11 +71,16 @@ function developerRoomView(limit = 50) {
     messages,
     busy: jobs.busy,
     cursor: state.messages.at(-1)?.id,
+    developerTeam: developerTeam.roster(),
   };
 }
 
-function developerAuthorized(authorization: string | undefined) {
-  return developerRequestAuthorized(authorization, developerAccess.token);
+function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }) {
+  if (result.kind === "ok") return response.json(result.value);
+  if (result.kind === "unauthorized") return response.status(404).json({ error: "Not found." });
+  if (result.kind === "not_found") return response.status(404).json({ error: "Improvement not found." });
+  if (result.kind === "conflict") return response.status(409).json(result);
+  return response.status(403).json(result);
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
@@ -398,20 +401,24 @@ app.post("/api/messages", async (request, response) => {
 });
 
 app.get("/api/developer/room", (request, response) => {
-  if (!developerAuthorized(request.header("authorization"))) return response.status(404).json({ error: "Not found." });
+  if (!developerTeam.authenticate(request.header("authorization"), "ROOM_READ")) return response.status(404).json({ error: "Not found." });
   const requestedLimit = Number(request.query.limit || 50);
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 50;
   response.json(developerRoomView(limit));
 });
 
 app.post("/api/developer/messages", async (request, response) => {
-  if (!developerAuthorized(request.header("authorization"))) return response.status(404).json({ error: "Not found." });
+  const authenticated = developerTeam.authenticate(request.header("authorization"), "ROOM_CHAT");
+  if (!authenticated) return response.status(404).json({ error: "Not found." });
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
   if (text.length > 16_000) return response.status(400).json({ error: "Developer messages are limited to 16,000 characters." });
 
   roomActivity.interrupt();
-  const message = await store.addMessage("you", text, "chat", undefined, undefined, developerHuman);
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
+    id: authenticated.member.memberId,
+    name: authenticated.member.displayName,
+  });
   broadcast();
   jobs.enqueue("developer-message-conversation", () => runJob(async () => {
     const conversationState = roomSnapshot();
@@ -422,6 +429,64 @@ app.post("/api/developer/messages", async (request, response) => {
     );
   }));
   return response.status(202).json({ accepted: true, message, room: developerRoomView() });
+});
+
+app.get("/api/developer/improvements/:id", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.readImprovement(request.header("authorization"), request.params.id));
+});
+
+app.post("/api/developer/improvements/:id/claims", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.acquireClaim(request.header("authorization"), {
+    improvementId: request.params.id,
+    expectedRevision: request.body?.expectedRevision,
+    idempotencyKey: request.body?.idempotencyKey,
+    leaseExpiresAt: request.body?.leaseExpiresAt,
+    manifest: request.body?.manifest,
+  }));
+});
+
+app.get("/api/developer/improvements/:id/claims", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.readClaim(request.header("authorization"), request.params.id));
+});
+
+app.post("/api/developer/improvements/:id/claims/:operation", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.mutateClaim(request.header("authorization"), {
+    improvementId: request.params.id,
+    expectedRevision: request.body?.expectedRevision,
+    idempotencyKey: request.body?.idempotencyKey,
+    fencingToken: request.body?.fencingToken,
+    operation: request.params.operation as "renew" | "release" | "expire" | "complete" | "manifest" | "handoff",
+    leaseExpiresAt: request.body?.leaseExpiresAt,
+    toMemberId: request.body?.toMemberId,
+    manifest: request.body?.manifest,
+  }));
+});
+
+app.post("/api/developer/improvements/:id/evidence", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.appendEvidence(request.header("authorization"), {
+    improvementId: request.params.id,
+    expectedRevision: request.body?.expectedRevision,
+    fencingToken: request.body?.fencingToken,
+    evidence: request.body?.evidence,
+  }));
+});
+
+app.post("/api/developer/improvements/:id/reviews", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.recordReview(request.header("authorization"), {
+    improvementId: request.params.id,
+    expectedRevision: request.body?.expectedRevision,
+    decision: request.body?.decision,
+  }));
+});
+
+app.post("/api/developer/improvements/:id/transitions", async (request, response) => {
+  return sendBridgeResult(response, await developerBridge.requestTransition(request.header("authorization"), {
+    improvementId: request.params.id,
+    expectedRevision: request.body?.expectedRevision,
+    fencingToken: request.body?.fencingToken,
+    to: request.body?.to,
+    action: request.body?.action,
+  }));
 });
 
 app.post("/api/actions", async (request, response) => {
@@ -458,5 +523,5 @@ app.get("/{*splat}", (_request, response) => response.sendFile(path.join(project
 
 app.listen(port, host, () => {
   console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
-  console.log(`Developer room bridge token: ${developerAccess.source}`);
+  console.log(`Developer team bridge: ${developerTeam.roster().length} configured member(s)`);
 });

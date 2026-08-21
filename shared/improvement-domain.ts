@@ -55,6 +55,43 @@ export interface ImprovementClaim {
   readonly statement: string;
 }
 
+export interface DeveloperExecutionManifest {
+  readonly revision: number;
+  readonly memberId: string;
+  readonly memberConfigRevision: number;
+  readonly model: string;
+  readonly harness: string;
+  readonly promptReference: string;
+  readonly promptHash?: string;
+  readonly effectiveToolGrants: readonly string[];
+  readonly policyRevision: number;
+  readonly repositoryBaseCommit: string;
+  readonly environmentId: string;
+  readonly createdAt: string;
+}
+
+export type WorkClaimEventKind = "ACQUIRED" | "RENEWED" | "HANDED_OFF" | "RELEASED" | "EXPIRED" | "REPLACED" | "COMPLETED" | "MANIFEST_REVISED";
+
+export interface WorkClaimEvent {
+  readonly idempotencyKey: string;
+  readonly kind: WorkClaimEventKind;
+  readonly memberId: string;
+  readonly at: string;
+  readonly fencingToken: number;
+  readonly leaseExpiresAt: string | null;
+  readonly manifestRevision: number;
+  readonly replacedMemberId?: string;
+}
+
+export interface ImprovementWorkClaim {
+  readonly fencingToken: number;
+  readonly holderMemberId: string | null;
+  readonly leaseExpiresAt: string | null;
+  readonly status: "UNCLAIMED" | "ACTIVE" | "RELEASED" | "EXPIRED" | "COMPLETED";
+  readonly manifests: readonly DeveloperExecutionManifest[];
+  readonly history: readonly WorkClaimEvent[];
+}
+
 export interface EvidenceReference {
   readonly id: string;
   readonly uri: string;
@@ -79,6 +116,7 @@ export interface Improvement {
   readonly technicalConsensus: TechnicalConsensus;
   readonly actionAuthority: ActionAuthority;
   readonly claims: readonly ImprovementClaim[];
+  readonly workClaim: ImprovementWorkClaim;
   readonly evidence: readonly EvidenceReference[];
   readonly attribution: readonly AttributionEntry[];
   readonly createdAt: string;
@@ -91,6 +129,30 @@ export type ImprovementChange =
   | { readonly kind: "ADD_CLAIM"; readonly claim: ImprovementClaim }
   | { readonly kind: "ADD_EVIDENCE"; readonly evidence: Omit<EvidenceReference, "addedBy" | "addedAt"> }
   | { readonly kind: "RECORD_TECHNICAL_REVIEW"; readonly decision: TechnicalReview["decision"] }
+  | {
+      readonly kind: "ACQUIRE_WORK_CLAIM";
+      readonly idempotencyKey: string;
+      readonly leaseExpiresAt: string;
+      readonly manifest: Omit<DeveloperExecutionManifest, "revision" | "createdAt">;
+    }
+  | { readonly kind: "RENEW_WORK_CLAIM"; readonly idempotencyKey: string; readonly fencingToken: number; readonly leaseExpiresAt: string }
+  | { readonly kind: "EXPIRE_WORK_CLAIM"; readonly idempotencyKey: string; readonly fencingToken: number }
+  | {
+      readonly kind: "HANDOFF_WORK_CLAIM";
+      readonly idempotencyKey: string;
+      readonly fencingToken: number;
+      readonly toMemberId: string;
+      readonly leaseExpiresAt: string;
+      readonly manifest: Omit<DeveloperExecutionManifest, "revision" | "createdAt">;
+    }
+  | { readonly kind: "RELEASE_WORK_CLAIM"; readonly idempotencyKey: string; readonly fencingToken: number }
+  | { readonly kind: "COMPLETE_WORK_CLAIM"; readonly idempotencyKey: string; readonly fencingToken: number }
+  | {
+      readonly kind: "REVISE_WORK_CLAIM_MANIFEST";
+      readonly idempotencyKey: string;
+      readonly fencingToken: number;
+      readonly manifest: Omit<DeveloperExecutionManifest, "revision" | "createdAt">;
+    }
   | {
       readonly kind: "SET_ACTION_AUTHORITY";
       readonly status: ActionAuthority["status"];
@@ -150,6 +212,14 @@ export function createImprovement(input: {
       allowedActions: [],
     },
     claims: [...(input.claims ?? [])],
+    workClaim: {
+      fencingToken: 0,
+      holderMemberId: null,
+      leaseExpiresAt: null,
+      status: "UNCLAIMED",
+      manifests: [],
+      history: [],
+    },
     evidence: [],
     attribution: [{ actorId: input.author.id, at: input.now, change: "CREATE", revision: 1 }],
     createdAt: input.now,
@@ -190,6 +260,11 @@ export function applyImprovementChange(
   }
   if (!actor.id.trim()) return { kind: "rejected", reason: "Actor ID must not be empty" };
 
+  const workClaim = normalizeWorkClaim(improvement.workClaim);
+  if ("idempotencyKey" in change && workClaim.history.some((event) => event.idempotencyKey === change.idempotencyKey)) {
+    return { kind: "accepted", improvement };
+  }
+
   if (change.kind === "TRANSITION") {
     const invalid = validateTransition(improvement, expectedRevision, change.to, actor);
     if (invalid) return invalid;
@@ -199,6 +274,30 @@ export function applyImprovementChange(
   }
   if (change.kind === "RECORD_TECHNICAL_REVIEW" && !["REVIEWER", "ADMIN"].includes(actor.role)) {
     return { kind: "rejected", reason: `${actor.role} cannot record a technical review` };
+  }
+  if (["RENEW_WORK_CLAIM", "RELEASE_WORK_CLAIM", "COMPLETE_WORK_CLAIM", "REVISE_WORK_CLAIM_MANIFEST", "HANDOFF_WORK_CLAIM"].includes(change.kind)) {
+    const fencingToken = "fencingToken" in change ? change.fencingToken : -1;
+    if (workClaim.status !== "ACTIVE" || workClaim.holderMemberId !== actor.id || workClaim.fencingToken !== fencingToken) {
+      return { kind: "rejected", reason: "The work claim is not actively held by this member and fencing token" };
+    }
+    if (Date.parse(workClaim.leaseExpiresAt ?? "") <= Date.parse(now)) {
+      return { kind: "rejected", reason: "The work claim lease has expired" };
+    }
+  }
+  if (change.kind === "EXPIRE_WORK_CLAIM") {
+    if (workClaim.status !== "ACTIVE" || workClaim.fencingToken !== change.fencingToken) {
+      return { kind: "rejected", reason: "The work claim and fencing token are not current" };
+    }
+    if (Date.parse(workClaim.leaseExpiresAt ?? "") > Date.parse(now)) return { kind: "rejected", reason: "The work claim lease has not expired" };
+  }
+  if (change.kind === "ACQUIRE_WORK_CLAIM") {
+    const leaseActive = workClaim.status === "ACTIVE" && Date.parse(workClaim.leaseExpiresAt ?? "") > Date.parse(now);
+    if (leaseActive) return { kind: "rejected", reason: "The improvement already has an active work claim" };
+    if (Date.parse(change.leaseExpiresAt) <= Date.parse(now)) return { kind: "rejected", reason: "Claim lease must expire in the future" };
+    if (change.manifest.memberId !== actor.id) return { kind: "rejected", reason: "Execution manifest member must match the authenticated actor" };
+  }
+  if ((change.kind === "RENEW_WORK_CLAIM" || change.kind === "HANDOFF_WORK_CLAIM") && Date.parse(change.leaseExpiresAt) <= Date.parse(now)) {
+    return { kind: "rejected", reason: "Claim lease must expire in the future" };
   }
 
   const nextRevision = improvement.revision + 1;
@@ -242,6 +341,71 @@ export function applyImprovementChange(
       };
       break;
     }
+    case "ACQUIRE_WORK_CLAIM": {
+      const replaced = workClaim.status === "ACTIVE" || workClaim.status === "EXPIRED";
+      const fencingToken = workClaim.fencingToken + 1;
+      const manifest = { ...change.manifest, revision: workClaim.manifests.length + 1, createdAt: now };
+      next = {
+        ...next,
+        workClaim: {
+          fencingToken,
+          holderMemberId: actor.id,
+          leaseExpiresAt: change.leaseExpiresAt,
+          status: "ACTIVE",
+          manifests: [...workClaim.manifests, manifest],
+          history: [
+            ...workClaim.history,
+            ...(workClaim.status === "ACTIVE" && Date.parse(workClaim.leaseExpiresAt ?? "") <= Date.parse(now)
+              ? [{ idempotencyKey: `${change.idempotencyKey}:expiry`, kind: "EXPIRED" as const, memberId: workClaim.holderMemberId!, at: now, fencingToken: workClaim.fencingToken, leaseExpiresAt: workClaim.leaseExpiresAt, manifestRevision: workClaim.manifests.at(-1)?.revision ?? 0 }]
+              : []),
+            { idempotencyKey: change.idempotencyKey, kind: replaced ? "REPLACED" : "ACQUIRED", memberId: actor.id, at: now, fencingToken, leaseExpiresAt: change.leaseExpiresAt, manifestRevision: manifest.revision, ...(workClaim.holderMemberId ? { replacedMemberId: workClaim.holderMemberId } : {}) },
+          ],
+        },
+      };
+      break;
+    }
+    case "RENEW_WORK_CLAIM":
+      next = { ...next, workClaim: appendWorkClaimEvent(workClaim, change.idempotencyKey, "RENEWED", actor.id, now, change.leaseExpiresAt) };
+      break;
+    case "EXPIRE_WORK_CLAIM":
+      next = { ...next, workClaim: { ...appendWorkClaimEvent(workClaim, change.idempotencyKey, "EXPIRED", workClaim.holderMemberId!, now, workClaim.leaseExpiresAt), holderMemberId: null, leaseExpiresAt: null, status: "EXPIRED" } };
+      break;
+    case "HANDOFF_WORK_CLAIM": {
+      if (change.manifest.memberId !== change.toMemberId) return { kind: "rejected", reason: "Execution manifest member must match the handoff target" };
+      const fencingToken = workClaim.fencingToken + 1;
+      const manifest = { ...change.manifest, revision: workClaim.manifests.length + 1, createdAt: now };
+      next = {
+        ...next,
+        workClaim: {
+          fencingToken,
+          holderMemberId: change.toMemberId,
+          leaseExpiresAt: change.leaseExpiresAt,
+          status: "ACTIVE",
+          manifests: [...workClaim.manifests, manifest],
+          history: [...workClaim.history, { idempotencyKey: change.idempotencyKey, kind: "HANDED_OFF", memberId: change.toMemberId, replacedMemberId: actor.id, at: now, fencingToken, leaseExpiresAt: change.leaseExpiresAt, manifestRevision: manifest.revision }],
+        },
+      };
+      break;
+    }
+    case "RELEASE_WORK_CLAIM":
+      next = { ...next, workClaim: { ...appendWorkClaimEvent(workClaim, change.idempotencyKey, "RELEASED", actor.id, now, null), holderMemberId: null, leaseExpiresAt: null, status: "RELEASED" } };
+      break;
+    case "COMPLETE_WORK_CLAIM":
+      next = { ...next, workClaim: { ...appendWorkClaimEvent(workClaim, change.idempotencyKey, "COMPLETED", actor.id, now, null), holderMemberId: null, leaseExpiresAt: null, status: "COMPLETED" } };
+      break;
+    case "REVISE_WORK_CLAIM_MANIFEST": {
+      if (change.manifest.memberId !== actor.id) return { kind: "rejected", reason: "Execution manifest member must match the authenticated actor" };
+      const manifest = { ...change.manifest, revision: workClaim.manifests.length + 1, createdAt: now };
+      next = {
+        ...next,
+        workClaim: {
+          ...workClaim,
+          manifests: [...workClaim.manifests, manifest],
+          history: [...workClaim.history, { idempotencyKey: change.idempotencyKey, kind: "MANIFEST_REVISED", memberId: actor.id, at: now, fencingToken: workClaim.fencingToken, leaseExpiresAt: workClaim.leaseExpiresAt, manifestRevision: manifest.revision }],
+        },
+      };
+      break;
+    }
     case "SET_ACTION_AUTHORITY":
       next = {
         ...next,
@@ -266,8 +430,34 @@ function describeChange(change: ImprovementChange): string {
     case "ADD_CLAIM": return `ADD_CLAIM:${change.claim.id}`;
     case "ADD_EVIDENCE": return `ADD_EVIDENCE:${change.evidence.id}`;
     case "RECORD_TECHNICAL_REVIEW": return `TECHNICAL_REVIEW:${change.decision}`;
+    case "ACQUIRE_WORK_CLAIM": return `WORK_CLAIM:ACQUIRE:${change.idempotencyKey}`;
+    case "RENEW_WORK_CLAIM": return `WORK_CLAIM:RENEW:${change.idempotencyKey}`;
+    case "EXPIRE_WORK_CLAIM": return `WORK_CLAIM:EXPIRE:${change.idempotencyKey}`;
+    case "HANDOFF_WORK_CLAIM": return `WORK_CLAIM:HANDOFF:${change.idempotencyKey}`;
+    case "RELEASE_WORK_CLAIM": return `WORK_CLAIM:RELEASE:${change.idempotencyKey}`;
+    case "COMPLETE_WORK_CLAIM": return `WORK_CLAIM:COMPLETE:${change.idempotencyKey}`;
+    case "REVISE_WORK_CLAIM_MANIFEST": return `WORK_CLAIM:MANIFEST:${change.idempotencyKey}`;
     case "SET_ACTION_AUTHORITY": return `ACTION_AUTHORITY:${change.status}`;
   }
+}
+
+function normalizeWorkClaim(value: ImprovementWorkClaim | undefined): ImprovementWorkClaim {
+  return value ?? { fencingToken: 0, holderMemberId: null, leaseExpiresAt: null, status: "UNCLAIMED", manifests: [], history: [] };
+}
+
+function appendWorkClaimEvent(
+  claim: ImprovementWorkClaim,
+  idempotencyKey: string,
+  kind: WorkClaimEventKind,
+  memberId: string,
+  at: string,
+  leaseExpiresAt: string | null,
+): ImprovementWorkClaim {
+  return {
+    ...claim,
+    leaseExpiresAt,
+    history: [...claim.history, { idempotencyKey, kind, memberId, at, fencingToken: claim.fencingToken, leaseExpiresAt, manifestRevision: claim.manifests.at(-1)?.revision ?? 0 }],
+  };
 }
 
 export interface EmergencyStop {
