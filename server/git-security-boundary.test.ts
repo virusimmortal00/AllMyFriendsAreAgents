@@ -214,10 +214,17 @@ describe("confined writer startup", () => {
   });
 
   it("makes raw Git unavailable and produces a profile that protects the repository and common Git directory", async () => {
-    const { root, grant } = await grantFixture();
+    const { root, state, grant } = await grantFixture();
     await expect(confinedWriterInvocation("/usr/bin/git", ["update-ref", "refs/heads/main", "deadbeef"], grant)).rejects.toThrow("Direct Git invocation");
+    let executablePath = process.env.PATH;
+    if (process.platform !== "darwin") {
+      const fakeBin = path.join(state, "fake-sandbox-bin"); await mkdir(fakeBin);
+      const fakeSandbox = path.join(fakeBin, "sandbox-exec");
+      await writeFile(fakeSandbox, "#!/bin/sh\nexit 0\n", { mode: 0o700 }); await chmod(fakeSandbox, 0o700);
+      executablePath = `${fakeBin}${path.delimiter}${executablePath}`;
+    }
     const invocation = await confinedWriterInvocation("/usr/bin/true", [], grant, {
-      PATH: process.env.PATH, HOME: process.env.HOME,
+      PATH: executablePath, HOME: process.env.HOME,
       ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY: "assignment-git-broker/v1",
     }, "darwin");
     expect(invocation.command).toBe("sandbox-exec");
