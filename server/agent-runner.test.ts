@@ -144,6 +144,7 @@ describe("room prompt context", () => {
     expect(prompt).not.toContain("Please review the implementation.");
     expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
     expect(prompt).not.toContain("DISPOSITION:");
+    expect(prompt).toContain("Read-only research, including web search");
   });
 
   it.each([
@@ -189,6 +190,8 @@ describe("Claude session recovery", () => {
       "Read",
       "Glob",
       "Grep",
+      "WebSearch",
+      "WebFetch",
       "--session-id",
       "fresh-session",
     ]);
@@ -201,9 +204,28 @@ describe("Claude session recovery", () => {
       "json",
       "--model",
       "claude-sonnet-5",
+      "--permission-mode",
+      "plan",
+      "--tools",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
       "--resume",
       "existing-session",
     ]);
+  });
+
+  it("gives resumed Opus sessions the same read-only web tools", () => {
+    const args = __testing.claudeArgs("read-only", "opus-session", "claude-opus-5", true);
+
+    expect(args).toContain("claude-opus-5");
+    expect(args).toContain("WebSearch");
+    expect(args).toContain("WebFetch");
+    expect(args).toContain("plan");
+    expect(args).toEqual(expect.arrayContaining(["--resume", "opus-session"]));
+    expect(args).not.toContain("acceptEdits");
   });
 });
 

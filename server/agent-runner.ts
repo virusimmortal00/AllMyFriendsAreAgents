@@ -118,6 +118,7 @@ ROOM RULES
 - Address another agent by its unique conversational name—${conversationalNames}—when you want to invite that specific participant to answer or continue the discussion. Provider names such as "Codex" or "Cursor" may be ambiguous.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - When you do send a visible response, follow it with exactly one private state line: CONVERSATION_STATE: SETTLED when no meaningful agent discussion remains, CONVERSATION_STATE: OPEN when a specific unresolved point would benefit from another agent turn, or CONVERSATION_STATE: BLOCKED when human input is required. This line is removed before delivery. Do not add it to NO_RESPONSE_NEEDED. If you also use STYLE, put STYLE after the conversation-state line.
+- Read-only research, including web search and fetching public pages, is allowed when it materially improves an answer. Do not browse merely to fill silence.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
 - Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
 
@@ -273,9 +274,9 @@ function isMissingClaudeSessionError(error: unknown) {
 }
 
 function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
-  if (resume) return ["-p", "--output-format", "json", "--model", model, "--resume", sessionId];
+  const sessionArgs = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
   return permission === "writable"
-    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", "--session-id", sessionId]
+    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", ...sessionArgs]
     : [
         "-p",
         "--output-format",
@@ -288,8 +289,9 @@ function claudeArgs(permission: "read-only" | "writable", sessionId: string, mod
         "Read",
         "Glob",
         "Grep",
-        "--session-id",
-        sessionId,
+        "WebSearch",
+        "WebFetch",
+        ...sessionArgs,
       ];
 }
 
