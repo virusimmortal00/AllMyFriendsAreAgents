@@ -8,6 +8,7 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 - [Typing indicator truthfulness](typing-indicator-truthfulness.md)
 - [Large-message autoscroll](large-message-autoscroll.md)
 - [AIM window controls](aim-window-controls.md)
+- [Cross-provider project write toggle](project-permissions-toggle.md)
 
 ## Working rules
 

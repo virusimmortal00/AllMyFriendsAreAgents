@@ -367,8 +367,9 @@ export default function App() {
   }
 
   function changeWritable(agent: WritableAgent) {
+    if (!human) return;
     setRoom((current) => ({ ...current, settings: { ...current.settings, writableAgent: agent } }));
-    void withErrorHandling(() => updateSettings({ writableAgent: agent }));
+    void withErrorHandling(() => updateSettings({ writableAgent: agent, actorId: human.id }));
   }
 
   function changeConversationEnergy(conversationEnergy: ConversationEnergy) {

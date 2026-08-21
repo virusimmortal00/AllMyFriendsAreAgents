@@ -17,6 +17,7 @@ import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruct
 import { addHumanMessageOnce } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
+import { projectPermissionAuditMessages, type ProjectPermissionActor } from "./project-permissions.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
 import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
@@ -389,6 +390,8 @@ app.post("/api/humans", (request, response) => {
 
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;
+  const previousWritableAgent = store.snapshot().settings.writableAgent;
+  let permissionActor: ProjectPermissionActor | undefined;
   if (typeof update.topic === "string") {
     const topic = update.topic.trim().replace(/\s+/g, " ");
     if (!topic || topic.length > 160) return response.status(400).json({ error: "Room topic must be between 1 and 160 characters." });
@@ -404,12 +407,22 @@ app.patch("/api/settings", async (request, response) => {
     allowed.roomName = roomName;
   }
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
-    allowed.writableAgent = normalizeWritableAgent(update.writableAgent);
+    const writableAgent = normalizeWritableAgent(update.writableAgent);
+    if (writableAgent !== previousWritableAgent) {
+      permissionActor = humans.get(request.body?.actorId);
+      if (!permissionActor) return response.status(400).json({ error: "Join the room before changing project permissions." });
+    }
+    allowed.writableAgent = writableAgent;
   }
   if (isConversationEnergy(update.conversationEnergy)) {
     allowed.conversationEnergy = update.conversationEnergy;
   }
   if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
+  if (allowed.writableAgent && permissionActor) {
+    for (const text of projectPermissionAuditMessages(previousWritableAgent, allowed.writableAgent, permissionActor)) {
+      await store.addMessage("system", text, "status", undefined, undefined, permissionActor);
+    }
+  }
   broadcast();
   response.json(publicRoomSnapshot());
 });

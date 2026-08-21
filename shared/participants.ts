@@ -52,7 +52,7 @@ export const AGENT_PROFILES = {
     modelId: "cursor-grok-4.6-high",
     modelLabel: "Grok 4.6",
     conversationalName: "Grok",
-    supportsProjectWrites: false,
+    supportsProjectWrites: true,
   },
   "cursor-gemini": {
     id: "cursor-gemini",
@@ -61,7 +61,7 @@ export const AGENT_PROFILES = {
     modelId: "gemini-3.1-pro",
     modelLabel: "Gemini 3.1 Pro",
     conversationalName: "Gemini",
-    supportsProjectWrites: false,
+    supportsProjectWrites: true,
   },
   "cursor-composer": {
     id: "cursor-composer",
@@ -70,7 +70,7 @@ export const AGENT_PROFILES = {
     modelId: "composer-2.5",
     modelLabel: "Composer 2.5",
     conversationalName: "Composer",
-    supportsProjectWrites: false,
+    supportsProjectWrites: true,
   },
 } as const;
 
