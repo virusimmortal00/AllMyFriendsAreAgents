@@ -46,6 +46,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [draft, setDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [configuredAgent, setConfiguredAgent] = useState<AgentId | null>(null);
   const [clientError, setClientError] = useState("");
   const [hasInitialState, setHasInitialState] = useState(false);
@@ -81,13 +82,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!configuredAgent) return;
+    if (!configuredAgent && !mobilePanel) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setConfiguredAgent(null);
+      if (event.key !== "Escape") return;
+      setConfiguredAgent(null);
+      setMobilePanel(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [configuredAgent]);
+  }, [configuredAgent, mobilePanel]);
 
   const ready = hasInitialState && minimumLoadingComplete;
 
@@ -194,12 +197,22 @@ export default function App() {
       <section className="app-window" aria-label="AllMyFriendsAreAgents application">
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
-          <h1>AllMyFriendsAreAgents — The Agent Room</h1>
+          <h1><span className="title-long">AllMyFriendsAreAgents — </span>The Agent Room</h1>
           <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <nav className="menu-bar" aria-label="Application menu">
-          <button type="button">Room</button>
-          <button type="button">People</button>
+          <button
+            type="button"
+            aria-controls="room-side-panel"
+            aria-expanded={mobilePanel === "room"}
+            onClick={() => setMobilePanel((panel) => panel === "room" ? null : "room")}
+          >Room</button>
+          <button
+            type="button"
+            aria-controls="room-side-panel"
+            aria-expanded={mobilePanel === "people"}
+            onClick={() => setMobilePanel((panel) => panel === "people" ? null : "people")}
+          >People</button>
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
@@ -224,7 +237,23 @@ export default function App() {
               onSubmit={submitMessage}
             />
           </section>
-          <div className="right-rail">
+          {mobilePanel ? (
+            <button
+              type="button"
+              className="mobile-panel-backdrop"
+              aria-label="Close side panel"
+              onClick={() => setMobilePanel(null)}
+            />
+          ) : null}
+          <div
+            id="room-side-panel"
+            className={`right-rail${mobilePanel ? " right-rail--open" : ""}`}
+            data-mobile-panel={mobilePanel || undefined}
+          >
+            <header className="mobile-panel-header">
+              <strong>{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
+              <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
+            </header>
             <RoomRoster availability={room.availability} onConfigureAgent={setConfiguredAgent} />
             <RoomControls
               topic={room.settings.topic}
