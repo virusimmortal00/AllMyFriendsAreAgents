@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DomainActor } from "../shared/improvement-domain.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import {
+  advanceImprovementProposal,
+  improvementPropose,
   listGovernedImprovements,
   projectParticipantImprovementManifest,
   readGovernedImprovement,
@@ -127,5 +129,134 @@ describe("governed improvement retrieval", () => {
     expect(JSON.stringify(manifest)).not.toContain("autonomous-improvement-foundation");
     expect(JSON.stringify(manifest)).not.toContain("evidence");
     expect(JSON.stringify(manifest)).not.toContain("audit");
+  });
+});
+
+describe("species-neutral governed improvement proposals", () => {
+  const proposedAt = "2026-08-21T10:00:00.000Z";
+  const proposal = (id: string, kind: string) => ({
+    proposer: { id, kind, capabilities: ["IMPROVEMENT_PROPOSE", "CHAT"] },
+    idempotencyKey: `proposal:${kind}:${id}`,
+    rationale: "The room should preserve a measurable improvement request.",
+    requestedOutcome: "A governed reviewer can advance the request without executing it.",
+  });
+
+  it("accepts capability-bearing participant kinds through one command path", async () => {
+    for (const [id, kind] of [["human-42", "human"], ["agent-7", "software-agent"], ["collective-3", "collective"]]) {
+      const result = await improvementPropose(repository, proposal(id, kind), proposedAt);
+      expect(result).toMatchObject({
+        kind: "accepted",
+        created: true,
+        proposal: {
+          revision: 1,
+          state: "PROPOSED",
+          authorId: id,
+          proposal: {
+            proposer: { id, kind },
+            proposedAt,
+            rationale: "The room should preserve a measurable improvement request.",
+            requestedOutcome: "A governed reviewer can advance the request without executing it.",
+          },
+          actionAuthority: { status: "PENDING", allowedActions: [] },
+          workClaim: { status: "UNCLAIMED", history: [] },
+          statusContract: {
+            schemaVersion: 1,
+            implementation: { state: "UNKNOWN" },
+            deployment: { state: "UNKNOWN" },
+            developerTeamEvidence: { state: "UNKNOWN" },
+            independentAcceptance: { state: "UNKNOWN" },
+            upstreamPublication: { state: "UNKNOWN" },
+            nextAction: { state: "ACTION_REQUIRED" },
+          },
+        },
+      });
+    }
+  });
+
+  it("assigns canonical IDs in the ledger and makes an idempotency replay audit-neutral", async () => {
+    const command = proposal("agent-repeat", "agent");
+    const first = await improvementPropose(repository, command, proposedAt);
+    const second = await improvementPropose(repository, command, "2026-08-21T10:01:00.000Z");
+    expect(first).toMatchObject({ kind: "accepted", created: true });
+    expect(second).toMatchObject({ kind: "accepted", created: false });
+    if (first.kind !== "accepted" || second.kind !== "accepted") throw new Error("proposal rejected");
+    expect(first.proposal.id).toMatch(/^improvement-[a-f0-9]{20}$/);
+    expect(second.proposal.id).toBe(first.proposal.id);
+    expect(await repository.listImprovementEvents(first.proposal.id)).toHaveLength(1);
+    expect((await repository.getImprovementLedgerRecords(first.proposal.id))?.audit).toHaveLength(1);
+  });
+
+  it("advances only with independently authorized governance and appends decision evidence", async () => {
+    const created = await improvementPropose(repository, proposal("agent-governed", "agent"), proposedAt);
+    if (created.kind !== "accepted") throw new Error("proposal rejected");
+    const decision = {
+      decisionId: "decision-1",
+      decidedBy: { id: "governor-9", kind: "governance-member", capabilities: ["GOVERNANCE_DECIDE"] },
+      authorityId: "charter-2026",
+      evidence: ["ledger://governance/vote-81"],
+    };
+    const result = await advanceImprovementProposal(repository, {
+      canonicalId: created.proposal.id,
+      expectedRevision: 1,
+      to: "IN_REVIEW",
+      decision,
+    }, (candidate) => candidate.authorityId === "charter-2026", "2026-08-21T10:02:00.000Z");
+
+    expect(result).toMatchObject({ kind: "accepted", improvement: { state: "IN_REVIEW", revision: 2 } });
+    const records = await repository.getImprovementLedgerRecords(created.proposal.id);
+    expect(records?.audit).toEqual([
+      expect.objectContaining({ revision: 1, eventKind: "CREATED", actorId: "agent-governed" }),
+      expect.objectContaining({
+        revision: 2,
+        eventKind: "REVISED",
+        actorId: "governor-9",
+        details: {
+          kind: "GOVERNANCE_ADVANCE",
+          decision: expect.objectContaining({
+            decisionId: "decision-1",
+            authorityId: "charter-2026",
+            evidence: ["ledger://governance/vote-81"],
+            priorState: "PROPOSED",
+            to: "IN_REVIEW",
+          }),
+        },
+      }),
+    ]);
+  });
+
+  it("rejects missing capability, unauthorized and self-asserted authority, stale revisions, and execution requests without mutation", async () => {
+    await expect(improvementPropose(repository, {
+      ...proposal("observer", "observer"),
+      proposer: { id: "observer", kind: "observer", capabilities: ["CHAT"] },
+    }, proposedAt)).resolves.toMatchObject({ kind: "rejected" });
+
+    const created = await improvementPropose(repository, proposal("agent-safe", "agent"), proposedAt);
+    if (created.kind !== "accepted") throw new Error("proposal rejected");
+    const base = {
+      canonicalId: created.proposal.id,
+      expectedRevision: 1,
+      to: "IN_REVIEW" as const,
+      decision: {
+        decisionId: "rogue-decision",
+        decidedBy: { id: "rogue", kind: "agent", capabilities: ["GOVERNANCE_DECIDE"] },
+        authorityId: "self-asserted-by-rogue",
+        evidence: ["self://claim"],
+      },
+    };
+    await expect(advanceImprovementProposal(repository, base, () => false, "2026-08-21T10:02:00.000Z"))
+      .resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("independently authorized") });
+    await expect(advanceImprovementProposal(repository, { ...base, requestedAction: "DEPLOY" }, () => true))
+      .resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("cannot request or perform execution") });
+    await expect(advanceImprovementProposal(repository, { ...base, to: "IN_PROGRESS" }, () => true))
+      .resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("is not allowed") });
+    await expect(advanceImprovementProposal(repository, { ...base, expectedRevision: 9 }, () => true))
+      .resolves.toEqual({ kind: "conflict", expectedRevision: 9, actualRevision: 1 });
+    expect(await repository.getImprovement(created.proposal.id)).toMatchObject({
+      revision: 1,
+      state: "PROPOSED",
+      actionAuthority: { status: "PENDING" },
+      workClaim: { status: "UNCLAIMED" },
+    });
+    expect(await repository.listImprovementEvents(created.proposal.id)).toHaveLength(1);
   });
 });

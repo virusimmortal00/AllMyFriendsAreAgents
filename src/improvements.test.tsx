@@ -8,6 +8,9 @@ import { loadImprovement } from "./api";
 vi.mock("./api", () => ({
   loadImprovements: vi.fn(async (scope: string) => ({ scope, items: [{ canonicalId: "known-id", revisionLabel: "r2", state: "IN_PROGRESS", risk: "GUARDED", updatedAt: "2026-08-21T12:00:00Z" }] })),
   loadImprovement: vi.fn(async () => ({ canonicalId: "known-id", revisionLabel: "r2", state: "IN_PROGRESS", risk: "GUARDED", updatedAt: "2026-08-21T12:00:00Z", status: { schemaVersion: 1, implementation: { state: "IMPLEMENTED", codeLocation: { immutableRevision: "abc", repository: "repo", branch: "main", worktree: null } }, deployment: { state: "DEPLOYED", generation: "g1", environment: "test" }, developerTeamEvidence: { state: "AVAILABLE", evidence: [{ id: "e1", uri: "https://example.test/e1" }] }, independentAcceptance: { state: "ACCEPTED", assessedBy: "QA", assessedAt: "2026-08-21T12:00:00Z", evidence: [{ id: "e2", uri: "https://example.test/e2" }] }, upstreamPublication: { state: "UNPUBLISHED" }, nextAction: { state: "ACTION_REQUIRED", action: "Review" } }, evidence: [{ id: "e1", introducedRevision: 2, revisionLabel: "r2", sourceClass: "DEVELOPER_TEAM", kind: "test", uri: "https://example.test/e1", summary: "Passing test", recordedAt: "2026-08-21T12:00:00Z" }], revisions: [], milestones: [{ id: "m1", introducedRevision: 2, revisionLabel: "r2", state: "ACHIEVED", summary: "UI complete", recordedAt: "2026-08-21T12:00:00Z" }] })),
+  loadHeartbeat: vi.fn(async () => ({ configured: true, active: false, runtime: { revision: 0, enabled: false, emergencyStopped: false, changedBy: null, changedAt: null, reason: null }, policy: { version: "heartbeat-policy-v1", cadenceMs: 30000, maxConcurrency: 1, maxSelectedPerRun: 5, maxDispatchedPerRun: 2, maxAttemptsPerRevision: 3, retryAfterMs: 120000, timeBudgetMs: 60000, permittedCapabilities: ["ANALYZE", "EDIT_SANDBOX", "RUN_TESTS"], prohibitedCapabilities: ["COMMIT"], eligibleStates: ["APPROVED", "IN_PROGRESS"], governedProposalRequired: true }, audit: [] })),
+  authorizeHeartbeat: vi.fn(async () => ({ configured: true, active: false, runtime: { revision: 1, enabled: true, emergencyStopped: false }, policy: { version: "heartbeat-policy-v1", cadenceMs: 30000, maxConcurrency: 1, maxAttemptsPerRevision: 3, timeBudgetMs: 60000, permittedCapabilities: [] }, audit: [] })),
+  emergencyStopHeartbeat: vi.fn(async () => ({ configured: true, active: false, runtime: { revision: 1, enabled: false, emergencyStopped: true }, policy: { version: "heartbeat-policy-v1", cadenceMs: 30000, maxConcurrency: 1, maxAttemptsPerRevision: 3, timeBudgetMs: 60000, permittedCapabilities: [] }, audit: [] })),
 }));
 
 afterEach(() => cleanup());
@@ -20,6 +23,15 @@ describe("Improvements interface", () => {
     expect(screen.getByRole("tab", { name: "Active" }).getAttribute("aria-selected")).toBe("true");
     await user.click(screen.getByRole("tab", { name: "All" }));
     expect(navigate).toHaveBeenCalledWith({ view: "list", scope: "all" });
+  });
+
+  it("keeps the emergency stop visible and records an explicit stop action", async () => {
+    const user = userEvent.setup();
+    render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
+    const stop = await screen.findByRole("button", { name: "Emergency stop heartbeat" });
+    await user.click(stop);
+    await waitFor(() => expect(screen.getByText("EMERGENCY STOPPED")).toBeTruthy());
+    expect(stop.hasAttribute("disabled")).toBe(true);
   });
 
   it("shows canonical identity, all six status fields, qualified evidence, and milestones", async () => {

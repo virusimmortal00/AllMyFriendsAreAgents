@@ -1,4 +1,4 @@
-import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
+import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ServerIdentity } from "../shared/protocol";
@@ -92,4 +92,16 @@ export async function loadImprovements(scope: "active" | "all"): Promise<{ scope
 
 export async function loadImprovement(id: string): Promise<GovernedImprovementDetail> {
   return request(`/api/improvements/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadHeartbeat(): Promise<HeartbeatStatus> {
+  return request("/api/heartbeat", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function authorizeHeartbeat(expectedRevision: number) {
+  return request("/api/heartbeat/authorize", { method: "POST", body: JSON.stringify({ expectedRevision, actorId: "local-human-operator", reason: "Explicitly authorized from the visible heartbeat control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
+}
+
+export async function emergencyStopHeartbeat(expectedRevision: number) {
+  return request("/api/heartbeat/emergency-stop", { method: "POST", body: JSON.stringify({ expectedRevision, actorId: "local-human-operator", reason: "Emergency stop requested from the visible control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
 }
