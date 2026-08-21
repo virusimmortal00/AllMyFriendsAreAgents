@@ -14,6 +14,7 @@ import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
+import { addHumanMessageOnce } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
@@ -398,10 +399,9 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  const duplicate = roomSnapshot().messages.find((message) => message.humanId === human.id && message.clientMessageId === clientMessageId);
-  if (duplicate) return response.status(200).json(publicRoomSnapshot());
+  const accepted = await addHumanMessageOnce(store, human, text, clientMessageId);
+  if (!accepted.inserted) return response.status(200).json(publicRoomSnapshot());
   roomActivity.interrupt();
-  await store.addMessage("you", text, "chat", human.style, undefined, { ...human, clientMessageId });
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
