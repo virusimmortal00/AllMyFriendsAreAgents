@@ -7,6 +7,7 @@ import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites,
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
+import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -543,6 +544,7 @@ export async function runAgent(
   sessionLifecycle?: AgentSessionLifecycle,
   supervisor?: AgentProcessSupervisor,
   assignmentId?: string,
+  writerGrant?: ConfinedWriterGrant,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -554,6 +556,12 @@ export async function runAgent(
   const profile = AGENT_PROFILES[agent];
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
+  const secureWriterRequested = permission === "writable"
+    && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
+  if (secureWriterRequested && !writerGrant) throw new Error("Writable startup failed: verified Git broker grant is unavailable");
+  const execution = async (command: string, args: readonly string[]) => secureWriterRequested
+    ? confinedWriterInvocation(command, args, writerGrant!)
+    : { command, args: [...args], cwd: projectPath, env: process.env };
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -576,8 +584,9 @@ export async function runAgent(
       let resumedSessionId = existing?.id;
       let result: ProcessResult;
       try {
-        result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId), projectPath, {
-          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+        const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId));
+        result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
+          environment: invocation.env, input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
           stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
         });
       } catch (error) {
@@ -590,8 +599,9 @@ export async function runAgent(
           ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
         });
         resumedSessionId = undefined;
-        result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId), projectPath, {
-          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+        const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId));
+        result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
+          environment: invocation.env, input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
         });
       }
       const parsed = parseCodexOutput(result.stdout);
@@ -613,7 +623,9 @@ export async function runAgent(
     }
 
     if (profile.provider === "cursor") {
-      const result = await runProcess(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id), projectPath, {
+      const invocation = await execution(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id));
+      const result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
+        environment: invocation.env,
         input: prompt,
         signal,
         supervisor,
@@ -641,7 +653,9 @@ export async function runAgent(
     let sessionId = existing?.id || randomUUID();
     let result: ProcessResult;
     try {
-      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)), projectPath, {
+      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)));
+      result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
+        environment: invocation.env,
         input: prompt,
         signal,
         supervisor,
@@ -664,7 +678,9 @@ export async function runAgent(
         } : {}),
       });
       sessionId = randomUUID();
-      result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId), projectPath, {
+      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId));
+      result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
+        environment: invocation.env,
         input: prompt,
         signal,
         supervisor,
