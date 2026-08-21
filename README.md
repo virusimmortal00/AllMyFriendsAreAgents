@@ -6,6 +6,8 @@ The app uses the installed `codex` and `claude` CLIs, keeps one resumable sessio
 
 ## Development
 
+Node.js 24 or newer and pnpm are required. The SQLite backend uses Node's built-in `node:sqlite` module and does not require a separately installed SQLite package.
+
 Prerequisites:
 
 ```bash
@@ -23,6 +25,27 @@ pnpm run dev
 ```
 
 Open <http://127.0.0.1:4173> on the host Mac. Vite runs on `127.0.0.1:4173` and proxies `/api` to `127.0.0.1:53147`.
+
+To run an isolated development copy without touching an existing room process or its data:
+
+```bash
+ALL_MY_FRIENDS_ARE_AGENTS_WEB_PORT=4174 \
+ALL_MY_FRIENDS_ARE_AGENTS_PORT=53148 \
+ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR=.runtime/storage-plumbing \
+pnpm run dev
+```
+
+The existing JSON store remains the default during the storage migration. SQLite is available as an explicit opt-in with `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite`; PostgreSQL remains fail-closed until its adapter is implemented. Configuration examples live in `.env.example`.
+
+To copy an existing JSON room into a new SQLite database without modifying the source file:
+
+```bash
+pnpm run storage:import:sqlite -- \
+  --source=.allmyfriendsareagents \
+  --database=.runtime/import-check/amfaa.sqlite
+```
+
+The importer refuses to replace an existing SQLite room unless `--overwrite` is provided. Verify the imported database through an isolated server before changing the active backend.
 
 To use a trusted LAN tunnel or reverse proxy, explicitly allow its hostname:
 

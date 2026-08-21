@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
 import { isParticipantId, migrateLegacyAgentId } from "../shared/participants.js";
+import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -50,18 +51,32 @@ function topicMessage(topic: string): RoomMessage {
   };
 }
 
-const DEFAULT_MESSAGES: RoomMessage[] = [
-  {
-    id: randomUUID(),
-    speaker: "system",
-    text: "Welcome to AllMyFriendsAreAgents. Everyone is here—set a topic or start chatting.",
-    timestamp: new Date().toISOString(),
-    kind: "status",
-  },
-  topicMessage(DEFAULT_ROOM_TOPIC),
-];
+export function createDefaultRoomState(projectRoot: string): RoomState {
+  return {
+    messages: [
+      {
+        id: randomUUID(),
+        speaker: "system",
+        text: "Welcome to AllMyFriendsAreAgents. Everyone is here—set a topic or start chatting.",
+        timestamp: new Date().toISOString(),
+        kind: "status",
+      },
+      topicMessage(DEFAULT_ROOM_TOPIC),
+    ],
+    sessions: {},
+    settings: {
+      roomName: DEFAULT_ROOM_NAME,
+      topic: DEFAULT_ROOM_TOPIC,
+      writableAgent: "nobody",
+      conversationEnergy: "balanced",
+      projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
+      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
+    },
+    status: "idle",
+  };
+}
 
-export class RoomStore {
+export class RoomStore implements RoomRepository {
   readonly stateDirectory: string;
   readonly statePath: string;
   private state: RoomState;
@@ -77,14 +92,7 @@ export class RoomStore {
     await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
     await chmod(stateDirectory, 0o700);
     const statePath = path.join(stateDirectory, "room.json");
-    const defaultSettings: RoomSettings = {
-      roomName: DEFAULT_ROOM_NAME,
-      topic: DEFAULT_ROOM_TOPIC,
-      writableAgent: "nobody",
-      conversationEnergy: "balanced",
-      projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
-      participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
-    };
+    const defaultSettings = createDefaultRoomState(projectRoot).settings;
 
     try {
       await chmod(statePath, 0o600);
@@ -156,12 +164,7 @@ export class RoomStore {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, {
-        messages: DEFAULT_MESSAGES,
-        sessions: {},
-        settings: defaultSettings,
-        status: "idle",
-      });
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot));
       await store.save();
       return store;
     }

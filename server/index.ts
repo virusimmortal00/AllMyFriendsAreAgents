@@ -13,8 +13,9 @@ import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
-import { RoomStore } from "./room-store.js";
 import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
+import { resolveStorageConfiguration } from "./storage/config.js";
+import { openRoomRepository } from "./storage/open-room-repository.js";
 import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -30,8 +31,9 @@ if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICAT
   );
 }
 const app = express();
-const store = await RoomStore.open(projectRoot);
-const generationJournal = await GenerationJournal.open(projectRoot);
+const storageConfiguration = resolveStorageConfiguration(projectRoot);
+const store = await openRoomRepository(projectRoot, storageConfiguration);
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
 const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();

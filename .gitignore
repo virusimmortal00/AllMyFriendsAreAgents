@@ -2,6 +2,10 @@ node_modules/
 dist/
 .DS_Store
 .allmyfriendsareagents/
+.runtime/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .agentwire/
 *.log
 *.tsbuildinfo

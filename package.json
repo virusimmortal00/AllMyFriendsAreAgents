@@ -4,12 +4,16 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
-    "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=53147 tsx watch server/index.ts",
+    "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
+    "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"
   },
