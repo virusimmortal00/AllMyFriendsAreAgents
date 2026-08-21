@@ -4,10 +4,24 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../../shared/chat-style.js";
 import { isConversationEnergy } from "../../shared/conversation-energy.js";
+import {
+  applyImprovementChange as applyDomainImprovementChange,
+  type DomainActor,
+  type Improvement,
+  type ImprovementChange,
+} from "../../shared/improvement-domain.js";
 import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
-import type { RoomRepository } from "./room-repository.js";
+import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, paginateImprovements } from "./improvement-storage.js";
+import type {
+  CreateImprovementResult,
+  EmergencyStopChangeResult,
+  EmergencyStopProjection,
+  ImprovementEvent,
+  ImprovementListQuery,
+  RoomRepository,
+} from "./room-repository.js";
 import { runSqliteMigrations } from "./sqlite-migrations.js";
 
 export const DEFAULT_ROOM_ID = "00000000-0000-4000-8000-000000000001";
@@ -54,6 +68,19 @@ interface SessionRow {
   agent_id: string;
   provider_session_id: string;
   permission: AgentSession["permission"];
+}
+
+interface ImprovementRow {
+  projection_json: string;
+}
+
+interface ImprovementEventRow {
+  improvement_id: string;
+  revision: number;
+  actor_id: string;
+  occurred_at: string;
+  change_json: string;
+  snapshot_json: string;
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -295,6 +322,182 @@ export class SqliteRoomRepository implements RoomRepository {
     this.setStatusSync(status, activeAgent, error);
   }
 
+  async createImprovement(improvement: Improvement): Promise<CreateImprovementResult> {
+    if (improvement.revision !== 1 || improvement.attribution.at(-1)?.revision !== 1) {
+      throw new Error("A newly persisted improvement must be at revision 1.");
+    }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.database.prepare("SELECT 1 FROM canonical_improvements WHERE room_id = ? AND id = ?")
+        .get(DEFAULT_ROOM_ID, improvement.id)) {
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", id: improvement.id };
+      }
+      const snapshot = structuredClone(improvement);
+      this.database.prepare(`
+        INSERT INTO canonical_improvements(
+          room_id, id, revision, state, risk, author_id, created_at, updated_at, projection_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        DEFAULT_ROOM_ID,
+        snapshot.id,
+        snapshot.revision,
+        snapshot.state,
+        snapshot.risk,
+        snapshot.authorId,
+        snapshot.createdAt,
+        snapshot.updatedAt,
+        JSON.stringify(snapshot),
+      );
+      this.insertImprovementEvent({
+        improvementId: snapshot.id,
+        revision: 1,
+        actorId: snapshot.authorId,
+        at: snapshot.createdAt,
+        change: "CREATE",
+        snapshot,
+      });
+      this.database.exec("COMMIT");
+      return { kind: "created", improvement: structuredClone(snapshot) };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async getImprovement(id: string) {
+    const row = this.database.prepare(`
+      SELECT projection_json FROM canonical_improvements WHERE room_id = ? AND id = ?
+    `).get(DEFAULT_ROOM_ID, id) as unknown as ImprovementRow | undefined;
+    return row ? parseJson<Improvement>(row.projection_json, undefined as never) : undefined;
+  }
+
+  async listImprovements(query: ImprovementListQuery = {}) {
+    const rows = this.database.prepare(`
+      SELECT projection_json FROM canonical_improvements WHERE room_id = ?
+    `).all(DEFAULT_ROOM_ID) as unknown as ImprovementRow[];
+    return paginateImprovements(rows.map((row) => parseJson<Improvement>(row.projection_json, undefined as never)), query);
+  }
+
+  async applyImprovementChange(
+    id: string,
+    expectedRevision: number,
+    change: ImprovementChange,
+    actor: DomainActor,
+    now: string,
+  ) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.database.prepare(`
+        SELECT projection_json FROM canonical_improvements WHERE room_id = ? AND id = ?
+      `).get(DEFAULT_ROOM_ID, id) as unknown as ImprovementRow | undefined;
+      if (!row) {
+        this.database.exec("ROLLBACK");
+        return { kind: "rejected" as const, reason: `Improvement ${id} does not exist` };
+      }
+      const current = parseJson<Improvement>(row.projection_json, undefined as never);
+      const result = applyDomainImprovementChange(current, expectedRevision, change, actor, now);
+      if (result.kind !== "accepted") {
+        this.database.exec("ROLLBACK");
+        return result;
+      }
+      const snapshot = result.improvement;
+      const updated = this.database.prepare(`
+        UPDATE canonical_improvements SET
+          revision = ?, state = ?, risk = ?, author_id = ?, updated_at = ?, projection_json = ?
+        WHERE room_id = ? AND id = ? AND revision = ?
+      `).run(
+        snapshot.revision,
+        snapshot.state,
+        snapshot.risk,
+        snapshot.authorId,
+        snapshot.updatedAt,
+        JSON.stringify(snapshot),
+        DEFAULT_ROOM_ID,
+        id,
+        expectedRevision,
+      );
+      if (updated.changes !== 1) {
+        const actual = this.database.prepare(`
+          SELECT revision FROM canonical_improvements WHERE room_id = ? AND id = ?
+        `).get(DEFAULT_ROOM_ID, id) as { revision: number };
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict" as const, expectedRevision, actualRevision: actual.revision };
+      }
+      this.insertImprovementEvent({ improvementId: id, revision: snapshot.revision, actorId: actor.id, at: now, change, snapshot });
+      this.database.exec("COMMIT");
+      return { kind: "accepted" as const, improvement: structuredClone(snapshot) };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async listImprovementEvents(id: string, options: { readonly afterRevision?: number; readonly limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
+    const rows = this.database.prepare(`
+      SELECT improvement_id, revision, actor_id, occurred_at, change_json, snapshot_json
+      FROM canonical_improvement_events
+      WHERE room_id = ? AND improvement_id = ? AND revision > ?
+      ORDER BY revision
+      LIMIT ?
+    `).all(DEFAULT_ROOM_ID, id, options.afterRevision ?? 0, limit) as unknown as ImprovementEventRow[];
+    return rows.map((row): ImprovementEvent => ({
+      improvementId: row.improvement_id,
+      revision: row.revision,
+      actorId: row.actor_id,
+      at: row.occurred_at,
+      change: parseJson(row.change_json, "CREATE"),
+      snapshot: parseJson<Improvement>(row.snapshot_json, undefined as never),
+    }));
+  }
+
+  async getEmergencyStop(): Promise<EmergencyStopProjection> {
+    return this.getEmergencyStopSync();
+  }
+
+  private getEmergencyStopSync(): EmergencyStopProjection {
+    const row = this.database.prepare("SELECT projection_json FROM emergency_stops WHERE room_id = ?")
+      .get(DEFAULT_ROOM_ID) as { projection_json: string } | undefined;
+    return row ? parseJson(row.projection_json, { ...CLEAR_EMERGENCY_STOP }) : { ...CLEAR_EMERGENCY_STOP };
+  }
+
+  async updateEmergencyStop(
+    expectedRevision: number,
+    update: { readonly active: boolean; readonly reason?: string },
+    actor: DomainActor,
+    now: string,
+  ): Promise<EmergencyStopChangeResult> {
+    if (!actor.id.trim()) throw new Error("Actor ID must not be empty");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.getEmergencyStopSync();
+      if (current.revision !== expectedRevision) {
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", expectedRevision, actualRevision: current.revision };
+      }
+      const next = emergencyStopProjection(current, update, actor.id, now);
+      this.database.prepare(`
+        INSERT INTO emergency_stops(room_id, revision, projection_json, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(room_id) DO UPDATE SET
+          revision = excluded.revision,
+          projection_json = excluded.projection_json,
+          updated_at = excluded.updated_at
+        WHERE emergency_stops.revision = ?
+      `).run(DEFAULT_ROOM_ID, next.revision, JSON.stringify(next), now, expectedRevision);
+      this.database.prepare(`
+        INSERT INTO emergency_stop_events(room_id, revision, actor_id, occurred_at, snapshot_json)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(DEFAULT_ROOM_ID, next.revision, actor.id, now, JSON.stringify(next));
+      this.database.exec("COMMIT");
+      return { kind: "accepted", emergencyStop: structuredClone(next) };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   private setStatusSync(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
     this.database.prepare("UPDATE rooms SET status = ?, active_agent = ?, error = ?, updated_at = ? WHERE id = ?")
       .run(status, activeAgent || null, error || null, new Date().toISOString(), DEFAULT_ROOM_ID);
@@ -402,5 +605,21 @@ export class SqliteRoomRepository implements RoomRepository {
         permission = excluded.permission,
         updated_at = excluded.updated_at
     `).run(DEFAULT_ROOM_ID, agent, id, permission, new Date().toISOString());
+  }
+
+  private insertImprovementEvent(event: ImprovementEvent) {
+    this.database.prepare(`
+      INSERT INTO canonical_improvement_events(
+        room_id, improvement_id, revision, actor_id, occurred_at, change_json, snapshot_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      DEFAULT_ROOM_ID,
+      event.improvementId,
+      event.revision,
+      event.actorId,
+      event.at,
+      JSON.stringify(event.change),
+      JSON.stringify(event.snapshot),
+    );
   }
 }

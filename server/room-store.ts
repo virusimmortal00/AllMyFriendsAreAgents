@@ -3,8 +3,28 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
+import {
+  applyImprovementChange as applyDomainImprovementChange,
+  type ChangeResult,
+  type DomainActor,
+  type Improvement,
+  type ImprovementChange,
+} from "../shared/improvement-domain.js";
 import { isActiveAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
-import type { RoomRepository } from "./storage/room-repository.js";
+import {
+  emergencyStopProjection,
+  emptyJsonImprovementState,
+  normalizeJsonImprovementState,
+  paginateImprovements,
+  type JsonImprovementState,
+} from "./storage/improvement-storage.js";
+import type {
+  CreateImprovementResult,
+  EmergencyStopChangeResult,
+  ImprovementEvent,
+  ImprovementListQuery,
+  RoomRepository,
+} from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -79,20 +99,32 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
 export class RoomStore implements RoomRepository {
   readonly stateDirectory: string;
   readonly statePath: string;
+  readonly improvementsPath: string;
   private state: RoomState;
+  private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
+  private improvementQueue: Promise<void> = Promise.resolve();
 
-  private constructor(stateDirectory: string, state: RoomState) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
+    this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.state = state;
+    this.improvementState = improvementState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
     await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
     await chmod(stateDirectory, 0o700);
     const statePath = path.join(stateDirectory, "room.json");
+    const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
+    const improvementState = await readFile(improvementsPath, "utf8")
+      .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return emptyJsonImprovementState();
+        throw error;
+      });
 
     try {
       await chmod(statePath, 0o600);
@@ -146,7 +178,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state);
+      const store = new RoomStore(stateDirectory, state, improvementState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -162,7 +194,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot));
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState);
       await store.save();
       return store;
     }
@@ -233,6 +265,144 @@ export class RoomStore implements RoomRepository {
     this.state.activeAgent = activeAgent;
     this.state.error = error;
     await this.save();
+  }
+
+  async createImprovement(improvement: Improvement): Promise<CreateImprovementResult> {
+    if (improvement.revision !== 1 || improvement.attribution.at(-1)?.revision !== 1) {
+      throw new Error("A newly persisted improvement must be at revision 1.");
+    }
+    return this.mutateImprovements<CreateImprovementResult>(async (state) => {
+      if (state.improvements[improvement.id]) return { result: { kind: "conflict", id: improvement.id } };
+      const snapshot = structuredClone(improvement);
+      const event: ImprovementEvent = {
+        improvementId: snapshot.id,
+        revision: 1,
+        actorId: snapshot.authorId,
+        at: snapshot.createdAt,
+        change: "CREATE",
+        snapshot,
+      };
+      return {
+        next: {
+          ...state,
+          improvements: { ...state.improvements, [snapshot.id]: snapshot },
+          events: [...state.events, event],
+        },
+        result: { kind: "created", improvement: structuredClone(snapshot) },
+      };
+    });
+  }
+
+  async getImprovement(id: string) {
+    await this.improvementQueue;
+    const improvement = this.improvementState.improvements[id];
+    return improvement ? structuredClone(improvement) : undefined;
+  }
+
+  async listImprovements(query: ImprovementListQuery = {}) {
+    await this.improvementQueue;
+    return paginateImprovements(Object.values(this.improvementState.improvements), query);
+  }
+
+  async applyImprovementChange(
+    id: string,
+    expectedRevision: number,
+    change: ImprovementChange,
+    actor: DomainActor,
+    now: string,
+  ): Promise<ChangeResult> {
+    return this.mutateImprovements<ChangeResult>(async (state) => {
+      const current = state.improvements[id];
+      if (!current) return { result: { kind: "rejected" as const, reason: `Improvement ${id} does not exist` } };
+      const result = applyDomainImprovementChange(current, expectedRevision, change, actor, now);
+      if (result.kind !== "accepted") return { result };
+      const snapshot = structuredClone(result.improvement);
+      const event: ImprovementEvent = {
+        improvementId: id,
+        revision: snapshot.revision,
+        actorId: actor.id,
+        at: now,
+        change: structuredClone(change),
+        snapshot,
+      };
+      return {
+        next: {
+          ...state,
+          improvements: { ...state.improvements, [id]: snapshot },
+          events: [...state.events, event],
+        },
+        result: { kind: "accepted" as const, improvement: structuredClone(snapshot) },
+      };
+    });
+  }
+
+  async listImprovementEvents(id: string, options: { readonly afterRevision?: number; readonly limit?: number } = {}) {
+    await this.improvementQueue;
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
+    return structuredClone(this.improvementState.events
+      .filter((event) => event.improvementId === id && event.revision > (options.afterRevision ?? 0))
+      .sort((left, right) => left.revision - right.revision)
+      .slice(0, limit));
+  }
+
+  async getEmergencyStop() {
+    await this.improvementQueue;
+    return structuredClone(this.improvementState.emergencyStop);
+  }
+
+  async updateEmergencyStop(
+    expectedRevision: number,
+    update: { readonly active: boolean; readonly reason?: string },
+    actor: DomainActor,
+    now: string,
+  ): Promise<EmergencyStopChangeResult> {
+    if (!actor.id.trim()) throw new Error("Actor ID must not be empty");
+    return this.mutateImprovements<EmergencyStopChangeResult>(async (state) => {
+      if (state.emergencyStop.revision !== expectedRevision) {
+        return { result: { kind: "conflict", expectedRevision, actualRevision: state.emergencyStop.revision } };
+      }
+      const emergencyStop = emergencyStopProjection(state.emergencyStop, update, actor.id, now);
+      return {
+        next: {
+          ...state,
+          emergencyStop,
+          emergencyStopEvents: [
+            ...state.emergencyStopEvents,
+            { revision: emergencyStop.revision, actorId: actor.id, at: now, snapshot: emergencyStop },
+          ],
+        },
+        result: { kind: "accepted", emergencyStop: structuredClone(emergencyStop) },
+      };
+    });
+  }
+
+  private async mutateImprovements<T>(
+    mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
+  ): Promise<T> {
+    let resolveResult!: (result: T) => void;
+    let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    const operation = this.improvementQueue.then(async () => {
+      try {
+        const mutationResult = await mutation(this.improvementState);
+        if (mutationResult.next) {
+          const temporaryPath = `${this.improvementsPath}.tmp`;
+          await writeFile(temporaryPath, `${JSON.stringify(mutationResult.next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+          await rename(temporaryPath, this.improvementsPath);
+          await chmod(this.improvementsPath, 0o600);
+          this.improvementState = mutationResult.next;
+        }
+        resolveResult(mutationResult.result);
+      } catch (error) {
+        rejectResult(error);
+        throw error;
+      }
+    });
+    this.improvementQueue = operation.catch(() => undefined);
+    return result;
   }
 
   private async save() {
