@@ -6,6 +6,7 @@ export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
 
 interface TranscriptEntry {
   speaker: RoomMessage["speaker"];
+  speakerName?: string;
   text: string;
   burstId?: string;
 }
@@ -21,7 +22,7 @@ function entriesFor(messages: RoomMessage[]) {
     if (message.burstId && previous?.speaker === message.speaker && previous.burstId === message.burstId) {
       previous.text += `\n${text}`;
     } else {
-      entries.push({ speaker: message.speaker, text, burstId: message.burstId });
+      entries.push({ speaker: message.speaker, speakerName: message.speakerName, text, burstId: message.burstId });
     }
   }
   return entries;
@@ -30,7 +31,7 @@ function entriesFor(messages: RoomMessage[]) {
 function formatEntry(entry: TranscriptEntry, text = entry.text) {
   const speaker = isAgentId(entry.speaker)
     ? AGENT_PROFILES[entry.speaker].conversationalName.toUpperCase()
-    : entry.speaker.toUpperCase();
+    : (entry.speakerName || entry.speaker).toUpperCase();
   return `[${speaker}]\n${text}`;
 }
 

@@ -8,6 +8,7 @@ function roomState(messages: RoomMessage[]): RoomState {
     messages,
     sessions: {},
     settings: {
+      roomName: "The Agent Room",
       topic: "Open conversation",
       writableAgent: "nobody",
       conversationEnergy: "balanced",

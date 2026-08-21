@@ -6,9 +6,9 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 4173,
+    allowedHosts: ["agents.example.test"],
     proxy: {
-      "/api": "http://127.0.0.1:4174",
+      "/api": "http://127.0.0.1:53147",
     },
   },
 });
-

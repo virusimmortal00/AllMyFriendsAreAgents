@@ -34,6 +34,7 @@ describe("agent permissions", () => {
     messages: [],
     sessions: {},
     settings: {
+      roomName: "The Agent Room",
       topic: "Open conversation",
       writableAgent: "codex-sol",
       conversationEnergy: "balanced",
@@ -56,12 +57,13 @@ describe("agent permissions", () => {
 describe("room prompt context", () => {
   const state = {
     messages: [
-      { id: "old", speaker: "you", text: "Please review the implementation.", timestamp: "2026-08-19T12:00:00.000Z", kind: "chat" },
+      { id: "old", speaker: "you", humanId: "alice-id", speakerName: "Alice", text: "Please review the implementation.", timestamp: "2026-08-19T12:00:00.000Z", kind: "chat" },
       { id: "topic", speaker: "system", text: "Room topic: Weekend cooking", timestamp: "2026-08-19T12:01:00.000Z", kind: "topic" },
-      { id: "new", speaker: "you", text: "What should we make?", timestamp: "2026-08-19T12:02:00.000Z", kind: "chat" },
+      { id: "new", speaker: "you", humanId: "bob-id", speakerName: "Bob", text: "What should we make?", timestamp: "2026-08-19T12:02:00.000Z", kind: "chat" },
     ],
     sessions: {},
     settings: {
+      roomName: "The Agent Room",
       topic: "Weekend cooking",
       writableAgent: "nobody",
       conversationEnergy: "balanced",
@@ -69,12 +71,17 @@ describe("room prompt context", () => {
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
     status: "idle",
+    humans: [
+      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
+      { id: "bob-id", name: "Bob", style: { ...DEFAULT_PARTICIPANT_STYLES.you, textColor: "#ed36ff" } },
+    ],
   } satisfies RoomState;
 
   it("keeps ordinary chat casual and scoped to the latest topic", async () => {
     const prompt = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only");
 
     expect(prompt).toContain("ROOM THEME\nWeekend cooking");
+    expect(prompt).toContain("ROOM NAME\nThe Agent Room");
     expect(prompt).toContain("What should we make?");
     expect(prompt).toContain("NO_RESPONSE_NEEDED");
     expect(prompt).toContain("Output only the chat message participants should see");
@@ -93,7 +100,9 @@ describe("room prompt context", () => {
     expect(prompt).toContain("including agents from the same provider");
     expect(prompt).toContain('Before using continuity language such as "still," "as I said," or "my earlier point,"');
     expect(prompt).toContain("CURRENT PARTICIPANT STYLES");
-    expect(prompt).toContain(`Human (You): ${JSON.stringify(state.settings.participantStyles.you)}`);
+    expect(prompt).toContain(`Alice: ${JSON.stringify(state.humans[0].style)}`);
+    expect(prompt).toContain(`Bob: ${JSON.stringify(state.humans[1].style)}`);
+    expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
     expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");

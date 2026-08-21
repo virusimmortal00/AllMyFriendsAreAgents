@@ -3,18 +3,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript } from "./components";
-import { LoadingScreen } from "./App";
+import { LoadingScreen, NameEntry } from "./App";
 
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
-    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} onConfigureAgent={() => undefined} />);
+    const html = renderToStaticMarkup(<RoomRoster availability={{ "codex-luna": true, "codex-terra": true, "codex-sol": true, "claude-sonnet": false }} humans={[
+      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
+      { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
+    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
     expect(html).toContain("3 agents");
-    expect(html).toContain("1 human");
+    expect(html).toContain("2 humans");
     expect(html).toContain("Codex [gpt-5.6 Luna]");
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
-    expect(html).toContain("You");
+    expect(html).toContain("Alice (You)");
+    expect(html).toContain("Bob");
     expect(html).not.toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
@@ -71,19 +75,34 @@ describe("LoadingScreen", () => {
   });
 });
 
+describe("NameEntry", () => {
+  it("asks for only a display name before entering the room", () => {
+    const html = renderToStaticMarkup(<NameEntry onJoin={() => undefined} />);
+
+    expect(html).toContain("What should everyone call you?");
+    expect(html).toContain('id="human-name"');
+    expect(html).toContain("no account is required");
+    expect(html).not.toMatch(/password|email/i);
+  });
+});
+
 describe("RoomControls", () => {
   it("shows the current loose room topic and explains its context boundary", () => {
     const html = renderToStaticMarkup(
       <RoomControls
+        roomName="Weekend Room"
         topic="Weekend cooking"
         conversationEnergy="balanced"
         disabled={false}
+        onRoomNameChange={() => undefined}
         onTopicChange={() => undefined}
         onConversationEnergyChange={() => undefined}
       />,
     );
 
     expect(html).toContain('value="Weekend cooking"');
+    expect(html).toContain('value="Weekend Room"');
+    expect(html).toContain("Shown in the room window and transcript header.");
     expect(html).toContain("A starting point, not a boundary. Changing it starts fresh agent context.");
     expect(html).toContain("Conversation energy");
     expect(html).toContain("Usually one or two agents join in.");
@@ -95,9 +114,11 @@ describe("RoomControls", () => {
   it("keeps topic changes available while other room controls are locked", () => {
     const html = renderToStaticMarkup(
       <RoomControls
+        roomName="Current Room"
         topic="Current topic"
         conversationEnergy="balanced"
         disabled
+        onRoomNameChange={() => undefined}
         onTopicChange={() => undefined}
         onConversationEnergyChange={() => undefined}
       />,
@@ -137,6 +158,8 @@ describe("Transcript message styling", () => {
           {
             id: "styled-human",
             speaker: "you",
+            humanId: "alice-id",
+            speakerName: "Alice",
             text: "Styled human body",
             timestamp: "2026-08-19T12:00:00.000Z",
             kind: "chat",
@@ -168,7 +191,7 @@ describe("Transcript message styling", () => {
       />,
     );
 
-    expect(html).toContain('<strong class="speaker speaker--you">You:</strong> <span class="message__bubble" style=');
+    expect(html).toContain('<strong class="speaker speaker--you">Alice:</strong> <span class="message__bubble" style=');
     expect(html).toContain('<strong class="speaker speaker--claude-sonnet">Claude [Claude Sonnet 5]:</strong> <span class="message__bubble" style=');
     expect(html).not.toMatch(/<strong class="speaker speaker--you" style=/);
     expect(html).not.toMatch(/<time[^>]+style=/);

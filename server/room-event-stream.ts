@@ -7,7 +7,7 @@ export class RoomEventStream {
   private readonly clients = new Set<Response>();
   private heartbeat?: NodeJS.Timeout;
 
-  connect(request: Request, response: Response, initialState: RoomState) {
+  connect(request: Request, response: Response, initialState: RoomState, onDisconnect?: () => void) {
     response.setHeader("Content-Type", "text/event-stream");
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
@@ -22,7 +22,13 @@ export class RoomEventStream {
     this.write(response, this.stateEvent(initialState));
     this.startHeartbeat();
 
-    const disconnect = () => this.disconnect(response);
+    let disconnected = false;
+    const disconnect = () => {
+      if (disconnected) return;
+      disconnected = true;
+      this.disconnect(response);
+      onDisconnect?.();
+    };
     request.once("close", disconnect);
     request.once("aborted", disconnect);
     response.once("close", disconnect);

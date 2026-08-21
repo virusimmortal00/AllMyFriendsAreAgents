@@ -13,6 +13,14 @@ export interface RoomMessage {
   style?: ChatStyle;
   burstId?: string;
   sequence?: number;
+  humanId?: string;
+  speakerName?: string;
+}
+
+export interface HumanPresence {
+  id: string;
+  name: string;
+  style: ChatStyle;
 }
 
 export interface AgentSession {
@@ -21,6 +29,7 @@ export interface AgentSession {
 }
 
 export interface RoomSettings {
+  roomName: string;
   topic: string;
   writableAgent: WritableAgent;
   conversationEnergy: ConversationEnergy;
@@ -35,4 +44,5 @@ export interface RoomState {
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
   error?: string;
+  humans?: HumanPresence[];
 }

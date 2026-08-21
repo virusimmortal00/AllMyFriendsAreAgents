@@ -7,6 +7,7 @@ const room: RoomState = {
   messages: [],
   sessions: {},
   settings: {
+    roomName: "The Agent Room",
     topic: "Open conversation",
     writableAgent: "nobody",
     conversationEnergy: "balanced",
@@ -15,14 +16,17 @@ const room: RoomState = {
   },
   status: "idle",
 };
+const human = { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you };
 
 describe("optimistic human messages", () => {
   it("adds the submitted message immediately with the current human style", () => {
-    const next = appendOptimisticHumanMessage(room, "pending-message", "Hello room", "2026-08-19T12:00:00.000Z");
+    const next = appendOptimisticHumanMessage(room, human, "pending-message", "Hello room", "2026-08-19T12:00:00.000Z");
 
     expect(next.messages).toEqual([expect.objectContaining({
       id: "pending-message",
       speaker: "you",
+      humanId: "alice-id",
+      speakerName: "Alice",
       text: "Hello room",
       style: DEFAULT_PARTICIPANT_STYLES.you,
     })]);
@@ -30,7 +34,7 @@ describe("optimistic human messages", () => {
   });
 
   it("removes only the pending message when submission fails", () => {
-    const pending = appendOptimisticHumanMessage(room, "pending-message", "Hello room", "2026-08-19T12:00:00.000Z");
+    const pending = appendOptimisticHumanMessage(room, human, "pending-message", "Hello room", "2026-08-19T12:00:00.000Z");
     const withAnotherMessage = {
       ...pending,
       messages: [...pending.messages, { id: "agent", speaker: "codex-sol" as const, text: "Hi", timestamp: "2026-08-19T12:00:01.000Z" }],

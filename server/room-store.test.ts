@@ -46,6 +46,7 @@ describe("room style persistence", () => {
       "claude-sonnet": { id: "claude-session", permission: "read-only" },
     });
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
+    expect(snapshot.settings.roomName).toBe("The Agent Room");
     expect(snapshot.settings.conversationEnergy).toBe("balanced");
     expect(snapshot.settings.participantStyles["codex-sol"]).toEqual(oldCodexStyle);
     expect(snapshot.settings.participantStyles["claude-sonnet"]).toEqual(oldClaudeStyle);
@@ -150,5 +151,19 @@ describe("room style persistence", () => {
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
     expect(reopened.snapshot().settings.topic).toBe("Weekend cooking");
     expect(reopened.snapshot().sessions).toEqual({});
+  });
+
+  it("persists room renames without resetting conversation context", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.setSession("codex-sol", "existing-session", "read-only");
+
+    await store.updateSettings({ roomName: "Friday Night Agents" });
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().settings.roomName).toBe("Friday Night Agents");
+    expect(reopened.snapshot().sessions["codex-sol"]?.id).toBe("existing-session");
   });
 });

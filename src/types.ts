@@ -13,12 +13,21 @@ export interface RoomMessage {
   style?: ChatStyle;
   burstId?: string;
   sequence?: number;
+  humanId?: string;
+  speakerName?: string;
+}
+
+export interface HumanPresence {
+  id: string;
+  name: string;
+  style: ChatStyle;
 }
 
 export interface RoomState {
   messages: RoomMessage[];
   sessions: Partial<Record<AgentId, { id: string; permission: "read-only" | "writable" }>>;
   settings: {
+    roomName: string;
     topic: string;
     writableAgent: WritableAgent;
     conversationEnergy: ConversationEnergy;
@@ -29,4 +38,5 @@ export interface RoomState {
   activeAgent?: AgentId;
   error?: string;
   availability?: Record<AgentId, boolean>;
+  humans?: HumanPresence[];
 }

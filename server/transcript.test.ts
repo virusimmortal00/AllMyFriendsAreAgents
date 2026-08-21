@@ -8,6 +8,7 @@ function state(messages: RoomMessage[]): RoomState {
     messages,
     sessions: {},
     settings: {
+      roomName: "The Agent Room",
       topic: "Open conversation",
       writableAgent: "nobody",
       conversationEnergy: "balanced",
@@ -52,5 +53,15 @@ describe("agent transcript context", () => {
     expect(transcript).toContain(`[YOU]\n${preface}\n\nWhat game wins?`);
     expect(transcript).toContain("[CLAUDE]\nSolitaire, unironically.");
     expect(transcript.match(/plan mode/g)).toHaveLength(1);
+  });
+
+  it("keeps different human names distinct in agent context", () => {
+    const transcript = transcriptFor(state([
+      { id: "1", speaker: "you", humanId: "alice-id", speakerName: "Alice", text: "I prefer blue.", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "2", speaker: "you", humanId: "bob-id", speakerName: "Bob", text: "I prefer orange.", timestamp: "2026-08-19T12:00:01Z" },
+    ]));
+
+    expect(transcript).toContain("[ALICE]\nI prefer blue.");
+    expect(transcript).toContain("[BOB]\nI prefer orange.");
   });
 });

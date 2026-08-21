@@ -1,6 +1,6 @@
-import type { RoomState } from "./types";
+import type { HumanPresence, RoomState } from "./types";
 
-export function appendOptimisticHumanMessage(room: RoomState, id: string, text: string, timestamp: string): RoomState {
+export function appendOptimisticHumanMessage(room: RoomState, human: HumanPresence, id: string, text: string, timestamp: string): RoomState {
   return {
     ...room,
     messages: [
@@ -8,10 +8,12 @@ export function appendOptimisticHumanMessage(room: RoomState, id: string, text: 
       {
         id,
         speaker: "you",
+        humanId: human.id,
+        speakerName: human.name,
         text,
         timestamp,
         kind: "chat",
-        style: { ...room.settings.participantStyles.you },
+        style: { ...human.style },
       },
     ],
   };

@@ -2,13 +2,13 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { sanitizeChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import { AGENT_IDS, isAgentId } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
 import { GenerationJournal } from "./generation-journal.js";
+import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
@@ -19,22 +19,27 @@ import type { AgentId, RoomSettings } from "./types.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
-const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 4174);
+const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const app = express();
 const store = await RoomStore.open(projectRoot);
 const generationJournal = await GenerationJournal.open(projectRoot);
 const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
+const humans = new HumanPresenceRegistry();
 
 app.use(express.json({ limit: "64kb" }));
 
+function roomSnapshot() {
+  return { ...store.snapshot(), humans: humans.list() };
+}
+
 function broadcast() {
-  roomEvents.broadcast(store.snapshot());
+  roomEvents.broadcast(roomSnapshot());
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
-  const before = store.snapshot();
+  const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
   const generationCancellation = roomActivity.abortSignal(activityRevision);
@@ -224,12 +229,46 @@ async function runJob(job: () => Promise<void>) {
   }
 }
 
+async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
+  await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
+  broadcast();
+  jobs.enqueue(`presence:${event}:${human.id}:${randomUUID()}`, () => runJob(async () => {
+    await performConversation(AGENT_IDS.map((agent) => ({
+      agent,
+      visibleMessageLimit: 1,
+      instruction: humanPresenceInstruction(human.name, event),
+    })), true);
+  }));
+}
+
 app.get("/api/state", async (_request, response) => {
-  response.json(await roomStateWithAvailability(() => store.snapshot(), cliAvailability));
+  response.json(await roomStateWithAvailability(roomSnapshot, cliAvailability));
 });
 
 app.get("/api/events", (request, response) => {
-  roomEvents.connect(request, response, store.snapshot());
+  const humanId = request.query.humanId;
+  const connection = humans.connect(humanId);
+  if (!connection) return response.status(400).json({ error: "Join the room before connecting." });
+  roomEvents.connect(request, response, roomSnapshot(), () => {
+    const departure = humans.disconnect(humanId);
+    if (departure?.becameAbsent) {
+      void announceHumanPresence(departure.human, "left").catch((error) => console.error("Failed to announce room departure", error));
+    } else {
+      broadcast();
+    }
+  });
+  broadcast();
+  if (connection.becamePresent) {
+    void announceHumanPresence(connection.human, "joined").catch((error) => console.error("Failed to announce room arrival", error));
+  }
+});
+
+app.post("/api/humans", (request, response) => {
+  try {
+    response.status(201).json(humans.join(request.body || {}));
+  } catch (error) {
+    response.status(400).json({ error: error instanceof Error ? error.message : "A valid name is required." });
+  }
 });
 
 app.patch("/api/settings", async (request, response) => {
@@ -243,6 +282,11 @@ app.patch("/api/settings", async (request, response) => {
     }
   }
   const allowed: Partial<RoomSettings> = {};
+  if (typeof update.roomName === "string") {
+    const roomName = update.roomName.trim().replace(/\s+/g, " ");
+    if (!roomName || roomName.length > 80) return response.status(400).json({ error: "Room name must be between 1 and 80 characters." });
+    allowed.roomName = roomName;
+  }
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
     allowed.writableAgent = update.writableAgent;
   }
@@ -251,32 +295,34 @@ app.patch("/api/settings", async (request, response) => {
   }
   if (Object.keys(allowed).length > 0) await store.updateSettings(allowed);
   broadcast();
-  response.json(store.snapshot());
+  response.json(roomSnapshot());
 });
 
 app.patch("/api/style", async (request, response) => {
-  const currentStyle = store.snapshot().settings.participantStyles.you;
-  await store.updateParticipantStyle("you", sanitizeChatStyle(request.body, currentStyle));
+  const human = humans.updateStyle(request.body?.humanId, request.body?.style);
+  if (!human) return response.status(400).json({ error: "Join the room before changing your style." });
   broadcast();
-  response.json(store.snapshot());
+  response.json(human);
 });
 
 app.post("/api/messages", async (request, response) => {
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
+  const human = humans.get(request.body?.humanId);
+  if (!human) return response.status(400).json({ error: "Join the room before sending a message." });
   roomActivity.interrupt();
-  await store.addMessage("you", text, "chat", store.snapshot().settings.participantStyles.you);
+  await store.addMessage("you", text, "chat", human.style, undefined, human);
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
-    const conversationState = store.snapshot();
+    const conversationState = roomSnapshot();
     await performConversation(
       roomMessageTurns(conversationState),
       true,
       latestHumanInvitesWholeRoom(conversationState),
     );
   }));
-  return response.status(202).json(store.snapshot());
+  return response.status(202).json(roomSnapshot());
 });
 
 app.post("/api/actions", async (request, response) => {
@@ -308,6 +354,7 @@ app.post("/api/actions", async (request, response) => {
 app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
-app.listen(port, "127.0.0.1", () => {
-  console.log(`AllMyFriendsAreAgents API listening at http://127.0.0.1:${port}`);
+const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
+app.listen(port, host, () => {
+  console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
 });

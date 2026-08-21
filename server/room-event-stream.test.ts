@@ -9,6 +9,7 @@ function room(text: string): RoomState {
     messages: [{ id: text, speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" }],
     sessions: {},
     settings: {
+      roomName: "The Agent Room",
       topic: "Open conversation",
       writableAgent: "nobody",
       conversationEnergy: "balanced",
@@ -64,5 +65,17 @@ describe("RoomEventStream", () => {
 
     request.emit("close");
     expect(stream.clientCount).toBe(0);
+  });
+
+  it("runs presence cleanup only once when a connection emits multiple close signals", () => {
+    const stream = new RoomEventStream();
+    const { request, response } = connection();
+    const disconnect = vi.fn();
+
+    stream.connect(request as never, response as never, room("initial"), disconnect);
+    request.emit("close");
+    response.emit("close");
+
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 });

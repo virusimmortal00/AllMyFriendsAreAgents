@@ -1,6 +1,6 @@
 # AllMyFriendsAreAgents
 
-A local, chatroom-style collaboration surface for you, three model-specific Codex participants, and Claude Code.
+A LAN-friendly, chatroom-style collaboration surface for named human participants, three model-specific Codex participants, and Claude Code.
 
 The app uses the installed `codex` and `claude` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster is Codex Luna (`gpt-5.6-luna`), Codex Terra (`gpt-5.6-terra`), Codex Sol (`gpt-5.6-sol`), and Claude (`claude-sonnet-5`). Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
@@ -18,16 +18,18 @@ claude auth login
 Then start the room:
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
-Open <http://127.0.0.1:4173>. The API runs on `127.0.0.1:4174`.
+Open <http://127.0.0.1:4173> on the host Mac or <https://agents.example.test> from the local LAN. Vite runs on `127.0.0.1:4173`, proxies `/api` to `127.0.0.1:53147`, and accepts the `agents.example.test` host used by the LAN tunnel.
+
+Each browser asks for a display name on first entry and remembers that lightweight identity locally. There is intentionally no further authentication: connected humans share the same room, transcript, settings, and locally authenticated Codex/Claude capabilities. Online human names appear in the room roster, and every message keeps its sender name and style snapshot.
 
 By default the agents inspect this repository. To point the room at another project:
 
 ```bash
-ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project npm run dev
+ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
 ```
 
 Normal human messages create a staged set of response opportunities rather than invoking all four agents at once. The server ranks a primary candidate from conversational continuity, recent engagement, quiet time, and deterministic jitter; if that agent declines with `NO_RESPONSE_NEEDED`, the opportunity passes to the next candidate. Depending on the room's conversation-energy setting, a second participant may then see the updated transcript and decide whether it has a distinct contribution. Direct mentions and substantive continuation cues can extend the exchange within progressively tighter soft limits and an absolute ceiling. Explicit **Actions → Review with all agents** still asks all four participants for a read-only review.
@@ -56,7 +58,8 @@ The transcript header's percentage controls are a separate local viewing prefere
 
 ## Safety model
 
-- The room binds to localhost only.
+- Vite and the API bind to localhost; the configured `agents.example.test` tunnel makes the room reachable on the trusted local LAN.
+- Human identity is name-only and intentionally unauthenticated. Anyone who can reach the LAN URL can use the shared room and its locally authenticated agent capabilities.
 - Ordinary room turns are read-only unless you explicitly choose a writable agent.
 - **Actions → Review with all agents** always runs read-only, even when an agent is selected as writable for ordinary turns.
 - Only one agent can be writable at a time.
