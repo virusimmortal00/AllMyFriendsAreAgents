@@ -25,6 +25,7 @@ const EMPTY_ROOM: RoomState = {
 };
 const MINIMUM_LOADING_MS = 450;
 const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";
+const ROOM_EVENT_STALE_MS = 9_000;
 
 function loadHumanProfile(): HumanPresence | null {
   if (typeof window === "undefined") return null;
@@ -144,9 +145,11 @@ export default function App() {
     let cancelled = false;
     let events: EventSource | undefined;
     let retryTimer: number | undefined;
+    let watchdogTimer: number | undefined;
     let reconnectAttempt = 0;
     let disconnected = false;
     let noticeTimer: number | undefined;
+    let lastEventAt = Date.now();
 
     const showTemporaryNotice = (notice: string) => {
       setConnectionNotice(notice);
@@ -168,8 +171,13 @@ export default function App() {
       events?.close();
       const source = new EventSource(`/api/events?humanId=${encodeURIComponent(currentHuman.id)}`);
       events = source;
+      lastEventAt = Date.now();
+      source.addEventListener("heartbeat", () => {
+        if (source === events) lastEventAt = Date.now();
+      });
       source.onmessage = (event) => {
         if (source !== events) return;
+        lastEventAt = Date.now();
         const next = JSON.parse(event.data) as RoomState;
         if (next.server && next.server.protocolVersion !== ROOM_PROTOCOL_VERSION) {
           saveDraft(window.localStorage, currentHuman.id, draftRef.current);
@@ -206,6 +214,7 @@ export default function App() {
       source.onerror = () => {
         if (source !== events) return;
         source.close();
+        events = undefined;
         if (!disconnected) restoreDistance.current = scrollDistanceFromBottom(transcript.current);
         disconnected = true;
         setConnected(false);
@@ -231,6 +240,17 @@ export default function App() {
     setConnected(false);
     setHasInitialState(false);
     connectEvents();
+    watchdogTimer = window.setInterval(() => {
+      const source = events;
+      if (!source || Date.now() - lastEventAt <= ROOM_EVENT_STALE_MS) return;
+      source.close();
+      events = undefined;
+      if (!disconnected) restoreDistance.current = scrollDistanceFromBottom(transcript.current);
+      disconnected = true;
+      setConnected(false);
+      setConnectionNotice("Connection lost — reconnecting…");
+      scheduleReconnect();
+    }, 1_000);
     void loadRoom().then((next) => {
       if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability }));
     }).catch(() => {
@@ -239,6 +259,7 @@ export default function App() {
     return () => {
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
       if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
       events?.close();
     };

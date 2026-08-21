@@ -53,7 +53,7 @@ describe("RoomEventStream", () => {
       "retry: 1000\n\n",
       expect.stringContaining('"text":"initial"'),
       expect.stringContaining('"text":"round one"'),
-      expect.stringMatching(/^: keepalive /),
+      expect.stringMatching(/^event: heartbeat\ndata: /),
       expect.stringContaining('"text":"round two"'),
     ]);
     expect(request.socket.setTimeout).toHaveBeenCalledWith(0);
