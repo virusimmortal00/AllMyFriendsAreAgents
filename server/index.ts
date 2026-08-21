@@ -262,11 +262,7 @@ async function performConversation(turns: ConversationTurn[], staged = false, in
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
   if (staged) {
-    const result = await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
-    if (result.pauseReason) {
-      await store.addMessage("system", `${result.pauseReason} Use Actions → Continue discussion to start another bounded round.`, "status");
-      broadcast();
-    }
+    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
