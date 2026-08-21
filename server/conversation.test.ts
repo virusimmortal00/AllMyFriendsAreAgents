@@ -199,14 +199,14 @@ describe("agent conversations", () => {
     const conversation = runAgentConversation(concurrentTurns, 1, performTurn, AGENT_IDS.length);
     await vi.waitFor(() => expect(seenAgents).toEqual(AGENT_IDS));
 
-    initial.get("codex-luna")!.resolve({ replyCandidates: ["codex-terra", "codex-sol", "claude-sonnet"] });
+    initial.get("codex-terra")!.resolve({ replyCandidates: ["codex-sol", "claude-sonnet", "claude-opus"] });
     await Promise.resolve();
     expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
 
-    initial.get("codex-terra")!.resolve({ replyCandidates: ["codex-luna", "codex-sol", "claude-sonnet"] });
-    await vi.waitFor(() => expect(seenAgents).toEqual([...AGENT_IDS, "codex-luna"]));
+    initial.get("codex-sol")!.resolve({ replyCandidates: ["codex-terra", "claude-sonnet", "claude-opus"] });
+    await vi.waitFor(() => expect(seenAgents).toEqual([...AGENT_IDS, "codex-terra"]));
     for (const agent of AGENT_IDS) {
-      if (agent !== "codex-luna" && agent !== "codex-terra") initial.get(agent)!.resolve({});
+      if (agent !== "codex-terra" && agent !== "codex-sol") initial.get(agent)!.resolve({});
     }
     lunaReaction.resolve({});
     await conversation;
@@ -222,7 +222,7 @@ describe("agent conversations", () => {
     let active = 0;
     let maximumActive = 0;
     const performTurn = vi.fn((turn: ConversationTurn) => {
-      const index = AGENT_IDS.indexOf(turn.agent);
+      const index = AGENT_IDS.findIndex((agent) => agent === turn.agent);
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       return completions[index].promise.finally(() => { active -= 1; });
@@ -301,7 +301,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "low", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
   });
 
   it("stages a second balanced invitation after the first visible response", async () => {
@@ -311,7 +311,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
     expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
   });
 
@@ -320,7 +320,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra"]);
   });
 
   it("seeks another participant when an agent explicitly leaves a point open", async () => {
@@ -331,7 +331,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
 
-    expect(performTurn.mock.calls.slice(0, 2).map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+    expect(performTurn.mock.calls.slice(0, 2).map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol"]);
   });
 
   it("explains when an open point receives no second participant", async () => {
@@ -404,11 +404,11 @@ describe("conversation energy", () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-sol"] })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] });
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-opus"] });
 
     await runEnergyConversation(candidates, "low", performTurn, () => 1);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "claude-sonnet", "codex-sol"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "claude-sonnet", "codex-sol"]);
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit! <= 3)).toBe(true);
   });
 
@@ -420,7 +420,7 @@ describe("conversation energy", () => {
 
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra", "codex-sol"]);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-terra", "codex-sol", "claude-sonnet"]);
   });
 
   it("stops immediately when new human activity cancels the current pulse", async () => {
@@ -434,14 +434,14 @@ describe("conversation energy", () => {
   it("prevents the same pair from recursively inviting each other", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-luna"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["codex-terra"] })
       .mockResolvedValueOnce({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] })
       .mockResolvedValue({ visibleMessageCount: 0 });
 
     await runEnergyConversation(candidates, "party", performTurn, () => 1);
 
     const speakers = performTurn.mock.calls.map(([turn]) => turn.agent);
-    expect(speakers.slice(0, 3)).toEqual(["codex-luna", "claude-sonnet", "codex-luna"]);
+    expect(speakers.slice(0, 3)).toEqual(["codex-terra", "claude-sonnet", "codex-terra"]);
     expect(speakers.filter((agent) => agent === "claude-sonnet")).toHaveLength(1);
   });
 });

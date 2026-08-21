@@ -134,6 +134,7 @@ describe("room prompt context", () => {
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
+    expect(prompt).toContain(`Claude [Claude Opus 5]: ${JSON.stringify(state.settings.participantStyles["claude-opus"])}`);
     expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
@@ -146,10 +147,10 @@ describe("room prompt context", () => {
   });
 
   it.each([
-    ["codex-luna", "[LUNA]"],
     ["codex-terra", "[TERRA]"],
     ["codex-sol", "[SOL]"],
     ["claude-sonnet", "[CLAUDE]"],
+    ["claude-opus", "[OPUS]"],
     ["cursor-grok", "[GROK]"],
     ["cursor-gemini", "[GEMINI]"],
     ["cursor-composer", "[COMPOSER]"],

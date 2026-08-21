@@ -3,7 +3,7 @@ import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
 import { isNoResponseNeeded, visibleAgentChatText } from "../shared/message-format.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName } from "../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 
 export interface ConversationTurn {
   agent: AgentId;
@@ -65,7 +65,7 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   for (let index = latestHumanIndex - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.kind === "topic") break;
-    if (AGENT_IDS.includes(message.speaker as AgentId)) {
+    if (isActiveAgentId(message.speaker)) {
       continuityAgent = message.speaker as AgentId;
       break;
     }

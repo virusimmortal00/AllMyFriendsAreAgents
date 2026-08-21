@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
 import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
-import { isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
+import { isActiveAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
 
@@ -23,7 +23,7 @@ function migrateSessions(input: unknown) {
   const sessions: Partial<Record<AgentId, AgentSession>> = {};
   for (const [rawAgent, session] of Object.entries(value)) {
     const agent = migrateLegacyAgentId(rawAgent);
-    if (agent && session?.id && (session.permission === "read-only" || session.permission === "writable")) {
+    if (agent && isActiveAgentId(agent) && session?.id && (session.permission === "read-only" || session.permission === "writable")) {
       sessions[agent] = session;
     }
   }

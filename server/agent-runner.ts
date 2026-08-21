@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites } from "../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -495,7 +495,7 @@ export async function runAgent(
   }
 }
 
-export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
+export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>> {
   const check = async (command: string) => {
     try {
       await runProcess(command, ["--version"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
@@ -521,7 +521,7 @@ export async function cliAvailability(): Promise<Record<AgentId, boolean>> {
         ? claude
         : availableCursorModels.has(profile.modelId);
     return [agent, available];
-  })) as Record<AgentId, boolean>;
+  })) as Record<ActiveAgentId, boolean>;
 }
 
 export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, isMissingClaudeSessionError, claudeArgs, codexArgs, cursorArgs, runProcess };

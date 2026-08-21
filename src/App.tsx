@@ -6,7 +6,7 @@ import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimi
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import { AGENT_IDS, agentScreenName } from "../shared/participants";
+import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
 import type { AgentId, HumanPresence, RoomState, WritableAgent } from "./types";
 
 const EMPTY_ROOM: RoomState = {
@@ -90,7 +90,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
-  const [configuredAgent, setConfiguredAgent] = useState<AgentId | null>(null);
+  const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [clientError, setClientError] = useState("");
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);

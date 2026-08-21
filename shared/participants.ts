@@ -1,4 +1,5 @@
 export const AGENT_PROFILES = {
+  // Retained for historical transcript rendering. Luna is no longer in AGENT_IDS.
   "codex-luna": {
     id: "codex-luna",
     provider: "codex",
@@ -35,6 +36,15 @@ export const AGENT_PROFILES = {
     conversationalName: "Claude",
     supportsProjectWrites: true,
   },
+  "claude-opus": {
+    id: "claude-opus",
+    provider: "claude",
+    displayName: "Claude",
+    modelId: "claude-opus-5",
+    modelLabel: "Claude Opus 5",
+    conversationalName: "Opus",
+    supportsProjectWrites: true,
+  },
   "cursor-grok": {
     id: "cursor-grok",
     provider: "cursor",
@@ -68,13 +78,26 @@ export type AgentId = keyof typeof AGENT_PROFILES;
 export type AgentProvider = (typeof AGENT_PROFILES)[AgentId]["provider"];
 export type ParticipantId = "you" | AgentId;
 export type SpeakerId = ParticipantId | "system";
-export type WritableAgent = AgentId | "nobody";
 
-export const AGENT_IDS = Object.keys(AGENT_PROFILES) as AgentId[];
+export const AGENT_IDS = [
+  "codex-terra",
+  "codex-sol",
+  "claude-sonnet",
+  "claude-opus",
+  "cursor-grok",
+  "cursor-gemini",
+  "cursor-composer",
+] as const satisfies readonly AgentId[];
+export type ActiveAgentId = (typeof AGENT_IDS)[number];
+export type WritableAgent = ActiveAgentId | "nobody";
 export const PARTICIPANT_IDS: ParticipantId[] = ["you", ...AGENT_IDS];
 
 export function isAgentId(value: unknown): value is AgentId {
   return typeof value === "string" && value in AGENT_PROFILES;
+}
+
+export function isActiveAgentId(value: unknown): value is ActiveAgentId {
+  return isAgentId(value) && (AGENT_IDS as readonly AgentId[]).includes(value);
 }
 
 export function isParticipantId(value: unknown): value is ParticipantId {
@@ -87,7 +110,7 @@ export function agentSupportsProjectWrites(agent: AgentId) {
 
 export function normalizeWritableAgent(value: unknown): WritableAgent {
   if (value === "nobody") return "nobody";
-  return isAgentId(value) && agentSupportsProjectWrites(value) ? value : "nobody";
+  return isActiveAgentId(value) && agentSupportsProjectWrites(value) ? value : "nobody";
 }
 
 export function agentScreenName(agent: AgentId) {

@@ -104,6 +104,15 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
+  "claude-opus": {
+    fontFamily: "Trebuchet MS",
+    fontSize: 17,
+    textColor: "#340a38",
+    backgroundColor: "#ffffff",
+    bold: true,
+    italic: false,
+    underline: false,
+  },
   "cursor-grok": {
     fontFamily: "Comic Sans MS",
     fontSize: 17,
@@ -160,6 +169,7 @@ export function normalizeParticipantStyles(input: unknown): ParticipantStyles {
   const normalized = {
     you: sanitizeChatStyle(value.you, DEFAULT_PARTICIPANT_STYLES.you),
   } as ParticipantStyles;
+  normalized["codex-luna"] = sanitizeChatStyle(value["codex-luna"], DEFAULT_PARTICIPANT_STYLES["codex-luna"]);
   for (const agent of AGENT_IDS) {
     const legacy = agent === "codex-sol" ? value.codex : agent === "claude-sonnet" ? value.claude : undefined;
     normalized[agent] = sanitizeChatStyle(value[agent] ?? legacy, DEFAULT_PARTICIPANT_STYLES[agent]);

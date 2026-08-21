@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../../shared/chat-style.js";
 import { isConversationEnergy } from "../../shared/conversation-energy.js";
-import { AGENT_IDS, AGENT_PROFILES, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
+import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
 import type { RoomRepository } from "./room-repository.js";
@@ -336,7 +336,7 @@ export class SqliteRoomRepository implements RoomRepository {
       .map((message) => messageFromRow(message, participantStyles));
     const sessions: Partial<Record<AgentId, AgentSession>> = {};
     for (const session of this.database.prepare("SELECT * FROM agent_sessions WHERE room_id = ?").all(DEFAULT_ROOM_ID) as unknown as SessionRow[]) {
-      if (isAgentId(session.agent_id) && (session.permission === "read-only" || session.permission === "writable")) {
+      if (isActiveAgentId(session.agent_id) && (session.permission === "read-only" || session.permission === "writable")) {
         sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission };
       }
     }

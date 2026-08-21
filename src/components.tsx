@@ -8,7 +8,7 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
-import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName } from "../shared/participants";
+import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
@@ -68,10 +68,10 @@ export function RoomRoster({
   currentHumanId,
   onConfigureAgent,
 }: {
-  availability?: Record<AgentId, boolean>;
+  availability?: Record<ActiveAgentId, boolean>;
   humans: HumanPresence[];
   currentHumanId: string;
-  onConfigureAgent: (agent: AgentId) => void;
+  onConfigureAgent: (agent: ActiveAgentId) => void;
 }) {
   const presentAgents = AGENT_IDS.filter((agent) => availability?.[agent] !== false);
   const agentCount = presentAgents.length;
@@ -116,7 +116,7 @@ export function AgentSettingsDialog({
   onWritableChange,
   onClose,
 }: {
-  agent: AgentId;
+  agent: ActiveAgentId;
   available: boolean;
   writableAgent: WritableAgent;
   disabled: boolean;

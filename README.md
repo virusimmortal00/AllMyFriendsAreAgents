@@ -2,7 +2,7 @@
 
 A LAN-friendly, chatroom-style collaboration surface for named human participants and model-pinned agents running through Codex, Claude Code, and Cursor Agent.
 
-The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Luna, Terra, and Sol; Claude Sonnet; and read-only Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
+The app uses the installed `codex`, `claude`, and Cursor `agent` CLIs, keeps one resumable session per participant, pins each participant to its displayed model, and stores the room transcript locally. The default room roster includes Codex Terra and Sol; Claude Sonnet 5 and Opus 5; and read-only Cursor-harnessed Grok 4.6, Gemini 3.1 Pro, and Composer 2.5. Reviews are read-only by default and automated conversations have a server-owned energy budget plus an absolute safety ceiling.
 
 ## Development
 

@@ -8,10 +8,10 @@ import { LoadingScreen, NameEntry } from "./App";
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
     const html = renderToStaticMarkup(<RoomRoster availability={{
-      "codex-luna": true,
       "codex-terra": true,
       "codex-sol": true,
       "claude-sonnet": false,
+      "claude-opus": true,
       "cursor-grok": true,
       "cursor-gemini": true,
       "cursor-composer": true,
@@ -22,9 +22,10 @@ describe("RoomRoster", () => {
 
     expect(html).toContain("6 agents");
     expect(html).toContain("2 humans");
-    expect(html).toContain("Codex [gpt-5.6 Luna]");
+    expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain("Claude [Claude Opus 5]");
     expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Cursor [Gemini 3.1 Pro]");
     expect(html).toContain("Cursor [Composer 2.5]");
@@ -33,7 +34,7 @@ describe("RoomRoster", () => {
     expect(html).not.toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Codex|Cursor)/g)).toHaveLength(6);
+    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
     expect(html).not.toContain("Configure You");
   });
 });
