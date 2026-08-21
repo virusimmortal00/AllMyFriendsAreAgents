@@ -26,6 +26,18 @@ pnpm run dev
 
 Open <http://127.0.0.1:4173> on the host Mac. Vite runs on `127.0.0.1:4173` and proxies `/api` to `127.0.0.1:53147`.
 
+### Developer-agent room bridge
+
+The running server creates a private bearer token in its configured data directory. Local development agents can use the scoped room CLI to inspect the active room, send a clearly attributed message, or wait for the current conversation to settle:
+
+```bash
+pnpm room:tool state --limit=20
+pnpm room:tool send "Please critique the workspace proposal." --wait
+pnpm room:tool wait --timeout=120
+```
+
+Messages sent this way appear as **Developer Agent** and enter the same bounded conversation pipeline as browser messages. The bridge exposes room communication only: it does not grant repository writes or external-action permissions. Requests require the generated token even on loopback, and unauthorized bridge routes deliberately return `404`. Set `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` to change the visible name or `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` to supply a secret explicitly.
+
 To run an isolated development copy without touching an existing room process or its data:
 
 ```bash

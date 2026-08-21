@@ -7,6 +7,7 @@ import { AGENT_IDS, isAgentId } from "../shared/participants.js";
 import { cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
+import { developerRequestAuthorized, openDeveloperToken } from "./developer-access.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { CoalescingJobQueue } from "./job-queue.js";
@@ -38,6 +39,11 @@ const roomEvents = new RoomEventStream();
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const humans = new HumanPresenceRegistry();
+const developerAccess = await openDeveloperToken(storageConfiguration.dataDirectory);
+const developerHuman = {
+  id: "developer-agent",
+  name: process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME?.trim() || "Developer Agent",
+};
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -47,6 +53,21 @@ function roomSnapshot() {
 
 function broadcast() {
   roomEvents.broadcast(publicRoomState(roomSnapshot()));
+}
+
+function developerRoomView(limit = 50) {
+  const state = publicRoomState(roomSnapshot());
+  const messages = state.messages.slice(-limit);
+  return {
+    ...state,
+    messages,
+    busy: jobs.busy,
+    cursor: state.messages.at(-1)?.id,
+  };
+}
+
+function developerAuthorized(authorization: string | undefined) {
+  return developerRequestAuthorized(authorization, developerAccess.token);
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
@@ -336,6 +357,33 @@ app.post("/api/messages", async (request, response) => {
   return response.status(202).json(publicRoomState(roomSnapshot()));
 });
 
+app.get("/api/developer/room", (request, response) => {
+  if (!developerAuthorized(request.header("authorization"))) return response.status(404).json({ error: "Not found." });
+  const requestedLimit = Number(request.query.limit || 50);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 50;
+  response.json(developerRoomView(limit));
+});
+
+app.post("/api/developer/messages", async (request, response) => {
+  if (!developerAuthorized(request.header("authorization"))) return response.status(404).json({ error: "Not found." });
+  const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
+  if (!text) return response.status(400).json({ error: "Message text is required." });
+  if (text.length > 16_000) return response.status(400).json({ error: "Developer messages are limited to 16,000 characters." });
+
+  roomActivity.interrupt();
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, developerHuman);
+  broadcast();
+  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
+    const conversationState = roomSnapshot();
+    await performConversation(
+      roomMessageTurns(conversationState),
+      true,
+      latestHumanInvitesWholeRoom(conversationState),
+    );
+  }));
+  return response.status(202).json({ accepted: true, message, room: developerRoomView() });
+});
+
 app.post("/api/actions", async (request, response) => {
   const action = request.body?.action as "ask" | "review" | "roundtable";
   const target = request.body?.target as AgentId | "all" | "both";
@@ -367,4 +415,5 @@ app.get("/{*splat}", (_request, response) => response.sendFile(path.join(project
 
 app.listen(port, host, () => {
   console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
+  console.log(`Developer room bridge token: ${developerAccess.source}`);
 });

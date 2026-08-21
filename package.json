@@ -13,6 +13,7 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
+    "room:tool": "tsx scripts/room-tool.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"
