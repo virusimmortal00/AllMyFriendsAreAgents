@@ -38,6 +38,13 @@ describe("agent turn parsing", () => {
     });
   });
 
+  it("keeps the declared conversation state private while returning it to the orchestrator", () => {
+    expect(parseAgentTurn("codex-sol", "We should test the migration first.\n\nCONVERSATION_STATE: OPEN")).toMatchObject({
+      visibleMessages: ["We should test the migration first."],
+      conversationState: "open",
+    });
+  });
+
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude-sonnet", "NO_RESPONSE_NEEDED")).toEqual({
       visibleMessages: [],
@@ -189,7 +196,7 @@ describe("agent conversations", () => {
     });
 
     const concurrentTurns = candidatesForAllAgents();
-    const conversation = runAgentConversation(concurrentTurns, 1, performTurn);
+    const conversation = runAgentConversation(concurrentTurns, 1, performTurn, AGENT_IDS.length);
     await vi.waitFor(() => expect(seenAgents).toEqual(AGENT_IDS));
 
     initial.get("codex-luna")!.resolve({ replyCandidates: ["codex-terra", "codex-sol", "claude-sonnet"] });
@@ -203,6 +210,32 @@ describe("agent conversations", () => {
     }
     lunaReaction.resolve({});
     await conversation;
+  });
+
+  it("limits concurrent bulk agent launches", async () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((next) => { resolve = next; });
+      return { promise, resolve };
+    }
+    const completions = AGENT_IDS.map(() => deferred<TurnResult>());
+    let active = 0;
+    let maximumActive = 0;
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      const index = AGENT_IDS.indexOf(turn.agent);
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      return completions[index].promise.finally(() => { active -= 1; });
+    });
+
+    const conversation = runAgentConversation(candidatesForAllAgents(), 0, performTurn, 3);
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    completions[0].resolve({});
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(4));
+    for (const completion of completions) completion.resolve({});
+    await conversation;
+
+    expect(maximumActive).toBe(3);
   });
 });
 
@@ -288,6 +321,64 @@ describe("conversation energy", () => {
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-luna"]);
+  });
+
+  it("seeks another participant when an agent explicitly leaves a point open", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValueOnce({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
+
+    expect(performTurn.mock.calls.slice(0, 2).map(([turn]) => turn.agent)).toEqual(["codex-luna", "codex-terra"]);
+  });
+
+  it("explains when an open point receives no second participant", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValue({ visibleMessageCount: 0 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 1);
+
+    expect(result.pauseReason).toContain("no second agent");
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
+  });
+
+  it("lets every configured agent participate at party energy", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 0);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
+  });
+
+  it("synthesizes, checks objections, and reconciles an explicitly open discussion", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" });
+
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: true });
+    expect(performTurn).toHaveBeenCalledTimes(5);
+    expect(performTurn.mock.calls[2][0].instruction).toContain("discussion synthesizer");
+    expect(performTurn.mock.calls[3][0].instruction).toContain("material omission");
+    expect(performTurn.mock.calls[4][0].instruction).toContain("Reconcile");
+  });
+
+  it("reports when synthesis is blocked on human input", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "blocked" });
+
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+
+    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
   });
 
   it("offers every agent one concise turn when the human invites the whole room", async () => {

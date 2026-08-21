@@ -242,7 +242,7 @@ export default function App() {
     })();
   }
 
-  function invoke(action: "ask" | "review" | "roundtable", agent: AgentId | "all") {
+  function invoke(action: "ask" | "review" | "roundtable" | "continue", agent: AgentId | "all") {
     setMenuOpen(false);
     void withErrorHandling(() => runAction(action, agent));
   }
@@ -304,6 +304,7 @@ export default function App() {
             <button type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu">
+                <button type="button" disabled={working} onClick={() => invoke("continue", "all")}>Continue discussion</button>
                 <button type="button" disabled={working} onClick={() => invoke("roundtable", "all")}>Start roundtable</button>
                 <button type="button" disabled={working} onClick={() => invoke("review", "all")}>Review with all agents</button>
               </div>

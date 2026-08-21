@@ -23,6 +23,7 @@ const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
+const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
 if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE !== "true") {
@@ -222,6 +223,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     mentionedAgents: parsed.mentionedAgents,
     visibleMessageCount: parsed.visibleMessageCount,
     continuationWorthy: parsed.continuationWorthy,
+    conversationState: parsed.conversationState,
   };
 }
 
@@ -240,11 +242,15 @@ async function performConversation(turns: ConversationTurn[], staged = false, in
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
   if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
+    const result = await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
+    if (result.pauseReason) {
+      await store.addMessage("system", `${result.pauseReason} Use Actions → Continue discussion to start another bounded round.`, "status");
+      broadcast();
+    }
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-  await runAgentConversation(turns, followUpAllowance, performTurn);
+  await runAgentConversation(turns, followUpAllowance, performTurn, agentConcurrency);
 }
 
 async function runJob(job: () => Promise<void>) {
@@ -385,10 +391,10 @@ app.post("/api/developer/messages", async (request, response) => {
 });
 
 app.post("/api/actions", async (request, response) => {
-  const action = request.body?.action as "ask" | "review" | "roundtable";
+  const action = request.body?.action as "ask" | "review" | "roundtable" | "continue";
   const target = request.body?.target as AgentId | "all" | "both";
   if (jobs.busy) return response.status(409).json({ error: "The room is already working." });
-  if (!(["ask", "review", "roundtable"].includes(action))) {
+  if (!(["ask", "review", "roundtable", "continue"].includes(action))) {
     return response.status(400).json({ error: "Unknown room action." });
   }
   if (target !== "all" && target !== "both" && !isAgentId(target)) {
@@ -397,15 +403,18 @@ app.post("/api/actions", async (request, response) => {
 
   const agents: AgentId[] = target === "all" || target === "both" ? AGENT_IDS : [target];
   jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
-    await performConversation(agents.map((agent) => ({
+    const turns = agents.map((agent) => ({
       agent,
-      instruction: action === "roundtable"
+      instruction: action === "continue"
+        ? "Continue the latest unresolved room discussion. Focus on the specific open point, contribute only new substance, and help the group reach a usable conclusion. Use NO_RESPONSE_NEEDED if the matter is already settled."
+        : action === "roundtable"
         ? "Join the discussion with the most useful opening thought. React to the room naturally and stop escalating once further replies would add noise."
         : action === "review"
           ? "Review the current worktree changes. Focus on correctness, clarity, security, accessibility, and missing tests. Report concrete findings before general observations."
           : "Read the room and contribute the most useful next thought.",
       includeDiff: action === "review",
-    })));
+    }));
+    await performConversation(turns, action === "continue");
   }));
   return response.status(202).json({ accepted: true });
 });

@@ -5,7 +5,7 @@ export type ConversationEnergy = (typeof CONVERSATION_ENERGY_LEVELS)[number];
 export interface ConversationEnergyPolicy {
   label: string;
   description: string;
-  participantLimit: number;
+  participantLimit: number | "all";
   secondaryChance: number;
   softMessageBudget: number;
   hardMessageCeiling: number;
@@ -43,7 +43,7 @@ export const CONVERSATION_ENERGY_POLICIES: Record<ConversationEnergy, Conversati
   party: {
     label: "Party",
     description: "The whole room can pile in—within limits.",
-    participantLimit: 4,
+    participantLimit: "all",
     secondaryChance: 1,
     softMessageBudget: 12,
     hardMessageCeiling: 16,

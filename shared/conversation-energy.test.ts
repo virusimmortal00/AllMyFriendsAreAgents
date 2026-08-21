@@ -7,6 +7,7 @@ describe("conversation energy", () => {
     expect(CONVERSATION_ENERGY_LEVELS.map((level) => CONVERSATION_ENERGY_POLICIES[level].softMessageBudget)).toEqual([1, 4, 7, 12]);
     expect(CONVERSATION_ENERGY_LEVELS.map((level) => CONVERSATION_ENERGY_POLICIES[level].hardMessageCeiling)).toEqual([3, 6, 10, 16]);
     expect(CONVERSATION_ENERGY_LEVELS.every((level) => CONVERSATION_ENERGY_POLICIES[level].hardTurnCeiling > 0)).toBe(true);
+    expect(CONVERSATION_ENERGY_POLICIES.party.participantLimit).toBe("all");
   });
 
   it("validates levels and migrates the legacy numeric setting", () => {
