@@ -329,6 +329,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
       label: candidate.label,
+      providerSnapshot: candidate.providerSnapshot,
+      modelSnapshot: candidate.modelSnapshot,
       revision: candidate.revision,
       start: mentionQuery.start,
       end: mentionQuery.start + token.length,

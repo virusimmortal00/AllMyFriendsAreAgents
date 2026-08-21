@@ -41,7 +41,6 @@ export function roomMentionCandidates(humans: readonly { id: string; name: strin
     description: name,
     revision: 1,
   }));
-  // Ranking boost for structured agent mentions (agents first)
   return [...agents, ...people];
 }
 

@@ -16,7 +16,7 @@ Humans can select any current human or agent from an accessible `@` autocomplete
 
 - Typing `@` opens a keyboard- and pointer-accessible participant list.
 - Agent targets use stable room participant IDs; human targets use their durable local room IDs.
-- Sent messages retain target kind, stable ID, selected label, revision, and text offsets in JSON and SQLite storage.
+- Sent messages retain target kind, stable ID, selected label, provider/model snapshot where applicable, revision, and text offsets in JSON and SQLite storage.
 - The server rejects forged, stale, or text-mismatched mention metadata.
 - Unanswered mentions create no forced turn, spinner, or error state.
 - Humans and agents use the same mention record shape.
