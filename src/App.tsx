@@ -13,6 +13,7 @@ import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/partic
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
+import { reconcileMessageMentions, roomMentionCandidates, type MessageMention } from "../shared/mentions";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -95,6 +96,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [draft, setDraft] = useState(() => typeof window === "undefined" ? "" : loadDraft(window.localStorage, loadHumanProfile()?.id));
+  const [draftMentions, setDraftMentions] = useState<MessageMention[]>([]);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
@@ -276,6 +278,7 @@ export default function App() {
   useEffect(() => {
     if (!human) return;
     setDraft(loadDraft(window.localStorage, human.id));
+    setDraftMentions([]);
     setPendingSend(loadPendingSend(window.localStorage, human.id));
   }, [human?.id]);
 
@@ -415,14 +418,16 @@ export default function App() {
     event.preventDefault();
     const message = draft.trim();
     if (!message || !human || !connected) return;
+    const mentions = reconcileMessageMentions(message, draftMentions);
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
     setDraft("");
-    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString()));
+    setDraftMentions([]);
+    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions));
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, message, clientMessageId);
+        const next = await sendMessage(human.id, message, clientMessageId, mentions);
         setRoom((current) => {
           const stillPending = current.messages.some(({ id }) => id === optimisticId);
           if (!stillPending && current.messages.length >= next.messages.length) return current;
@@ -431,9 +436,12 @@ export default function App() {
       } catch (error) {
         setRoom((current) => discardOptimisticMessage(current, optimisticId));
         if (error instanceof ApiRequestError && error.outcomeUnknown) {
-          setPendingSend({ clientMessageId, text: message });
+          setPendingSend({ clientMessageId, text: message, mentions });
         } else {
-          setDraft((current) => current || message);
+          if (!draftRef.current) {
+            setDraft(message);
+            setDraftMentions(mentions);
+          }
         }
         setClientError(error instanceof Error ? error.message : String(error));
       }
@@ -446,7 +454,7 @@ export default function App() {
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, pending.text, pending.clientMessageId);
+        const next = await sendMessage(human.id, pending.text, pending.clientMessageId, pending.mentions || []);
         setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
         setPendingSend(null);
       } catch (error) {
@@ -457,7 +465,10 @@ export default function App() {
 
   function returnPendingToDraft() {
     if (!pendingSend) return;
-    setDraft((current) => current || pendingSend.text);
+    if (!draft) {
+      setDraft(pendingSend.text);
+      setDraftMentions(pendingSend.mentions || []);
+    }
     setPendingSend(null);
   }
 
@@ -554,9 +565,12 @@ export default function App() {
             ) : null}
             <ChatComposer
               draft={draft}
+              mentions={draftMentions}
+              mentionCandidates={roomMentionCandidates(room.humans || [])}
               style={human.style}
               sendDisabled={!connected}
               onDraftChange={setDraft}
+              onMentionsChange={setDraftMentions}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}
             />

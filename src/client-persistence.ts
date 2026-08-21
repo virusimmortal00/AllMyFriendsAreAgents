@@ -1,6 +1,9 @@
+import type { MessageMention } from "../shared/mentions";
+
 export interface PendingSend {
   clientMessageId: string;
   text: string;
+  mentions?: MessageMention[];
 }
 
 function key(kind: "draft" | "pending-send", humanId: string) {

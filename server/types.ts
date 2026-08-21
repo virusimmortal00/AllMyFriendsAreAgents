@@ -3,6 +3,7 @@ import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 import type { AgentHealth } from "./agent-health.js";
 import type { ServerIdentity } from "../shared/protocol.js";
+import type { MessageMention } from "../shared/mentions.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -18,6 +19,7 @@ export interface RoomMessage {
   humanId?: string;
   speakerName?: string;
   clientMessageId?: string;
+  mentions?: MessageMention[];
 }
 
 export interface HumanPresence {

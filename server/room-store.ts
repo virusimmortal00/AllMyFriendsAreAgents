@@ -26,6 +26,7 @@ import type {
   RoomRepository,
 } from "./storage/room-repository.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "./types.js";
+import type { MessageMention } from "../shared/mentions.js";
 import type {
   AddImprovementMilestoneResult,
   ImprovementLedgerRecords,
@@ -216,7 +217,7 @@ export class RoomStore implements RoomRepository {
     kind: RoomMessage["kind"] = "chat",
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string; clientMessageId?: string },
+    human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[] },
   ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
@@ -232,6 +233,7 @@ export class RoomStore implements RoomRepository {
       ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
       ...(human ? { humanId: human.id, speakerName: human.name } : {}),
       ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
+      ...(human?.mentions?.length ? { mentions: structuredClone(human.mentions) } : {}),
     };
     this.state.messages.push(message);
     await this.save();

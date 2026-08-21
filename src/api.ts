@@ -2,6 +2,7 @@ import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, He
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ServerIdentity } from "../shared/protocol";
+import type { MessageMention } from "../shared/mentions";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -68,10 +69,10 @@ export async function updateMyStyle(humanId: string, style: ChatStyle) {
   });
 }
 
-export async function sendMessage(humanId: string, text: string, clientMessageId: string): Promise<RoomState> {
+export async function sendMessage(humanId: string, text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<RoomState> {
   return request("/api/messages", {
     method: "POST",
-    body: JSON.stringify({ humanId, text, clientMessageId }),
+    body: JSON.stringify({ humanId, text, clientMessageId, mentions }),
   }).then((response) => response.json());
 }
 

@@ -9,6 +9,7 @@ import type {
   ImprovementState,
 } from "../../shared/improvement-domain.js";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "../types.js";
+import type { MessageMention } from "../../shared/mentions.js";
 import type {
   AddImprovementMilestoneResult,
   ImprovementLedgerRecords,
@@ -72,7 +73,7 @@ export interface RoomRepository {
     kind?: RoomMessage["kind"],
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string; clientMessageId?: string },
+    human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[] },
   ): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
   changeTopic(topic: string): Promise<void>;
