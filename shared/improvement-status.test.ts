@@ -94,4 +94,14 @@ describe("versioned six-field improvement status contract", () => {
     const status = fullyPopulated();
     expect(parseImprovementStatus(serializeImprovementStatus(status))).toEqual(status);
   });
+
+  it("records an explicit unpublished upstream state without conflating local implementation", () => {
+    const status: ImprovementStatusContract = {
+      ...emptyImprovementStatus(),
+      upstreamPublication: { state: "UNPUBLISHED" },
+    };
+    expect(validateImprovementStatus(status)).toBeNull();
+    expect(parseImprovementStatus(serializeImprovementStatus(status)).upstreamPublication)
+      .toEqual({ state: "UNPUBLISHED" });
+  });
 });

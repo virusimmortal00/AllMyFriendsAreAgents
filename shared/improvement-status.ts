@@ -41,7 +41,7 @@ export type IndependentAcceptanceStatus = UnresolvedStatus | {
   readonly evidence: readonly StatusEvidenceReference[];
 };
 
-export type UpstreamPublicationStatus = UnresolvedStatus | {
+export type UpstreamPublicationStatus = UnresolvedStatus | { readonly state: "UNPUBLISHED" } | {
   readonly state: "PUBLISHED";
   readonly revision: string;
   readonly location: string;
@@ -181,6 +181,7 @@ function validateAcceptance(value: unknown): string | null {
 
 function validatePublication(value: unknown): string | null {
   if (isUnresolved(value)) return null;
+  if (isRecord(value) && value.state === "UNPUBLISHED" && hasExactKeys(value, ["state"])) return null;
   if (!isRecord(value) || value.state !== "PUBLISHED" || !hasExactKeys(value, ["state", "revision", "location"])) {
     return "Publication must be unresolved or contain only upstream revision and location";
   }

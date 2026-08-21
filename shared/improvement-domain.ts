@@ -275,6 +275,19 @@ export function applyImprovementChange(
   if ("idempotencyKey" in change && workClaim.history.some((event) => event.idempotencyKey === change.idempotencyKey)) {
     return { kind: "accepted", improvement };
   }
+  if (change.kind === "SET_RISK" && change.risk === improvement.risk) {
+    return { kind: "accepted", improvement };
+  }
+  if (change.kind === "SET_STATUS_FIELD") {
+    try {
+      const candidate = applyImprovementStatusTransition(statusContract, change.transition);
+      if (JSON.stringify(candidate) === JSON.stringify(statusContract)) {
+        return { kind: "accepted", improvement };
+      }
+    } catch (error) {
+      return { kind: "rejected", reason: error instanceof Error ? error.message : "Invalid status transition" };
+    }
+  }
 
   if (change.kind === "TRANSITION") {
     const invalid = validateTransition(improvement, expectedRevision, change.to, actor);

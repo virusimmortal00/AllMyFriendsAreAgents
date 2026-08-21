@@ -11,7 +11,7 @@ export async function openRoomRepository(
   }
   if (configuration.backend === "sqlite") {
     const { SqliteRoomRepository } = await import("./sqlite-room-repository.js");
-    return SqliteRoomRepository.open(projectRoot, configuration.databasePath);
+    return SqliteRoomRepository.open(projectRoot, configuration.databasePath, { seedImprovements: true });
   }
   throw new Error(
     "postgres storage is configured but its adapter is not implemented yet. "

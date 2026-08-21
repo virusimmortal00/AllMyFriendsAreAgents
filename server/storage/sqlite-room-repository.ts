@@ -14,6 +14,7 @@ import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId,
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
 import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, normalizeStoredImprovement, paginateImprovements } from "./improvement-storage.js";
+import { seedWaveOneImprovements } from "./improvement-ledger.js";
 import type {
   CreateImprovementResult,
   EmergencyStopChangeResult,
@@ -161,7 +162,7 @@ export class SqliteRoomRepository implements RoomRepository {
   static async open(
     projectRoot: string,
     databasePath: string,
-    options: { initializeDefaultRoom?: boolean } = {},
+    options: { initializeDefaultRoom?: boolean; seedImprovements?: boolean } = {},
   ) {
     const databaseDirectory = path.dirname(databasePath);
     await mkdir(databaseDirectory, { recursive: true, mode: 0o700 });
@@ -178,6 +179,9 @@ export class SqliteRoomRepository implements RoomRepository {
     } else if (repository.hasPersistedRoom()) {
       repository.state = repository.loadState();
       repository.setStatusSync("idle");
+    }
+    if (options.seedImprovements && repository.hasPersistedRoom()) {
+      seedWaveOneImprovements(database, DEFAULT_ROOM_ID);
     }
     return repository;
   }
@@ -336,8 +340,9 @@ export class SqliteRoomRepository implements RoomRepository {
       const snapshot = structuredClone(improvement);
       this.database.prepare(`
         INSERT INTO canonical_improvements(
-          room_id, id, revision, state, risk, author_id, created_at, updated_at, projection_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          room_id, id, revision, state, risk, author_id, created_at, updated_at,
+          projection_json, status_contract_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         DEFAULT_ROOM_ID,
         snapshot.id,
@@ -348,6 +353,7 @@ export class SqliteRoomRepository implements RoomRepository {
         snapshot.createdAt,
         snapshot.updatedAt,
         JSON.stringify(snapshot),
+        JSON.stringify(snapshot.statusContract),
       );
       this.insertImprovementEvent({
         improvementId: snapshot.id,
@@ -357,6 +363,7 @@ export class SqliteRoomRepository implements RoomRepository {
         change: "CREATE",
         snapshot,
       });
+      this.insertImprovementLedgerRevision(snapshot, snapshot.authorId, "CREATED", "revision-1");
       this.database.exec("COMMIT");
       return { kind: "created", improvement: structuredClone(snapshot) };
     } catch (error) {
@@ -401,10 +408,15 @@ export class SqliteRoomRepository implements RoomRepository {
         this.database.exec("ROLLBACK");
         return result;
       }
+      if (result.improvement.revision === current.revision) {
+        this.database.exec("ROLLBACK");
+        return { kind: "accepted" as const, improvement: structuredClone(current) };
+      }
       const snapshot = result.improvement;
       const updated = this.database.prepare(`
         UPDATE canonical_improvements SET
-          revision = ?, state = ?, risk = ?, author_id = ?, updated_at = ?, projection_json = ?
+          revision = ?, state = ?, risk = ?, author_id = ?, updated_at = ?, projection_json = ?,
+          status_contract_json = ?
         WHERE room_id = ? AND id = ? AND revision = ?
       `).run(
         snapshot.revision,
@@ -413,6 +425,7 @@ export class SqliteRoomRepository implements RoomRepository {
         snapshot.authorId,
         snapshot.updatedAt,
         JSON.stringify(snapshot),
+        JSON.stringify(snapshot.statusContract),
         DEFAULT_ROOM_ID,
         id,
         expectedRevision,
@@ -425,6 +438,7 @@ export class SqliteRoomRepository implements RoomRepository {
         return { kind: "conflict" as const, expectedRevision, actualRevision: actual.revision };
       }
       this.insertImprovementEvent({ improvementId: id, revision: snapshot.revision, actorId: actor.id, at: now, change, snapshot });
+      this.insertImprovementLedgerRevision(snapshot, actor.id, "REVISED", `revision-${snapshot.revision}`, change);
       this.database.exec("COMMIT");
       return { kind: "accepted" as const, improvement: structuredClone(snapshot) };
     } catch (error) {
@@ -620,6 +634,43 @@ export class SqliteRoomRepository implements RoomRepository {
       event.at,
       JSON.stringify(event.change),
       JSON.stringify(event.snapshot),
+    );
+  }
+
+  private insertImprovementLedgerRevision(
+    snapshot: Improvement,
+    actorId: string,
+    eventKind: "CREATED" | "REVISED",
+    eventId: string,
+    details: unknown = "CREATE",
+  ) {
+    const snapshotJson = JSON.stringify(snapshot);
+    this.database.prepare(`
+      INSERT INTO canonical_improvement_revisions(
+        room_id, improvement_id, revision, lifecycle_state, status_contract_json, snapshot_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      DEFAULT_ROOM_ID,
+      snapshot.id,
+      snapshot.revision,
+      snapshot.state,
+      JSON.stringify(snapshot.statusContract),
+      snapshotJson,
+      snapshot.updatedAt,
+    );
+    this.database.prepare(`
+      INSERT INTO canonical_improvement_audit_history(
+        room_id, improvement_id, event_id, revision, event_kind, actor_id, occurred_at, details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      DEFAULT_ROOM_ID,
+      snapshot.id,
+      eventId,
+      snapshot.revision,
+      eventKind,
+      actorId,
+      snapshot.updatedAt,
+      JSON.stringify(details),
     );
   }
 }

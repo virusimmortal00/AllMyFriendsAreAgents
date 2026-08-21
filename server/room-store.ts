@@ -316,6 +316,9 @@ export class RoomStore implements RoomRepository {
       if (!current) return { result: { kind: "rejected" as const, reason: `Improvement ${id} does not exist` } };
       const result = applyDomainImprovementChange(current, expectedRevision, change, actor, now);
       if (result.kind !== "accepted") return { result };
+      if (result.improvement.revision === current.revision) {
+        return { result: { kind: "accepted" as const, improvement: structuredClone(current) } };
+      }
       const snapshot = structuredClone(result.improvement);
       const event: ImprovementEvent = {
         improvementId: id,

@@ -158,6 +158,29 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
     }
   });
 
+  it("advances revisions for meaningful changes but not semantic no-ops", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-improvement-contract-"));
+    temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      await fixture.repository.createImprovement(initial("imp-no-op"));
+      const unchanged = await fixture.repository.applyImprovementChange(
+        "imp-no-op", 1, { kind: "SET_RISK", risk: "LOW" }, author, "2026-08-21T12:01:00.000Z",
+      );
+      expect(unchanged).toMatchObject({ kind: "accepted", improvement: { revision: 1 } });
+      expect(await fixture.repository.listImprovementEvents("imp-no-op")).toHaveLength(1);
+
+      const changed = await fixture.repository.applyImprovementChange(
+        "imp-no-op", 1, { kind: "SET_RISK", risk: "GUARDED" }, author, "2026-08-21T12:02:00.000Z",
+      );
+      expect(changed).toMatchObject({ kind: "accepted", improvement: { revision: 2, risk: "GUARDED" } });
+      expect((await fixture.repository.listImprovementEvents("imp-no-op")).map(({ revision }) => revision))
+        .toEqual([1, 2]);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("survives reopen with history and emergency-stop state without changing room data", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-improvement-contract-"));
     temporaryDirectories.push(root);
