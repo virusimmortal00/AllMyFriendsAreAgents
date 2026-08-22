@@ -14,7 +14,10 @@ export type DeveloperCapability =
   | "IMPROVEMENT_EVIDENCE"
   | "IMPROVEMENT_REVIEW"
   | "IMPROVEMENT_TRANSITION"
-  | "ASSIGNMENT_WRITE";
+  | "ASSIGNMENT_WRITE"
+  | "TASK_READ"
+  | "TASK_PROPOSE"
+  | "TASK_UPDATE";
 
 export type DeveloperPresence = "SLEEPING" | "AVAILABLE" | "WORKING" | "COOLING_DOWN" | "OFFLINE";
 

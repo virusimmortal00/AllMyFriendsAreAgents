@@ -17,6 +17,7 @@ import { roomMentionCandidates } from "../shared/mentions";
 import { useDismissibleLayer, useModalOverlay } from "./overlay";
 import { reconcileRoomEvent } from "./room-reconciliation";
 import type { RoomProtocolPosition } from "../shared/protocol";
+import { Tasks, TasksMenuControl } from "./tasks";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -135,6 +136,7 @@ export default function App() {
   const [workshopError, setWorkshopError] = useState("");
   const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
+  const [tasksView, setTasksView] = useState(false);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -669,15 +671,16 @@ export default function App() {
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "room"}
-            onClick={() => { setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
           >Room</button>
           <button
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "people"}
-            onClick={() => { setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
           <button ref={changeNameTrigger} type="button" aria-haspopup="dialog" aria-expanded={changeNameOpen} onClick={() => {
+            setTasksView(false);
             composer.current?.flush();
             setChangeNameConsequences({
               hasDraft: Boolean(loadDraftSnapshot(window.localStorage, human.id).text),
@@ -685,9 +688,10 @@ export default function App() {
             });
             setChangeNameOpen(true);
           }}>Change name</button>
-          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
+          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => { setTasksView(false); navigateImprovements(improvementsView ? null : { view: "list", scope: "active" }); }} />
+          <TasksMenuControl active={tasksView} onOpen={() => { setTasksView((open) => !open); navigateImprovements(null); setMobilePanel(null); }} />
           <div className="menu-wrap" ref={actionsMenu}>
-            <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); actionsMenuFocusLast.current = event.key === "ArrowUp"; setMenuOpen(true); } }} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
+            <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); actionsMenuFocusLast.current = event.key === "ArrowUp"; setMenuOpen(true); } }} onClick={() => { setTasksView(false); setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu" role="menu" aria-label="Actions" onKeyDown={onActionsMenuKeyDown}>
                 <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
@@ -701,7 +705,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className="workspace">
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onRoomNameChange={changeRoomName} onTopicChange={changeTopic} onConversationEnergyChange={changeConversationEnergy} /></div></> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} onMagnificationReset={resetTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />

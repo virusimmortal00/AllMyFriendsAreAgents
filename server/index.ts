@@ -29,6 +29,7 @@ import { projectParticipantImprovementManifest, resolveImprovementReferences } f
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
+import { HumanTaskSessions, registerTaskRoutes, setHumanTaskSession } from "./task-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -55,6 +56,7 @@ const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
+const humanTaskSessions = new HumanTaskSessions();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const assignmentLifecycle = new AssignmentLifecycleService(
@@ -449,11 +451,15 @@ app.get("/api/events", (request, response) => {
 
 app.post("/api/humans", (request, response) => {
   try {
-    response.status(201).json(humans.join(request.body || {}));
+    const human = humans.join(request.body || {});
+    setHumanTaskSession(response, humanTaskSessions, human.id);
+    response.status(201).json(human);
   } catch (error) {
     response.status(400).json({ error: error instanceof Error ? error.message : "A valid name is required." });
   }
 });
+
+registerTaskRoutes({ app, store, humans, sessions: humanTaskSessions, developerTeam, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;
