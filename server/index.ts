@@ -28,7 +28,7 @@ import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
-import { HumanTaskSessions, registerTaskRoutes, setHumanTaskSession } from "./task-api.js";
+import { HumanTaskSessions, joinHumanWithTaskSession, registerTaskRoutes } from "./task-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -444,9 +444,7 @@ app.get("/api/events", (request, response) => {
 
 app.post("/api/humans", (request, response) => {
   try {
-    const human = humans.join(request.body || {});
-    setHumanTaskSession(response, humanTaskSessions, human.id);
-    response.status(201).json(human);
+    response.status(201).json(joinHumanWithTaskSession(request, response, humans, humanTaskSessions));
   } catch (error) {
     response.status(400).json({ error: error instanceof Error ? error.message : "A valid name is required." });
   }

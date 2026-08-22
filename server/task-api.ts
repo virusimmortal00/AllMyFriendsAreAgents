@@ -28,6 +28,14 @@ export function setHumanTaskSession(response: express.Response, sessions: HumanT
   response.setHeader("Set-Cookie", `${HUMAN_TASK_COOKIE}=${encodeURIComponent(sessions.issue(humanId))}; Path=/api; HttpOnly; SameSite=Strict`);
 }
 
+/** A client may resume only the identity already bound to its opaque server session. */
+export function joinHumanWithTaskSession(request: express.Request, response: express.Response, humans: HumanPresenceRegistry, sessions: HumanTaskSessions) {
+  const sessionHumanId = sessions.humanId(request.header("cookie"));
+  const human = humans.join({ ...(request.body || {}), id: sessionHumanId });
+  setHumanTaskSession(response, sessions, human.id);
+  return human;
+}
+
 function containsForbiddenIdentity(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   return Object.entries(value).some(([key, nested]) => forbiddenKeys.has(key) || containsForbiddenIdentity(nested));
@@ -62,10 +70,16 @@ export function registerTaskRoutes(input: {
     return id && humans.get(id) ? { id, roomRole: "owner" } : null;
   };
   const requireHuman = (request: express.Request, response: express.Response) => {
-    const actor = humanActor(request);
+    const actor = response.locals.taskActor as TaskActor | undefined || humanActor(request);
     if (!actor) response.status(401).json({ error: "Join the room before managing tasks." });
     return actor;
   };
+  app.use("/api/tasks", (request, response, next) => {
+    const actor = humanActor(request);
+    if (!actor) return response.status(401).json({ error: "Join the room before managing tasks." });
+    response.locals.taskActor = actor;
+    next();
+  });
   const rejectIdentity = (request: express.Request, response: express.Response) => {
     if (!containsForbiddenIdentity(request.body)) return false;
     response.status(400).json({ error: "Room, actor, attribution, and developer-role identity are server-derived." });
@@ -134,7 +148,7 @@ export function registerTaskRoutes(input: {
   });
   app.post("/api/tasks/:taskId/complete", async (request, response) => {
     const actor = requireHuman(request, response); if (!actor || rejectIdentity(request, response)) return;
-    let revision = expectedRevision(request.body?.expectedRevision);
+    const revision = expectedRevision(request.body?.expectedRevision);
     if (!revision) return response.status(400).json({ error: "A positive expectedRevision is required." });
     const evidence = request.body?.evidence;
     if (!evidence || typeof evidence.targetId !== "string") return response.status(400).json({ error: "Completion evidence is required." });
@@ -150,13 +164,7 @@ export function registerTaskRoutes(input: {
     const changes: TaskChange[] = [{ kind: "append_reference", reference: { id: evidence.id || randomUUID(), kind: "evidence", targetId: evidence.targetId, uri: evidence.uri, contentHash: evidence.contentHash } }];
     for (const disposition of dispositions) changes.push({ kind: "append_reference", reference: { id: disposition.id || randomUUID(), kind: "disposition", targetId: disposition.targetId, dispositionFor: disposition.dispositionFor } });
     changes.push({ kind: "transition", to: "completed" });
-    let last;
-    for (const change of changes) {
-      last = await store.applyTaskChange(identity(String(request.params.taskId)), revision, change, actor, new Date().toISOString());
-      if (last.kind !== "accepted") return sendResult(response, last, broadcast);
-      revision = last.task.revision;
-    }
-    broadcast(); return response.json(last!.task);
+    return sendResult(response, await store.applyTaskChanges(identity(String(request.params.taskId)), revision, changes, actor, new Date().toISOString()), broadcast);
   });
   app.post("/api/tasks/:taskId/fork", async (request, response) => {
     const actor = requireHuman(request, response); if (!actor || rejectIdentity(request, response)) return;

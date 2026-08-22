@@ -65,4 +65,33 @@ describe.each(factories)("%s task repository", (_backend, makeFixture) => {
       expect(await fixture.repository.getTaskDependencies(id("b"))).toMatchObject({ dependencies: [id("c")], dependents: [id("a")] });
     } finally { fixture.close(); }
   });
+
+  it("commits multi-change completion atomically and rolls back every staged event on rejection", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-task-contract-")); temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      const identity = { roomId: DEFAULT_ROOM_ID, taskId: "atomic" };
+      await fixture.repository.createTask(initial("atomic"));
+      let revision = 1;
+      for (const to of ["proposed", "approved", "active"] as const) {
+        const result = await fixture.repository.applyTaskChange(identity, revision, { kind: "transition", to }, owner, "2026-08-21T12:01:00.000Z");
+        expect(result.kind).toBe("accepted"); if (result.kind === "accepted") revision = result.task.revision;
+      }
+      const beforeEvents = await fixture.repository.listTaskEvents(identity);
+      const rejected = await fixture.repository.applyTaskChanges(identity, revision, [
+        { kind: "append_reference", reference: { id: "evidence-rejected", kind: "evidence", targetId: "sha256:rejected" } },
+        { kind: "transition", to: "archived" },
+      ], owner, "2026-08-21T12:02:00.000Z");
+      expect(rejected.kind).toBe("rejected");
+      expect(await fixture.repository.getTask(identity)).toMatchObject({ revision, state: "active", references: [] });
+      expect(await fixture.repository.listTaskEvents(identity)).toHaveLength(beforeEvents.length);
+
+      const accepted = await fixture.repository.applyTaskChanges(identity, revision, [
+        { kind: "append_reference", reference: { id: "evidence-ok", kind: "evidence", targetId: "sha256:ok" } },
+        { kind: "transition", to: "completed" },
+      ], owner, "2026-08-21T12:03:00.000Z");
+      expect(accepted).toMatchObject({ kind: "accepted", task: { revision: revision + 2, state: "completed" } });
+      expect((await fixture.repository.listTaskEvents(identity)).slice(-2).map(({ revision: eventRevision }) => eventRevision)).toEqual([revision + 1, revision + 2]);
+    } finally { fixture.close(); }
+  });
 });

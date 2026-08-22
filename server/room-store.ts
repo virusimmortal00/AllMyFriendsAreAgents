@@ -568,20 +568,30 @@ export class RoomStore implements RoomRepository {
   }
 
   async applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    return this.applyTaskChanges(identity, expectedRevision, [change], actor, now);
+  }
+
+  async applyTaskChanges(identity: TaskIdentity, expectedRevision: number, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<TaskChangeResult> {
     return this.mutateTasks<TaskChangeResult>((state) => {
-      const current = state.tasks[taskKey(identity)];
+      let current = state.tasks[taskKey(identity)];
       if (!current) return { result: { kind: "rejected" as const, reason: `Task ${identity.taskId} does not exist in room ${identity.roomId}` } };
-      if (change.kind === "add_dependency" || change.kind === "add_blocker") {
-        if (!state.tasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
-        if (change.kind === "add_dependency" && createsDependencyCycle(state.tasks, identity, change.task)) {
-          return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
+      if (!changes.length) return { result: { kind: "rejected" as const, reason: "At least one task change is required" } };
+      const events: TaskEvent[] = [];
+      let stagedTasks = state.tasks;
+      let revision = expectedRevision;
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!stagedTasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
+          if (change.kind === "add_dependency" && createsDependencyCycle(stagedTasks, identity, change.task)) return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
         }
+        const result = applyDomainTaskChange(current, revision, change, actor, now);
+        if (result.kind !== "accepted") return { result };
+        current = structuredClone(result.task);
+        revision = current.revision;
+        stagedTasks = { ...stagedTasks, [taskKey(identity)]: current };
+        events.push({ roomId: identity.roomId, taskId: identity.taskId, revision: current.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot: current });
       }
-      const result = applyDomainTaskChange(current, expectedRevision, change, actor, now);
-      if (result.kind !== "accepted") return { result };
-      const snapshot = structuredClone(result.task);
-      const event: TaskEvent = { roomId: identity.roomId, taskId: identity.taskId, revision: snapshot.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot };
-      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [taskKey(identity)]: snapshot }, events: [...state.events, event] }, result: { kind: "accepted" as const, task: structuredClone(snapshot) } };
+      return { next: { schemaVersion: 1, tasks: stagedTasks, events: [...state.events, ...events] }, result: { kind: "accepted" as const, task: structuredClone(current) } };
     });
   }
 

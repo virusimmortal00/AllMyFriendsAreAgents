@@ -775,20 +775,30 @@ export class SqliteRoomRepository implements RoomRepository {
   }
 
   async applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    return this.applyTaskChanges(identity, expectedRevision, [change], actor, now);
+  }
+
+  async applyTaskChanges(identity: TaskIdentity, expectedRevision: number, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<TaskChangeResult> {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const row = this.taskRow(identity);
       if (!row) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Task ${identity.taskId} does not exist in room ${identity.roomId}` }; }
-      const current = parseJson<Task>(row.projection_json, undefined as never);
-      if (change.kind === "add_dependency" || change.kind === "add_blocker") {
-        if (!this.taskRow(change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` }; }
-        if (change.kind === "add_dependency" && this.createsTaskDependencyCycle(identity, change.task)) {
-          this.database.exec("ROLLBACK"); return { kind: "rejected", reason: "Task dependency would create a direct or transitive cycle" };
+      let current = parseJson<Task>(row.projection_json, undefined as never);
+      if (!changes.length) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: "At least one task change is required" }; }
+      const events: Array<{ change: TaskChange; snapshot: Task }> = [];
+      let revision = expectedRevision;
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!this.taskRow(change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` }; }
+          if (change.kind === "add_dependency" && this.createsTaskDependencyCycle(identity, change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: "Task dependency would create a direct or transitive cycle" }; }
         }
+        const result = applyDomainTaskChange(current, revision, change, actor, now);
+        if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
+        current = result.task;
+        revision = current.revision;
+        events.push({ change, snapshot: current });
       }
-      const result = applyDomainTaskChange(current, expectedRevision, change, actor, now);
-      if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
-      const snapshot = result.task;
+      const snapshot = current;
       const updated = this.database.prepare(`UPDATE canonical_tasks SET revision = ?, lifecycle_state = ?, title = ?, description = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND task_id = ? AND revision = ?`)
         .run(snapshot.revision, snapshot.state, snapshot.title, snapshot.description, JSON.stringify(snapshot), snapshot.updatedAt, identity.roomId, identity.taskId, expectedRevision);
       if (updated.changes !== 1) {
@@ -796,7 +806,7 @@ export class SqliteRoomRepository implements RoomRepository {
         this.database.exec("ROLLBACK"); return { kind: "conflict", expectedRevision, actualRevision: actual.revision };
       }
       this.replaceTaskLinks(snapshot);
-      this.insertTaskEvent({ roomId: identity.roomId, taskId: identity.taskId, revision: snapshot.revision, actorId: actor.id, at: now, change, snapshot });
+      for (const event of events) this.insertTaskEvent({ roomId: identity.roomId, taskId: identity.taskId, revision: event.snapshot.revision, actorId: actor.id, at: now, change: event.change, snapshot: event.snapshot });
       this.database.exec("COMMIT");
       return { kind: "accepted", task: structuredClone(snapshot) };
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
