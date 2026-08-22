@@ -21,22 +21,40 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
     await copyFile(sourcePath, path.join(normalizationDirectory, "room.json"));
     await copyFile(path.join(options.sourceStateDirectory, "assignments.json"), path.join(normalizationDirectory, "assignments.json"))
       .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+    await copyFile(path.join(options.sourceStateDirectory, "tasks.json"), path.join(normalizationDirectory, "tasks.json"))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     const legacyStore = await RoomStore.open(options.projectRoot, normalizationDirectory);
     const state = legacyStore.snapshot();
     const assignments = await legacyStore.listAssignments();
+    const tasks = (await legacyStore.listTasks()).items;
+    const taskEvents = (await Promise.all(tasks.map((task) => legacyStore.listTaskEvents(task)))).flat();
     const sqliteStore = await SqliteRoomRepository.open(options.projectRoot, options.databasePath, {
       initializeDefaultRoom: false,
     });
     try {
-      sqliteStore.replaceState(state, { overwrite: options.overwrite });
+      if (!sqliteStore.hasPersistedRoom() || options.overwrite) {
+        sqliteStore.replaceState(state, { overwrite: options.overwrite });
+      } else if (!sameRoomState(sqliteStore.snapshot(), state)) {
+        throw new Error("The SQLite database already contains a different default room. Pass overwrite=true to replace it.");
+      }
       for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
+      sqliteStore.importTasks(tasks, taskEvents);
     } finally {
       sqliteStore.close();
     }
-    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length };
+    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, tasks: tasks.length, taskEvents: taskEvents.length };
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }
+}
+
+function sameRoomState(left: ReturnType<RoomStore["snapshot"]>, right: ReturnType<RoomStore["snapshot"]>) {
+  return JSON.stringify(left.messages) === JSON.stringify(right.messages)
+    && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
+    && JSON.stringify(left.settings) === JSON.stringify(right.settings)
+    && left.status === right.status
+    && left.activeAgent === right.activeAgent
+    && left.error === right.error;
 }
 
 function argument(name: string) {
@@ -49,7 +67,7 @@ async function main() {
   const databasePath = path.resolve(argument("database") || path.join(sourceStateDirectory, "amfaa.sqlite"));
   const overwrite = process.argv.includes("--overwrite");
   const imported = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite });
-  console.log(`Imported ${imported.messages} messages, ${imported.sessions} agent sessions, and ${imported.assignments} assignments into ${databasePath}`);
+  console.log(`Imported ${imported.messages} messages, ${imported.sessions} agent sessions, ${imported.assignments} assignments, and ${imported.tasks} tasks into ${databasePath}`);
   console.log("The source JSON file was not modified. Set ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite only after verification.");
 }
 

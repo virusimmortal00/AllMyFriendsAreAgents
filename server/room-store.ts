@@ -34,6 +34,17 @@ import type {
   StoredImprovementMilestone,
 } from "../shared/governed-improvements.js";
 import { normalizeAssignmentRecord, type AssignmentRecord } from "./assignment-record.js";
+import {
+  applyTaskChange as applyDomainTaskChange,
+  forkTask as forkDomainTask,
+  type Task,
+  type TaskActor,
+  type TaskChange,
+  type TaskChangeResult,
+  type TaskIdentity,
+} from "../shared/task-domain.js";
+import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTaskState } from "./storage/task-storage.js";
+import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -109,21 +120,26 @@ export class RoomStore implements RoomRepository {
   readonly statePath: string;
   readonly improvementsPath: string;
   readonly assignmentsPath: string;
+  readonly tasksPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
   private improvementQueue: Promise<void> = Promise.resolve();
   private assignmentQueue: Promise<void> = Promise.resolve();
+  private taskQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
+  private taskState: JsonTaskState;
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[]) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.assignmentsPath = path.join(stateDirectory, "assignments.json");
+    this.tasksPath = path.join(stateDirectory, "tasks.json");
     this.state = state;
     this.improvementState = improvementState;
     this.assignments = assignments;
+    this.taskState = taskState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -132,6 +148,7 @@ export class RoomStore implements RoomRepository {
     const statePath = path.join(stateDirectory, "room.json");
     const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
+    const tasksPath = path.join(stateDirectory, "tasks.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -147,6 +164,12 @@ export class RoomStore implements RoomRepository {
       })
       .catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return [];
+        throw error;
+      });
+    const taskState = await readFile(tasksPath, "utf8")
+      .then((contents) => normalizeJsonTaskState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return emptyJsonTaskState();
         throw error;
       });
 
@@ -202,7 +225,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -218,7 +241,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState);
       await store.save();
       return store;
     }
@@ -519,6 +542,78 @@ export class RoomStore implements RoomRepository {
     await operation;
   }
 
+  async createTask(task: Task): Promise<CreateTaskResult> {
+    if (task.roomId !== CANONICAL_ROOM_ID) return { kind: "rejected", reason: `Room repository only owns room ${CANONICAL_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create") {
+      return { kind: "rejected", reason: "A newly persisted task must be a canonical revision 1 task" };
+    }
+    return this.mutateTasks<CreateTaskResult>((state) => {
+      const key = taskKey(task);
+      if (state.tasks[key]) return { result: { kind: "conflict" as const, identity: { roomId: task.roomId, taskId: task.taskId } } };
+      const snapshot = structuredClone(task);
+      const event: TaskEvent = { roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: task.attribution[0]!.actorId, at: task.createdAt, change: "create", snapshot };
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [key]: snapshot }, events: [...state.events, event] }, result: { kind: "created" as const, task: structuredClone(snapshot) } };
+    });
+  }
+
+  async getTask(identity: TaskIdentity) {
+    await this.taskQueue;
+    const task = this.taskState.tasks[taskKey(identity)];
+    return task ? structuredClone(task) : undefined;
+  }
+
+  async listTasks(query: TaskListQuery = {}) {
+    await this.taskQueue;
+    return paginateTasks(Object.values(this.taskState.tasks), query);
+  }
+
+  async applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    return this.mutateTasks<TaskChangeResult>((state) => {
+      const current = state.tasks[taskKey(identity)];
+      if (!current) return { result: { kind: "rejected" as const, reason: `Task ${identity.taskId} does not exist in room ${identity.roomId}` } };
+      if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+        if (!state.tasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
+        if (change.kind === "add_dependency" && createsDependencyCycle(state.tasks, identity, change.task)) {
+          return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
+        }
+      }
+      const result = applyDomainTaskChange(current, expectedRevision, change, actor, now);
+      if (result.kind !== "accepted") return { result };
+      const snapshot = structuredClone(result.task);
+      const event: TaskEvent = { roomId: identity.roomId, taskId: identity.taskId, revision: snapshot.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot };
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [taskKey(identity)]: snapshot }, events: [...state.events, event] }, result: { kind: "accepted" as const, task: structuredClone(snapshot) } };
+    });
+  }
+
+  async listTaskEvents(identity: TaskIdentity, options: { readonly afterRevision?: number; readonly limit?: number } = {}) {
+    await this.taskQueue;
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
+    return structuredClone(this.taskState.events.filter((event) => event.roomId === identity.roomId && event.taskId === identity.taskId && event.revision > (options.afterRevision ?? 0)).sort((a, b) => a.revision - b.revision).slice(0, limit));
+  }
+
+  async getTaskDependencies(identity: TaskIdentity) {
+    await this.taskQueue;
+    const task = this.taskState.tasks[taskKey(identity)];
+    if (!task) return undefined;
+    const dependents = Object.values(this.taskState.tasks).filter((candidate) => candidate.dependencies.some((dependency) => dependency.roomId === identity.roomId && dependency.taskId === identity.taskId)).map(({ roomId, taskId }) => ({ roomId, taskId }));
+    return { dependencies: structuredClone(task.dependencies), blockers: structuredClone(task.blockers), dependents };
+  }
+
+  async forkTask(source: TaskIdentity, expectedRevision: number, newTaskId: string, actor: TaskActor, now: string, title?: string): Promise<TaskChangeResult> {
+    return this.mutateTasks<TaskChangeResult>((state) => {
+      const current = state.tasks[taskKey(source)];
+      if (!current) return { result: { kind: "rejected" as const, reason: `Task ${source.taskId} does not exist in room ${source.roomId}` } };
+      if (current.revision !== expectedRevision) return { result: { kind: "conflict" as const, expectedRevision, actualRevision: current.revision } };
+      const identity = { roomId: source.roomId, taskId: newTaskId };
+      if (state.tasks[taskKey(identity)]) return { result: { kind: "rejected" as const, reason: `Task ${newTaskId} already exists` } };
+      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, title, actor, now });
+      if (result.kind !== "accepted") return { result };
+      const snapshot = structuredClone(result.task);
+      const event: TaskEvent = { roomId: snapshot.roomId, taskId: snapshot.taskId, revision: 1, actorId: actor.id, at: now, change: { kind: "fork", source }, snapshot };
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [taskKey(snapshot)]: snapshot }, events: [...state.events, event] }, result: { kind: "accepted" as const, task: structuredClone(snapshot) } };
+    });
+  }
+
   private async mutateImprovements<T>(
     mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
   ): Promise<T> {
@@ -548,6 +643,27 @@ export class RoomStore implements RoomRepository {
     return result;
   }
 
+  private async mutateTasks<T>(mutation: (state: JsonTaskState) => { next?: JsonTaskState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void;
+    let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.taskQueue.then(async () => {
+      try {
+        const mutationResult = mutation(this.taskState);
+        if (mutationResult.next) {
+          const temporaryPath = `${this.tasksPath}.tmp`;
+          await writeFile(temporaryPath, `${JSON.stringify(mutationResult.next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+          await rename(temporaryPath, this.tasksPath);
+          await chmod(this.tasksPath, 0o600);
+          this.taskState = mutationResult.next;
+        }
+        resolveResult(mutationResult.result);
+      } catch (error) { rejectResult(error); throw error; }
+    });
+    this.taskQueue = operation.catch(() => undefined);
+    return result;
+  }
+
   private async save() {
     const operation = this.saveQueue.then(async () => {
       const temporaryPath = `${this.statePath}.tmp`;
@@ -558,6 +674,21 @@ export class RoomStore implements RoomRepository {
     this.saveQueue = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }
+
+function createsDependencyCycle(tasks: Record<string, Task>, source: TaskIdentity, target: TaskIdentity) {
+  if (source.roomId !== target.roomId || source.taskId === target.taskId) return true;
+  const visited = new Set<string>();
+  const visit = (identity: TaskIdentity): boolean => {
+    const key = taskKey(identity);
+    if (key === taskKey(source)) return true;
+    if (visited.has(key)) return false;
+    visited.add(key);
+    return (tasks[key]?.dependencies ?? []).some(visit);
+  };
+  return visit(target);
 }
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {

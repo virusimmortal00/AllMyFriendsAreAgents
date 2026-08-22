@@ -33,8 +33,19 @@ import type {
 } from "../../shared/governed-improvements.js";
 import type { ImprovementStatusContract } from "../../shared/improvement-status.js";
 import { normalizeAssignmentRecord, type AssignmentRecord } from "../assignment-record.js";
+import {
+  applyTaskChange as applyDomainTaskChange,
+  forkTask as forkDomainTask,
+  type Task,
+  type TaskActor,
+  type TaskChange,
+  type TaskChangeResult,
+  type TaskIdentity,
+} from "../../shared/task-domain.js";
+import { paginateTasks } from "./task-storage.js";
+import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./room-repository.js";
 
-export const DEFAULT_ROOM_ID = "00000000-0000-4000-8000-000000000001";
+export const DEFAULT_ROOM_ID = CANONICAL_ROOM_ID;
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
 
 async function restrictDatabaseFiles(databasePath: string) {
@@ -93,6 +104,9 @@ interface ImprovementEventRow {
   change_json: string;
   snapshot_json: string;
 }
+
+interface TaskRow { projection_json: string }
+interface TaskEventRow { room_id: string; task_id: string; revision: number; actor_id: string; occurred_at: string; change_json: string; snapshot_json: string }
 
 interface LedgerRevisionRow {
   revision: number;
@@ -732,6 +746,125 @@ export class SqliteRoomRepository implements RoomRepository {
       value.lifecycleStatus, JSON.stringify(value.recovery), value.createdAt, value.updatedAt);
   }
 
+  async createTask(task: Task): Promise<CreateTaskResult> {
+    if (task.roomId !== DEFAULT_ROOM_ID) return { kind: "rejected", reason: `SQLite room repository only owns room ${DEFAULT_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create") return { kind: "rejected", reason: "A newly persisted task must be a canonical revision 1 task" };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.taskRow(task)) {
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict", identity: { roomId: task.roomId, taskId: task.taskId } };
+      }
+      this.insertTask(task);
+      this.insertTaskEvent({ roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: task.attribution[0]!.actorId, at: task.createdAt, change: "create", snapshot: task });
+      this.replaceTaskLinks(task);
+      this.database.exec("COMMIT");
+      return { kind: "created", task: structuredClone(task) };
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  async getTask(identity: TaskIdentity) {
+    const row = this.taskRow(identity);
+    return row ? parseJson<Task>(row.projection_json, undefined as never) : undefined;
+  }
+
+  async listTasks(query: TaskListQuery = {}) {
+    if (query.roomId && query.roomId !== DEFAULT_ROOM_ID) return { items: [], nextCursor: null };
+    const rows = this.database.prepare("SELECT projection_json FROM canonical_tasks WHERE room_id = ?").all(DEFAULT_ROOM_ID) as unknown as TaskRow[];
+    return paginateTasks(rows.map((row) => parseJson<Task>(row.projection_json, undefined as never)), query);
+  }
+
+  async applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.taskRow(identity);
+      if (!row) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Task ${identity.taskId} does not exist in room ${identity.roomId}` }; }
+      const current = parseJson<Task>(row.projection_json, undefined as never);
+      if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+        if (!this.taskRow(change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` }; }
+        if (change.kind === "add_dependency" && this.createsTaskDependencyCycle(identity, change.task)) {
+          this.database.exec("ROLLBACK"); return { kind: "rejected", reason: "Task dependency would create a direct or transitive cycle" };
+        }
+      }
+      const result = applyDomainTaskChange(current, expectedRevision, change, actor, now);
+      if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
+      const snapshot = result.task;
+      const updated = this.database.prepare(`UPDATE canonical_tasks SET revision = ?, lifecycle_state = ?, title = ?, description = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND task_id = ? AND revision = ?`)
+        .run(snapshot.revision, snapshot.state, snapshot.title, snapshot.description, JSON.stringify(snapshot), snapshot.updatedAt, identity.roomId, identity.taskId, expectedRevision);
+      if (updated.changes !== 1) {
+        const actual = this.database.prepare("SELECT revision FROM canonical_tasks WHERE room_id = ? AND task_id = ?").get(identity.roomId, identity.taskId) as { revision: number };
+        this.database.exec("ROLLBACK"); return { kind: "conflict", expectedRevision, actualRevision: actual.revision };
+      }
+      this.replaceTaskLinks(snapshot);
+      this.insertTaskEvent({ roomId: identity.roomId, taskId: identity.taskId, revision: snapshot.revision, actorId: actor.id, at: now, change, snapshot });
+      this.database.exec("COMMIT");
+      return { kind: "accepted", task: structuredClone(snapshot) };
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  async listTaskEvents(identity: TaskIdentity, options: { readonly afterRevision?: number; readonly limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
+    const rows = this.database.prepare(`SELECT room_id, task_id, revision, actor_id, occurred_at, change_json, snapshot_json FROM canonical_task_events WHERE room_id = ? AND task_id = ? AND revision > ? ORDER BY revision LIMIT ?`)
+      .all(identity.roomId, identity.taskId, options.afterRevision ?? 0, limit) as unknown as TaskEventRow[];
+    return rows.map((row): TaskEvent => ({ roomId: row.room_id, taskId: row.task_id, revision: row.revision, actorId: row.actor_id, at: row.occurred_at, change: parseJson(row.change_json, "create"), snapshot: parseJson<Task>(row.snapshot_json, undefined as never) }));
+  }
+
+  async getTaskDependencies(identity: TaskIdentity) {
+    const task = await this.getTask(identity);
+    if (!task) return undefined;
+    const rows = this.database.prepare("SELECT task_id FROM canonical_task_links WHERE room_id = ? AND target_task_id = ? AND link_kind = 'dependency' ORDER BY task_id").all(identity.roomId, identity.taskId) as unknown as Array<{ task_id: string }>;
+    return { dependencies: structuredClone(task.dependencies), blockers: structuredClone(task.blockers), dependents: rows.map(({ task_id }) => ({ roomId: identity.roomId, taskId: task_id })) };
+  }
+
+  async forkTask(source: TaskIdentity, expectedRevision: number, newTaskId: string, actor: TaskActor, now: string, title?: string): Promise<TaskChangeResult> {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.taskRow(source);
+      if (!row) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Task ${source.taskId} does not exist in room ${source.roomId}` }; }
+      const current = parseJson<Task>(row.projection_json, undefined as never);
+      if (current.revision !== expectedRevision) { this.database.exec("ROLLBACK"); return { kind: "conflict", expectedRevision, actualRevision: current.revision }; }
+      const identity = { roomId: source.roomId, taskId: newTaskId };
+      if (this.taskRow(identity)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Task ${newTaskId} already exists` }; }
+      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, title, actor, now });
+      if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
+      const snapshot = result.task;
+      this.insertTask(snapshot);
+      this.insertTaskEvent({ roomId: snapshot.roomId, taskId: snapshot.taskId, revision: 1, actorId: actor.id, at: now, change: { kind: "fork", source }, snapshot });
+      this.replaceTaskLinks(snapshot);
+      this.database.exec("COMMIT");
+      return { kind: "accepted", task: structuredClone(snapshot) };
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  /** Imports canonical projections and append-only history without replacing newer local revisions. */
+  importTasks(tasks: readonly Task[], events: readonly TaskEvent[]) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const imported = new Set<string>();
+      for (const task of tasks) {
+        if (task.roomId !== DEFAULT_ROOM_ID) throw new Error(`Cannot import task ${task.taskId} from another room`);
+        const existing = this.database.prepare("SELECT revision, projection_json FROM canonical_tasks WHERE room_id = ? AND task_id = ?").get(task.roomId, task.taskId) as { revision: number; projection_json: string } | undefined;
+        if (!existing) {
+          this.insertTask(task);
+          imported.add(task.taskId);
+        } else if (existing.revision === task.revision) {
+          if (existing.projection_json !== JSON.stringify(task)) throw new Error(`Task ${task.taskId} has a divergent projection at revision ${task.revision}`);
+          imported.add(task.taskId);
+        }
+      }
+      for (const task of tasks) {
+        if (imported.has(task.taskId)) this.replaceTaskLinks(task);
+      }
+      const insertEvent = this.database.prepare(`INSERT OR IGNORE INTO canonical_task_events(room_id, task_id, revision, actor_id, occurred_at, change_json, snapshot_json) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      for (const event of events) {
+        if (!imported.has(event.taskId)) continue;
+        insertEvent.run(event.roomId, event.taskId, event.revision, event.actorId, event.at, JSON.stringify(event.change), JSON.stringify(event.snapshot));
+      }
+      this.database.exec("COMMIT");
+      return imported.size;
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
   private setStatusSync(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
     this.database.prepare("UPDATE rooms SET status = ?, active_agent = ?, error = ?, updated_at = ? WHERE id = ?")
       .run(status, activeAgent || null, error || null, new Date().toISOString(), DEFAULT_ROOM_ID);
@@ -740,6 +873,42 @@ export class SqliteRoomRepository implements RoomRepository {
     state.activeAgent = activeAgent;
     state.error = error;
     this.state = state;
+  }
+
+  private taskRow(identity: TaskIdentity) {
+    return this.database.prepare("SELECT projection_json FROM canonical_tasks WHERE room_id = ? AND task_id = ?").get(identity.roomId, identity.taskId) as unknown as TaskRow | undefined;
+  }
+
+  private insertTask(task: Task) {
+    this.database.prepare(`INSERT INTO canonical_tasks(room_id, task_id, revision, lifecycle_state, title, description, projection_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(task.roomId, task.taskId, task.revision, task.state, task.title, task.description, JSON.stringify(task), task.createdAt, task.updatedAt);
+  }
+
+  private insertTaskEvent(event: TaskEvent) {
+    this.database.prepare(`INSERT INTO canonical_task_events(room_id, task_id, revision, actor_id, occurred_at, change_json, snapshot_json) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(event.roomId, event.taskId, event.revision, event.actorId, event.at, JSON.stringify(event.change), JSON.stringify(event.snapshot));
+  }
+
+  private replaceTaskLinks(task: Task) {
+    this.database.prepare("DELETE FROM canonical_task_links WHERE room_id = ? AND task_id = ?").run(task.roomId, task.taskId);
+    const insert = this.database.prepare("INSERT INTO canonical_task_links(room_id, task_id, link_kind, target_task_id) VALUES (?, ?, ?, ?)");
+    for (const link of task.dependencies) insert.run(task.roomId, task.taskId, "dependency", link.taskId);
+    for (const link of task.blockers) insert.run(task.roomId, task.taskId, "blocker", link.taskId);
+  }
+
+  private createsTaskDependencyCycle(source: TaskIdentity, target: TaskIdentity) {
+    if (source.roomId !== target.roomId || source.taskId === target.taskId) return true;
+    const rows = this.database.prepare("SELECT task_id, target_task_id FROM canonical_task_links WHERE room_id = ? AND link_kind = 'dependency'").all(source.roomId) as unknown as Array<{ task_id: string; target_task_id: string }>;
+    const edges = new Map<string, string[]>();
+    for (const row of rows) edges.set(row.task_id, [...(edges.get(row.task_id) ?? []), row.target_task_id]);
+    const visited = new Set<string>();
+    const visit = (id: string): boolean => {
+      if (id === source.taskId) return true;
+      if (visited.has(id)) return false;
+      visited.add(id);
+      return (edges.get(id) ?? []).some(visit);
+    };
+    return visit(target.taskId);
   }
 
   private seedAgents() {
