@@ -156,6 +156,8 @@ export interface RoomRepository extends AssignmentRecordStore {
   getTask(identity: TaskIdentity): Promise<Task | undefined>;
   listTasks(query?: TaskListQuery): Promise<TaskPage>;
   applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult>;
+  /** Persists every change and event together, or leaves the task untouched. */
+  applyTaskChanges(identity: TaskIdentity, expectedRevision: number, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<TaskChangeResult>;
   listTaskEvents(identity: TaskIdentity, options?: { readonly afterRevision?: number; readonly limit?: number }): Promise<readonly TaskEvent[]>;
   getTaskDependencies(identity: TaskIdentity): Promise<TaskDependencyQueryResult | undefined>;
   forkTask(source: TaskIdentity, expectedRevision: number, newTaskId: string, actor: TaskActor, now: string, title?: string): Promise<TaskChangeResult>;

@@ -3,11 +3,11 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeveloperTeamRegistry, hashToken } from "./developer-team.js";
 import { HumanPresenceRegistry } from "./human-presence.js";
 import { RoomStore } from "./room-store.js";
-import { HumanTaskSessions, registerTaskRoutes } from "./task-api.js";
+import { HumanTaskSessions, joinHumanWithTaskSession, registerTaskRoutes } from "./task-api.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -21,11 +21,14 @@ async function fixture() {
   const cookie = `amfaa_task_session=${sessions.issue(human.id)}`;
   const developerToken = "d".repeat(40);
   const developerTeam = new DeveloperTeamRegistry([{ memberId: "agent-a", revision: 7, displayName: "Agent A", roles: ["AUTHOR"], capabilities: ["TASK_READ", "TASK_PROPOSE", "TASK_UPDATE"], tokenHash: hashToken(developerToken), createdAt: new Date().toISOString() }]);
-  const app = express(); app.use(express.json()); registerTaskRoutes({ app, store, humans, sessions, developerTeam, broadcast() {} });
+  const app = express(); app.use(express.json());
+  app.post("/api/humans", (request, response) => response.status(201).json(joinHumanWithTaskSession(request, response, humans, sessions)));
+  registerTaskRoutes({ app, store, humans, sessions, developerTeam, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (url: string, init: RequestInit = {}) => fetch(`${base}${url}`, { ...init, headers: { "Content-Type": "application/json", Cookie: cookie, ...(init.headers as Record<string, string> | undefined) } });
-  return { call, humanId: human.id, developerToken, close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) };
+  const callWithoutSession = (url: string, init: RequestInit = {}) => fetch(`${base}${url}`, { ...init, headers: { "Content-Type": "application/json", ...(init.headers as Record<string, string> | undefined) } });
+  return { call, callWithoutSession, store, humanId: human.id, developerToken, close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) };
 }
 
 describe("identity-safe task API", () => {
@@ -53,6 +56,29 @@ describe("identity-safe task API", () => {
       expect(forked.status).toBe(200);
       const detail = await (await api.call(`/api/tasks/${created.taskId}`)).json() as { history: unknown[]; task: { attribution: unknown[] } };
       expect(detail.history.length).toBeGreaterThan(6); expect(detail.task.attribution.length).toBeGreaterThan(6);
+    } finally { await api.close(); }
+  });
+
+  it("never converts a caller-supplied human ID into task authority", async () => {
+    const api = await fixture();
+    try {
+      const response = await api.callWithoutSession("/api/humans", { method: "POST", body: JSON.stringify({ id: api.humanId, name: "Impersonator" }) });
+      expect(response.status).toBe(201);
+      const joined = await response.json() as { id: string };
+      expect(joined.id).not.toBe(api.humanId);
+      expect(response.headers.get("set-cookie")).toContain("amfaa_task_session=");
+      const resumed = await api.call("/api/humans", { method: "POST", body: JSON.stringify({ id: joined.id, name: "Session owner" }) });
+      expect((await resumed.json() as { id: string }).id).toBe(api.humanId);
+    } finally { await api.close(); }
+  });
+
+  it("authenticates assignment routes before checking whether an assignment exists", async () => {
+    const api = await fixture();
+    try {
+      const lookup = vi.spyOn(api.store, "getAssignment");
+      const response = await api.callWithoutSession("/api/tasks/secret/assign", { method: "POST", body: JSON.stringify({ expectedRevision: 1, assignmentId: "secret-assignment" }) });
+      expect(response.status).toBe(401);
+      expect(lookup).not.toHaveBeenCalled();
     } finally { await api.close(); }
   });
 
