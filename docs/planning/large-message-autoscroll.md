@@ -1,11 +1,12 @@
 ---
 id: large-message-autoscroll
-status: proposed
+status: superseded
+issue: 26
 owner: unclaimed
 reviewers: []
 depends_on: []
 reported_by: Chankster
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Outcome
@@ -22,11 +23,11 @@ When the composer or transcript grows substantially, users who are following the
 
 # Current state
 
-Chankster reported that pasting a large amount of text does not scroll the chat all the way down. The precise trigger and affected scroll container are not yet confirmed.
+Promoted to [#26](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/26). This file is historical.
 
 # Next action
 
-Capture a minimal reproduction and record scroll height, client height, and scroll top before and after paste, layout, and send.
+Do the work on #26. Do not update this file except to record evidence after close.
 
 # Evidence
 

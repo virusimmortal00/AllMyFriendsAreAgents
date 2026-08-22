@@ -1,11 +1,12 @@
 ---
 id: compose-lag-cross-platform
-status: proposed
+status: superseded
+issue: 13
 owner: unclaimed
 reviewers: []
 depends_on: []
 reported_by: Chankster, Bobbo
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Outcome
@@ -27,13 +28,11 @@ Typing remains responsive in the message composer on Chrome iOS during quiet roo
 
 # Current state
 
-Chankster reported the lag in Windows Chrome, and Bobbo reproduced it in Chrome iOS during every composer input event. A room code read found that each draft character is lifted into `App` state, participates in draft persistence and mention reconciliation, and can rerender the transcript. Those are plausible cross-platform costs, not yet an accepted root cause.
-
-The room agreed that traces must gate the implementation choice. Likely candidates include keeping ephemeral draft state local to the composer, memoizing transcript rendering, isolating mention reconciliation, and batching durable persistence. Incoming SSE remains a distinct stress case even if keystroke-triggered transcript rerenders are removed. Bobbo narrowed V1 acceptance and validation to Chrome iOS and the message composer; the implementation must still fix the shared composer path rather than add an iOS-specific fork. Windows Chrome remains the explicit V2 with Chankster.
+Shipped. This file is historical; GitHub is the tracker.
 
 # Next action
 
-Profile the Chrome iOS composer across the agreed transcript/SSE matrix before selecting a V1 fix. Implementation remains unclaimed and must occur in an isolated worktree with independent review. Repeat the accepted checks on Windows Chrome in V2.
+None. Closed as [#13](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/13) after [PR #21](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/21).
 
 # Evidence
 

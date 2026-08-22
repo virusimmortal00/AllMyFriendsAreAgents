@@ -14,6 +14,7 @@
     "build": "tsc -b --force && vite build",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
+    "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"

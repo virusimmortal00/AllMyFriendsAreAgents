@@ -1,11 +1,12 @@
 ---
 id: typing-indicator-truthfulness
-status: proposed
+status: superseded
+issue: 25
 owner: unclaimed
 reviewers: []
 depends_on: []
 reported_by: room
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Outcome
@@ -22,11 +23,11 @@ The room shows an agent as typing only while that agent has at least one active 
 
 # Current state
 
-The room has reported typing indicators that remain visible after useful generation activity has ended. The behavior is agreed intake but is not implemented or live.
+Promoted to [#25](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/25). This file is historical.
 
 # Next action
 
-Map every generation lifecycle transition and reconnect path, then add failing state-machine tests before implementation.
+Do the work on #25. Do not update this file except to record evidence after close.
 
 # Evidence
 
