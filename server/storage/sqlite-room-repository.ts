@@ -763,6 +763,32 @@ export class SqliteRoomRepository implements RoomRepository {
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
+  async createTaskWithChanges(task: Task, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<CreateTaskResult> {
+    if (task.roomId !== DEFAULT_ROOM_ID) return { kind: "rejected", reason: `SQLite room repository only owns room ${DEFAULT_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create" || task.attribution[0]?.actorId !== actor.id) return { kind: "rejected", reason: "Atomic task creation requires a canonical revision 1 task from the same actor" };
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.taskRow(task)) { this.database.exec("ROLLBACK"); return { kind: "conflict", identity: { roomId: task.roomId, taskId: task.taskId } }; }
+      let current = structuredClone(task);
+      const events: TaskEvent[] = [{ roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: actor.id, at: task.createdAt, change: "create", snapshot: structuredClone(task) }];
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!this.taskRow(change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` }; }
+          if (change.kind === "add_dependency" && this.createsTaskDependencyCycle(task, change.task)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: "Task dependency would create a direct or transitive cycle" }; }
+        }
+        const changed = applyDomainTaskChange(current, current.revision, change, actor, now);
+        if (changed.kind !== "accepted") { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: changed.kind === "rejected" ? changed.reason : "Atomic task creation conflicted" }; }
+        current = changed.task;
+        events.push({ roomId: task.roomId, taskId: task.taskId, revision: current.revision, actorId: actor.id, at: now, change, snapshot: current });
+      }
+      this.insertTask(current);
+      this.replaceTaskLinks(current);
+      for (const event of events) this.insertTaskEvent(event);
+      this.database.exec("COMMIT");
+      return { kind: "created", task: structuredClone(current) };
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
   async getTask(identity: TaskIdentity) {
     const row = this.taskRow(identity);
     return row ? parseJson<Task>(row.projection_json, undefined as never) : undefined;

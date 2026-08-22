@@ -87,8 +87,12 @@ describe("identity-safe task API", () => {
     try {
       expect((await api.call("/api/developer/tasks")).status).toBe(404);
       const headers = { Authorization: `Bearer ${api.developerToken}` };
+      const atomicCreate = vi.spyOn(api.store, "createTaskWithChanges");
+      const draftCreate = vi.spyOn(api.store, "createTask");
       const proposedResponse = await api.call("/api/developer/tasks", { method: "POST", headers, body: JSON.stringify({ title: "Agent proposal" }) });
       expect(proposedResponse.status).toBe(201);
+      expect(atomicCreate).toHaveBeenCalledOnce();
+      expect(draftCreate).not.toHaveBeenCalled();
       const proposed = await proposedResponse.json() as { taskId: string; revision: number; state: string; attribution: { memberRevision?: number }[] };
       expect(proposed).toMatchObject({ state: "proposed" });
       expect(proposed.attribution.every(({ memberRevision }) => memberRevision === 7)).toBe(true);

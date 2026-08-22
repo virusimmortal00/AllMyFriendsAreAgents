@@ -94,4 +94,27 @@ describe.each(factories)("%s task repository", (_backend, makeFixture) => {
       expect((await fixture.repository.listTaskEvents(identity)).slice(-2).map(({ revision: eventRevision }) => eventRevision)).toEqual([revision + 1, revision + 2]);
     } finally { fixture.close(); }
   });
+
+  it("creates a proposed task and both history events atomically", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-task-contract-")); temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      const rejectedTask = initial("rejected-proposal");
+      const rejected = await fixture.repository.createTaskWithChanges(rejectedTask, [
+        { kind: "transition", to: "proposed" },
+        { kind: "transition", to: "completed" },
+      ], owner, "2026-08-21T12:01:00.000Z");
+      expect(rejected.kind).toBe("rejected");
+      expect(await fixture.repository.getTask(rejectedTask)).toBeUndefined();
+      expect(await fixture.repository.listTaskEvents(rejectedTask)).toEqual([]);
+
+      const proposedTask = initial("proposed-atomically");
+      const proposed = await fixture.repository.createTaskWithChanges(proposedTask, [{ kind: "transition", to: "proposed" }], owner, "2026-08-21T12:02:00.000Z");
+      expect(proposed).toMatchObject({ kind: "created", task: { revision: 2, state: "proposed" } });
+      expect((await fixture.repository.listTaskEvents(proposedTask)).map(({ revision, change }) => ({ revision, change }))).toEqual([
+        { revision: 1, change: "create" },
+        { revision: 2, change: { kind: "transition", to: "proposed" } },
+      ]);
+    } finally { fixture.close(); }
+  });
 });

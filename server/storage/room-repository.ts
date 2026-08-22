@@ -153,6 +153,8 @@ export interface RoomRepository extends AssignmentRecordStore {
     now: string,
   ): Promise<EmergencyStopChangeResult>;
   createTask(task: Task): Promise<CreateTaskResult>;
+  /** Creates the initial projection and applies every supplied change in one atomic write. */
+  createTaskWithChanges(task: Task, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<CreateTaskResult>;
   getTask(identity: TaskIdentity): Promise<Task | undefined>;
   listTasks(query?: TaskListQuery): Promise<TaskPage>;
   applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult>;

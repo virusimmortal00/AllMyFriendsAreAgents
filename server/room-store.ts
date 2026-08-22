@@ -556,6 +556,28 @@ export class RoomStore implements RoomRepository {
     });
   }
 
+  async createTaskWithChanges(task: Task, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<CreateTaskResult> {
+    if (task.roomId !== CANONICAL_ROOM_ID) return { kind: "rejected", reason: `Room repository only owns room ${CANONICAL_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create" || task.attribution[0]?.actorId !== actor.id) return { kind: "rejected", reason: "Atomic task creation requires a canonical revision 1 task from the same actor" };
+    return this.mutateTasks<CreateTaskResult>((state) => {
+      const key = taskKey(task);
+      if (state.tasks[key]) return { result: { kind: "conflict" as const, identity: { roomId: task.roomId, taskId: task.taskId } } };
+      let current = structuredClone(task);
+      const events: TaskEvent[] = [{ roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: actor.id, at: task.createdAt, change: "create", snapshot: structuredClone(task) }];
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!state.tasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
+          if (change.kind === "add_dependency" && createsDependencyCycle({ ...state.tasks, [key]: current }, task, change.task)) return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
+        }
+        const changed = applyDomainTaskChange(current, current.revision, change, actor, now);
+        if (changed.kind !== "accepted") return { result: { kind: "rejected" as const, reason: changed.kind === "rejected" ? changed.reason : "Atomic task creation conflicted" } };
+        current = structuredClone(changed.task);
+        events.push({ roomId: task.roomId, taskId: task.taskId, revision: current.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot: current });
+      }
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [key]: current }, events: [...state.events, ...events] }, result: { kind: "created" as const, task: structuredClone(current) } };
+    });
+  }
+
   async getTask(identity: TaskIdentity) {
     await this.taskQueue;
     const task = this.taskState.tasks[taskKey(identity)];
