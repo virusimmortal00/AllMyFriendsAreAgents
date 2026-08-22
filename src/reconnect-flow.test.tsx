@@ -7,6 +7,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import App from "./App";
 import { ApiRequestError } from "./api";
+import { loadDraftSnapshot } from "./client-persistence";
 import type { HumanPresence, RoomState } from "./types";
 
 const api = vi.hoisted(() => ({
@@ -182,7 +183,7 @@ describe("rendered reconnect recovery", () => {
     act(() => ControlledEventSource.instances[0].fail());
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
-    expect(window.localStorage.getItem(`all-my-friends-are-agents-draft:${human.id}`)).toBe("Keep this draft");
+    await waitFor(() => expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("Keep this draft"));
     expect(screen.getByText("Before outage")).not.toBeNull();
 
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
