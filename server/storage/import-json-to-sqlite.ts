@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { RoomStore } from "../room-store.js";
 import { SqliteRoomRepository } from "./sqlite-room-repository.js";
+import { WORKSPACE_JSON_FILENAME } from "./json-workspace-repository.js";
 
 export interface JsonToSqliteImportOptions {
   projectRoot: string;
@@ -21,19 +22,23 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
     await copyFile(sourcePath, path.join(normalizationDirectory, "room.json"));
     await copyFile(path.join(options.sourceStateDirectory, "assignments.json"), path.join(normalizationDirectory, "assignments.json"))
       .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+    await copyFile(path.join(options.sourceStateDirectory, WORKSPACE_JSON_FILENAME), path.join(normalizationDirectory, WORKSPACE_JSON_FILENAME))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     const legacyStore = await RoomStore.open(options.projectRoot, normalizationDirectory);
     const state = legacyStore.snapshot();
     const assignments = await legacyStore.listAssignments();
+    const workspace = await legacyStore.exportWorkspace();
     const sqliteStore = await SqliteRoomRepository.open(options.projectRoot, options.databasePath, {
       initializeDefaultRoom: false,
     });
     try {
       sqliteStore.replaceState(state, { overwrite: options.overwrite });
       for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
+      sqliteStore.importWorkspace(workspace);
     } finally {
       sqliteStore.close();
     }
-    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length };
+    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, workspaceDocuments: workspace.documents.length, workspaceRevisions: workspace.revisions.length };
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }

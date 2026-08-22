@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { WorkspaceQuotas } from "./workspace-repository.js";
 
 export const STORAGE_BACKENDS = ["json", "sqlite", "postgres"] as const;
 export type StorageBackend = typeof STORAGE_BACKENDS[number];
@@ -6,6 +7,7 @@ export type StorageBackend = typeof STORAGE_BACKENDS[number];
 interface StorageConfigurationBase {
   backend: StorageBackend;
   dataDirectory: string;
+  workspaceQuotas?: WorkspaceQuotas;
 }
 
 export interface JsonStorageConfiguration extends StorageConfigurationBase {
@@ -46,6 +48,19 @@ function postgresConnectionString(value: string | undefined) {
   return value;
 }
 
+function workspaceQuotas(environment: NodeJS.ProcessEnv): WorkspaceQuotas | undefined {
+  const names = [
+    "ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_DOCUMENT_LIMIT",
+    "ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_CONTENT_BYTES",
+    "ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_REVISION_LIMIT",
+    "ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_ROOM_BYTES",
+  ] as const;
+  if (!names.some((name) => environment[name]?.trim())) return undefined;
+  const values = names.map((name) => Number(environment[name]));
+  if (values.some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new Error("Workspace quota settings must all be positive safe integers.");
+  return { documentCount: values[0], contentSizeBytes: values[1], revisionCount: values[2], aggregateRoomBytes: values[3] };
+}
+
 export function resolveStorageConfiguration(
   projectRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -58,6 +73,7 @@ export function resolveStorageConfiguration(
   }
 
   const backend = requestedBackend as StorageBackend;
+  const configuredWorkspaceQuotas = workspaceQuotas(environment);
   const dataDirectory = configuredPath(
     projectRoot,
     environment.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR,
@@ -73,6 +89,7 @@ export function resolveStorageConfiguration(
         environment.ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH,
         path.join(dataDirectory, "amfaa.sqlite"),
       ),
+      ...(configuredWorkspaceQuotas ? { workspaceQuotas: configuredWorkspaceQuotas } : {}),
     };
   }
   if (backend === "postgres") {
@@ -80,7 +97,8 @@ export function resolveStorageConfiguration(
       backend,
       dataDirectory,
       connectionString: postgresConnectionString(environment.DATABASE_URL),
+      ...(configuredWorkspaceQuotas ? { workspaceQuotas: configuredWorkspaceQuotas } : {}),
     };
   }
-  return { backend, dataDirectory, stateDirectory: dataDirectory };
+  return { backend, dataDirectory, stateDirectory: dataDirectory, ...(configuredWorkspaceQuotas ? { workspaceQuotas: configuredWorkspaceQuotas } : {}) };
 }

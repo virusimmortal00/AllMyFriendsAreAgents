@@ -33,6 +33,9 @@ import type {
 } from "../../shared/governed-improvements.js";
 import type { ImprovementStatusContract } from "../../shared/improvement-status.js";
 import { normalizeAssignmentRecord, type AssignmentRecord } from "../assignment-record.js";
+import { SqliteWorkspaceRepository } from "./sqlite-workspace-repository.js";
+import type { WorkspaceAttachmentInput, WorkspaceMutation, WorkspaceQuotas } from "./workspace-repository.js";
+import type { WorkspaceExport } from "./workspace-repository.js";
 
 export const DEFAULT_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -199,6 +202,7 @@ function messageFor(
 
 export class SqliteRoomRepository implements RoomRepository {
   private state?: RoomState;
+  private workspace?: SqliteWorkspaceRepository;
 
   private constructor(
     readonly databasePath: string,
@@ -209,7 +213,7 @@ export class SqliteRoomRepository implements RoomRepository {
   static async open(
     projectRoot: string,
     databasePath: string,
-    options: { initializeDefaultRoom?: boolean; seedImprovements?: boolean } = {},
+    options: { initializeDefaultRoom?: boolean; seedImprovements?: boolean; workspaceQuotas?: WorkspaceQuotas } = {},
   ) {
     const databaseDirectory = path.dirname(databasePath);
     await mkdir(databaseDirectory, { recursive: true, mode: 0o700 });
@@ -230,6 +234,7 @@ export class SqliteRoomRepository implements RoomRepository {
     if (options.seedImprovements && repository.hasPersistedRoom()) {
       seedWaveOneImprovements(database, DEFAULT_ROOM_ID);
     }
+    if (repository.hasPersistedRoom()) repository.workspace = new SqliteWorkspaceRepository(database, DEFAULT_ROOM_ID, options.workspaceQuotas);
     return repository;
   }
 
@@ -245,6 +250,22 @@ export class SqliteRoomRepository implements RoomRepository {
     if (!this.state) throw new Error("The SQLite room has not been initialized.");
     return structuredClone(this.state);
   }
+
+  private workspaceRepository() {
+    if (!this.workspace) throw new Error("The SQLite workspace has not been initialized.");
+    return this.workspace;
+  }
+  listWorkspaceDocuments(options?: { readonly includeArchived?: boolean }) { return this.workspaceRepository().listWorkspaceDocuments(options); }
+  getWorkspaceDocument(documentId: string) { return this.workspaceRepository().getWorkspaceDocument(documentId); }
+  getWorkspaceRevision(documentId: string, revision: number | string) { return this.workspaceRepository().getWorkspaceRevision(documentId, revision); }
+  createWorkspaceDocument(input: { id?: string; path: string; content: string; attachments?: readonly WorkspaceAttachmentInput[] }, mutation: WorkspaceMutation) { return this.workspaceRepository().createWorkspaceDocument(input, mutation); }
+  updateWorkspaceDocument(documentId: string, input: { expectedRevisionId: string; content: string; attachments?: readonly WorkspaceAttachmentInput[] }, mutation: WorkspaceMutation) { return this.workspaceRepository().updateWorkspaceDocument(documentId, input, mutation); }
+  renameOrMoveWorkspaceDocument(documentId: string, input: { expectedRevisionId: string; path: string }, mutation: WorkspaceMutation) { return this.workspaceRepository().renameOrMoveWorkspaceDocument(documentId, input, mutation); }
+  archiveWorkspaceDocument(documentId: string, input: { expectedRevisionId: string }, mutation: WorkspaceMutation) { return this.workspaceRepository().archiveWorkspaceDocument(documentId, input, mutation); }
+  restoreWorkspaceDocument(documentId: string, input: { expectedRevisionId: string }, mutation: WorkspaceMutation) { return this.workspaceRepository().restoreWorkspaceDocument(documentId, input, mutation); }
+  getWorkspaceHistory(documentId: string) { return this.workspaceRepository().getWorkspaceHistory(documentId); }
+  exportWorkspace() { return this.workspaceRepository().exportWorkspace(); }
+  importWorkspace(snapshot: WorkspaceExport) { return this.workspaceRepository().importWorkspace(snapshot); }
 
   replaceState(state: RoomState, options: { overwrite?: boolean } = {}) {
     if (this.hasPersistedRoom() && !options.overwrite) {
@@ -298,6 +319,7 @@ export class SqliteRoomRepository implements RoomRepository {
       `).run(DEFAULT_ROOM_ID, agent, position, now, now));
       this.database.exec("COMMIT");
       this.state = structuredClone(state);
+      if (!this.workspace) this.workspace = new SqliteWorkspaceRepository(this.database, DEFAULT_ROOM_ID);
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;

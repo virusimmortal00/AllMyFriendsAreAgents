@@ -39,6 +39,16 @@ describe("storage configuration", () => {
     })).toThrow("DATABASE_URL is required");
   });
 
+  it("accepts a complete positive workspace quota configuration", () => {
+    expect(resolveStorageConfiguration(projectRoot, {
+      ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_DOCUMENT_LIMIT: "2",
+      ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_CONTENT_BYTES: "10",
+      ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_REVISION_LIMIT: "3",
+      ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_ROOM_BYTES: "20",
+    })).toMatchObject({ workspaceQuotas: { documentCount: 2, contentSizeBytes: 10, revisionCount: 3, aggregateRoomBytes: 20 } });
+    expect(() => resolveStorageConfiguration(projectRoot, { ALL_MY_FRIENDS_ARE_AGENTS_WORKSPACE_DOCUMENT_LIMIT: "2" })).toThrow("positive safe integers");
+  });
+
   it("accepts a PostgreSQL URL without exposing it in an error", () => {
     const connectionString = "postgresql://amfaa:secret@amfaa-db.sayers.io/amfaa";
     expect(resolveStorageConfiguration(projectRoot, {

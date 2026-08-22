@@ -7,11 +7,11 @@ export async function openRoomRepository(
   configuration: StorageConfiguration = resolveStorageConfiguration(projectRoot),
 ): Promise<RoomRepository> {
   if (configuration.backend === "json") {
-    return RoomStore.open(projectRoot, configuration.stateDirectory);
+    return RoomStore.open(projectRoot, configuration.stateDirectory, configuration.workspaceQuotas);
   }
   if (configuration.backend === "sqlite") {
     const { SqliteRoomRepository } = await import("./sqlite-room-repository.js");
-    return SqliteRoomRepository.open(projectRoot, configuration.databasePath, { seedImprovements: true });
+    return SqliteRoomRepository.open(projectRoot, configuration.databasePath, { seedImprovements: true, workspaceQuotas: configuration.workspaceQuotas });
   }
   throw new Error(
     "postgres storage is configured but its adapter is not implemented yet. "

@@ -34,6 +34,9 @@ import type {
   StoredImprovementMilestone,
 } from "../shared/governed-improvements.js";
 import { normalizeAssignmentRecord, type AssignmentRecord } from "./assignment-record.js";
+import { JsonWorkspaceRepository } from "./storage/json-workspace-repository.js";
+import type { WorkspaceAttachmentInput, WorkspaceMutation } from "./storage/workspace-repository.js";
+import type { WorkspaceQuotas } from "./storage/workspace-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -116,7 +119,7 @@ export class RoomStore implements RoomRepository {
   private assignmentQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[]) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], private readonly workspace: JsonWorkspaceRepository) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
@@ -126,12 +129,13 @@ export class RoomStore implements RoomRepository {
     this.assignments = assignments;
   }
 
-  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
+  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), workspaceQuotas?: WorkspaceQuotas) {
     await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
     await chmod(stateDirectory, 0o700);
     const statePath = path.join(stateDirectory, "room.json");
     const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
+    const workspace = await JsonWorkspaceRepository.open("00000000-0000-4000-8000-000000000001", stateDirectory, workspaceQuotas);
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -202,7 +206,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, workspace);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -218,7 +222,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, workspace);
       await store.save();
       return store;
     }
@@ -227,6 +231,17 @@ export class RoomStore implements RoomRepository {
   snapshot(): RoomState {
     return structuredClone(this.state);
   }
+
+  listWorkspaceDocuments(options?: { readonly includeArchived?: boolean }) { return this.workspace.listWorkspaceDocuments(options); }
+  getWorkspaceDocument(documentId: string) { return this.workspace.getWorkspaceDocument(documentId); }
+  getWorkspaceRevision(documentId: string, revision: number | string) { return this.workspace.getWorkspaceRevision(documentId, revision); }
+  createWorkspaceDocument(input: { id?: string; path: string; content: string; attachments?: readonly WorkspaceAttachmentInput[] }, mutation: WorkspaceMutation) { return this.workspace.createWorkspaceDocument(input, mutation); }
+  updateWorkspaceDocument(documentId: string, input: { expectedRevisionId: string; content: string; attachments?: readonly WorkspaceAttachmentInput[] }, mutation: WorkspaceMutation) { return this.workspace.updateWorkspaceDocument(documentId, input, mutation); }
+  renameOrMoveWorkspaceDocument(documentId: string, input: { expectedRevisionId: string; path: string }, mutation: WorkspaceMutation) { return this.workspace.renameOrMoveWorkspaceDocument(documentId, input, mutation); }
+  archiveWorkspaceDocument(documentId: string, input: { expectedRevisionId: string }, mutation: WorkspaceMutation) { return this.workspace.archiveWorkspaceDocument(documentId, input, mutation); }
+  restoreWorkspaceDocument(documentId: string, input: { expectedRevisionId: string }, mutation: WorkspaceMutation) { return this.workspace.restoreWorkspaceDocument(documentId, input, mutation); }
+  getWorkspaceHistory(documentId: string) { return this.workspace.getWorkspaceHistory(documentId); }
+  exportWorkspace() { return this.workspace.exportWorkspace(); }
 
   async addMessage(
     speaker: RoomMessage["speaker"],
