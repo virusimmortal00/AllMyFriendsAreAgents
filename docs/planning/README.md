@@ -4,7 +4,7 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 
 ## Current work
 
-- [Chrome/Windows compose lag](compose-lag-windows-chrome.md)
+- [Cross-platform compose lag](compose-lag-cross-platform.md)
 - [Typing indicator truthfulness](typing-indicator-truthfulness.md)
 - [Large-message autoscroll](large-message-autoscroll.md)
 - [AIM window controls](aim-window-controls.md)
