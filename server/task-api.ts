@@ -190,12 +190,11 @@ export function registerTaskRoutes(input: {
     const context = developerActor(request, "TASK_PROPOSE"); if (!context) return response.status(404).json({ error: "Not found." });
     if (rejectIdentity(request, response)) return;
     try {
-      let task = createTask({ roomId: CANONICAL_ROOM_ID, taskId: randomUUID(), title: request.body?.title, description: request.body?.description, actor: context.actor, now: new Date().toISOString() });
-      const proposed = await store.createTask(task);
-      if (proposed.kind !== "created") return response.status(422).json({ error: proposed.kind === "rejected" ? proposed.reason : "Task conflict." });
-      const changed = await store.applyTaskChange(identity(task.taskId), 1, { kind: "transition", to: "proposed" }, context.actor, new Date().toISOString());
-      if (changed.kind !== "accepted") return response.status(422).json({ error: "Unable to propose task." });
-      broadcast(); return response.status(201).json(changed.task);
+      const now = new Date().toISOString();
+      const task = createTask({ roomId: CANONICAL_ROOM_ID, taskId: randomUUID(), title: request.body?.title, description: request.body?.description, actor: context.actor, now });
+      const proposed = await store.createTaskWithChanges(task, [{ kind: "transition", to: "proposed" }], context.actor, now);
+      if (proposed.kind !== "created") return response.status(proposed.kind === "conflict" ? 409 : 422).json({ error: proposed.kind === "rejected" ? proposed.reason : "Task conflict." });
+      broadcast(); return response.status(201).json(proposed.task);
     } catch (error) { return response.status(400).json({ error: error instanceof Error ? error.message : "Invalid task." }); }
   });
   app.patch("/api/developer/tasks/:taskId", async (request, response) => {
