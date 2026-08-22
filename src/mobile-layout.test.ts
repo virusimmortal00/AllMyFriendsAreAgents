@@ -8,8 +8,23 @@ const mobileStyles = styles.slice(styles.indexOf("@media (max-width: 720px) {"))
 describe("mobile layout contract", () => {
   it("keeps the application and chat inside the dynamic viewport", () => {
     expect(mobileStyles).toContain("height: 100dvh");
+    expect(styles).toMatch(/\.app-window \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(mobileStyles).toMatch(/\.workspace \{[^}]*min-height: 0;[^}]*overflow: hidden;/s);
     expect(mobileStyles).toMatch(/\.chat-panel \{[^}]*height: 100%;[^}]*minmax\(0, 1fr\)/s);
+    expect(styles).toMatch(/\.composer \{[^}]*width: 100%;[^}]*min-width: 0;/s);
+    expect(styles).toMatch(/\.composer textarea \{[^}]*width: 100%;[^}]*min-width: 0;/s);
+  });
+
+  it("makes narrow navigation intentionally horizontally scrollable", () => {
+    expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow-x: auto;[^}]*overflow-y: hidden;/s);
+    expect(mobileStyles).toMatch(/\.menu-bar > button, \.menu-bar > \.menu-wrap \{[^}]*flex: 0 0 auto;/s);
+    expect(mobileStyles).toMatch(/\.menu-bar button \{[^}]*white-space: nowrap;/s);
+  });
+
+  it("contains long room names and message content", () => {
+    expect(mobileStyles).toMatch(/\.transcript-header \.panel-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s);
+    expect(styles).toMatch(/\.transcript \{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;/s);
+    expect(styles).toMatch(/\.message > div \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;[^}]*word-break: break-word;/s);
   });
 
   it("moves secondary room controls into an off-canvas panel", () => {
