@@ -15,6 +15,7 @@ import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
+import { Tasks, TasksMenuControl } from "./tasks";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -105,6 +106,7 @@ export default function App() {
   const [workshopLoading, setWorkshopLoading] = useState(false);
   const [workshopMissing, setWorkshopMissing] = useState(false);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
+  const [tasksView, setTasksView] = useState(false);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -518,16 +520,17 @@ export default function App() {
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "room"}
-            onClick={() => { setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
           >Room</button>
           <button
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "people"}
-            onClick={() => { setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
-          <button type="button" onClick={() => { changeName(); navigateImprovements(null); }}>Change name</button>
-          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
+          <button type="button" onClick={() => { setTasksView(false); changeName(); navigateImprovements(null); }}>Change name</button>
+          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => { setTasksView(false); navigateImprovements(improvementsView ? null : { view: "list", scope: "active" }); }} />
+          <TasksMenuControl active={tasksView} onOpen={() => { setTasksView((open) => !open); navigateImprovements(null); setMobilePanel(null); }} />
           <div className="menu-wrap">
             <button type="button" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
@@ -543,7 +546,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status">{connectionNotice}</div> : null}
         <div className="workspace">
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onRoomNameChange={changeRoomName} onTopicChange={changeTopic} onConversationEnergyChange={changeConversationEnergy} /></div></> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />

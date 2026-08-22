@@ -3,12 +3,13 @@ import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
+import type { Task, TaskChange } from "../shared/task-domain";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly outcomeUnknown = false) {
+  constructor(message: string, readonly outcomeUnknown = false, readonly status?: number) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -25,7 +26,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`);
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status);
     }
     return response;
   } catch (error) {
@@ -38,6 +39,32 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+export interface TaskDetailResponse {
+  task: Task;
+  history: readonly { revision: number; actorId: string; at: string; change: unknown }[];
+  relationships: { dependencies: readonly { roomId: string; taskId: string }[]; blockers: readonly { roomId: string; taskId: string }[]; dependents: readonly { roomId: string; taskId: string }[] };
+}
+
+export async function loadTasks() {
+  return request("/api/tasks", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: Task[]; nextCursor: string | null }>);
+}
+
+export async function loadTask(taskId: string) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<TaskDetailResponse>);
+}
+
+export async function createRoomTask(title: string, description: string) {
+  return request("/api/tasks", { method: "POST", body: JSON.stringify({ title, description }) }).then((response) => response.json() as Promise<Task>);
+}
+
+export async function taskAction(taskId: string, action: string, body: Record<string, unknown>) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.json() as Promise<Task>);
+}
+
+export async function updateRoomTask(taskId: string, expectedRevision: number, field: "title" | "description", value: string) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify({ expectedRevision, [field]: value }) }).then((response) => response.json() as Promise<Task>);
 }
 
 export async function checkReady(): Promise<ServerIdentity> {

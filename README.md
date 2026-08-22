@@ -51,7 +51,7 @@ ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR=.runtime/storage-plumbing \
 pnpm run dev
 ```
 
-The existing JSON store remains the default during the storage migration. SQLite is available as an explicit opt-in with `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite`; PostgreSQL remains fail-closed until its adapter is implemented. Configuration examples live in `.env.example`.
+The existing JSON store remains the default during the storage migration. Room tasks are stored in `tasks.json` beside the room and keep both their current projection and append-only revision events. SQLite stores the same task projections, history, links, and optimistic revisions in canonical task tables. SQLite is available as an explicit opt-in with `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite`; PostgreSQL remains fail-closed until its adapter is implemented. Configuration examples live in `.env.example`.
 
 To copy an existing JSON room into a new SQLite database without modifying the source file:
 
@@ -61,7 +61,7 @@ pnpm run storage:import:sqlite -- \
   --database=.runtime/import-check/amfaa.sqlite
 ```
 
-The importer refuses to replace an existing SQLite room unless `--overwrite` is provided. Verify the imported database through an isolated server before changing the active backend.
+The importer includes tasks and task events, refuses to replace an existing SQLite room unless `--overwrite` is provided, and never modifies the JSON source. Verify task counts and history through an isolated server before changing the active backend.
 
 To use a trusted LAN tunnel or reverse proxy, explicitly allow its hostname:
 
@@ -96,6 +96,10 @@ The authenticated developer bridge uses stable team-member IDs rather than a spe
 Existing `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` or `developer-token` installations migrate to the stable `developer-agent` member ID. That compatibility member receives only its historical room-read and room-chat capabilities, so migration preserves attribution without silently granting improvement authority. The existing `room:tool` continues to work during rollout.
 
 Improvement bridge endpoints live under `/api/developer/improvements/:id`. They support authenticated reads, renewable exclusive claims, claim lifecycle operations (`renew`, `handoff`, `release`, `expire`, `complete`, and `manifest`), evidence, independent reviews, and policy-checked transition requests. Every mutation uses the authenticated member as its actor and requires the canonical improvement revision. Worker writes also require the current claim fencing token. Expiry, replacement, handoff, manifest changes, release, and completion remain in append-only claim and repository history; idempotency keys make retries safe. Starting work invokes the shared consensus, authority, risk/reviewer-threshold, bounded-action, and emergency-stop policy.
+
+Room tasks are available to joined humans from the visible **Tasks** workspace and `/api/tasks`. The server binds task operations to the HttpOnly room session established at join time; room ID, actor ID, and attribution supplied in a body are rejected. Every mutation requires `expectedRevision`, and a stale `409` makes the client refresh visible state while retaining typed form input. Task participants, dependencies, blockers, immutable references, assignment pointers, evidence, dispositions, and history remain coordination records only.
+
+Developer task endpoints under `/api/developer/tasks` require the explicit `TASK_READ`, `TASK_PROPOSE`, or `TASK_UPDATE` capability. Attribution is derived from the authenticated member revision. These endpoints can read, propose, and make the narrow text/reference updates they expose; they cannot approve work, assign source work, change project-write eligibility, invoke assignment lifecycle operations, create workspaces, or request repository, GitHub, merge, deployment, credential, or destructive authority. Linking an assignment never creates or changes that assignment, and changing a task assignee never changes the room's writable agent or an improvement claim.
 
 The optional coordinator heartbeat ships disabled. Configuration requires both `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_HEARTBEAT_ENABLED=true` and `ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_URL`, after which a human must explicitly authorize the persisted runtime from the visible Improvements control. It selects only proposals created through `IMPROVEMENT_PROPOSE`, advanced by recorded governance into an eligible state, and carrying current action authority. Its observable versioned policy bounds cadence, singleton concurrency, selection and dispatch counts, attempts, retry delay, time budget, and the only permitted capabilities (`ANALYZE`, `EDIT_SANDBOX`, and `RUN_TESTS`). The private SQLite journal stores the runtime authorization/emergency-stop history, revision-scoped idempotency keys, authority and evidence decisions, attempt outcomes, timestamps, blockers, and returned evidence. The visible emergency stop disables future scheduling and aborts active HTTP work; that state survives restart and can only be cleared by a new explicit authorization. The coordinator receives no commit, push, merge, deploy, upstream-publication, or governed-executor-bypass capability.
 

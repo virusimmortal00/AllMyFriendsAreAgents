@@ -10,7 +10,12 @@ export const TASK_PARTICIPANT_ROLES = ["owner", "coordinator", "assignee", "revi
 export type TaskParticipantRole = typeof TASK_PARTICIPANT_ROLES[number];
 
 export interface TaskIdentity { readonly roomId: string; readonly taskId: string }
-export interface TaskActor { readonly id: string; readonly roomRole?: "owner" | "coordinator" }
+export interface TaskActor {
+  readonly id: string;
+  readonly roomRole?: "owner" | "coordinator";
+  /** Immutable developer-team revision used to derive agent attribution. */
+  readonly memberRevision?: number;
+}
 export interface TaskParticipant {
   readonly participantId: string;
   readonly role: TaskParticipantRole;
@@ -39,6 +44,7 @@ export interface TaskAttribution {
   readonly actorId: string;
   readonly at: string;
   readonly action: string;
+  readonly memberRevision?: number;
 }
 
 export interface TaskLifecycleEvent {
@@ -144,7 +150,7 @@ export function createTask(input: {
   return {
     roomId, taskId, title, description, state: "draft", participants, dependencies: [], blockers: [], references: [],
     forkedFrom: input.forkedFrom ?? null, revision: 1, createdAt: input.now, updatedAt: input.now,
-    attribution: [{ revision: 1, actorId: input.actor.id, at: input.now, action: "create" }],
+    attribution: [{ revision: 1, actorId: input.actor.id, at: input.now, action: "create", ...(input.actor.memberRevision ? { memberRevision: input.actor.memberRevision } : {}) }],
     lifecycleHistory: [{ revision: 1, from: null, to: "draft", actorId: input.actor.id, at: input.now, operation: "create" }],
   };
 }
@@ -206,7 +212,7 @@ export function applyTaskChange(task: Task, expectedRevision: number, change: Ta
   const revision = task.revision + 1;
   const next: Task = {
     ...task, ...patch, revision, updatedAt: now,
-    attribution: [...task.attribution, { revision, actorId: actor.id, at: now, action: change.kind }],
+    attribution: [...task.attribution, { revision, actorId: actor.id, at: now, action: change.kind, ...(actor.memberRevision ? { memberRevision: actor.memberRevision } : {}) }],
     lifecycleHistory: lifecycle ? [...task.lifecycleHistory, lifecycle] : task.lifecycleHistory,
   };
   return { kind: "accepted", task: next };
