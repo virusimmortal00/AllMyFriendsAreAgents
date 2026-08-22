@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
+import { AgentSettingsDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
+import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
-import { loadDraft, loadDraftMentions, loadPendingSend, saveDraft, saveDraftMentions, savePendingSend, type PendingSend } from "./client-persistence";
+import { loadPendingSend, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
@@ -13,7 +14,7 @@ import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/partic
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
-import { reconcileMessageMentions, roomMentionCandidates, type MessageMention } from "../shared/mentions";
+import { roomMentionCandidates } from "../shared/mentions";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -95,12 +96,6 @@ export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (nam
 export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
-  const [draft, setDraft] = useState(() => typeof window === "undefined" ? "" : loadDraft(window.localStorage, loadHumanProfile()?.id));
-  const [draftMentions, setDraftMentions] = useState<MessageMention[]>(() => {
-    if (typeof window === "undefined") return [];
-    const humanId = loadHumanProfile()?.id;
-    return reconcileMessageMentions(loadDraft(window.localStorage, humanId), loadDraftMentions(window.localStorage, humanId));
-  });
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
@@ -120,9 +115,9 @@ export default function App() {
   const [joinError, setJoinError] = useState("");
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
+  const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
   const roomRevealed = useRef(false);
-  const draftRef = useRef(draft);
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
 
@@ -194,7 +189,7 @@ export default function App() {
         lastEventAt = Date.now();
         const next = JSON.parse(event.data) as RoomState;
         if (next.server && next.server.protocolVersion !== ROOM_PROTOCOL_VERSION) {
-          saveDraft(window.localStorage, currentHuman.id, draftRef.current);
+          composer.current?.flush();
           const reloadMarker = `${next.server.instanceId}:${next.server.protocolVersion}`;
           const reloadKey = "all-my-friends-are-agents-protocol-reload";
           if (window.sessionStorage.getItem(reloadKey) !== reloadMarker) {
@@ -281,19 +276,8 @@ export default function App() {
 
   useEffect(() => {
     if (!human) return;
-    const restoredDraft = loadDraft(window.localStorage, human.id);
-    setDraft(restoredDraft);
-    setDraftMentions(reconcileMessageMentions(restoredDraft, loadDraftMentions(window.localStorage, human.id)));
     setPendingSend(loadPendingSend(window.localStorage, human.id));
   }, [human?.id]);
-
-  useEffect(() => {
-    draftRef.current = draft;
-    if (human) {
-      saveDraft(window.localStorage, human.id, draft);
-      saveDraftMentions(window.localStorage, human.id, reconcileMessageMentions(draft, draftMentions));
-    }
-  }, [human?.id, draft, draftMentions]);
 
   useEffect(() => {
     if (human) savePendingSend(window.localStorage, human.id, pendingSend);
@@ -422,38 +406,28 @@ export default function App() {
     });
   }
 
-  function submitMessage(event: React.FormEvent) {
-    event.preventDefault();
-    const message = draft.trim();
-    if (!message || !human || !connected) return;
-    const mentions = reconcileMessageMentions(message, draftMentions);
+  async function submitMessage({ text: message, mentions }: ComposerSubmission) {
+    if (!message || !human || !connected) return { restoreOnFailure: false };
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
-    setDraft("");
-    setDraftMentions([]);
     setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions));
-    void (async () => {
-      try {
-        setClientError("");
-        const next = await sendMessage(human.id, message, clientMessageId, mentions);
-        setRoom((current) => {
-          const stillPending = current.messages.some(({ id }) => id === optimisticId);
-          if (!stillPending && current.messages.length >= next.messages.length) return current;
-          return { ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth };
-        });
-      } catch (error) {
-        setRoom((current) => discardOptimisticMessage(current, optimisticId));
-        if (error instanceof ApiRequestError && error.outcomeUnknown) {
-          setPendingSend({ clientMessageId, text: message, mentions });
-        } else {
-          if (!draftRef.current) {
-            setDraft(message);
-            setDraftMentions(mentions);
-          }
-        }
-        setClientError(error instanceof Error ? error.message : String(error));
+    try {
+      setClientError("");
+      const next = await sendMessage(human.id, message, clientMessageId, mentions);
+      setRoom((current) => {
+        const stillPending = current.messages.some(({ id }) => id === optimisticId);
+        if (!stillPending && current.messages.length >= next.messages.length) return current;
+        return { ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth };
+      });
+      return { restoreOnFailure: false };
+    } catch (error) {
+      setRoom((current) => discardOptimisticMessage(current, optimisticId));
+      if (error instanceof ApiRequestError && error.outcomeUnknown) {
+        setPendingSend({ clientMessageId, text: message, mentions });
       }
-    })();
+      setClientError(error instanceof Error ? error.message : String(error));
+      return { restoreOnFailure: !(error instanceof ApiRequestError && error.outcomeUnknown) };
+    }
   }
 
   function resendPending() {
@@ -473,10 +447,7 @@ export default function App() {
 
   function returnPendingToDraft() {
     if (!pendingSend) return;
-    if (!draft) {
-      setDraft(pendingSend.text);
-      setDraftMentions(pendingSend.mentions || []);
-    }
+    composer.current?.restoreDraft(pendingSend.text, pendingSend.mentions || []);
     setPendingSend(null);
   }
 
@@ -492,6 +463,7 @@ export default function App() {
   }
 
   function changeName() {
+    composer.current?.flush();
     setHuman(null);
     setSavedHuman(null);
     saveHumanProfile(null);
@@ -519,6 +491,11 @@ export default function App() {
       ? "Room needs attention"
       : "Room is idle";
   const peopleHere = (room.humans?.length || 0) + AGENT_IDS.filter((agent) => room.availability?.[agent] !== false).length;
+  const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || []), [room.humans]);
+  const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
+    workshopTrigger.current = trigger;
+    setWorkshopId((current) => nextWorkshopId(current, { type: "open", id }));
+  }, []);
 
   useEffect(() => {
     document.title = `AllMyFriendsAreAgents — ${room.settings.roomName}`;
@@ -569,7 +546,7 @@ export default function App() {
           {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
-            <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={(id, trigger) => { workshopTrigger.current = trigger; setWorkshopId((current) => nextWorkshopId(current, { type: "open", id })); }} />
+            <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             {pendingSend ? (
               <div className="pending-send" role="status">
                 <span><strong>Not sent — send now?</strong> {pendingSend.text}</span>
@@ -577,14 +554,13 @@ export default function App() {
                 <button type="button" className="classic-button" onClick={returnPendingToDraft}>Keep as draft</button>
               </div>
             ) : null}
-            <ChatComposer
-              draft={draft}
-              mentions={draftMentions}
-              mentionCandidates={roomMentionCandidates(room.humans || [])}
+            <ComposerBoundary
+              key={human.id}
+              ref={composer}
+              humanId={human.id}
+              mentionCandidates={mentionCandidates}
               style={human.style}
               sendDisabled={!connected}
-              onDraftChange={setDraft}
-              onMentionsChange={setDraftMentions}
               onStyleChange={changeMyStyle}
               onSubmit={submitMessage}
             />

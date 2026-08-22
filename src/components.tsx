@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -195,11 +195,72 @@ export function AgentSettingsDialog({
   );
 }
 
+const TIME_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
+
 function formatTime(timestamp: string) {
-  return new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+  return TIME_FORMATTER.format(new Date(timestamp));
 }
 
-export function Transcript({
+function messageText(text: string, onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void) {
+  const references = improvementReferences(text);
+  if (!references.length) return renderAimSmileys(text);
+  const parts: React.ReactNode[] = [];
+  let offset = 0;
+  references.forEach((reference) => {
+    parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
+    parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
+    offset = reference.end;
+  });
+  parts.push(...renderAimSmileys(text.slice(offset)));
+  return parts;
+}
+
+function equalChatStyle(left: ChatStyle | undefined, right: ChatStyle | undefined) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.fontFamily === right.fontFamily
+    && left.fontSize === right.fontSize
+    && left.textColor === right.textColor
+    && left.backgroundColor === right.backgroundColor
+    && left.bold === right.bold
+    && left.italic === right.italic
+    && left.underline === right.underline;
+}
+
+const TranscriptMessage = memo(function TranscriptMessage({
+  message,
+  magnification,
+  onOpenImprovement,
+}: {
+  message: RoomMessage;
+  magnification: number;
+  onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
+}) {
+  const visibleText = isAgentId(message.speaker)
+    ? visibleAgentChatText(message.text)
+    : visibleAgentText(message.text);
+  return (
+    <article className={`message message--${message.kind || "chat"}`}>
+      <time>[{formatTime(message.timestamp)}]</time>
+      <div>
+        <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
+        <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
+          <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
+        </span>
+      </div>
+    </article>
+  );
+}, (previous, next) => previous.magnification === next.magnification
+  && previous.onOpenImprovement === next.onOpenImprovement
+  && previous.message.id === next.message.id
+  && previous.message.kind === next.message.kind
+  && previous.message.speaker === next.message.speaker
+  && previous.message.speakerName === next.message.speakerName
+  && previous.message.text === next.message.text
+  && previous.message.timestamp === next.message.timestamp
+  && equalChatStyle(previous.message.style, next.message.style));
+
+export const Transcript = memo(function Transcript({
   messages,
   magnification,
   transcriptRef,
@@ -210,19 +271,6 @@ export function Transcript({
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
-  const messageText = (text: string) => {
-    const references = improvementReferences(text);
-    if (!references.length) return renderAimSmileys(text);
-    const parts: React.ReactNode[] = [];
-    let offset = 0;
-    references.forEach((reference) => {
-      parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
-      parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
-      offset = reference.end;
-    });
-    parts.push(...renderAimSmileys(text.slice(offset)));
-    return parts;
-  };
   return (
     <div
       ref={transcriptRef}
@@ -232,26 +280,10 @@ export function Transcript({
       aria-label="Room transcript"
       style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
     >
-      {messages.map((message) => {
-        return (
-          <article className={`message message--${message.kind || "chat"}`} key={message.id}>
-            <time>[{formatTime(message.timestamp)}]</time>
-            <div>
-              <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
-              <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
-                <span className="message__text">{messageText(
-                  isAgentId(message.speaker)
-                    ? visibleAgentChatText(message.text)
-                    : visibleAgentText(message.text),
-                )}</span>
-              </span>
-            </div>
-          </article>
-        );
-      })}
+      {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
     </div>
   );
-}
+});
 
 export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
   const view = data?.improvement;
@@ -300,9 +332,10 @@ interface ChatComposerProps {
   onMentionsChange?: (mentions: MessageMention[]) => void;
   onStyleChange: (style: ChatStyle) => void;
   onSubmit: (event: FormEvent) => void;
+  onBlur?: () => void;
 }
 
-export function ChatComposer({ draft, mentions = [], mentionCandidates = [], style, sendDisabled = false, onDraftChange, onMentionsChange = () => undefined, onStyleChange, onSubmit }: ChatComposerProps) {
+export function ChatComposer({ draft, mentions = [], mentionCandidates = [], style, sendDisabled = false, onDraftChange, onMentionsChange = () => undefined, onStyleChange, onSubmit, onBlur }: ChatComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -503,9 +536,11 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           setMentionQuery(queryAt(value, event.target.selectionStart));
         }}
         onSelect={(event) => setMentionQuery(queryAt(event.currentTarget.value, event.currentTarget.selectionStart))}
+        onBlur={onBlur}
         placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
         aria-label="Message"
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
           if (matchingMentions.length && event.key === "ArrowDown") {
             event.preventDefault();
             setActiveMention((current) => (current + 1) % matchingMentions.length);
