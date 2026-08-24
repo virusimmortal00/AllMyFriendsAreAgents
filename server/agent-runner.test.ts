@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { __testing } from "./agent-runner.js";
+import { AgentProcessSupervisor, __testing } from "./agent-runner.js";
 import type { RoomState } from "./types.js";
 
 describe("Codex JSONL parsing", () => {
@@ -236,7 +236,48 @@ describe("Claude session recovery", () => {
   });
 });
 
+describe("Codex runtime recovery", () => {
+  it("recognizes incomplete resumed history but not ordinary command failures", () => {
+    expect(__testing.isCorruptCodexSessionError(new Error("thread history projection expected ordinal 901, got 900"))).toBe(true);
+    expect(__testing.isCorruptCodexSessionError(new Error("Custom tool call output is missing for call_123"))).toBe(true);
+    expect(__testing.isCorruptCodexSessionError(new Error("codex exited with 1: API unavailable"))).toBe(false);
+    expect(__testing.isCorruptCodexSessionError(__testing.codexSessionFailure("Custom tool call output is missing for call_123"))).toBe(true);
+  });
+
+  it("keeps ordinary chat short while allowing bounded writable development", () => {
+    expect(__testing.runTimeout("read-only", false)).toBe(90_000);
+    expect(__testing.runTimeout("read-only", true)).toBe(5 * 60_000);
+    expect(__testing.runTimeout("writable", false)).toBe(10 * 60_000);
+  });
+
+  it("does not expose live service storage or bridge configuration to agent commands", () => {
+    expect(__testing.agentProcessEnvironment({
+      PATH: "/bin",
+      HOME: "/tmp/home",
+      DATABASE_URL: "postgres://live",
+      ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH: "/live/room.sqlite",
+      ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN: "secret",
+      AGENTWIRE_PORT: "53147",
+    })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
+  });
+});
+
 describe("agent process cancellation", () => {
+  it("lets server shutdown await all owned agent processes", async () => {
+    const supervisor = new AgentProcessSupervisor();
+    const outcome = __testing.runProcess(
+      process.execPath,
+      ["-e", "setInterval(() => undefined, 1000)"],
+      process.cwd(),
+      { supervisor, timeoutMs: 10_000 },
+    ).catch((error: unknown) => error);
+
+    expect(supervisor.activeCount).toBe(1);
+    await supervisor.shutdown();
+    await expect(outcome).resolves.toMatchObject({ name: "ProcessExecutionError" });
+    expect(supervisor.activeCount).toBe(0);
+  });
+
   it("cancels an active generation promptly", async () => {
     const controller = new AbortController();
     const outcome = __testing.runProcess(

@@ -38,4 +38,21 @@ describe("CoalescingJobQueue", () => {
     await eventually(() => expect(order).toEqual(["first:start", "first:end", "second"]));
     expect(queue.busy).toBe(false);
   });
+
+  it("drops pending work and rejects new work after shutdown", async () => {
+    const queue = new CoalescingJobQueue();
+    const first = deferred();
+    const order: string[] = [];
+    queue.enqueue("active", async () => {
+      order.push("active");
+      await first.promise;
+    });
+    queue.enqueue("pending", async () => { order.push("pending"); });
+
+    queue.close();
+    expect(queue.enqueue("late", async () => { order.push("late"); })).toBe(false);
+    first.resolve();
+    await eventually(() => expect(queue.busy).toBe(false));
+    expect(order).toEqual(["active"]);
+  });
 });

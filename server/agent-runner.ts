@@ -13,6 +13,7 @@ const OUTPUT_LIMIT = 80_000;
 const DIFF_LIMIT = 30_000;
 const CHAT_RUN_TIMEOUT_MS = 90_000;
 const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
+const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
 const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
@@ -33,6 +34,63 @@ interface ProcessResult {
 export interface GenerationLifecycle {
   start(generationId: string, agent: AgentId): void;
   finish(generationId: string): void;
+}
+
+export interface AgentSessionLifecycle {
+  invalidate(agent: AgentId, sessionId: string, reason: string): Promise<void>;
+}
+
+function processTreeAlive(child: ChildProcess) {
+  if (!child.pid) return false;
+  try {
+    if (process.platform !== "win32") process.kill(-child.pid, 0);
+    else process.kill(child.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessTreeExit(child: ChildProcess, milliseconds: number) {
+  const deadline = Date.now() + milliseconds;
+  while (processTreeAlive(child) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return !processTreeAlive(child);
+}
+
+export class AgentProcessSupervisor {
+  private readonly children = new Set<ChildProcess>();
+  private closed = false;
+
+  track(child: ChildProcess) {
+    if (this.closed) throw new Error("Agent process supervisor is shutting down.");
+    this.children.add(child);
+  }
+
+  async terminate(child: ChildProcess) {
+    if (!this.children.has(child) && !processTreeAlive(child)) return;
+    signalProcessTree(child, "SIGTERM");
+    if (!await waitForProcessTreeExit(child, TERMINATION_GRACE_MS)) {
+      signalProcessTree(child, "SIGKILL");
+      await waitForProcessTreeExit(child, TERMINATION_GRACE_MS);
+    }
+    this.children.delete(child);
+  }
+
+  async release(child: ChildProcess) {
+    if (processTreeAlive(child)) await this.terminate(child);
+    else this.children.delete(child);
+  }
+
+  async shutdown() {
+    this.closed = true;
+    await Promise.all([...this.children].map((child) => this.terminate(child)));
+  }
+
+  get activeCount() {
+    return this.children.size;
+  }
 }
 
 class ProcessExecutionError extends Error {
@@ -97,6 +155,9 @@ async function buildPrompt(
 CURRENT WORKTREE DIFF
 ${(await currentDiff(state.settings.projectPath)) || "(The worktree has no unstaged diff.)"}\n`
     : "";
+  const developmentContext = permission === "writable"
+    ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
+    : "";
   return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
 
 ROOM NAME
@@ -134,6 +195,7 @@ ${participantStyleRoster}
 CURRENT ROOM CONVERSATION
 ${transcriptFor(state)}
 ${reviewContext}
+${developmentContext}
 
 YOUR TURN
 ${instruction}`;
@@ -143,6 +205,9 @@ interface RunProcessOptions {
   input?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  environment?: NodeJS.ProcessEnv;
+  supervisor?: AgentProcessSupervisor;
+  stderrFailure?: (stderr: string) => Error | undefined;
 }
 
 function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
@@ -162,13 +227,12 @@ function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
   }
 }
 
-function terminateProcessTree(child: ChildProcess) {
-  signalProcessTree(child, "SIGTERM");
-  const escalation = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) signalProcessTree(child, "SIGKILL");
-  }, TERMINATION_GRACE_MS);
-  escalation.unref();
-  return escalation;
+function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => (
+    !name.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
+    && !name.startsWith("AGENTWIRE_")
+    && name !== "DATABASE_URL"
+  )));
 }
 
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
@@ -176,7 +240,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     const timeoutMs = options.timeoutMs ?? CHAT_RUN_TIMEOUT_MS;
     const child = spawn(command, args, {
       cwd,
-      env: process.env,
+      env: agentProcessEnvironment(options.environment),
       shell: false,
       detached: process.platform !== "win32",
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -184,7 +248,9 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let escalation: NodeJS.Timeout | undefined;
+    let terminating = false;
+    const supervisor = options.supervisor || new AgentProcessSupervisor();
+    supervisor.track(child);
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -196,15 +262,18 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
       cleanup();
       reject(error);
     };
-    const cancel = () => {
-      escalation = terminateProcessTree(child);
+    const terminateWith = async (error: Error) => {
+      if (settled || terminating) return;
+      terminating = true;
       child.stdin?.destroy();
-      fail(new ProcessCancelledError({ stdout, stderr, exitCode: child.exitCode }));
+      await supervisor.terminate(child);
+      fail(error);
+    };
+    const cancel = () => {
+      void terminateWith(new ProcessCancelledError({ stdout, stderr, exitCode: child.exitCode }));
     };
     const timer = setTimeout(() => {
-      escalation = terminateProcessTree(child);
-      child.stdin?.destroy();
-      fail(new ProcessExecutionError(`${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`, {
+      void terminateWith(new ProcessExecutionError(`${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`, {
         stdout,
         stderr,
         exitCode: null,
@@ -216,13 +285,16 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     });
     child.stderr!.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-OUTPUT_LIMIT);
+      const detected = options.stderrFailure?.(stderr);
+      if (detected) void terminateWith(detected);
     });
     child.on("error", (error) => {
       fail(error);
     });
-    child.on("close", (code) => {
-      if (escalation) clearTimeout(escalation);
-      if (settled) return;
+    child.on("close", async (code) => {
+      if (settled || terminating) return;
+      await supervisor.release(child);
+      if (settled || terminating) return;
       settled = true;
       cleanup();
       if (code === 0) resolve({ stdout, stderr });
@@ -284,6 +356,28 @@ function resolveExecutionProjectPath(permission: "read-only" | "writable", proje
 
 function isMissingClaudeSessionError(error: unknown) {
   return error instanceof Error && /No conversation found with session ID/i.test(error.message);
+}
+
+function isCorruptCodexSessionError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const diagnostic = error instanceof ProcessExecutionError
+    ? `${error.message}\n${error.process.stderr}`
+    : error.message;
+  return /thread history projection.*expected ordinal.*got|custom tool call output is missing|thread .*not found|session .*not found|no rollout found/i.test(diagnostic);
+}
+
+function codexSessionFailure(stderr: string) {
+  if (!isCorruptCodexSessionError(new Error(stderr))) return undefined;
+  return new ProcessExecutionError("Codex could not resume the persisted session because its history is incomplete.", {
+    stdout: "",
+    stderr,
+    exitCode: null,
+  });
+}
+
+function runTimeout(permission: "read-only" | "writable", includeDiff: boolean) {
+  if (includeDiff) return REVIEW_RUN_TIMEOUT_MS;
+  return permission === "writable" ? WRITABLE_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS;
 }
 
 function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
@@ -366,6 +460,8 @@ export async function runAgent(
   signal?: AbortSignal,
   assignmentWorkspace?: string,
   lifecycle?: GenerationLifecycle,
+  sessionLifecycle?: AgentSessionLifecycle,
+  supervisor?: AgentProcessSupervisor,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -396,14 +492,29 @@ export async function runAgent(
   try {
     lifecycle?.start(generationId, agent);
     if (profile.provider === "codex") {
-      const args = codexArgs(permission, projectPath, profile.modelId, existing?.id);
-      const result = await runProcess("codex", args, projectPath, {
-        input: prompt,
-        signal,
-        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
-      });
+      let resumedSessionId = existing?.id;
+      let result: ProcessResult;
+      try {
+        result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId), projectPath, {
+          input: prompt, signal, supervisor, timeoutMs: runTimeout(permission, includeDiff),
+          stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
+        });
+      } catch (error) {
+        if (!resumedSessionId || !isCorruptCodexSessionError(error)) throw error;
+        const sessionError = error as Error;
+        const staleSessionId = resumedSessionId;
+        await sessionLifecycle?.invalidate(agent, staleSessionId, sessionError.message);
+        await journal?.append({
+          type: "generation.retry", generationId, agent, reason: sessionError.message, staleSessionId,
+          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
+        });
+        resumedSessionId = undefined;
+        result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId), projectPath, {
+          input: prompt, signal, supervisor, timeoutMs: runTimeout(permission, includeDiff),
+        });
+      }
       const parsed = parseCodexOutput(result.stdout);
-      const sessionId = parsed.sessionId || existing?.id;
+      const sessionId = parsed.sessionId || resumedSessionId;
       if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
       const durationMs = Date.now() - startedAt;
       await journal?.append({
@@ -424,7 +535,8 @@ export async function runAgent(
       const result = await runProcess(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id), projectPath, {
         input: prompt,
         signal,
-        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+        supervisor,
+        timeoutMs: runTimeout(permission, includeDiff),
       });
       const parsed = parseCursorOutput(result.stdout);
       const sessionId = parsed.sessionId || existing?.id;
@@ -450,10 +562,12 @@ export async function runAgent(
       result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)), projectPath, {
         input: prompt,
         signal,
-        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+        supervisor,
+        timeoutMs: runTimeout(permission, includeDiff),
       });
     } catch (error) {
       if (!existing || !isMissingClaudeSessionError(error)) throw error;
+      await sessionLifecycle?.invalidate(agent, sessionId, error instanceof Error ? error.message : String(error));
       await journal?.append({
         type: "generation.retry",
         generationId,
@@ -470,7 +584,8 @@ export async function runAgent(
       result = await runProcess("claude", claudeArgs(permission, sessionId, profile.modelId), projectPath, {
         input: prompt,
         signal,
-        timeoutMs: includeDiff ? REVIEW_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS,
+        supervisor,
+        timeoutMs: runTimeout(permission, includeDiff),
       });
     }
     const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
@@ -550,4 +665,4 @@ export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>>
   })) as Record<ActiveAgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, claudeArgs, codexArgs, cursorArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, cursorArgs, runProcess };
