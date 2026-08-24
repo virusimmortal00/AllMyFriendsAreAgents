@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
@@ -129,6 +129,8 @@ export default function App() {
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
   const styleSaveRevision = useRef(0);
+  const focusRouteHeading = useRef(Boolean(improvementsView));
+  const actionsMenuFocusLast = useRef(false);
   const { layerRef: actionsMenu, triggerRef: actionsTrigger } = useDismissibleLayer(menuOpen, () => setMenuOpen(false));
   const panelOverlayOpen = Boolean(mobilePanel && compactLayout);
   const { dialogRef: sidePanelRef, onDialogKeyDown: onSidePanelKeyDown } = useModalOverlay<HTMLDivElement>(() => setMobilePanel(null), null, panelOverlayOpen);
@@ -307,7 +309,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const updateRoute = () => setImprovementsView(readImprovementsRoute());
+    const updateRoute = (moveFocus = true) => { focusRouteHeading.current = moveFocus; setImprovementsView(readImprovementsRoute()); };
     const resolveAlias = () => {
       const alias = window.location.hash.slice(1);
       if (!alias || readImprovementsRoute()) return;
@@ -316,22 +318,23 @@ export default function App() {
         if (!resolved) return;
         if (resolved.view === "detail") {
           window.history.replaceState({}, "", `/improvements/${encodeURIComponent(alias)}`);
-          updateRoute();
-        } else setImprovementsView(resolved);
+          updateRoute(true);
+        } else { focusRouteHeading.current = true; setImprovementsView(resolved); }
       });
     };
     const onClick = (event: MouseEvent) => {
       const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="/improvements"]');
-      if (!anchor || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || anchor.target || anchor.hasAttribute("download") || anchor.origin !== window.location.origin) return;
       event.preventDefault();
       window.history.pushState({}, "", anchor.href);
-      updateRoute();
+      updateRoute(event.detail === 0);
     };
     resolveAlias();
-    window.addEventListener("popstate", updateRoute);
+    const onPopState = () => updateRoute(true);
+    window.addEventListener("popstate", onPopState);
     window.addEventListener("hashchange", resolveAlias);
     document.addEventListener("click", onClick);
-    return () => { window.removeEventListener("popstate", updateRoute); window.removeEventListener("hashchange", resolveAlias); document.removeEventListener("click", onClick); };
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener("hashchange", resolveAlias); document.removeEventListener("click", onClick); };
   }, []);
 
   useEffect(() => {
@@ -488,7 +491,8 @@ export default function App() {
     setHasInitialState(false);
   }
 
-  function navigateImprovements(next: ImprovementsRoute | null) {
+  function navigateImprovements(next: ImprovementsRoute | null, options: { focusHeading?: boolean } = {}) {
+    focusRouteHeading.current = options.focusHeading ?? Boolean(!next || next.view === "missing" || next.view === "detail");
     if (!next) {
       if (!improvementsView) return;
       window.history.pushState({}, "", "/");
@@ -515,8 +519,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.title = `AllMyFriendsAreAgents — ${room.settings.roomName}`;
-  }, [room.settings.roomName]);
+    const routeTitle = !improvementsView ? room.settings.roomName : improvementsView.view === "detail" ? improvementsView.id : improvementsView.view === "missing" ? "Improvement not found" : `Improvements — ${improvementsView.scope === "all" ? "All" : "Active"}`;
+    document.title = `AllMyFriendsAreAgents — ${routeTitle}`;
+  }, [room.settings.roomName, improvementsView]);
+
+  useEffect(() => {
+    if (!focusRouteHeading.current) return;
+    const heading = document.querySelector<HTMLElement>("[data-route-heading]");
+    if (heading) heading.focus();
+    focusRouteHeading.current = false;
+  }, [improvementsView]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const items = [...(actionsMenu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [])];
+    items[actionsMenuFocusLast.current ? items.length - 1 : 0]?.focus();
+    actionsMenuFocusLast.current = false;
+  }, [menuOpen]);
+
+  function onActionsMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const items = [...(actionsMenu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [])];
+    if (!items.length) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? (current + 1 + items.length) % items.length
+      : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length
+      : event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    items[next]?.focus();
+  }
 
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
   if (!human) return <LoadingScreen error={joinError || "Joining the room"} />;
@@ -553,19 +584,19 @@ export default function App() {
           }}>Change name</button>
           <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
           <div className="menu-wrap" ref={actionsMenu}>
-            <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
+            <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); actionsMenuFocusLast.current = event.key === "ArrowUp"; setMenuOpen(true); } }} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
-              <div className="dropdown-menu" role="menu">
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("continue", "all"); }}>Continue discussion</button>
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("roundtable", "all"); }}>Start roundtable</button>
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("review", "all"); }}>Review with all agents</button>
+              <div className="dropdown-menu" role="menu" aria-label="Actions" onKeyDown={onActionsMenuKeyDown}>
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("roundtable", "all"); }}>Start roundtable</button>
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("review", "all"); }}>Review with all agents</button>
               </div>
             ) : null}
           </div>
           <button type="button" aria-haspopup="dialog" aria-expanded={helpOpen} onClick={() => { setMenuOpen(false); setMobilePanel(null); setHelpOpen(true); }}>Help</button>
         </nav>
 
-        {connectionNotice ? <div className="connection-banner" role="status">{connectionNotice}</div> : null}
+        {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className="workspace">
           {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
           <section className="chat-panel beveled-inset">

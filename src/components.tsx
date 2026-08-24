@@ -31,7 +31,7 @@ function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperti
 }
 
 export function PanelTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="panel-title">{children}</h2>;
+  return <h2 className="panel-title" data-route-heading tabIndex={-1}>{children}</h2>;
 }
 
 export function ConfirmationDialog({

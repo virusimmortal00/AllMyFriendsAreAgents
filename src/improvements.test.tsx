@@ -25,6 +25,23 @@ describe("Improvements interface", () => {
     expect(navigate).toHaveBeenCalledWith({ view: "list", scope: "all" });
   });
 
+  it("uses arrow keys, Home, and End for roving Improvements tabs", async () => {
+    const user = userEvent.setup(); const navigate = vi.fn();
+    render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={navigate} />);
+    const active = screen.getByRole("tab", { name: "Active" });
+    const all = screen.getByRole("tab", { name: "All" });
+    active.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(all);
+    expect(navigate).toHaveBeenLastCalledWith({ view: "list", scope: "all" });
+    await user.keyboard("{Home}");
+    expect(document.activeElement).toBe(active);
+    await user.keyboard("{End}");
+    expect(document.activeElement).toBe(all);
+    await user.keyboard("{ArrowLeft}");
+    expect(document.activeElement).toBe(active);
+  });
+
   it("confirms emergency stop, cancels safely, and records only an explicit confirmed action", async () => {
     const user = userEvent.setup();
     render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
