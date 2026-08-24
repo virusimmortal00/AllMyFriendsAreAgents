@@ -258,11 +258,26 @@ describe("Codex runtime recovery", () => {
       ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH: "/live/room.sqlite",
       ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_EXECUTOR_TOKEN: "secret",
       AGENTWIRE_PORT: "53147",
+      Database_Url: "postgres://mixed-case-live",
+      All_My_Friends_Are_Agents_Data_Dir: "/mixed-case-live",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
   });
 });
 
 describe("agent process cancellation", () => {
+  it("refuses to spawn after the process supervisor has closed", async () => {
+    const supervisor = new AgentProcessSupervisor();
+    await supervisor.shutdown();
+
+    await expect(__testing.runProcess(
+      process.execPath,
+      ["-e", "process.stdout.write('should-not-run')"],
+      process.cwd(),
+      { supervisor, timeoutMs: 10_000 },
+    )).rejects.toThrow("Agent process supervisor is shutting down.");
+    expect(supervisor.activeCount).toBe(0);
+  });
+
   it("lets server shutdown await all owned agent processes", async () => {
     const supervisor = new AgentProcessSupervisor();
     const outcome = __testing.runProcess(

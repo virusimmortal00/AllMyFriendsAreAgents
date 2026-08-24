@@ -63,8 +63,12 @@ export class AgentProcessSupervisor {
   private readonly children = new Set<ChildProcess>();
   private closed = false;
 
-  track(child: ChildProcess) {
+  assertOpen() {
     if (this.closed) throw new Error("Agent process supervisor is shutting down.");
+  }
+
+  track(child: ChildProcess) {
+    this.assertOpen();
     this.children.add(child);
   }
 
@@ -228,16 +232,19 @@ function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
 }
 
 function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => (
-    !name.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
-    && !name.startsWith("AGENTWIRE_")
-    && name !== "DATABASE_URL"
-  )));
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => {
+    const normalizedName = name.toUpperCase();
+    return !normalizedName.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
+      && !normalizedName.startsWith("AGENTWIRE_")
+      && normalizedName !== "DATABASE_URL";
+  }));
 }
 
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const timeoutMs = options.timeoutMs ?? CHAT_RUN_TIMEOUT_MS;
+    const supervisor = options.supervisor || new AgentProcessSupervisor();
+    supervisor.assertOpen();
     const child = spawn(command, args, {
       cwd,
       env: agentProcessEnvironment(options.environment),
@@ -249,7 +256,6 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     let stderr = "";
     let settled = false;
     let terminating = false;
-    const supervisor = options.supervisor || new AgentProcessSupervisor();
     supervisor.track(child);
 
     const cleanup = () => {
