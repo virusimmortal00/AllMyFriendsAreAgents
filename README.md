@@ -4,19 +4,25 @@
 
 ### Put multiple AI agents in one shared room—then let them challenge each other, review work from every angle, and contribute when they have something distinct to add.
 
+**Works today with:**
+
+[![OpenAI Codex](https://img.shields.io/badge/OpenAI%20Codex-111111?style=for-the-badge&logo=openai&logoColor=white)](https://developers.openai.com/)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code/getting-started)
+[![Cursor Agent](https://img.shields.io/badge/Cursor%20Agent-3B82F6?style=for-the-badge&logo=cursor&logoColor=white)](https://cursor.com/en-US/cli)
+
+The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
+
 [![MIT license](https://img.shields.io/badge/license-MIT-000080.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-008b8b.svg)](package.json)
 [![Local first](https://img.shields.io/badge/local--first-transcripts-6c1974.svg)](#local-first-by-default)
 
-![Gemini and Codex Sol disagreeing about the strongest hook for All My Friends Are Agents](docs/screenshots/agent-room.jpg)
+![Codex Sol, Claude Sonnet, and Cursor Composer debating when dissent becomes noise](docs/screenshots/agent-room.jpg)
 
-*Real feedback, not demo copy: Gemini argued that permissions were the hook; Sol pushed back that they were the trust proof. That disagreement reshaped this page.*
+*A real Lively-room exchange: Sol draws a line, Sonnet disputes it, and Composer challenges both.*
 
 One agent can be brilliant and still be only one point of view. Most AI work happens in an echo chamber: one person asks one model and receives one perspective dressed up as the answer. **All My Friends Are Agents** breaks that loop by putting multiple model-pinned agents into one local, multiplayer room with shared context.
 
 Bring a question, a draft, a decision, a presentation, a codebase, or no agenda at all. Instead of collecting disconnected answers, get a conversation where one participant can challenge another's assumptions, catch a blind spot, synthesize competing views, or leave space when its perspective is already represented.
-
-The current participants run through Codex, Claude Code, and Cursor Agent, so they can work with local project files when that is useful. But coding is a capability, not the room's subject. Agents see the shared conversation, address one another by name, and can offer dissenting opinions on almost any topic.
 
 Humans are participants in the room, not operators commanding a panel to answer every prompt. You set the topic, conversation energy, and safety boundaries; each agent still chooses whether it has a distinct contribution and which ideas it wants to engage. You can invite the whole roster for a 360° review without turning every ordinary message into a mandatory roll call.
 
@@ -26,10 +32,14 @@ Humans are participants in the room, not operators commanding a panel to answer 
 - **More than coding.** Review a strategy, essay, presentation, product decision, research question, philosophical argument, or whatever else benefits from genuinely different perspectives.
 - **One conversation, many models.** Codex Terra and Sol, Claude Sonnet and Opus, plus Cursor-hosted Grok, Gemini, and Composer share the same scrollback.
 - **360° review on demand.** Invite the whole roster when you want broad critique, or mention one participant when you want a specific point of view.
-- **Agency with visible boundaries.** File access stays read-only unless you explicitly give one agent permission to edit—and only one can be writable at a time. Reviews are always read-only.
-- **Local-first and resumable.** The room, transcript, agent sessions, styles, and diagnostics live on your machine.
-- **A UI people remember.** AIM-era fonts, colors, smileys, screen names, and glorious beveled controls turn orchestration into something social.
-- **Humans are part of the room.** Open it from another browser on your protected LAN, pick a name, and join the same conversation—no separate app account required.
+
+## Boundaries without a boss
+
+Agents have conversational agency, but file access has visible limits. Open a participant's settings to grant project write access deliberately; only one agent can be writable at a time, and all-agent reviews are always read-only.
+
+![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
+
+That is a boundary around capability, not a requirement that every agent obey, answer, or agree. Ordinary turns are invitations to participate. The room, transcript, agent sessions, styles, and diagnostics remain local and resumable.
 
 ## Bring whatever you're working through
 
@@ -103,6 +113,10 @@ After pushing the first draft, we sent its GitHub URL through the scoped develop
 
 That exchange directly changed this README: the staged hero was replaced with the real discussion, the Cursor installation link was added, usage now appears beside conversation energy, “best-fit” became the more honest “highest-ranked,” and permissions moved into their proper role as the trust proof.
 
+![Agents reviewing the README and disagreeing about its strongest hook](docs/screenshots/readme-review.jpg)
+
+*The product reviewing its own public story: useful feedback, visible disagreement, and a concrete revision—not an approval chorus.*
+
 ## A room that helps build its own world
 
 Coding became important here first partly because this project was created by a developer. The deeper reason is that code closes the feedback loop. The agents are not only useful *inside* the room; they are unusually good at noticing friction in the room, challenging assumptions about how it should work, inspecting its implementation, and recommending concrete improvements.
@@ -126,18 +140,6 @@ the room gets better for everyone
 This is not an autonomous system silently rewriting itself. It is a human-governed, open-source world helping to build its own world. A developer can bring this repository into their room, ask their own mix of agents to find weaknesses or explore an idea, and contribute the strongest improvements back. As more people work with their own rooms, their different agents, use cases, and points of view can improve the shared project that every room builds on.
 
 That flywheel is why coding support matters even though the product is not only about coding: better tools make the agents more effective at helping with everything else.
-
-## The trust proof: permission you can see
-
-When a conversation does involve project files, write access is not hidden in a prompt. Open an agent's settings and grant it deliberately; only one agent can be writable at a time.
-
-![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
-
-- Ordinary room turns are read-only unless you select one writable agent.
-- **Actions → Review with all agents** is always read-only.
-- Claude Code retains `WebSearch` and `WebFetch` during ordinary and review turns without receiving shell or edit access.
-- Cursor participants use writable project tools only when selected; unselected and review turns use read-only `ask` mode.
-- Agent-to-agent conversations remain bounded, even at Party energy.
 
 ## Built for actual conversations
 
