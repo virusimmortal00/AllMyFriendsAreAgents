@@ -17,6 +17,15 @@ describe("continuation status and inbox UI", () => {
     render(<Continuations refreshKey={0} />); expect(await screen.findByText(/Finish bounded work/)).toBeTruthy(); expect(screen.getByText("A bounded public result")).toBeTruthy();
     await user.click(screen.getByRole("checkbox", { name: "Initiative enabled" })); await user.click(screen.getByRole("button", { name: "Cancel" })); await user.click(screen.getByRole("button", { name: "Resume" })); await user.click(screen.getByRole("button", { name: "Acknowledge" })); await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => { expect(setContinuationPolicy).toHaveBeenCalledWith(2, false); expect(continuationAction).toHaveBeenCalledWith("job-1", "cancel"); expect(continuationAction).toHaveBeenCalledWith("job-1", "resume"); expect(acknowledgeContinuationInbox).toHaveBeenCalledWith("inbox-1", false); expect(acknowledgeContinuationInbox).toHaveBeenCalledWith("inbox-1", true); });
-    expect(loadContinuations).toHaveBeenCalled(); expect(loadContinuationInbox).toHaveBeenCalledWith("codex-sol");
+    expect(loadContinuations).toHaveBeenCalled(); expect(loadContinuationInbox).toHaveBeenCalledWith("codex-sol", expect.any(AbortSignal));
+  });
+  it("shows a distinct initial load and ignores an aborted stale generation", async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof loadContinuations>>) => void; const old = new Promise<Awaited<ReturnType<typeof loadContinuations>>>((resolve) => { resolveOld = resolve; });
+    const newer = { policy: { revision: 3, enabled: false, policyVersion: "continuation-policy-v1", updatedAt: "2026-08-24T13:00:00Z", defaultBudget: { timeMs: 1000, tokenLimit: 10, toolCallLimit: 2, retryLimit: 1 } }, jobs: [] } as Awaited<ReturnType<typeof loadContinuations>>;
+    vi.mocked(loadContinuations).mockImplementationOnce(() => old).mockResolvedValueOnce(newer);
+    const view = render(<Continuations refreshKey={0} />); expect(screen.getByText("Loading continuation status…")).toBeTruthy();
+    view.rerender(<Continuations refreshKey={1} />); await screen.findByText("No continuation jobs.");
+    resolveOld({ ...newer, jobs: [{ jobId: "stale-job", jobRevision: 1, owner: "codex-sol", task: { roomId: "room", taskId: "stale" }, taskRevision: 1, assignmentId: "old", objective: "Stale rollback", trigger: "old", status: "QUEUED", resultDisposition: "PENDING", resultSummary: null, blocker: null, nextEligibilityAt: null, updatedAt: "2026-08-24T11:00:00Z", usage: { elapsedMs: 0, tokens: 0, toolCalls: 0, attempts: 0 } }] });
+    await new Promise((resolve) => setTimeout(resolve, 0)); expect(screen.queryByText(/Stale rollback/)).toBeNull();
   });
 });

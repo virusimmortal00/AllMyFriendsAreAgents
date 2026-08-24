@@ -45,7 +45,7 @@ import {
 } from "../shared/task-domain.js";
 import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTaskState } from "./storage/task-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
-import { canTransitionContinuation, canTransitionContinuationInbox, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
+import { canTransitionContinuation, canTransitionContinuationInbox, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -667,41 +667,50 @@ export class RoomStore implements RoomRepository {
   }
   async listContinuations(owner?: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.jobs).filter((job) => !owner || job.owner === owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.jobId.localeCompare(b.jobId))); }
   async getContinuation(jobId: string) { await this.continuationQueue; const job = this.continuationState.jobs[jobId]; return job ? structuredClone(job) : undefined; }
-  async createContinuation(record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
-    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== 1 || value.status !== "QUEUED") throw new Error("Invalid initial continuation");
+  async createContinuation(record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || value.jobRevision !== 1 || value.status !== "QUEUED" || !auditMatches(audit, value, null)) throw new Error("Invalid initial continuation");
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       if (state.jobs[value.jobId] || hasActiveOwner(state, value.owner)) return { result: { kind: "conflict" as const } };
-      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
     });
   }
-  async compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
-    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== expectedRevision + 1) throw new Error("Invalid continuation CAS revision");
+  async compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || value.jobRevision !== expectedRevision + 1) throw new Error("Invalid continuation CAS revision");
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       const current = state.jobs[value.jobId]; if (!current) return { result: { kind: "not_found" as const } };
       if (current.jobRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
       if (!canTransitionContinuation(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!auditMatches(audit, value, current.status)) throw new Error("Invalid continuation audit event");
       if (hasActiveOwner(state, value.owner, value.jobId) && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(value.status)) return { result: { kind: "conflict" as const } };
-      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
     });
   }
-  async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number): Promise<CasResult<ContinuationRecord>> {
-    const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry);
+  async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry); const audit = normalizeContinuationAuditEvent(event);
     if (!job || !inbox || job.status !== "COMPLETED" || job.jobId !== inbox.jobId || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       const current = state.jobs[job.jobId]; if (!current) return { result: { kind: "not_found" as const } };
       if (current.jobRevision !== expectedRevision || state.inbox[inbox.inboxEntryId]) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
       if (!canTransitionContinuation(current.status, job.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!auditMatches(audit, job, current.status)) throw new Error("Invalid completion audit event");
       const nextInbox = { ...state.inbox, [inbox.inboxEntryId]: inbox };
-      const live = Object.values(nextInbox).filter((item) => item.owner === inbox.owner && item.status !== "ARCHIVED").sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId));
-      for (const stale of live.slice(0, Math.max(0, live.length - Math.max(1, maxEntries)))) nextInbox[stale.inboxEntryId] = { ...stale, inboxRevision: stale.inboxRevision + 1, status: "ARCHIVED", updatedAt: inbox.createdAt, closedAt: inbox.createdAt };
-      return { next: { ...state, jobs: { ...state.jobs, [job.jobId]: job }, inbox: nextInbox }, result: { kind: "accepted" as const, value: structuredClone(job) } };
+      const nextJobs = { ...state.jobs, [job.jobId]: job };
+      const nextEvents = [...state.events, audit!];
+      const live = Object.values(nextInbox).filter((item) => item.owner === inbox.owner && (item.status === "UNREAD" || item.status === "ACKNOWLEDGED")).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId));
+      for (const stale of live.slice(0, Math.max(0, live.length - Math.max(1, maxEntries)))) { nextInbox[stale.inboxEntryId] = { ...stale, inboxRevision: stale.inboxRevision + 1, status: "ARCHIVED", updatedAt: inbox.createdAt, closedAt: inbox.createdAt }; const staleJob = nextJobs[stale.jobId]; if (staleJob?.resultDisposition === "INBOX") { const archivedJob = { ...staleJob, jobRevision: staleJob.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: inbox.createdAt }; nextJobs[stale.jobId] = archivedJob; nextEvents.push(capacityArchiveAudit(archivedJob, staleJob.status, inbox.createdAt)); } }
+      return { next: { ...state, jobs: nextJobs, inbox: nextInbox, events: nextEvents }, result: { kind: "accepted" as const, value: structuredClone(job) } };
     });
   }
+  async listContinuationAudit(jobId: string) { await this.continuationQueue; return structuredClone(this.continuationState.events.filter((event) => event.jobId === jobId).sort((a, b) => a.jobRevision - b.jobRevision || a.eventId.localeCompare(b.eventId))); }
   async listContinuationInbox(owner: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.inbox).filter((entry) => entry.owner === owner).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId))); }
   async getContinuationInboxEntry(inboxEntryId: string) { await this.continuationQueue; const entry = this.continuationState.inbox[inboxEntryId]; return entry ? structuredClone(entry) : undefined; }
   async compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
     const value = normalizeContinuationInboxEntry(entry); if (!value || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox CAS revision");
-    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || value.status === "ARCHIVED" || !canTransitionContinuationInbox(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+  }
+  async archiveContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
+    const value = normalizeContinuationInboxEntry(entry); if (!value || value.status !== "ARCHIVED" || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox archive");
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, "ARCHIVED")) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, capacityArchiveAudit(archivedJob, job.status, value.updatedAt)] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
   }
 
   private async mutateImprovements<T>(
@@ -774,6 +783,8 @@ export class RoomStore implements RoomRepository {
 }
 
 function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }
+function auditMatches(event: ContinuationAuditEvent | undefined, record: ContinuationRecord, fromStatus: ContinuationRecord["status"] | null) { return Boolean(event && event.jobId === record.jobId && event.jobRevision === record.jobRevision && event.toStatus === record.status && event.fromStatus === fromStatus && event.policyRevision === record.policyRevision && event.trigger === record.trigger); }
+function capacityArchiveAudit(record: ContinuationRecord, fromStatus: ContinuationRecord["status"], at: string): ContinuationAuditEvent { return { schemaVersion: 1, eventId: `archive-${record.jobId}-${record.jobRevision}`, jobId: record.jobId, jobRevision: record.jobRevision, attempt: record.usage.attempts, trigger: record.trigger, policyRevision: record.policyRevision, at, action: "INBOX_ARCHIVED", fromStatus, toStatus: record.status, usage: record.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Inbox result archived by bounded retention policy.", nextEligibilityAt: record.nextEligibilityAt }; }
 
 function createsDependencyCycle(tasks: Record<string, Task>, source: TaskIdentity, target: TaskIdentity) {
   if (source.roomId !== target.roomId || source.taskId === target.taskId) return true;

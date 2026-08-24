@@ -33,6 +33,7 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
     const continuationPolicy = await legacyStore.getContinuationPolicy();
     const continuations = await legacyStore.listContinuations();
     const continuationInbox = (await Promise.all([...new Set(continuations.map((job) => job.owner))].map((owner) => legacyStore.listContinuationInbox(owner)))).flat();
+    const continuationAudit = (await Promise.all(continuations.map((job) => legacyStore.listContinuationAudit(job.jobId)))).flat();
     const sqliteStore = await SqliteRoomRepository.open(options.projectRoot, options.databasePath, {
       initializeDefaultRoom: false,
     });
@@ -44,11 +45,11 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
       }
       for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
       sqliteStore.importTasks(tasks, taskEvents);
-      sqliteStore.importContinuations(continuationPolicy, continuations, continuationInbox);
+      sqliteStore.importContinuations(continuationPolicy, continuations, continuationInbox, continuationAudit);
     } finally {
       sqliteStore.close();
     }
-    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, tasks: tasks.length, taskEvents: taskEvents.length, continuations: continuations.length, continuationInbox: continuationInbox.length };
+    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, tasks: tasks.length, taskEvents: taskEvents.length, continuations: continuations.length, continuationInbox: continuationInbox.length, continuationAudit: continuationAudit.length };
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }

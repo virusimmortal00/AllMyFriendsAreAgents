@@ -42,6 +42,13 @@ export interface ContinuationInboxEntry {
   readonly relevance: readonly string[]; readonly createdAt: string; readonly updatedAt: string; readonly expiresAt: string;
   readonly acknowledgedAt: string | null; readonly closedAt: string | null;
 }
+export type ContinuationAuditAction = "CREATED" | "DISPATCHED" | "WAITING_TOOL" | "TOOL_RESUMED" | "RETRY_BLOCKED" | "RESUMED" | "COMPLETED" | "FAILED" | "CANCELLED" | "RESTART_INTERRUPTED" | "ACKNOWLEDGED" | "INBOX_ARCHIVED";
+export interface ContinuationAuditEvent {
+  readonly schemaVersion: 1; readonly eventId: string; readonly jobId: string; readonly jobRevision: number;
+  readonly attempt: number; readonly trigger: string; readonly policyRevision: number; readonly at: string;
+  readonly action: ContinuationAuditAction; readonly fromStatus: ContinuationStatus | null; readonly toStatus: ContinuationStatus;
+  readonly usage: ContinuationUsage; readonly attemptUsage: { readonly elapsedMs: number; readonly tokens: number; readonly toolCalls: number }; readonly result: string | null; readonly nextEligibilityAt: string | null;
+}
 
 export type CasResult<T> = { readonly kind: "accepted"; readonly value: T } | { readonly kind: "conflict"; readonly actualRevision?: number } | { readonly kind: "not_found" };
 export interface ContinuationRecordStore {
@@ -49,12 +56,14 @@ export interface ContinuationRecordStore {
   compareAndSetContinuationPolicy(expectedRevision: number, policy: ContinuationPolicy): Promise<CasResult<ContinuationPolicy>>;
   listContinuations(owner?: AgentId): Promise<readonly ContinuationRecord[]>;
   getContinuation(jobId: string): Promise<ContinuationRecord | undefined>;
-  createContinuation(record: ContinuationRecord): Promise<CasResult<ContinuationRecord>>;
-  compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord): Promise<CasResult<ContinuationRecord>>;
-  completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number): Promise<CasResult<ContinuationRecord>>;
+  createContinuation(record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>>;
+  compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>>;
+  completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>>;
+  listContinuationAudit(jobId: string): Promise<readonly ContinuationAuditEvent[]>;
   listContinuationInbox(owner: AgentId): Promise<readonly ContinuationInboxEntry[]>;
   getContinuationInboxEntry(inboxEntryId: string): Promise<ContinuationInboxEntry | undefined>;
   compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>>;
+  archiveContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>>;
 }
 
 const TRANSITIONS: Record<ContinuationStatus, readonly ContinuationStatus[]> = {
@@ -100,8 +109,21 @@ export function normalizeContinuationInboxEntry(value: unknown): ContinuationInb
     || !validDate(e.createdAt) || !validDate(e.updatedAt) || !validDate(e.expiresAt) || !nullableDate(e.acknowledgedAt) || !nullableDate(e.closedAt)) return undefined;
   return structuredClone(e as ContinuationInboxEntry);
 }
+export function normalizeContinuationAuditEvent(value: unknown): ContinuationAuditEvent | undefined {
+  if (!value || typeof value !== "object") return undefined; const e = value as Partial<ContinuationAuditEvent>;
+  if (e.schemaVersion !== 1 || !validId(e.eventId) || !validId(e.jobId) || !positive(e.jobRevision) || !nonnegative(e.attempt)
+    || !boundedText(e.trigger, 500) || !positive(e.policyRevision) || !validDate(e.at) || !["CREATED", "DISPATCHED", "WAITING_TOOL", "TOOL_RESUMED", "RETRY_BLOCKED", "RESUMED", "COMPLETED", "FAILED", "CANCELLED", "RESTART_INTERRUPTED", "ACKNOWLEDGED", "INBOX_ARCHIVED"].includes(e.action || "")
+    || !(e.fromStatus === null || CONTINUATION_STATUSES.includes(e.fromStatus as ContinuationStatus)) || !CONTINUATION_STATUSES.includes(e.toStatus as ContinuationStatus)
+    || !validUsage(e.usage) || !validAttemptUsage(e.attemptUsage) || !nullableText(e.result, 2_000) || !nullableDate(e.nextEligibilityAt)) return undefined;
+  return structuredClone(e as ContinuationAuditEvent);
+}
+export function redactContinuationText(value: string) {
+  return value.replace(/<(analysis|reasoning|thinking)>[\s\S]*?(?:<\/\1>|$)/gi, "[REDACTED]")
+    .replace(/(?:sk|ghp|github_pat|Bearer)[-_\s]?[A-Za-z0-9_=-]{12,}/gi, "[REDACTED]");
+}
 function validBudget(value: unknown): value is ContinuationBudget { const b = value as Partial<ContinuationBudget> | undefined; return !!b && positive(b.timeMs) && positive(b.tokenLimit) && positive(b.toolCallLimit) && nonnegative(b.retryLimit); }
 function validUsage(value: unknown): value is ContinuationUsage { const u = value as Partial<ContinuationUsage> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls) && nonnegative(u.attempts); }
+function validAttemptUsage(value: unknown): value is ContinuationAuditEvent["attemptUsage"] { const u = value as Partial<ContinuationAuditEvent["attemptUsage"]> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls); }
 function validId(v: unknown): v is string { return typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(v); }
 function boundedText(v: unknown, n: number): v is string { return typeof v === "string" && v.trim().length > 0 && v.length <= n; }
 function nullableText(v: unknown, n: number) { return v === null || typeof v === "string" && v.length <= n; }

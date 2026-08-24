@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONTINUATION_STATUSES, canTransitionContinuation, normalizeContinuationInboxEntry, normalizeContinuationRecord } from "./continuation-record.js";
+import { CONTINUATION_STATUSES, canTransitionContinuation, normalizeContinuationInboxEntry, normalizeContinuationRecord, redactContinuationText } from "./continuation-record.js";
 
 describe("continuation record state machine", () => {
   const legal = new Set(["QUEUED>RUNNING", "QUEUED>CANCELLED", "QUEUED>FAILED", "RUNNING>WAITING_TOOL", "RUNNING>BLOCKED", "RUNNING>COMPLETED", "RUNNING>FAILED", "RUNNING>CANCELLED", "WAITING_TOOL>RUNNING", "WAITING_TOOL>BLOCKED", "WAITING_TOOL>FAILED", "WAITING_TOOL>CANCELLED", "BLOCKED>QUEUED", "BLOCKED>FAILED", "BLOCKED>CANCELLED", "COMPLETED>ACKNOWLEDGED", "FAILED>ACKNOWLEDGED", "CANCELLED>ACKNOWLEDGED"]);
@@ -10,5 +10,10 @@ describe("continuation record state machine", () => {
   it("rejects hidden/unbounded or malformed persisted records", () => {
     expect(normalizeContinuationRecord({ schemaVersion: 1, jobId: "x" })).toBeUndefined();
     expect(normalizeContinuationInboxEntry({ schemaVersion: 1, inboxEntryId: "x", summary: "<thinking>secret</thinking>" })).toBeUndefined();
+  });
+  it("redacts closed and unterminated hidden-reasoning blocks through end of string", () => {
+    expect(redactContinuationText("public <analysis>secret</analysis> end")).toBe("public [REDACTED] end");
+    expect(redactContinuationText("public <thinking>secret through end")).toBe("public [REDACTED]");
+    expect(redactContinuationText(JSON.stringify({ objective: "ok", result: "<reasoning>never closes" }))).not.toContain("never closes");
   });
 });

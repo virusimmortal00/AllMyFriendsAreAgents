@@ -142,14 +142,17 @@ export class AssignmentLifecycleService {
   }
 
   /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
-  async authorityForContinuation(assignmentId: string, agent: AgentId): Promise<{ assignment: AssignmentRecord; workspace: string } | undefined> {
+  async authorityForContinuation(assignmentId: string, agent: AgentId): Promise<{ kind: "ok"; assignment: AssignmentRecord; workspace: string } | { kind: "revoked"; reason: string }> {
     const assignments = await this.reconcile();
     const assignment = assignments.find((candidate) => candidate.assignmentId === assignmentId && candidate.agent === agent);
-    if (!assignment || !["ACTIVE", "RECOVERABLE"].includes(assignment.lifecycleStatus)) return undefined;
-    if (this.rooms.snapshot().settings.writableAgent !== agent) return undefined;
+    if (!assignment || assignment.agent !== agent) return { kind: "revoked", reason: "Assignment is missing or belongs to another agent." };
+    if (!["ACTIVE", "RECOVERABLE"].includes(assignment.lifecycleStatus)) return { kind: "revoked", reason: `Assignment lifecycle is ${assignment.lifecycleStatus}.` };
+    if (this.rooms.snapshot().settings.writableAgent !== agent) return { kind: "revoked", reason: "Project write capability was revoked for this agent." };
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
-    if (governed.kind !== "ok") return undefined;
-    return { assignment, workspace: assignment.workspacePath };
+    if (governed.kind !== "ok") return { kind: "revoked", reason: governed.kind === "rejected" || governed.kind === "conflict" ? governed.reason : "Assignment claim authority no longer exists." };
+    const workspace = await this.workspaceForAgent(agent);
+    if (!workspace || workspace !== assignment.workspacePath) return { kind: "revoked", reason: "Assignment workspace authority changed." };
+    return { kind: "ok", assignment, workspace };
   }
 
   /** Cleanup is intentionally conservative: it only marks merged clean work complete. */
