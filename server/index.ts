@@ -21,13 +21,14 @@ import { projectPermissionAuditMessages, type ProjectPermissionActor } from "./p
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
 import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
-import { resolveStorageConfiguration } from "./storage/config.js";
+import { prepareAssignmentWorktreesDirectory, resolveStorageConfiguration } from "./storage/config.js";
 import { openRoomRepository } from "./storage/open-room-repository.js";
 import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-api.js";
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
+import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
 import { HumanTaskSessions, joinHumanWithTaskSession, registerTaskRoutes } from "./task-api.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
@@ -51,6 +52,8 @@ if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICAT
 const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
 const store = await openRoomRepository(projectRoot, storageConfiguration);
+const projectRepositoryPath = store.snapshot().settings.projectPath;
+const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
 const roomEvents = new RoomEventStream(serverIdentity.instanceId);
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -66,8 +69,11 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
   developerTeam,
-  store.snapshot().settings.projectPath,
-  path.join(storageConfiguration.dataDirectory, "assignment-worktrees"),
+  projectRepositoryPath,
+  assignmentWorktreesDirectory,
+  undefined,
+  true,
+  agentProcesses,
 );
 await assignmentLifecycle.reconcile();
 const coordinatorConfigured = coordinatorEnabled();
@@ -133,10 +139,10 @@ function developerRoomView(limit = 50) {
   };
 }
 
-function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }) {
+function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }, notFoundMessage = "Improvement not found.") {
   if (result.kind === "ok") return response.json(result.value);
   if (result.kind === "unauthorized") return response.status(404).json({ error: "Not found." });
-  if (result.kind === "not_found") return response.status(404).json({ error: "Improvement not found." });
+  if (result.kind === "not_found") return response.status(404).json({ error: notFoundMessage });
   if (result.kind === "conflict") return response.status(409).json(result);
   return response.status(403).json(result);
 }
@@ -159,6 +165,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       assignmentWorkspace, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) },
       agentProcesses,
+      assignment?.assignmentId,
     );
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
@@ -602,31 +609,7 @@ app.get("/api/developer/improvements/:id", async (request, response) => {
   return sendBridgeResult(response, await developerBridge.readImprovement(request.header("authorization"), request.params.id));
 });
 
-app.get("/api/developer/assignments", async (request, response) => {
-  if (!developerTeam.authenticate(request.header("authorization"), "IMPROVEMENT_READ")) return response.status(404).json({ error: "Not found." });
-  response.set("Cache-Control", "no-store").json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.list() });
-});
-
-app.post("/api/developer/assignments", async (request, response) => {
-  return sendBridgeResult(response, await assignmentLifecycle.create(request.header("authorization"), {
-    assignmentId: request.body?.assignmentId,
-    improvementId: request.body?.improvementId,
-    agent: request.body?.agent,
-    baseRef: request.body?.baseRef,
-    fencingToken: request.body?.fencingToken,
-    manifestRevision: request.body?.manifestRevision,
-  }));
-});
-
-app.post("/api/developer/assignments/reconcile", async (request, response) => {
-  if (!developerTeam.authenticate(request.header("authorization"), "ASSIGNMENT_WRITE")) return response.status(404).json({ error: "Not found." });
-  response.json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.reconcile() });
-});
-
-app.post("/api/developer/assignments/cleanup", async (request, response) => {
-  if (!developerTeam.authenticate(request.header("authorization"), "ASSIGNMENT_WRITE")) return response.status(404).json({ error: "Not found." });
-  response.json({ metadata: assignmentLifecycle.metadata, assignments: await assignmentLifecycle.cleanup() });
-});
+registerAssignmentRoutes({ app, service: assignmentLifecycle, developers: developerTeam });
 
 app.post("/api/developer/improvements/:id/claims", async (request, response) => {
   return sendBridgeResult(response, await developerBridge.acquireClaim(request.header("authorization"), {

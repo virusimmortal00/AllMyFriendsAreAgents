@@ -189,6 +189,7 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` | Project agents may inspect or edit |
 | `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND` | `json` (default) or `sqlite` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR` | Runtime data directory |
+| `ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR` | Durable assignment worktrees outside the source checkout; relative paths resolve beside the checkout |
 | `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY` | Maximum parallel CLI processes for bulk actions; default `3` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` | Absolute path or alternate name for Cursor Agent |
 | `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |

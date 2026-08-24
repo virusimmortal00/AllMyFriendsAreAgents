@@ -51,40 +51,111 @@ function processTreeAlive(child: ChildProcess) {
   }
 }
 
-async function waitForProcessTreeExit(child: ChildProcess, milliseconds: number) {
+function processAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function descendantPids(rootPid: number) {
+  if (process.platform === "win32") return new Set<number>();
+  const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid="], { maxBuffer: 4 * 1024 * 1024 });
+  const children = new Map<number, number[]>();
+  for (const line of stdout.split("\n")) {
+    const [pidText, parentText] = line.trim().split(/\s+/);
+    const pid = Number(pidText); const parent = Number(parentText);
+    if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(parent)) continue;
+    const values = children.get(parent) || [];
+    values.push(pid); children.set(parent, values);
+  }
+  const result = new Set<number>(); const pending = [...(children.get(rootPid) || [])];
+  while (pending.length) {
+    const pid = pending.pop()!;
+    if (result.has(pid)) continue;
+    result.add(pid); pending.push(...(children.get(pid) || []));
+  }
+  return result;
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals) {
+  try { process.kill(pid, signal); } catch { /* It may have exited after discovery. */ }
+}
+
+async function freezeAndDiscoverProcessTree(rootPid: number) {
+  const tracked = new Set<number>([rootPid]);
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (const pid of tracked) signalPid(pid, "SIGSTOP");
+    const before = tracked.size;
+    const discovered = await descendantPids(rootPid).catch(() => undefined);
+    if (!discovered) break;
+    for (const pid of discovered) tracked.add(pid);
+    if (tracked.size === before) break;
+  }
+  for (const pid of tracked) signalPid(pid, "SIGSTOP");
+  return tracked;
+}
+
+async function waitForProcessTreeExit(child: ChildProcess, pids: ReadonlySet<number>, milliseconds: number) {
   const deadline = Date.now() + milliseconds;
-  while (processTreeAlive(child) && Date.now() < deadline) {
+  const alive = () => processTreeAlive(child) || [...pids].some(processAlive);
+  while (alive() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  return !processTreeAlive(child);
+  return !alive();
 }
 
 export class AgentProcessSupervisor {
   private readonly children = new Set<ChildProcess>();
+  private readonly scopes = new Map<ChildProcess, string>();
+  private readonly terminations = new Map<ChildProcess, Promise<void>>();
   private closed = false;
 
   assertOpen() {
     if (this.closed) throw new Error("Agent process supervisor is shutting down.");
   }
 
-  track(child: ChildProcess) {
+  track(child: ChildProcess, scope?: string) {
     this.assertOpen();
     this.children.add(child);
+    if (scope) this.scopes.set(child, scope);
   }
 
-  async terminate(child: ChildProcess) {
+  terminate(child: ChildProcess) {
+    const active = this.terminations.get(child);
+    if (active) return active;
+    const operation = this.terminateOnce(child).finally(() => this.terminations.delete(child));
+    this.terminations.set(child, operation);
+    return operation;
+  }
+
+  private async terminateOnce(child: ChildProcess) {
     if (!this.children.has(child) && !processTreeAlive(child)) return;
-    signalProcessTree(child, "SIGTERM");
-    if (!await waitForProcessTreeExit(child, TERMINATION_GRACE_MS)) {
-      signalProcessTree(child, "SIGKILL");
-      await waitForProcessTreeExit(child, TERMINATION_GRACE_MS);
+    if (process.platform === "win32") {
+      if (child.pid) await execFileAsync("taskkill", ["/PID", String(child.pid), "/T"]).catch(() => undefined);
+      if (processTreeAlive(child) && child.pid) await execFileAsync("taskkill", ["/PID", String(child.pid), "/T", "/F"]).catch(() => undefined);
+      this.children.delete(child); this.scopes.delete(child);
+      return;
     }
-    this.children.delete(child);
+    const tracked = child.pid ? await freezeAndDiscoverProcessTree(child.pid) : new Set<number>();
+    for (const pid of [...tracked].reverse()) signalPid(pid, "SIGTERM");
+    for (const pid of tracked) signalPid(pid, "SIGCONT");
+    if (!await waitForProcessTreeExit(child, tracked, TERMINATION_GRACE_MS)) {
+      for (const pid of [...tracked].reverse()) signalPid(pid, "SIGKILL");
+      await waitForProcessTreeExit(child, tracked, TERMINATION_GRACE_MS);
+    }
+    this.children.delete(child); this.scopes.delete(child);
   }
 
   async release(child: ChildProcess) {
     if (processTreeAlive(child)) await this.terminate(child);
-    else this.children.delete(child);
+    else { this.children.delete(child); this.scopes.delete(child); }
+  }
+
+  async terminateScope(scope: string) {
+    await Promise.all([...this.children].filter((child) => this.scopes.get(child) === scope).map((child) => this.terminate(child)));
   }
 
   async shutdown() {
@@ -211,6 +282,7 @@ interface RunProcessOptions {
   timeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
   supervisor?: AgentProcessSupervisor;
+  scope?: string;
   stderrFailure?: (stderr: string) => Error | undefined;
 }
 
@@ -256,7 +328,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     let stderr = "";
     let settled = false;
     let terminating = false;
-    supervisor.track(child);
+    supervisor.track(child, options.scope);
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -470,6 +542,7 @@ export async function runAgent(
   lifecycle?: GenerationLifecycle,
   sessionLifecycle?: AgentSessionLifecycle,
   supervisor?: AgentProcessSupervisor,
+  assignmentId?: string,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -504,7 +577,7 @@ export async function runAgent(
       let result: ProcessResult;
       try {
         result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId), projectPath, {
-          input: prompt, signal, supervisor, timeoutMs: runTimeout(permission, includeDiff),
+          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
           stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
         });
       } catch (error) {
@@ -518,7 +591,7 @@ export async function runAgent(
         });
         resumedSessionId = undefined;
         result = await runProcess("codex", codexArgs(permission, projectPath, profile.modelId), projectPath, {
-          input: prompt, signal, supervisor, timeoutMs: runTimeout(permission, includeDiff),
+          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
         });
       }
       const parsed = parseCodexOutput(result.stdout);
@@ -544,6 +617,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
+        scope: assignmentId,
         timeoutMs: runTimeout(permission, includeDiff),
       });
       const parsed = parseCursorOutput(result.stdout);
@@ -571,6 +645,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
+        scope: assignmentId,
         timeoutMs: runTimeout(permission, includeDiff),
       });
     } catch (error) {
@@ -593,6 +668,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
+        scope: assignmentId,
         timeoutMs: runTimeout(permission, includeDiff),
       });
     }

@@ -60,6 +60,7 @@ function assignmentRecord(workspacePath: string): AssignmentRecord {
     assignmentId: "persisted-1", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 3,
     agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/assignment-persisted",
     observedHeadSha: "b".repeat(40), workspacePath, lifecycleStatus: "RECOVERABLE",
+    lifecycleRevision: 1, cancelledAt: null, disposedAt: null, lastOperationKey: null,
     recovery: { classification: "dirty", reconciledAt: "2099-01-01T00:00:00.000Z", previousStatus: "ACTIVE", detail: "preserved" },
     createdAt: "2099-01-01T00:00:00.000Z", updatedAt: "2099-01-01T00:00:00.000Z",
   };
@@ -151,6 +152,30 @@ describe("trusted single-writer assignment lifecycle", () => {
     await writeFile(path.join(created.value.workspacePath, "done.txt"), "done\n"); await git(created.value.workspacePath, "add", "done.txt"); await git(created.value.workspacePath, "commit", "-m", "done");
     await git(root, "merge", "--ff-only", created.value.branch);
     expect((await service.reconcile())[0]).toMatchObject({ lifecycleStatus: "COMPLETED", recovery: { classification: "merged" } });
+  });
+
+  it("cancels authority before process cleanup, preserves dirty work, and releases the writer gate", async () => {
+    const { service } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-cancel", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    await writeFile(path.join(created.value.workspacePath, "keep.txt"), "preserve\n");
+    const cancelled = await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-one" });
+    expect(cancelled).toMatchObject({ kind: "ok", value: { lifecycleStatus: "CANCELLED", lifecycleRevision: 2, lastOperationKey: "cancel-one" } });
+    expect((await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "cancel-conflict" })).kind).toBe("conflict");
+    expect(await stat(path.join(created.value.workspacePath, "keep.txt"))).toBeTruthy();
+    expect((await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-dirty", confirmDisposable: true })).kind).toBe("rejected");
+    expect((await service.create(`Bearer ${token}`, { assignmentId: "assignment-next", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 })).kind).toBe("ok");
+  });
+
+  it("disposes only an explicitly confirmed clean cancelled worktree and is idempotent", async () => {
+    const { service } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-dispose", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-dispose" });
+    const disposed = await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-one", confirmDisposable: true });
+    expect(disposed).toMatchObject({ kind: "ok", value: { lifecycleStatus: "DISPOSED", lifecycleRevision: 3 } });
+    await expect(stat(created.value.workspacePath)).rejects.toBeTruthy();
+    expect(await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-one", confirmDisposable: true })).toEqual(disposed);
   });
 
   it("exposes prototype metadata without publication operations and scopes writable cwd only", () => {
