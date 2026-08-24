@@ -70,10 +70,12 @@ const assignmentLifecycle = new AssignmentLifecycleService(
 );
 await assignmentLifecycle.reconcile();
 const continuationExecutorUrl = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_URL?.trim() || "http://127.0.0.1/continuation-executor-not-configured";
-const continuationService = new ContinuationService(store, store, assignmentLifecycle, new HttpContinuationExecutor(
+const continuationExecutor = new HttpContinuationExecutor(
   continuationExecutorUrl,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN}` : undefined,
-), { configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATIONS_ENABLED === "true", onTransition: () => broadcast() });
+  process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_PROGRESS_BASE_URL?.trim() || `http://127.0.0.1:${port}`,
+);
+const continuationService = new ContinuationService(store, store, assignmentLifecycle, continuationExecutor, { configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATIONS_ENABLED === "true", onTransition: () => broadcast() });
 await continuationService.initialize();
 const coordinatorConfigured = coordinatorEnabled();
 const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
@@ -470,7 +472,7 @@ app.post("/api/humans", (request, response) => {
 });
 
 registerTaskRoutes({ app, store, humans, sessions: humanTaskSessions, developerTeam, broadcast });
-registerContinuationRoutes({ app, service: continuationService, humans, sessions: humanTaskSessions, developers: developerTeam, broadcast });
+registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanTaskSessions, developers: developerTeam, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const update = request.body as Partial<RoomSettings>;

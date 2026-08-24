@@ -28,4 +28,9 @@ describe("continuation status and inbox UI", () => {
     resolveOld({ ...newer, jobs: [{ jobId: "stale-job", jobRevision: 1, owner: "codex-sol", task: { roomId: "room", taskId: "stale" }, taskRevision: 1, assignmentId: "old", objective: "Stale rollback", trigger: "old", status: "QUEUED", resultDisposition: "PENDING", resultSummary: null, blocker: null, nextEligibilityAt: null, updatedAt: "2026-08-24T11:00:00Z", usage: { elapsedMs: 0, tokens: 0, toolCalls: 0, attempts: 0 } }] });
     await new Promise((resolve) => setTimeout(resolve, 0)); expect(screen.queryByText(/Stale rollback/)).toBeNull();
   });
+  it("labels failed and cancelled outcomes distinctly", async () => {
+    const base = { jobRevision: 3, owner: "codex-sol" as const, task: { roomId: "room", taskId: "task-1" }, taskRevision: 5, assignmentId: "assignment-1", trigger: "Explicit request", resultDisposition: "CLOSED" as const, resultSummary: null, nextEligibilityAt: null, updatedAt: "2026-08-24T12:00:00Z", usage: { elapsedMs: 50, tokens: 2, toolCalls: 1, attempts: 1 } };
+    vi.mocked(loadContinuations).mockResolvedValueOnce({ policy: { revision: 2, enabled: true, policyVersion: "continuation-policy-v1", updatedAt: "2026-08-24T12:00:00Z", defaultBudget: { timeMs: 1000, tokenLimit: 10, toolCallLimit: 2, retryLimit: 1 } }, jobs: [{ ...base, jobId: "failed", objective: "Failed work", status: "FAILED", blocker: "Executor failed" }, { ...base, jobId: "cancelled", objective: "Cancelled work", status: "CANCELLED", blocker: "Authority revoked" }] }); vi.mocked(loadContinuationInbox).mockResolvedValueOnce([]);
+    render(<Continuations refreshKey={0} />); expect(await screen.findByText("Failure:")).toBeTruthy(); expect(screen.getByText("Cancellation:")).toBeTruthy(); expect(screen.queryByText("Blocked:")).toBeNull();
+  });
 });

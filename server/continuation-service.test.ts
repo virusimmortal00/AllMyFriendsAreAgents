@@ -1,11 +1,17 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import express from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTask } from "../shared/task-domain.js";
 import type { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import type { AssignmentRecord } from "./assignment-record.js";
-import { ContinuationService, type ContinuationExecutorInput, type ContinuationExecutorResult } from "./continuation-service.js";
+import { ContinuationService, HttpContinuationExecutor, type ContinuationExecutor, type ContinuationExecutorInput, type ContinuationExecutorResult } from "./continuation-service.js";
+import { registerContinuationRoutes } from "./continuation-api.js";
+import type { DeveloperTeamRegistry } from "./developer-team.js";
+import type { HumanPresenceRegistry } from "./human-presence.js";
+import type { HumanTaskSessions } from "./task-api.js";
 import { RoomStore } from "./room-store.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 
@@ -14,7 +20,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 async function eventually(check: () => boolean | Promise<boolean>) { for (let i = 0; i < 100; i += 1) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 2)); } throw new Error("condition not reached"); }
 
-async function fixture(dispatch: (input: ContinuationExecutorInput) => Promise<ContinuationExecutorResult>, now?: () => Date) {
+async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<ContinuationExecutorResult>) | ContinuationExecutor, now?: () => Date) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-service-")); roots.push(root); const store = await RoomStore.open(root, path.join(root, "state"));
   await store.updateSettings({ projectPath: root, writableAgent: "codex-sol" });
   const actor = { id: "human", roomRole: "owner" as const }; let task = createTask({ roomId: CANONICAL_ROOM_ID, taskId: "task-1", title: "Durable work", actor, now: at });
@@ -23,7 +29,7 @@ async function fixture(dispatch: (input: ContinuationExecutorInput) => Promise<C
   const assignment: AssignmentRecord = { assignmentId: "assignment-1", improvementId: "improvement-1", developerMemberId: "dev-1", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 2, manifestRevision: 3, pinnedBaseSha: "a".repeat(40), branch: "work", observedHeadSha: "a".repeat(40), workspacePath: root, lifecycleStatus: "ACTIVE", recovery: { classification: "clean", reconciledAt: at, previousStatus: null, detail: "test" }, createdAt: at, updatedAt: at };
   let authority = async (id: string, owner: string) => id === assignment.assignmentId && owner === assignment.agent ? { kind: "ok" as const, assignment, workspace: root } : { kind: "revoked" as const, reason: "Assignment mismatch." };
   const lifecycle = { authorityForContinuation: (id: string, owner: string) => authority(id, owner) } as unknown as AssignmentLifecycleService;
-  const service = new ContinuationService(store, store, lifecycle, { dispatch }, { now }); await service.initialize();
+  const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { now }); await service.initialize();
   return { store, service, task, assignment, setAuthority(next: typeof authority) { authority = next; }, async enable() { const policy = await service.policy(); expect(policy).toBeTruthy(); expect((await service.updatePolicy(policy!.revision, { enabled: true }, "human")).kind).toBe("accepted"); }, create: () => service.create({ owner: "codex-sol", developerMemberId: "dev-1", developerMemberConfigRevision: 1, taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId: "assignment-ref", objective: "Continue the approved task", trigger: "Explicit test trigger" }) };
 }
 
@@ -76,12 +82,24 @@ describe("ContinuationService", () => {
     const restartGate = deferred<void>(); const restart = await fixture(async (next) => { await next.progress("WAITING_TOOL", "waiting"); await restartGate.promise; return { summary: "late", usage: { tokens: 1, toolCalls: 1 } }; }); await restart.enable(); await restart.create(); await eventually(async () => (await restart.service.list())[0]?.status === "WAITING_TOOL"); const restarted = new ContinuationService(restart.store, restart.store, { authorityForContinuation: async () => ({ kind: "revoked", reason: "missing" }) } as unknown as AssignmentLifecycleService, { dispatch: async () => ({ summary: "unused", usage: { tokens: 0, toolCalls: 0 } }) }); await restarted.reconcile(); expect((await restarted.list())[0]?.status).toBe("BLOCKED"); restartGate.resolve();
   });
 
+  it("persists authenticated WAITING_TOOL progress from the production HTTP executor and fences stale/cancelled callbacks", async () => {
+    const callbackApp = express(); callbackApp.use(express.json()); const callbackServer = callbackApp.listen(0); await new Promise<void>((resolve) => callbackServer.once("listening", resolve)); const callbackBase = `http://127.0.0.1:${(callbackServer.address() as AddressInfo).port}`;
+    const secondWaiting = deferred<void>(); const releaseSecond = deferred<void>(); const callbackStatuses: number[] = []; let requests = 0; let receivedBody: Record<string, unknown> = {};
+    const remoteApp = express(); remoteApp.use(express.json()); remoteApp.post("/execute", async (request, response) => { try { requests += 1; receivedBody = request.body as Record<string, unknown>; const progress = receivedBody.progress as { url: string; authorization: string }; callbackStatuses.push((await fetch(progress.url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer wrong" }, body: JSON.stringify({ state: "WAITING_TOOL" }) })).status); callbackStatuses.push((await fetch(progress.url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: progress.authorization }, body: JSON.stringify({ state: "WAITING_TOOL", detail: "Remote tool request" }) })).status); callbackStatuses.push((await fetch(progress.url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: progress.authorization }, body: JSON.stringify({ state: "WAITING_TOOL" }) })).status); if (requests === 2) { secondWaiting.resolve(); await releaseSecond.promise; } callbackStatuses.push((await fetch(progress.url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: progress.authorization }, body: JSON.stringify({ state: "RUNNING", detail: "Remote tool complete" }) })).status); response.json({ summary: requests === 1 ? "HTTP executor result" : "late HTTP result", usage: { tokens: 2, toolCalls: 1 } }); } catch (error) { response.status(500).json({ error: String(error) }); } });
+    const remoteServer = remoteApp.listen(0); await new Promise<void>((resolve) => remoteServer.once("listening", resolve)); const remoteUrl = `http://127.0.0.1:${(remoteServer.address() as AddressInfo).port}/execute`;
+    try {
+      const executor = new HttpContinuationExecutor(remoteUrl, "Bearer executor-secret", callbackBase); const value = await fixture(executor); registerContinuationRoutes({ app: callbackApp, service: value.service, progressChannel: executor, humans: {} as HumanPresenceRegistry, sessions: { humanId: () => undefined } as unknown as HumanTaskSessions, developers: {} as DeveloperTeamRegistry, broadcast() {} }); await value.enable(); await value.create(); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED");
+      expect(callbackStatuses.slice(0, 4)).toEqual([401, 202, 409, 202]); expect((await value.service.audit((await value.service.list())[0]!.jobId)).map(({ action }) => action)).toEqual(["CREATED", "DISPATCHED", "WAITING_TOOL", "TOOL_RESUMED", "COMPLETED"]); expect(JSON.stringify(receivedBody)).not.toContain("executor-secret"); expect(receivedBody).toMatchObject({ excludedCapabilities: expect.arrayContaining(["PUSH", "MERGE", "DEPLOY", "PUBLISH"]), capabilities: ["ANALYZE", "EDIT_ASSIGNMENT_WORKSPACE", "RUN_TESTS"] });
+      const second = await value.create(); if (second.kind !== "ok") throw new Error("second create failed"); await secondWaiting.promise; await eventually(async () => (await value.service.list()).find((job) => job.jobId === second.value.jobId)?.status === "WAITING_TOOL"); await value.service.cancel(second.value.jobId); releaseSecond.resolve(); await eventually(() => callbackStatuses.length === 8); expect(callbackStatuses.slice(4)).toEqual([401, 202, 409, 409]); expect((await value.service.list()).find((job) => job.jobId === second.value.jobId)).toMatchObject({ status: "CANCELLED", cancellationRequested: true });
+    } finally { releaseSecond.resolve(); await Promise.all([new Promise<void>((resolve) => callbackServer.close(() => resolve())), new Promise<void>((resolve) => remoteServer.close(() => resolve()))]); }
+  });
+
   it("uses deterministic bounded retry/backoff and terminates after a successful retry", async () => {
     let clock = new Date("2026-08-24T12:00:00.000Z"); let attempts = 0;
     const value = await fixture(async () => { attempts += 1; if (attempts === 1) throw new Error("transient provider failure"); return { summary: "Recovered", usage: { tokens: 4, toolCalls: 1 } }; }, () => clock);
     await value.enable(); await value.create(); await eventually(async () => (await value.service.list())[0]?.status === "BLOCKED");
-    const blocked = (await value.service.list())[0]!; expect(blocked).toMatchObject({ usage: { attempts: 1 }, nextEligibilityAt: "2026-08-24T12:00:05.000Z" }); expect(await value.service.resume(blocked.jobId)).toMatchObject({ kind: "conflict", reason: "Retry backoff has not elapsed." });
-    clock = new Date("2026-08-24T12:00:05.000Z"); expect((await value.service.resume(blocked.jobId)).kind).toBe("ok"); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); expect((await value.service.list())[0]).toMatchObject({ usage: { attempts: 2, tokens: 4, toolCalls: 1 } });
+    const blocked = (await value.service.list())[0]!; expect(blocked).toMatchObject({ usage: { attempts: 1 }, nextEligibilityAt: "2026-08-24T12:00:05.000Z" }); const retryAudit = (await value.service.audit(blocked.jobId)).at(-1)!; expect(retryAudit).toMatchObject({ action: "RETRY_BLOCKED", attempt: 1, result: "transient provider failure", nextEligibilityAt: "2026-08-24T12:00:05.000Z", attemptUsage: { tokens: 0, toolCalls: 0 } }); expect(retryAudit.attemptUsage.elapsedMs).toBe(blocked.usage.elapsedMs); expect(await value.service.resume(blocked.jobId)).toMatchObject({ kind: "conflict", reason: "Retry backoff has not elapsed." });
+    clock = new Date("2026-08-24T12:00:05.000Z"); expect((await value.service.resume(blocked.jobId)).kind).toBe("ok"); const resumedAudit = (await value.service.audit(blocked.jobId)).at(-1)!; expect(resumedAudit).toMatchObject({ action: "RESUMED", attempt: 1, result: "Retry/resume authorized.", nextEligibilityAt: null, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 } }); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); expect((await value.service.list())[0]).toMatchObject({ usage: { attempts: 2, tokens: 4, toolCalls: 1 } }); expect((await value.service.audit(blocked.jobId)).at(-1)).toMatchObject({ action: "COMPLETED", attempt: 2, result: "Recovered", attemptUsage: { tokens: 4, toolCalls: 1 } });
   });
 
   it("does not register an AbortController when cumulative time is already exhausted", async () => {

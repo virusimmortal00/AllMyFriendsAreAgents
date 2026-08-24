@@ -45,7 +45,7 @@ import {
 } from "../shared/task-domain.js";
 import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTaskState } from "./storage/task-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
-import { canTransitionContinuation, canTransitionContinuationInbox, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
+import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxProvenanceMatches, continuationInboxStartsJobResult, continuationRecordIsCanonical, continuationRecordProvenanceMatches, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -181,7 +181,7 @@ export class RoomStore implements RoomRepository {
         throw error;
       });
     const continuationState = await readFile(continuationsPath, "utf8")
-      .then((contents) => normalizeJsonContinuationState(JSON.parse(contents)))
+      .then((contents) => normalizeJsonContinuationState(JSON.parse(contents), CANONICAL_ROOM_ID))
       .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonContinuationState(); throw error; });
 
     try {
@@ -659,16 +659,17 @@ export class RoomStore implements RoomRepository {
 
   async getContinuationPolicy() { await this.continuationQueue; return this.continuationState.policy ? structuredClone(this.continuationState.policy) : undefined; }
   async compareAndSetContinuationPolicy(expectedRevision: number, policy: ContinuationPolicy): Promise<CasResult<ContinuationPolicy>> {
-    const value = normalizeContinuationPolicy(policy); if (!value) throw new Error("Invalid continuation policy");
+    const value = normalizeContinuationPolicy(policy); if (!value || value.roomId !== CANONICAL_ROOM_ID || value.revision !== expectedRevision + 1) throw new Error("Invalid continuation policy");
     return this.mutateContinuations<CasResult<ContinuationPolicy>>((state) => {
       const actual = state.policy?.revision ?? 0; if (actual !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: actual } };
+      if (state.policy && (state.policy.roomId !== value.roomId || state.policy.projectPathHash !== value.projectPathHash || state.policy.policyVersion !== value.policyVersion)) throw new Error("Continuation policy provenance is immutable");
       return { next: { ...state, policy: value }, result: { kind: "accepted" as const, value: structuredClone(value) } };
     });
   }
   async listContinuations(owner?: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.jobs).filter((job) => !owner || job.owner === owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.jobId.localeCompare(b.jobId))); }
   async getContinuation(jobId: string) { await this.continuationQueue; const job = this.continuationState.jobs[jobId]; return job ? structuredClone(job) : undefined; }
   async createContinuation(record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
-    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || value.jobRevision !== 1 || value.status !== "QUEUED" || !auditMatches(audit, value, null)) throw new Error("Invalid initial continuation");
+    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || !continuationRecordIsCanonical(value, CANONICAL_ROOM_ID) || value.jobRevision !== 1 || value.status !== "QUEUED" || !continuationAuditMatches(null, value, audit)) throw new Error("Invalid initial continuation");
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       if (state.jobs[value.jobId] || hasActiveOwner(state, value.owner)) return { result: { kind: "conflict" as const } };
       return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
@@ -679,20 +680,22 @@ export class RoomStore implements RoomRepository {
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       const current = state.jobs[value.jobId]; if (!current) return { result: { kind: "not_found" as const } };
       if (current.jobRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationRecordIsCanonical(value, CANONICAL_ROOM_ID) || !continuationRecordProvenanceMatches(current, value)) throw new Error("Continuation provenance is immutable");
       if (!canTransitionContinuation(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
-      if (!auditMatches(audit, value, current.status)) throw new Error("Invalid continuation audit event");
+      if (!continuationAuditMatches(current, value, audit)) throw new Error("Invalid continuation audit event");
       if (hasActiveOwner(state, value.owner, value.jobId) && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(value.status)) return { result: { kind: "conflict" as const } };
       return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
     });
   }
   async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
     const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry); const audit = normalizeContinuationAuditEvent(event);
-    if (!job || !inbox || job.status !== "COMPLETED" || job.jobId !== inbox.jobId || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
+    if (!job || !inbox || !continuationRecordIsCanonical(job, CANONICAL_ROOM_ID) || inbox.roomId !== CANONICAL_ROOM_ID || !continuationInboxStartsJobResult(inbox, job) || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
     return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
       const current = state.jobs[job.jobId]; if (!current) return { result: { kind: "not_found" as const } };
       if (current.jobRevision !== expectedRevision || state.inbox[inbox.inboxEntryId]) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationRecordProvenanceMatches(current, job)) throw new Error("Continuation provenance is immutable");
       if (!canTransitionContinuation(current.status, job.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
-      if (!auditMatches(audit, job, current.status)) throw new Error("Invalid completion audit event");
+      if (!continuationAuditMatches(current, job, audit)) throw new Error("Invalid completion audit event");
       const nextInbox = { ...state.inbox, [inbox.inboxEntryId]: inbox };
       const nextJobs = { ...state.jobs, [job.jobId]: job };
       const nextEvents = [...state.events, audit!];
@@ -706,11 +709,11 @@ export class RoomStore implements RoomRepository {
   async getContinuationInboxEntry(inboxEntryId: string) { await this.continuationQueue; const entry = this.continuationState.inbox[inboxEntryId]; return entry ? structuredClone(entry) : undefined; }
   async compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
     const value = normalizeContinuationInboxEntry(entry); if (!value || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox CAS revision");
-    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || value.status === "ARCHIVED" || !canTransitionContinuationInbox(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || value.status === "ARCHIVED" || !canTransitionContinuationInbox(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxProvenanceMatches(current, value)) throw new Error("Continuation inbox provenance is immutable"); return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
   }
   async archiveContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
     const value = normalizeContinuationInboxEntry(entry); if (!value || value.status !== "ARCHIVED" || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox archive");
-    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, "ARCHIVED")) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, capacityArchiveAudit(archivedJob, job.status, value.updatedAt)] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, "ARCHIVED")) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxProvenanceMatches(current, value)) throw new Error("Continuation inbox provenance is immutable"); const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; if (!continuationInboxMatchesJob(value, job)) throw new Error("Continuation inbox provenance does not match its job"); const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, capacityArchiveAudit(archivedJob, job.status, value.updatedAt)] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
   }
 
   private async mutateImprovements<T>(
@@ -783,7 +786,6 @@ export class RoomStore implements RoomRepository {
 }
 
 function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }
-function auditMatches(event: ContinuationAuditEvent | undefined, record: ContinuationRecord, fromStatus: ContinuationRecord["status"] | null) { return Boolean(event && event.jobId === record.jobId && event.jobRevision === record.jobRevision && event.toStatus === record.status && event.fromStatus === fromStatus && event.policyRevision === record.policyRevision && event.trigger === record.trigger); }
 function capacityArchiveAudit(record: ContinuationRecord, fromStatus: ContinuationRecord["status"], at: string): ContinuationAuditEvent { return { schemaVersion: 1, eventId: `archive-${record.jobId}-${record.jobRevision}`, jobId: record.jobId, jobRevision: record.jobRevision, attempt: record.usage.attempts, trigger: record.trigger, policyRevision: record.policyRevision, at, action: "INBOX_ARCHIVED", fromStatus, toStatus: record.status, usage: record.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Inbox result archived by bounded retention policy.", nextEligibilityAt: record.nextEligibilityAt }; }
 
 function createsDependencyCycle(tasks: Record<string, Task>, source: TaskIdentity, target: TaskIdentity) {

@@ -3,7 +3,7 @@ import { isAgentId } from "../shared/participants.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
 import type { HumanTaskSessions } from "./task-api.js";
-import type { ContinuationService } from "./continuation-service.js";
+import type { ContinuationProgressChannel, ContinuationService } from "./continuation-service.js";
 import { redactContinuationText } from "./continuation-record.js";
 
 export function projectContinuationJob(job: Awaited<ReturnType<ContinuationService["list"]>>[number]) {
@@ -21,9 +21,10 @@ function send(response: express.Response, result: { kind: string; [key: string]:
   if (result.kind === "conflict") return response.status(409).json(result);
   return response.status(403).json(result);
 }
-export function registerContinuationRoutes(input: { app: express.Express; service: ContinuationService; humans: HumanPresenceRegistry; sessions: HumanTaskSessions; developers: DeveloperTeamRegistry; broadcast: () => void }) {
-  const { app, service, humans, sessions, developers, broadcast } = input;
+export function registerContinuationRoutes(input: { app: express.Express; service: ContinuationService; progressChannel?: ContinuationProgressChannel; humans: HumanPresenceRegistry; sessions: HumanTaskSessions; developers: DeveloperTeamRegistry; broadcast: () => void }) {
+  const { app, service, progressChannel, humans, sessions, developers, broadcast } = input;
   const human = (request: express.Request) => { const id = sessions.humanId(request.header("cookie")); return id && humans.get(id) ? id : undefined; };
+  app.post("/api/continuation-executor/progress/:jobId/:attempt", async (request, response) => { if (!progressChannel) return response.status(404).json({ error: "Not found." }); const attempt = Number(request.params.attempt); if (!Number.isSafeInteger(attempt) || attempt < 1) return response.status(400).json({ error: "Valid continuation attempt required." }); const result = await progressChannel.handleProgress(String(request.params.jobId), attempt, request.header("authorization"), request.body); return result === "accepted" ? response.status(202).json({ accepted: true }) : result === "unauthorized" ? response.status(401).json({ error: "Invalid progress authorization." }) : result === "invalid" ? response.status(400).json({ error: "Valid bounded progress state required." }) : response.status(409).json({ error: "Continuation attempt is stale." }); });
   app.use("/api/continuations", (request, response, next) => { const actor = human(request); if (!actor) return response.status(401).json({ error: "Join the room before managing continuations." }); response.locals.continuationActor = actor; next(); });
   app.get("/api/continuations", async (_request, response) => response.set("Cache-Control", "no-store").json({ policy: await service.policy(), jobs: (await service.list()).map(projectContinuationJob) }));
   app.patch("/api/continuations/policy", async (request, response) => { const revision = Number(request.body?.expectedRevision); if (!Number.isSafeInteger(revision) || typeof request.body?.enabled !== "boolean") return response.status(400).json({ error: "expectedRevision and enabled are required." }); const result = await service.updatePolicy(revision, { enabled: request.body.enabled }, response.locals.continuationActor); if (result.kind === "accepted") { broadcast(); return response.json(result.value); } return response.status(result.kind === "not_found" ? 404 : 409).json(result); });

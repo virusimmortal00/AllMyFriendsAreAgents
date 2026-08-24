@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Task } from "../shared/task-domain.js";
 import type { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import type { AssignmentRecord } from "./assignment-record.js";
@@ -23,19 +23,33 @@ export interface ContinuationExecutorInput {
 }
 export interface ContinuationExecutorResult { readonly summary: string; readonly relevance?: readonly string[]; readonly usage: { readonly tokens: number; readonly toolCalls: number } }
 export interface ContinuationExecutor { dispatch(input: ContinuationExecutorInput): Promise<ContinuationExecutorResult> }
+export interface ContinuationProgressChannel { handleProgress(jobId: string, attempt: number, authorization: string | undefined, body: unknown): Promise<"accepted" | "unauthorized" | "invalid" | "stale"> }
 export class HttpContinuationExecutor implements ContinuationExecutor {
-  constructor(private readonly url: string, private readonly authorization?: string) {}
+  private readonly pending = new Map<string, { token: string; progress: ContinuationExecutorInput["progress"] }>();
+  constructor(private readonly url: string, private readonly authorization?: string, private readonly progressBaseUrl = "http://127.0.0.1:53147") {}
   async dispatch(input: ContinuationExecutorInput): Promise<ContinuationExecutorResult> {
-    const response = await fetch(this.url, { method: "POST", signal: input.signal, headers: { "content-type": "application/json", ...(this.authorization ? { authorization: this.authorization } : {}) },
-      body: JSON.stringify({ schemaVersion: 1, jobId: input.jobId, attempt: input.attempt, owner: input.owner, objective: input.objective, trigger: input.trigger,
-        task: input.task, assignmentId: input.assignmentId, cwd: input.cwd, capabilities: input.capabilities, remainingBudget: input.remainingBudget,
-        excludedCapabilities: ["COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH", "EXTERNAL_REQUEST"] }) });
-    if (!response.ok) throw new Error(`Continuation executor returned HTTP ${response.status}.`);
-    const body = await response.json() as Partial<ContinuationExecutorResult>;
-    if (typeof body.summary !== "string" || !body.usage || !Number.isSafeInteger(body.usage.tokens) || !Number.isSafeInteger(body.usage.toolCalls)) throw new Error("Continuation executor returned an invalid bounded result.");
-    return { summary: body.summary, relevance: Array.isArray(body.relevance) ? body.relevance.map(String) : [], usage: { tokens: body.usage.tokens, toolCalls: body.usage.toolCalls } };
+    const key = progressKey(input.jobId, input.attempt); const token = randomBytes(32).toString("base64url"); this.pending.set(key, { token, progress: input.progress });
+    try {
+      const progressUrl = new URL(`/api/continuation-executor/progress/${encodeURIComponent(input.jobId)}/${input.attempt}`, this.progressBaseUrl).toString();
+      const response = await fetch(this.url, { method: "POST", signal: input.signal, headers: { "content-type": "application/json", ...(this.authorization ? { authorization: this.authorization } : {}) },
+        body: JSON.stringify({ schemaVersion: 1, jobId: input.jobId, attempt: input.attempt, owner: input.owner, objective: input.objective, trigger: input.trigger,
+          task: input.task, assignmentId: input.assignmentId, cwd: input.cwd, capabilities: input.capabilities, remainingBudget: input.remainingBudget,
+          progress: { url: progressUrl, authorization: `Bearer ${token}` }, excludedCapabilities: ["COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH", "EXTERNAL_REQUEST"] }) });
+      if (!response.ok) throw new Error(`Continuation executor returned HTTP ${response.status}.`);
+      const body = await response.json() as Partial<ContinuationExecutorResult>;
+      if (typeof body.summary !== "string" || !body.usage || !Number.isSafeInteger(body.usage.tokens) || !Number.isSafeInteger(body.usage.toolCalls)) throw new Error("Continuation executor returned an invalid bounded result.");
+      return { summary: body.summary, relevance: Array.isArray(body.relevance) ? body.relevance.map(String) : [], usage: { tokens: body.usage.tokens, toolCalls: body.usage.toolCalls } };
+    } finally { const current = this.pending.get(key); if (current?.token === token) this.pending.delete(key); }
+  }
+  async handleProgress(jobId: string, attempt: number, authorization: string | undefined, body: unknown) {
+    const pending = this.pending.get(progressKey(jobId, attempt)); if (!pending || !authorization?.startsWith("Bearer ")) return pending ? "unauthorized" as const : "stale" as const;
+    const supplied = authorization.slice(7); const expectedBytes = Buffer.from(pending.token); const suppliedBytes = Buffer.from(supplied);
+    if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) return "unauthorized" as const;
+    const value = body as { state?: unknown; detail?: unknown } | null; if (!value || (value.state !== "WAITING_TOOL" && value.state !== "RUNNING") || value.detail !== undefined && (typeof value.detail !== "string" || value.detail.length > 2_000)) return "invalid" as const;
+    return await pending.progress(value.state, value.detail) ? "accepted" as const : "stale" as const;
   }
 }
+function progressKey(jobId: string, attempt: number) { return `${jobId}\u0000${attempt}`; }
 export type ContinuationResult<T> = { readonly kind: "ok"; readonly value: T } | { readonly kind: "not_found" } | { readonly kind: "conflict"; readonly reason: string } | { readonly kind: "rejected"; readonly reason: string };
 
 export class ContinuationService {
@@ -252,7 +266,7 @@ export class ContinuationService {
     if (!((current.status === "RUNNING" && state === "WAITING_TOOL") || (current.status === "WAITING_TOOL" && state === "RUNNING"))) return false;
     const validation = await this.revalidate(current); if ("reason" in validation) { await this.failValidation(current, validation.reason!); return false; }
     const now = this.now(); const next = transition(current, state, now, { blocker: state === "WAITING_TOOL" ? redactContinuationText(detail || "Waiting for bounded tool work.").slice(0, 2_000) : null });
-    const result = await this.records.compareAndSetContinuation(current.jobRevision, next, audit(next, current.status, state === "WAITING_TOOL" ? "WAITING_TOOL" : "TOOL_RESUMED", now, next.blocker || detail || "Tool work resumed."));
+    const result = await this.records.compareAndSetContinuation(current.jobRevision, next, audit(next, current.status, state === "WAITING_TOOL" ? "WAITING_TOOL" : "TOOL_RESUMED", now, next.blocker || "Tool work resumed."));
     if (result.kind === "accepted") this.changed(); return result.kind === "accepted";
   }
 }

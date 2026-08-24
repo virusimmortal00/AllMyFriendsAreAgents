@@ -121,6 +121,64 @@ export function redactContinuationText(value: string) {
   return value.replace(/<(analysis|reasoning|thinking)>[\s\S]*?(?:<\/\1>|$)/gi, "[REDACTED]")
     .replace(/(?:sk|ghp|github_pat|Bearer)[-_\s]?[A-Za-z0-9_=-]{12,}/gi, "[REDACTED]");
 }
+export function continuationRecordIsCanonical(record: ContinuationRecord, roomId: string) { return record.roomId === roomId && record.task.roomId === roomId; }
+export function continuationRecordProvenanceMatches(before: ContinuationRecord, after: ContinuationRecord) {
+  return JSON.stringify({ schemaVersion: before.schemaVersion, jobId: before.jobId, roomId: before.roomId, projectPathHash: before.projectPathHash, owner: before.owner, task: before.task, taskRevision: before.taskRevision, assignmentReferenceId: before.assignmentReferenceId, authority: before.authority, objective: before.objective, trigger: before.trigger, policyRevision: before.policyRevision, policyVersion: before.policyVersion, capabilities: before.capabilities, budget: before.budget, createdAt: before.createdAt })
+    === JSON.stringify({ schemaVersion: after.schemaVersion, jobId: after.jobId, roomId: after.roomId, projectPathHash: after.projectPathHash, owner: after.owner, task: after.task, taskRevision: after.taskRevision, assignmentReferenceId: after.assignmentReferenceId, authority: after.authority, objective: after.objective, trigger: after.trigger, policyRevision: after.policyRevision, policyVersion: after.policyVersion, capabilities: after.capabilities, budget: after.budget, createdAt: after.createdAt });
+}
+export function continuationInboxProvenanceMatches(before: ContinuationInboxEntry, after: ContinuationInboxEntry) {
+  return JSON.stringify({ schemaVersion: before.schemaVersion, inboxEntryId: before.inboxEntryId, jobId: before.jobId, owner: before.owner, roomId: before.roomId, task: before.task, taskRevision: before.taskRevision, assignmentId: before.assignmentId, summary: before.summary, relevance: before.relevance, createdAt: before.createdAt, expiresAt: before.expiresAt })
+    === JSON.stringify({ schemaVersion: after.schemaVersion, inboxEntryId: after.inboxEntryId, jobId: after.jobId, owner: after.owner, roomId: after.roomId, task: after.task, taskRevision: after.taskRevision, assignmentId: after.assignmentId, summary: after.summary, relevance: after.relevance, createdAt: after.createdAt, expiresAt: after.expiresAt });
+}
+export function continuationInboxMatchesJob(entry: ContinuationInboxEntry, job: ContinuationRecord) {
+  return entry.jobId === job.jobId && entry.roomId === job.roomId && entry.owner === job.owner && entry.task.roomId === job.task.roomId && entry.task.taskId === job.task.taskId && entry.taskRevision === job.taskRevision && entry.assignmentId === job.authority.assignmentId;
+}
+export function continuationInboxStartsJobResult(entry: ContinuationInboxEntry, job: ContinuationRecord) {
+  return continuationInboxMatchesJob(entry, job) && entry.inboxRevision === 1 && entry.status === "UNREAD" && entry.summary === job.resultSummary
+    && entry.createdAt === job.completedAt && entry.updatedAt === entry.createdAt && Date.parse(entry.expiresAt) > Date.parse(entry.createdAt)
+    && entry.acknowledgedAt === null && entry.closedAt === null && job.status === "COMPLETED" && job.resultDisposition === "INBOX" && job.completedAt !== null;
+}
+export function continuationAuditMatches(before: ContinuationRecord | null, after: ContinuationRecord, candidate: ContinuationAuditEvent | undefined) {
+  if (!candidate || !continuationUsageProgresses(before, after)) return false;
+  const actions = auditActions(before?.status ?? null, after); if (!actions.includes(candidate.action)) return false;
+  const result = auditResult(candidate.action, after);
+  const attemptUsage = before ? { elapsedMs: after.usage.elapsedMs - before.usage.elapsedMs, tokens: after.usage.tokens - before.usage.tokens, toolCalls: after.usage.toolCalls - before.usage.toolCalls } : { elapsedMs: 0, tokens: 0, toolCalls: 0 };
+  return candidate.jobId === after.jobId && candidate.jobRevision === after.jobRevision && candidate.attempt === after.usage.attempts
+    && candidate.trigger === after.trigger && candidate.policyRevision === after.policyRevision && candidate.at === after.updatedAt
+    && candidate.fromStatus === (before?.status ?? null) && candidate.toStatus === after.status && candidate.result === result
+    && candidate.nextEligibilityAt === after.nextEligibilityAt && JSON.stringify(candidate.usage) === JSON.stringify(after.usage)
+    && JSON.stringify(candidate.attemptUsage) === JSON.stringify(attemptUsage);
+}
+function continuationUsageProgresses(before: ContinuationRecord | null, after: ContinuationRecord) {
+  if (!before) return after.status === "QUEUED" && after.jobRevision === 1 && after.usage.elapsedMs === 0 && after.usage.tokens === 0 && after.usage.toolCalls === 0 && after.usage.attempts === 0 && after.createdAt === after.updatedAt && after.startedAt === null && after.completedAt === null && after.resultDisposition === "PENDING" && after.resultSummary === null && after.blocker === null && after.nextEligibilityAt === null && !after.cancellationRequested;
+  const dispatch = before.status === "QUEUED" && after.status === "RUNNING";
+  return after.usage.elapsedMs >= before.usage.elapsedMs && after.usage.tokens >= before.usage.tokens && after.usage.toolCalls >= before.usage.toolCalls
+    && after.usage.attempts === before.usage.attempts + (dispatch ? 1 : 0) && Date.parse(after.updatedAt) >= Date.parse(before.updatedAt);
+}
+function auditActions(from: ContinuationStatus | null, after: ContinuationRecord): readonly ContinuationAuditAction[] { const to = after.status;
+  if (from === null && to === "QUEUED") return ["CREATED"];
+  if (from === "QUEUED" && to === "RUNNING") return ["DISPATCHED"];
+  if (from === "RUNNING" && to === "WAITING_TOOL") return ["WAITING_TOOL"];
+  if (from === "WAITING_TOOL" && to === "RUNNING") return ["TOOL_RESUMED"];
+  if ((from === "RUNNING" || from === "WAITING_TOOL") && to === "BLOCKED") return after.blocker?.startsWith("Executor interrupted by server restart;") ? ["RESTART_INTERRUPTED"] : ["RETRY_BLOCKED"];
+  if (from === "BLOCKED" && to === "QUEUED") return ["RESUMED"];
+  if (to === "COMPLETED") return ["COMPLETED"];
+  if (to === "FAILED") return ["FAILED"];
+  if (to === "CANCELLED") return ["CANCELLED"];
+  if (to === "ACKNOWLEDGED") return ["ACKNOWLEDGED"];
+  if (from === to) return ["INBOX_ARCHIVED"];
+  return [];
+}
+function auditResult(action: ContinuationAuditAction, record: ContinuationRecord): string | null {
+  if (action === "CREATED") return "Queued by authorized developer.";
+  if (action === "DISPATCHED") return "Executor dispatch started.";
+  if (action === "TOOL_RESUMED") return "Tool work resumed.";
+  if (action === "RESUMED") return "Retry/resume authorized.";
+  if (action === "ACKNOWLEDGED") return "Inbox entry closed.";
+  if (action === "INBOX_ARCHIVED") return "Inbox result archived by bounded retention policy.";
+  if (action === "COMPLETED") return record.resultSummary;
+  return record.blocker;
+}
 function validBudget(value: unknown): value is ContinuationBudget { const b = value as Partial<ContinuationBudget> | undefined; return !!b && positive(b.timeMs) && positive(b.tokenLimit) && positive(b.toolCallLimit) && nonnegative(b.retryLimit); }
 function validUsage(value: unknown): value is ContinuationUsage { const u = value as Partial<ContinuationUsage> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls) && nonnegative(u.attempts); }
 function validAttemptUsage(value: unknown): value is ContinuationAuditEvent["attemptUsage"] { const u = value as Partial<ContinuationAuditEvent["attemptUsage"]> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls); }
