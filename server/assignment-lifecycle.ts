@@ -273,7 +273,8 @@ async function disposableWorkspace(repositoryPath: string, worktreesRoot: string
   const branch = await git(workspace, ["branch", "--show-current"]).catch(() => "");
   if (branch !== assignment.branch) return { kind: "rejected", reason: "Assignment branch identity changed" };
   const common = await git(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "");
-  const expectedCommon = await realpath(path.join(repository, ".git")).catch(() => "");
+  const repositoryCommon = await git(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "");
+  const expectedCommon = await realpath(repositoryCommon).catch(() => "");
   if (!common || await realpath(common).catch(() => "") !== expectedCommon) return { kind: "rejected", reason: "Assignment Git common directory changed" };
   const dirty = await git(workspace, ["status", "--porcelain", "--untracked-files=normal"]);
   if (dirty) return { kind: "rejected", reason: "Dirty assignment work is preserved and cannot be disposed" };
@@ -307,3 +308,5 @@ async function exists(value: string) { return stat(value).then(() => true).catch
 function validId(value: string) { return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/.test(value); }
 function validMutation(value: AssignmentMutationInput) { return validId(value.assignmentId) && Number.isSafeInteger(value.expectedRevision) && value.expectedRevision >= 1 && validId(value.idempotencyKey); }
 function slug(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48); }
+
+export const __testing = { disposableWorkspace };
