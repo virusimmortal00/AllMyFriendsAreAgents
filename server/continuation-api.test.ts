@@ -28,7 +28,7 @@ describe("continuation public projection", () => {
     finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
   });
   it("projects bounded audit data with per-attempt usage and defense-in-depth redaction", () => {
-    const event: ContinuationAuditEvent = { schemaVersion: 1, eventId: "event", jobId: "job", jobRevision: 2, attempt: 1, trigger: "explicit <analysis>hidden", policyRevision: 1, at: "2026-08-24T00:00:00Z", action: "FAILED", fromStatus: "RUNNING", toStatus: "FAILED", usage: { elapsedMs: 12, tokens: 3, toolCalls: 1, attempts: 1 }, attemptUsage: { elapsedMs: 12, tokens: 3, toolCalls: 1 }, result: "public <reasoning>secret", nextEligibilityAt: null };
+    const event: ContinuationAuditEvent = { schemaVersion: 1, eventId: "event", jobId: "job", jobRevision: 2, attempt: 1, trigger: "explicit <analysis>hidden", policyRevision: 1, provenanceHash: "a".repeat(64), at: "2026-08-24T00:00:00Z", action: "FAILED", fromStatus: "RUNNING", toStatus: "FAILED", usage: { elapsedMs: 12, tokens: 3, toolCalls: 1, attempts: 1 }, attemptUsage: { elapsedMs: 12, tokens: 3, toolCalls: 1 }, result: "public <reasoning>secret", nextEligibilityAt: null };
     const projection = projectContinuationAudit(event); expect(projection).toMatchObject({ attemptUsage: { elapsedMs: 12, tokens: 3, toolCalls: 1 }, trigger: "explicit [REDACTED]", result: "public [REDACTED]" }); expect(JSON.stringify(projection)).not.toMatch(/hidden|secret/);
   });
 });

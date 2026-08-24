@@ -9,7 +9,7 @@ import { SqliteRoomRepository } from "./sqlite-room-repository.js";
 import type { AssignmentRecord } from "../assignment-record.js";
 import { createTask } from "../../shared/task-domain.js";
 import { DEFAULT_ROOM_ID } from "./sqlite-room-repository.js";
-import { CONTINUATION_POLICY_VERSION, projectPathHash, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
+import { CONTINUATION_POLICY_VERSION, continuationProvenanceHash, projectPathHash, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -50,7 +50,7 @@ describe("JSON to SQLite import", () => {
     const continuationPolicy: ContinuationPolicy = { schemaVersion: 1, policyVersion: CONTINUATION_POLICY_VERSION, revision: 1, roomId: DEFAULT_ROOM_ID, projectPathHash: projectPathHash(projectRoot), enabled: true, maxConcurrentPerAgent: 1, defaultBudget: { timeMs: 1000, tokenLimit: 10, toolCallLimit: 2, retryLimit: 0 }, maxInboxEntriesPerAgent: 10, inboxTtlMs: 1000, retryBackoffMs: 100, updatedAt: "2026-08-21T01:02:00.000Z", updatedBy: "owner" };
     await legacyStore.compareAndSetContinuationPolicy(0, continuationPolicy);
     const continuation: ContinuationRecord = { schemaVersion: 1, jobId: "imported-job", jobRevision: 1, roomId: DEFAULT_ROOM_ID, projectPathHash: projectPathHash(projectRoot), owner: "codex-sol", task: taskIdentity, taskRevision: 2, assignmentReferenceId: "assignment-ref", authority: { assignmentId: assignment.assignmentId, developerMemberId: assignment.developerMemberId, developerMemberConfigRevision: assignment.developerMemberConfigRevision, agent: assignment.agent, fencingToken: assignment.fencingToken, manifestRevision: assignment.manifestRevision, pinnedBaseSha: assignment.pinnedBaseSha }, objective: "Preserve continuation", trigger: "migration test", policyRevision: 1, policyVersion: CONTINUATION_POLICY_VERSION, capabilities: ["ANALYZE"], status: "QUEUED", budget: continuationPolicy.defaultBudget, usage: { elapsedMs: 0, tokens: 0, toolCalls: 0, attempts: 0 }, cancellationRequested: false, resultDisposition: "PENDING", resultSummary: null, blocker: null, nextEligibilityAt: null, createdAt: "2026-08-21T01:03:00.000Z", startedAt: null, updatedAt: "2026-08-21T01:03:00.000Z", completedAt: null };
-    await legacyStore.createContinuation(continuation, { schemaVersion: 1, eventId: "imported-created-event", jobId: continuation.jobId, jobRevision: 1, attempt: 0, trigger: continuation.trigger, policyRevision: 1, at: continuation.createdAt, action: "CREATED", fromStatus: null, toStatus: "QUEUED", usage: continuation.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Queued by authorized developer.", nextEligibilityAt: null });
+    await legacyStore.createContinuation(continuation, { schemaVersion: 1, eventId: "imported-created-event", jobId: continuation.jobId, jobRevision: 1, attempt: 0, trigger: continuation.trigger, policyRevision: 1, provenanceHash: continuationProvenanceHash(continuation), at: continuation.createdAt, action: "CREATED", fromStatus: null, toStatus: "QUEUED", usage: continuation.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Queued by authorized developer.", nextEligibilityAt: null });
     const sourcePath = path.join(sourceStateDirectory, "room.json");
     const sourceState = JSON.parse(await readFile(sourcePath, "utf8"));
     sourceState.sessions["codex-terra"] = { id: "retired-session", permission: "read-only" };
@@ -60,6 +60,14 @@ describe("JSON to SQLite import", () => {
     const sourceTasksBefore = await readFile(sourceTasksPath, "utf8");
     const sourceContinuationsPath = path.join(sourceStateDirectory, "continuations.json");
     const sourceContinuationsBefore = await readFile(sourceContinuationsPath, "utf8");
+    const validContinuationState = JSON.parse(sourceContinuationsBefore) as { policy: Record<string, unknown>; jobs: Record<string, Record<string, unknown>>; inbox: Record<string, unknown>; events: Array<Record<string, unknown>> };
+    const rejectsCorruptReload = async (mutate: (state: typeof validContinuationState) => void) => { const corrupt = structuredClone(validContinuationState); mutate(corrupt); await writeFile(sourceContinuationsPath, `${JSON.stringify(corrupt, null, 2)}\n`, "utf8"); await expect(RoomStore.open(projectRoot, sourceStateDirectory)).rejects.toThrow(/Malformed|Invalid|audit|continuation/i); await writeFile(sourceContinuationsPath, sourceContinuationsBefore, "utf8"); };
+    await rejectsCorruptReload((state) => { state.jobs["imported-job"]!.usage = { elapsedMs: 0, tokens: -1, toolCalls: 0, attempts: 0 }; });
+    await rejectsCorruptReload((state) => { state.jobs["wrong-key"] = state.jobs["imported-job"]!; delete state.jobs["imported-job"]; });
+    await rejectsCorruptReload((state) => { state.policy.maxConcurrentPerAgent = 2; });
+    await rejectsCorruptReload((state) => { state.inbox["malformed-entry"] = { schemaVersion: 1 }; });
+    await rejectsCorruptReload((state) => { state.events[0]!.result = "forged but shape-valid"; });
+    await rejectsCorruptReload((state) => { state.events.push({ schemaVersion: 1 }); });
 
     const result = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
 
@@ -89,7 +97,10 @@ describe("JSON to SQLite import", () => {
     expect(await importedStore.getTask(taskIdentity)).toMatchObject({ revision: 2, description: "history survives" });
     expect((await importedStore.listTaskEvents(taskIdentity)).map(({ revision }) => revision)).toEqual([1, 2]);
     expect(await importedStore.getContinuation("imported-job")).toEqual(continuation);
-    expect(await importedStore.listContinuationAudit("imported-job")).toHaveLength(1);
+    const importedAudit = (await importedStore.listContinuationAudit("imported-job"))[0]!; expect(importedAudit).toBeTruthy();
+    expect(() => importedStore.importContinuations(continuationPolicy, [continuation], [], [{ ...importedAudit, result: "forged but shape-valid" }])).toThrow(/audit/);
+    expect(() => importedStore.importContinuations(continuationPolicy, [{ ...continuation, usage: { ...continuation.usage, tokens: -1 } }], [], [importedAudit])).toThrow(/job/);
+    expect(await importedStore.getContinuation("imported-job")).toEqual(continuation); expect(await importedStore.listContinuationAudit("imported-job")).toEqual([importedAudit]);
     importedStore.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(result);
