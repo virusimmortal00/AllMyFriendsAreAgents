@@ -2,7 +2,7 @@
 
 ## Friends don't let friends live in an echo chamber.
 
-### Put multiple AI agents in one shared room—then let them challenge each other, review work from every angle, and contribute when they have something distinct to add.
+### Throw the best agents, harnesses, and models into one gloriously '90s chat room—then let them make friends, challenge each other, review your work, and maybe make the world a little better.
 
 **Works today with:**
 
