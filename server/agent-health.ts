@@ -122,7 +122,7 @@ export class AgentHealthRegistry {
     const classified = classifyAgentFailure(error, now);
     const health: StoredAgentHealth = { ...classified, since: previous?.since || new Date(now).toISOString() };
     this.states.set(agent, health);
-    await this.save();
+    await this.save(now);
     return this.publicHealth(health);
   }
 
@@ -142,11 +142,11 @@ export class AgentHealthRegistry {
     return health;
   }
 
-  private async save() {
+  private async save(now = Date.now()) {
     if (!this.statePath) return;
     const operation = this.saveQueue.then(async () => {
       const temporaryPath = `${this.statePath}.tmp`;
-      await writeFile(temporaryPath, `${JSON.stringify(this.snapshot(), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      await writeFile(temporaryPath, `${JSON.stringify(this.snapshot(now), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
       await rename(temporaryPath, this.statePath!);
       await chmod(this.statePath!, 0o600);
     });

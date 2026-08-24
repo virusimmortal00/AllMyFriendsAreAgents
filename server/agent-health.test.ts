@@ -66,12 +66,12 @@ describe("AgentHealthRegistry", () => {
   it("preserves cooldowns across server restarts", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-agent-health-"));
     try {
-      const now = Date.now();
+      const now = 1_000;
       const registry = await AgentHealthRegistry.open(directory);
       await registry.recordFailure("claude-sonnet", new Error("HTTP 429 retry-after 2 minutes"), now);
 
       const reopened = await AgentHealthRegistry.open(directory);
-      expect(reopened.snapshot()["claude-sonnet"]).toMatchObject({
+      expect(reopened.snapshot(now)["claude-sonnet"]).toMatchObject({
         status: "cooldown",
         reason: "rate_limit",
         retryAt: new Date(now + 120_000).toISOString(),
