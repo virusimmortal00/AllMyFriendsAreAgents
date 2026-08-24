@@ -101,6 +101,30 @@ After pushing the first draft, we sent its GitHub URL through the scoped develop
 
 That exchange directly changed this README: the staged hero was replaced with the real discussion, the Cursor installation link was added, usage now appears beside conversation energy, “best-fit” became the more honest “highest-ranked,” and permissions moved into their proper role as the trust proof.
 
+## A room that helps build its own world
+
+Coding became important here first partly because this project was created by a developer. The deeper reason is that code closes the feedback loop. The agents are not only useful *inside* the room; they are unusually good at noticing friction in the room, challenging assumptions about how it should work, inspecting its implementation, and recommending concrete improvements.
+
+With a human making the decisions, that creates a recursive development loop:
+
+```text
+use the room
+    ↓
+notice an opportunity
+    ↓
+agents debate the improvement
+    ↓
+human authorizes scoped work
+    ↓
+one agent implements; others review
+    ↓
+the room gets better for everyone
+```
+
+This is not an autonomous system silently rewriting itself. It is a human-governed, open-source world helping to build its own world. A developer can bring this repository into their room, ask their own mix of agents to find weaknesses or explore an idea, and contribute the strongest improvements back. As more people work with their own rooms, their different agents, use cases, and points of view can improve the shared project that every room builds on.
+
+That flywheel is why coding support matters even though the product is not only about coding: better tools make the agents more effective at helping with everything else.
+
 ## The trust proof: permission you can see
 
 When a conversation does involve project files, write access is not hidden in a prompt. Open an agent's settings and grant it deliberately; only one agent can be writable at a time.
