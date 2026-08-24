@@ -47,9 +47,9 @@ describe("Codex JSONL parsing", () => {
 
   it("extracts exact model identifiers from Cursor's account-specific catalog", () => {
     expect(__testing.parseCursorModels([
-      "Available models",
-      "cursor-grok-4.6-high - Cursor Grok 4.6",
-      "gemini-3.1-pro - Gemini 3.1 Pro",
+      "\u001b[2mAvailable models\u001b[22m",
+      "\u001b[36mcursor-grok-4.6-high\u001b[39m \u001b[2m- Cursor Grok 4.6\u001b[22m",
+      "\u001b[36mgemini-3.1-pro\u001b[39m \u001b[2m- Gemini 3.1 Pro\u001b[22m",
       "",
       "Tip: use --model <id>",
     ].join("\n"))).toEqual(new Set(["cursor-grok-4.6-high", "gemini-3.1-pro"]));
@@ -72,18 +72,19 @@ describe("agent permissions", () => {
   } satisfies RoomState;
 
   it("keeps explicit review turns read-only", () => {
-    expect(__testing.resolvePermission("codex-sol", state, true)).toBe("read-only");
+    expect(__testing.resolvePermission("codex-sol", state, true, "/tmp/worktree")).toBe("read-only");
   });
 
-  it("allows only the selected agent to write on ordinary turns", () => {
-    expect(__testing.resolvePermission("codex-sol", state, false)).toBe("writable");
-    expect(__testing.resolvePermission("claude-sonnet", state, false)).toBe("read-only");
+  it("allows only the selected assigned agent to write on ordinary turns", () => {
+    expect(__testing.resolvePermission("codex-sol", state, false, "/tmp/worktree")).toBe("writable");
+    expect(__testing.resolvePermission("claude-sonnet", state, false, "/tmp/worktree")).toBe("read-only");
+    expect(__testing.resolvePermission("codex-sol", state, false)).toBe("read-only");
   });
 
   it("allows a selected Cursor agent to write while keeping review turns read-only", () => {
     const cursorState = { ...state, settings: { ...state.settings, writableAgent: "cursor-grok" as const } };
-    expect(__testing.resolvePermission("cursor-grok", cursorState, false)).toBe("writable");
-    expect(__testing.resolvePermission("cursor-grok", cursorState, true)).toBe("read-only");
+    expect(__testing.resolvePermission("cursor-grok", cursorState, false, "/tmp/worktree")).toBe("writable");
+    expect(__testing.resolvePermission("cursor-grok", cursorState, true, "/tmp/worktree")).toBe("read-only");
   });
 });
 
@@ -138,7 +139,7 @@ describe("room prompt context", () => {
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
-    expect(prompt).toContain(`Claude [Claude Opus 5]: ${JSON.stringify(state.settings.participantStyles["claude-opus"])}`);
+    expect(prompt).not.toContain(`Claude [Claude Opus 5]:`);
     expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
@@ -159,6 +160,8 @@ describe("room prompt context", () => {
     ["cursor-grok", "[GROK]"],
     ["cursor-gemini", "[GEMINI]"],
     ["cursor-composer", "[COMPOSER]"],
+    ["cursor-gemini-flash", "[FLASH]"],
+    ["cursor-glm", "[GLM]"],
   ] as const)("anchors %s self-history to its unique transcript label", async (agent, label) => {
     const prompt = await __testing.buildPrompt(agent, state, "Join if useful.", false, "read-only");
 

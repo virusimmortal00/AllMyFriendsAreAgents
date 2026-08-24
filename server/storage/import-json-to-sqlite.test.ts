@@ -25,7 +25,7 @@ describe("JSON to SQLite import", () => {
       id: "import-human-1234",
       name: "Importer",
     });
-    await legacyStore.setSession("codex-terra", "imported-session", "read-only");
+    await legacyStore.setSession("codex-sol", "imported-session", "read-only");
     const assignment: AssignmentRecord = {
       assignmentId: "imported-assignment", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 1,
       agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/imported",
@@ -45,7 +45,7 @@ describe("JSON to SQLite import", () => {
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
     const importedStore = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
-    expect(importedStore.snapshot().sessions["codex-terra"]?.id).toBe("imported-session");
+    expect(importedStore.snapshot().sessions["codex-sol"]?.id).toBe("imported-session");
     expect(importedStore.snapshot().messages.at(-1)).toMatchObject({
       text: "Keep this transcript",
       speakerName: "Importer",

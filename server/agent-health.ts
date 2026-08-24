@@ -107,13 +107,18 @@ export class AgentHealthRegistry {
     return new AgentHealthRegistry();
   }
 
+  private isCurrent(health: StoredAgentHealth, now: number) {
+    return health.status !== "cooldown" || (health.retryAtMs || 0) > now;
+  }
+
   canAttempt(agent: ActiveAgentId, now = Date.now()) {
     const health = this.states.get(agent);
-    return !health || (health.status === "cooldown" && (health.retryAtMs || 0) <= now);
+    return !health || !this.isCurrent(health, now);
   }
 
   async recordFailure(agent: ActiveAgentId, error: unknown, now = Date.now()) {
-    const previous = this.states.get(agent);
+    const stored = this.states.get(agent);
+    const previous = stored && this.isCurrent(stored, now) ? stored : undefined;
     const classified = classifyAgentFailure(error, now);
     const health: StoredAgentHealth = { ...classified, since: previous?.since || new Date(now).toISOString() };
     this.states.set(agent, health);
@@ -127,8 +132,10 @@ export class AgentHealthRegistry {
     return recovered;
   }
 
-  snapshot() {
-    return Object.fromEntries([...this.states].map(([agent, health]) => [agent, this.publicHealth(health)])) as Partial<Record<ActiveAgentId, AgentHealth>>;
+  snapshot(now = Date.now()) {
+    return Object.fromEntries([...this.states]
+      .filter(([, health]) => this.isCurrent(health, now))
+      .map(([agent, health]) => [agent, this.publicHealth(health)])) as Partial<Record<ActiveAgentId, AgentHealth>>;
   }
 
   private publicHealth({ retryAtMs: _retryAtMs, ...health }: StoredAgentHealth): AgentHealth {

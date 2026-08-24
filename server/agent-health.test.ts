@@ -47,11 +47,11 @@ describe("agent failure classification", () => {
 describe("AgentHealthRegistry", () => {
   it("coalesces repeated failures and announces one recovery", async () => {
     const registry = AgentHealthRegistry.memory();
-    await registry.recordFailure("claude-opus", new Error("HTTP 429"), 1_000);
-    await registry.recordFailure("claude-opus", new Error("HTTP 429"), 2_000);
-    expect(registry.canAttempt("claude-opus", 2_001)).toBe(false);
-    expect(await registry.recordSuccess("claude-opus")).toBe(true);
-    expect(await registry.recordSuccess("claude-opus")).toBe(false);
+    await registry.recordFailure("claude-sonnet", new Error("HTTP 429"), 1_000);
+    await registry.recordFailure("claude-sonnet", new Error("HTTP 429"), 2_000);
+    expect(registry.canAttempt("claude-sonnet", 2_001)).toBe(false);
+    expect(await registry.recordSuccess("claude-sonnet")).toBe(true);
+    expect(await registry.recordSuccess("claude-sonnet")).toBe(false);
     expect(registry.snapshot()).toEqual({});
   });
 
@@ -60,21 +60,23 @@ describe("AgentHealthRegistry", () => {
     await registry.recordFailure("codex-sol", new Error("request timed out"), 1_000);
     expect(registry.canAttempt("codex-sol", 30_999)).toBe(false);
     expect(registry.canAttempt("codex-sol", 31_000)).toBe(true);
+    expect(registry.snapshot(31_000)).toEqual({});
   });
 
   it("preserves cooldowns across server restarts", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-agent-health-"));
     try {
+      const now = Date.now();
       const registry = await AgentHealthRegistry.open(directory);
-      await registry.recordFailure("claude-sonnet", new Error("HTTP 429 retry-after 2 minutes"), 1_000);
+      await registry.recordFailure("claude-sonnet", new Error("HTTP 429 retry-after 2 minutes"), now);
 
       const reopened = await AgentHealthRegistry.open(directory);
       expect(reopened.snapshot()["claude-sonnet"]).toMatchObject({
         status: "cooldown",
         reason: "rate_limit",
-        retryAt: new Date(121_000).toISOString(),
+        retryAt: new Date(now + 120_000).toISOString(),
       });
-      expect(reopened.canAttempt("claude-sonnet", 120_999)).toBe(false);
+      expect(reopened.canAttempt("claude-sonnet", now + 119_999)).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
