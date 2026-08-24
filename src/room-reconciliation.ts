@@ -1,5 +1,7 @@
 import type { RoomProtocolEvent, RoomProtocolPosition } from "../shared/protocol";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
+import { isConversationEnergy } from "../shared/conversation-energy";
+import { isActiveAgentId } from "../shared/participants";
 import type { RoomMessage, RoomState } from "./types";
 
 export type RoomReconciliation =
@@ -101,16 +103,35 @@ function isProtocolEvent(value: unknown): value is RoomProtocolEvent<RoomState> 
   if (typeof event.streamId !== "string" || !Number.isSafeInteger(event.version) || (event.version as number) < 0) return false;
   if (event.kind === "snapshot") return Boolean(event.state && isRoomState(event.state) && (event.reason === "initial" || event.reason === "resync"));
   if (event.kind === "messages-appended") return Number.isSafeInteger(event.fromVersion) && Array.isArray(event.messages) && event.messages.every(isRoomMessage);
-  if (event.kind === "state-delta") return Number.isSafeInteger(event.fromVersion) && Boolean(event.state && typeof event.state === "object" && !("messages" in event.state));
+  if (event.kind === "state-delta") return Number.isSafeInteger(event.fromVersion) && isNonMessageRoomState(event.state);
   return false;
 }
 
 function isRoomState(value: unknown): value is RoomState {
   if (!value || typeof value !== "object") return false;
   const room = value as Partial<RoomState>;
-  return Array.isArray(room.messages) && room.messages.every(isRoomMessage)
-    && Boolean(room.settings && typeof room.settings === "object")
-    && (room.status === "idle" || room.status === "working" || room.status === "error");
+  if (!Array.isArray(room.messages) || !room.messages.every(isRoomMessage)) return false;
+  const { messages: _messages, ...nonMessageState } = room;
+  return isNonMessageRoomState(nonMessageState);
+}
+
+function isNonMessageRoomState(value: unknown): value is Omit<RoomState, "messages"> {
+  if (!value || typeof value !== "object" || "messages" in value) return false;
+  const room = value as Partial<Omit<RoomState, "messages">>;
+  const settings = room.settings;
+  const server = room.server;
+  return Boolean(
+    settings && typeof settings === "object"
+    && typeof settings.roomName === "string"
+    && typeof settings.topic === "string"
+    && (settings.writableAgent === "nobody" || isActiveAgentId(settings.writableAgent))
+    && isConversationEnergy(settings.conversationEnergy)
+    && settings.participantStyles && typeof settings.participantStyles === "object"
+    && (room.status === "idle" || room.status === "working" || room.status === "error")
+    && server && typeof server === "object"
+    && typeof server.instanceId === "string" && server.instanceId.length > 0
+    && Number.isSafeInteger(server.protocolVersion),
+  );
 }
 
 function isRoomMessage(value: unknown): value is RoomMessage {

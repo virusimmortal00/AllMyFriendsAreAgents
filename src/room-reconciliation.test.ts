@@ -63,6 +63,23 @@ describe("room delta reconciliation", () => {
     expect(reconcileRoomEvent(current, position, { surprise: true }).kind).toBe("resync");
   });
 
+  it("rejects partial state deltas before they can erase required room fields", () => {
+    const current = state([message("safe")], { status: "working" });
+    const position = { streamId: "stream-1", version: 2 };
+    const partialDelta = {
+      kind: "state-delta",
+      streamId: "stream-1",
+      fromVersion: 2,
+      version: 3,
+      state: { server: { instanceId: "server-1", protocolVersion: ROOM_PROTOCOL_VERSION } },
+    };
+
+    expect(reconcileRoomEvent(current, position, partialDelta)).toEqual({ kind: "resync" });
+    expect(current.settings.roomName).toBe("Delta Lab");
+    expect(current.status).toBe("working");
+    expect(current.messages.map(({ id }) => id)).toEqual(["safe"]);
+  });
+
   it("replaces an optimistic message exactly once whether delta or acknowledgement arrives first", () => {
     const clientMessageId = "message-correlation-1234";
     const optimistic = appendOptimisticHumanMessage(state(), human, `pending-${clientMessageId}`, "hello", "2026-08-24T11:59:00.000Z", [], clientMessageId);
