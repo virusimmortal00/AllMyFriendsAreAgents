@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { scrollTranscriptToEnd } from "./scroll";
+import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd, transcriptDistanceFromEnd } from "./scroll";
 
 describe("scrollTranscriptToEnd", () => {
   it("scrolls the transcript container to its full content height", () => {
@@ -28,5 +29,21 @@ describe("scrollTranscriptToEnd", () => {
       options: { top: 654, behavior: "auto" },
     }]);
     expect(transcript.style.scrollBehavior).toBe("smooth");
+  });
+
+  it("measures follow state from the rendered viewport instead of message counts", () => {
+    const transcript = { scrollHeight: 1_200, clientHeight: 300, scrollTop: 868 };
+    expect(transcriptDistanceFromEnd(transcript)).toBe(32);
+    expect(isTranscriptFollowing(transcript)).toBe(true);
+    transcript.scrollTop = 867;
+    expect(isTranscriptFollowing(transcript)).toBe(false);
+  });
+
+  it("removes nonessential scroll motion when the user prefers reduced motion", () => {
+    const matchMedia = vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
+    expect(preferredScrollBehavior()).toBe("auto");
+    matchMedia.mockReturnValue({ matches: false } as MediaQueryList);
+    expect(preferredScrollBehavior()).toBe("smooth");
+    matchMedia.mockRestore();
   });
 });

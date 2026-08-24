@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -17,6 +17,7 @@ import type { WorkshopResponse } from "./types";
 import { workshopLayout } from "./workshop-dialog";
 import { reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageMention } from "../shared/mentions";
 import { useDismissibleLayer, useModalOverlay } from "./overlay";
+import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -379,16 +380,72 @@ export const Transcript = memo(function Transcript({
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const resizeFrame = useRef<number | undefined>(undefined);
+  const previousContent = useRef("");
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  const lastMessage = messages.at(-1);
+  const lastText = lastMessage?.text || "";
+  const contentSignature = `${messages.length}:${lastMessage?.id || ""}:${lastText.length}:${lastText.slice(-64)}`;
+
+  const followEnd = useCallback((behavior: ScrollBehavior = "auto") => {
+    following.current = true;
+    setHasNewMessages(false);
+    scrollTranscriptToEnd(transcriptRef.current, behavior);
+  }, [transcriptRef]);
+
+  useLayoutEffect(() => {
+    if (previousContent.current === contentSignature) return;
+    previousContent.current = contentSignature;
+    if (following.current) followEnd();
+    else setHasNewMessages(true);
+  }, [contentSignature, followEnd]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    const content = contentRef.current;
+    if (!transcript || !content || typeof ResizeObserver === "undefined") return;
+    const resizeObserver = new ResizeObserver(() => {
+      if (!following.current || resizeFrame.current !== undefined) return;
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = undefined;
+        if (following.current) scrollTranscriptToEnd(transcript, "auto");
+      });
+    });
+    resizeObserver.observe(transcript);
+    resizeObserver.observe(content);
+    return () => {
+      resizeObserver.disconnect();
+      if (resizeFrame.current !== undefined) cancelAnimationFrame(resizeFrame.current);
+    };
+  }, [transcriptRef]);
+
   return (
-    <div
-      ref={transcriptRef}
-      className="transcript beveled-inset"
-      role="log"
-      aria-live="polite"
-      aria-label="Room transcript"
-      style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
-    >
-      {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+    <div className="transcript-shell">
+      <div
+        ref={transcriptRef}
+        className="transcript beveled-inset"
+        role="log"
+        aria-live="polite"
+        aria-label="Room transcript"
+        style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
+        onScroll={() => {
+          const transcript = transcriptRef.current;
+          if (!transcript) return;
+          following.current = isTranscriptFollowing(transcript);
+          if (following.current) setHasNewMessages(false);
+        }}
+      >
+        <div ref={contentRef} className="transcript-content">
+          {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+        </div>
+      </div>
+      {hasNewMessages ? (
+        <button type="button" className="new-messages-button" onClick={() => followEnd(preferredScrollBehavior())}>
+          New messages ↓
+        </button>
+      ) : null}
     </div>
   );
 });

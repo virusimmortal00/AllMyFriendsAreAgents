@@ -25,6 +25,9 @@ describe("mobile layout contract", () => {
     expect(mobileStyles).toMatch(/\.transcript-header \.panel-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s);
     expect(styles).toMatch(/\.transcript \{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;/s);
     expect(styles).toMatch(/\.message > div \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;[^}]*word-break: break-word;/s);
+    expect(styles).toMatch(/\.chat-panel \{[^}]*contain: inline-size;/s);
+    expect(styles).toMatch(/\.transcript-shell \{[^}]*min-width: 0;[^}]*overflow: hidden;/s);
+    expect(styles).toMatch(/\.agent-settings-window \{[^}]*min-width: 0;[^}]*max-width: 100%;/s);
   });
 
   it("moves secondary room controls into an off-canvas panel", () => {

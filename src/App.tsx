@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
-import { scrollTranscriptToEnd } from "./scroll";
+import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend, type PendingSend } from "./client-persistence";
@@ -391,9 +391,9 @@ export default function App() {
       roomRevealed.current = true;
       return;
     }
-    scrollTranscriptToEnd(transcript.current, roomRevealed.current ? "smooth" : "auto");
+    scrollTranscriptToEnd(transcript.current, roomRevealed.current ? preferredScrollBehavior() : "auto");
     roomRevealed.current = true;
-  }, [ready, room.messages.length, connectionEpoch]);
+  }, [ready, connectionEpoch]);
 
   const activeGenerationAgents = Object.values(room.activeGenerations || {});
   const activeTypingAgents = [...new Set(activeGenerationAgents)];
