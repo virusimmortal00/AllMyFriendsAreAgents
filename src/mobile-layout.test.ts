@@ -25,6 +25,9 @@ describe("mobile layout contract", () => {
     expect(mobileStyles).toMatch(/\.transcript-header \.panel-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s);
     expect(styles).toMatch(/\.transcript \{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;/s);
     expect(styles).toMatch(/\.message > div \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;[^}]*word-break: break-word;/s);
+    expect(styles).toMatch(/\.chat-panel \{[^}]*contain: inline-size;/s);
+    expect(styles).toMatch(/\.transcript-shell \{[^}]*min-width: 0;[^}]*overflow: hidden;/s);
+    expect(styles).toMatch(/\.agent-settings-window \{[^}]*min-width: 0;[^}]*max-width: 100%;/s);
   });
 
   it("moves secondary room controls into an off-canvas panel", () => {
@@ -40,8 +43,9 @@ describe("mobile layout contract", () => {
   });
 
   it("places formatting popovers above the toolbar clipping boundary", () => {
-    expect(components).toMatch(/<div className="format-toolbar"[\s\S]*?<\/div>\s*\{colorPicker \? \(/);
-    expect(components).toMatch(/\) : null\}\s*\{emojiOpen \? \(/);
+    expect(components).toMatch(/<div className="format-popover-layer"[\s\S]*?<div className="format-toolbar"/);
+    expect(components).toContain('formatPopover === "text" || formatPopover === "background"');
+    expect(components).toContain('formatPopover === "emoji"');
     expect(mobileStyles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;[^}]*inset:/s);
     expect(mobileStyles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
   });

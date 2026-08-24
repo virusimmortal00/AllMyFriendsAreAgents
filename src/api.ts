@@ -1,14 +1,14 @@
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { ServerIdentity } from "../shared/protocol";
+import type { MessageMutationAcknowledgement, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly outcomeUnknown = false) {
+  constructor(message: string, readonly outcomeUnknown = false, readonly status?: number) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -25,7 +25,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`);
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status);
     }
     return response;
   } catch (error) {
@@ -69,11 +69,25 @@ export async function updateMyStyle(humanId: string, style: ChatStyle) {
   });
 }
 
-export async function sendMessage(humanId: string, text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<RoomState> {
+export async function sendMessage(humanId: string, text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<MessageMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ humanId, text, clientMessageId, mentions }),
-  }).then((response) => response.json());
+  }).then((response) => response.json()).then((acknowledgement: unknown) => {
+    if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
+      throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
+    }
+    return acknowledgement;
+  });
+}
+
+function isMessageAcknowledgement(value: unknown): value is MessageMutationAcknowledgement {
+  if (!value || typeof value !== "object") return false;
+  const acknowledgement = value as Partial<MessageMutationAcknowledgement>;
+  return acknowledgement.accepted === true
+    && typeof acknowledgement.duplicate === "boolean"
+    && typeof acknowledgement.clientMessageId === "string"
+    && typeof acknowledgement.messageId === "string";
 }
 
 export async function runAction(action: "ask" | "review" | "roundtable" | "continue", target: AgentId | "all") {

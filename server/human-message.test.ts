@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { addHumanMessageOnce } from "./human-message.js";
+import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import type { RoomRepository } from "./storage/room-repository.js";
@@ -42,6 +42,26 @@ describe("human message idempotency", () => {
         .toHaveLength(1);
       if (store instanceof SqliteRoomRepository) store.close();
     }
+  });
+
+  it("returns the same minimal correlation acknowledgement for a duplicate", async () => {
+    const [store] = await repositories();
+    const first = await addHumanMessageOnce(store, human, "Did this land?", "message_ack_1234");
+    const duplicate = await addHumanMessageOnce(store, human, "Did this land?", "message_ack_1234");
+
+    expect(messageMutationAcknowledgement(first)).toEqual({
+      accepted: true,
+      duplicate: false,
+      clientMessageId: "message_ack_1234",
+      messageId: first.message.id,
+    });
+    expect(messageMutationAcknowledgement(duplicate)).toEqual({
+      accepted: true,
+      duplicate: true,
+      clientMessageId: "message_ack_1234",
+      messageId: first.message.id,
+    });
+    expect(JSON.stringify(messageMutationAcknowledgement(first))).not.toContain("messages");
   });
 
   it("preserves stable mention metadata on JSON and SQLite", async () => {

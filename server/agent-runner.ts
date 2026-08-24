@@ -30,6 +30,11 @@ interface ProcessResult {
   stderr: string;
 }
 
+export interface GenerationLifecycle {
+  start(generationId: string, agent: AgentId): void;
+  finish(generationId: string): void;
+}
+
 class ProcessExecutionError extends Error {
   constructor(message: string, readonly process: ProcessResult & { exitCode: number | null }) {
     super(message);
@@ -360,6 +365,7 @@ export async function runAgent(
   journal?: GenerationJournal,
   signal?: AbortSignal,
   assignmentWorkspace?: string,
+  lifecycle?: GenerationLifecycle,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -388,6 +394,7 @@ export async function runAgent(
   });
 
   try {
+    lifecycle?.start(generationId, agent);
     if (profile.provider === "codex") {
       const args = codexArgs(permission, projectPath, profile.modelId, existing?.id);
       const result = await runProcess("codex", args, projectPath, {
@@ -509,6 +516,8 @@ export async function runAgent(
       } : {}),
     });
     throw error;
+  } finally {
+    lifecycle?.finish(generationId);
   }
 }
 

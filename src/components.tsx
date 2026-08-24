@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -14,8 +14,10 @@ import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type Conversa
 import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
-import { nextDialogFocusIndex, workshopLayout } from "./workshop-dialog";
+import { workshopLayout } from "./workshop-dialog";
 import { reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageMention } from "../shared/mentions";
+import { useDismissibleLayer, useModalOverlay } from "./overlay";
+import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -30,17 +32,69 @@ function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperti
 }
 
 export function PanelTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="panel-title">{children}</h2>;
+  return <h2 className="panel-title" data-route-heading tabIndex={-1}>{children}</h2>;
+}
+
+export function ConfirmationDialog({
+  title,
+  description,
+  confirmLabel,
+  busyLabel = "Working…",
+  busy = false,
+  error = "",
+  returnFocusTo,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  description: ReactNode;
+  confirmLabel: string;
+  busyLabel?: string;
+  busy?: boolean;
+  error?: string;
+  returnFocusTo: HTMLElement | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const requestCancel = () => { if (!busy) onCancel(); };
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestCancel, returnFocusTo);
+
+  return (
+    <div className="modal-backdrop confirmation-backdrop" onMouseDown={onBackdropMouseDown}>
+      <section
+        ref={dialogRef}
+        className="agent-settings-window confirmation-window"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+      >
+        <header className="agent-settings-titlebar"><h2 id={titleId}>{title}</h2></header>
+        <div className="confirmation-body" id={descriptionId}>{description}</div>
+        {error ? <p className="confirmation-error" role="alert">{error}</p> : null}
+        <footer className="agent-settings-actions confirmation-actions">
+          <button type="button" className="classic-button" disabled={busy} onClick={requestCancel}>Cancel</button>
+          <button type="button" className="classic-button confirmation-confirm" disabled={busy} onClick={onConfirm}>{busy ? busyLabel : confirmLabel}</button>
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 export function TranscriptHeader({
   roomName,
   magnification,
   onMagnificationChange,
+  onMagnificationReset,
 }: {
   roomName: string;
   magnification: number;
   onMagnificationChange: (direction: -1 | 1) => void;
+  onMagnificationReset: () => void;
 }) {
   return (
     <header className="transcript-header">
@@ -53,7 +107,14 @@ export function TranscriptHeader({
           disabled={magnification <= 75}
           onClick={() => onMagnificationChange(-1)}
         >−</button>
-        <output aria-label={`Transcript magnification ${magnification}%`}>{magnification}%</output>
+        <button
+          type="button"
+          className="transcript-magnification-reset"
+          aria-label={`Reset transcript magnification from ${magnification}% to 100%`}
+          title="Reset transcript magnification to 100%"
+          disabled={magnification === 100}
+          onClick={onMagnificationReset}
+        >{magnification}%</button>
         <button
           type="button"
           aria-label="Increase transcript magnification"
@@ -138,9 +199,14 @@ export function AgentSettingsDialog({
   health?: AgentHealth;
   writableAgent: WritableAgent;
   disabled: boolean;
-  onWritableChange: (agent: WritableAgent) => void;
+  onWritableChange: (agent: WritableAgent) => void | Promise<void>;
   onClose: () => void;
 }) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [confirmGrant, setConfirmGrant] = useState(false);
+  const permissionTrigger = useRef<HTMLInputElement>(null);
+  const permissionSubmitting = useRef(false);
   const canEdit = writableAgent === agent;
   const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
@@ -150,18 +216,40 @@ export function AgentSettingsDialog({
   const retryDescription = health?.retryAt
     ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
     : "";
+  const requestClose = () => { if (!saving) onClose(); };
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
+
+  async function changePermission(next: WritableAgent) {
+    if (permissionSubmitting.current) return false;
+    permissionSubmitting.current = true;
+    setSaveError("");
+    setSaving(true);
+    try {
+      await onWritableChange(next);
+      return true;
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      permissionSubmitting.current = false;
+      setSaving(false);
+    }
+  }
+
+  async function confirmPermissionGrant() {
+    if (permissionSubmitting.current) return;
+    if (await changePermission(agent)) setConfirmGrant(false);
+  }
 
   return (
     <div
       className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.currentTarget === event.target) onClose();
-      }}
+      onMouseDown={onBackdropMouseDown}
     >
-      <section className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title">
+      <section ref={dialogRef} className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
         <header className="agent-settings-titlebar">
           <h2 id="agent-settings-title">Agent Settings</h2>
-          <button type="button" aria-label="Close agent settings" onClick={onClose}>×</button>
+          <button type="button" aria-label="Close agent settings" disabled={saving} onClick={requestClose}>×</button>
         </header>
         <div className="agent-settings-body">
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
@@ -173,10 +261,16 @@ export function AgentSettingsDialog({
             <legend>Project permissions</legend>
             <label className="agent-permission-toggle">
               <input
+                ref={permissionTrigger}
                 type="checkbox"
                 checked={canEdit}
-                disabled={disabled || !supportsProjectWrites}
-                onChange={(event) => onWritableChange(event.target.checked ? agent : "nobody")}
+                disabled={disabled || saving || !supportsProjectWrites}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSaveError("");
+                    setConfirmGrant(true);
+                  } else void changePermission("nobody");
+                }}
               />
               Allow this agent to edit project files
             </label>
@@ -185,12 +279,27 @@ export function AgentSettingsDialog({
               : "This provider does not support project write access."}</p>
             {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
             {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
+            {saving ? <p className="agent-settings-status" role="status">Saving project permission…</p> : null}
+            {saveError ? <p className="agent-settings-error" role="alert">Could not save this permission. {saveError}</p> : null}
           </fieldset>
         </div>
         <footer className="agent-settings-actions">
-          <button type="button" className="classic-button" onClick={onClose}>Close</button>
+          <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Close</button>
         </footer>
       </section>
+      {confirmGrant ? <ConfirmationDialog
+        title={replacingAgent ? "Transfer project write access?" : "Grant project write access?"}
+        description={replacingAgent
+          ? <p>This transfers project write access from <strong>{replacingAgent}</strong> to <strong>{agentScreenName(agent)}</strong>. Only one agent can hold write access.</p>
+          : <p>This grants <strong>{agentScreenName(agent)}</strong> permission to edit project files when explicitly asked.</p>}
+        confirmLabel={replacingAgent ? "Transfer write access" : "Grant write access"}
+        busyLabel="Saving permission…"
+        busy={saving}
+        error={saveError ? `Could not save this permission. ${saveError}` : ""}
+        returnFocusTo={permissionTrigger.current}
+        onConfirm={() => void confirmPermissionGrant()}
+        onCancel={() => setConfirmGrant(false)}
+      /> : null}
     </div>
   );
 }
@@ -271,51 +380,117 @@ export const Transcript = memo(function Transcript({
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const resizeFrame = useRef<number | undefined>(undefined);
+  const previousContent = useRef("");
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  const lastMessage = messages.at(-1);
+  const lastText = lastMessage?.text || "";
+  const contentSignature = `${messages.length}:${lastMessage?.id || ""}:${lastText.length}:${lastText.slice(-64)}`;
+
+  const followEnd = useCallback((behavior: ScrollBehavior = "auto") => {
+    following.current = true;
+    setHasNewMessages(false);
+    scrollTranscriptToEnd(transcriptRef.current, behavior);
+  }, [transcriptRef]);
+
+  useLayoutEffect(() => {
+    if (previousContent.current === contentSignature) return;
+    previousContent.current = contentSignature;
+    if (following.current) followEnd();
+    else setHasNewMessages(true);
+  }, [contentSignature, followEnd]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    const content = contentRef.current;
+    if (!transcript || !content || typeof ResizeObserver === "undefined") return;
+    const resizeObserver = new ResizeObserver(() => {
+      if (!following.current || resizeFrame.current !== undefined) return;
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = undefined;
+        if (following.current) scrollTranscriptToEnd(transcript, "auto");
+      });
+    });
+    resizeObserver.observe(transcript);
+    resizeObserver.observe(content);
+    return () => {
+      resizeObserver.disconnect();
+      if (resizeFrame.current !== undefined) cancelAnimationFrame(resizeFrame.current);
+    };
+  }, [transcriptRef]);
+
   return (
-    <div
-      ref={transcriptRef}
-      className="transcript beveled-inset"
-      role="log"
-      aria-live="polite"
-      aria-label="Room transcript"
-      style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
-    >
-      {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+    <div className="transcript-shell">
+      <div
+        ref={transcriptRef}
+        className="transcript beveled-inset"
+        role="log"
+        aria-live="polite"
+        aria-label="Room transcript"
+        style={{ "--transcript-magnification": magnification / 100 } as CSSProperties}
+        onScroll={() => {
+          const transcript = transcriptRef.current;
+          if (!transcript) return;
+          following.current = isTranscriptFollowing(transcript);
+          if (following.current) setHasNewMessages(false);
+        }}
+      >
+        <div ref={contentRef} className="transcript-content">
+          {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+        </div>
+      </div>
+      {hasNewMessages ? (
+        <button type="button" className="new-messages-button" onClick={() => followEnd(preferredScrollBehavior())}>
+          New messages ↓
+        </button>
+      ) : null}
     </div>
   );
 });
 
-export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
+export function WorkshopDialog({ data, loading, missing, error = "", connected = true, onRetry, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; error?: string; connected?: boolean; onRetry?: () => void; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
   const view = data?.improvement;
-  const dialog = useRef<HTMLElement>(null);
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
   const [presentation, setPresentation] = useState(() => workshopLayout(typeof window === "undefined" ? 1024 : window.innerWidth));
   useEffect(() => {
-    dialog.current?.focus();
     const updatePresentation = () => setPresentation(workshopLayout(window.innerWidth));
     window.addEventListener("resize", updatePresentation);
-    return () => {
-      window.removeEventListener("resize", updatePresentation);
-      returnFocusTo?.focus();
-    };
-  }, [returnFocusTo]);
-  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
-    if (event.key !== "Tab") return;
-    const focusable = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])') || [])];
-    const index = focusable.indexOf(document.activeElement as HTMLElement);
-    const next = nextDialogFocusIndex(index < 0 ? 0 : index, focusable.length, event.shiftKey);
-    if (next >= 0) { event.preventDefault(); focusable[next]?.focus(); }
-  }
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-    <section ref={dialog} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={handleKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
+    return () => window.removeEventListener("resize", updatePresentation);
+  }, []);
+  return <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+    <section ref={dialogRef} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={onDialogKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
       <header className="agent-settings-titlebar"><h2 id="workshop-title">Improvement workshop</h2><button type="button" aria-label="Close improvement workshop" onClick={onClose}>×</button></header>
       <div className="workshop-body" aria-live="polite">
-        {loading ? <p>Loading improvement…</p> : missing || !view ? <p role="status">This improvement is unavailable or was deleted.</p> : <>
+        {loading ? <p role="status">Loading improvement…</p> : missing ? <p role="status">This improvement is unavailable or was deleted (verified not found).</p> : error || !view ? <div className="workshop-recovery" role="alert">
+          <p><strong>Could not load this improvement.</strong> {error || "The room returned an incomplete response."}</p>
+          {!connected ? <p>Retry is unavailable while the room is reconnecting.</p> : null}
+          <button type="button" className="classic-button" disabled={!connected} onClick={onRetry}>Retry</button>
+        </div> : <>
           <p><strong>{view.id}</strong> · revision {view.revision}</p>
           <dl className="workshop-facts"><dt>Lifecycle</dt><dd>{view.state}</dd><dt>Risk</dt><dd>{view.risk}</dd><dt>Technical consensus</dt><dd>{view.technicalConsensus.status} ({view.technicalConsensus.reviews.length} review{view.technicalConsensus.reviews.length === 1 ? "" : "s"})</dd><dt>Action authority</dt><dd>{view.actionAuthority.status}{view.actionAuthority.grantedByHuman ? " · human granted" : ""}</dd><dt>Current claim</dt><dd>{view.workClaim.status}{view.workClaim.holderMemberId ? ` · ${view.workClaim.holderMemberId}` : ""}</dd><dt>Emergency stop</dt><dd>{data.emergencyStop.active ? `ACTIVE${data.emergencyStop.reason ? ` · ${data.emergencyStop.reason}` : ""}` : "Clear"}</dd></dl>
           <h3>Active claims</h3><ul>{view.claims.length ? view.claims.map((claim) => <li key={claim.id}>{claim.statement}</li>) : <li>None recorded.</li>}</ul>
           <h3>Evidence</h3><ul>{view.evidence.length ? view.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.description}</a></li>) : <li>No evidence recorded.</li>}</ul>
         </>}
+      </div>
+      <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
+    </section>
+  </div>;
+}
+
+export function HelpDialog({ onClose }: { onClose: () => void }) {
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose);
+  return <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+    <section ref={dialogRef} className="help-window" role="dialog" aria-modal="true" aria-labelledby="help-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
+      <header className="agent-settings-titlebar"><h2 id="help-title">Help</h2><button type="button" aria-label="Close help" onClick={onClose}>×</button></header>
+      <div className="help-body">
+        <h3>Getting around</h3>
+        <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
+        <h3>Reading the room</h3>
+        <p>Use − and + above the transcript to change its size on this device. Select the percentage to reset it to 100%.</p>
+        <h3>Project work</h3>
+        <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
       </div>
       <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
     </section>
@@ -336,9 +511,10 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({ draft, mentions = [], mentionCandidates = [], style, sendDisabled = false, onDraftChange, onMentionsChange = () => undefined, onStyleChange, onSubmit, onBlur }: ChatComposerProps) {
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [colorPicker, setColorPicker] = useState<"text" | "background" | null>(null);
+  const [formatPopover, setFormatPopover] = useState<"emoji" | "text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const mentionSuggestions = useRef<HTMLDivElement>(null);
+  const { layerRef: formatLayer, triggerRef: formatTrigger } = useDismissibleLayer(Boolean(formatPopover), () => setFormatPopover(null));
   const pendingEditRange = useRef<{ start: number; end: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<{ start: number; end: number; text: string } | null>(null);
   const [activeMention, setActiveMention] = useState(0);
@@ -392,7 +568,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
     const nextDraft = `${draft.slice(0, start)}${shortcut}${draft.slice(end)}`;
     onDraftChange(nextDraft);
     onMentionsChange(reconcileMessageMentionsAfterEdit(draft, nextDraft, mentions, { start, end }));
-    setEmojiOpen(false);
+    setFormatPopover(null);
     requestAnimationFrame(() => {
       textarea.current?.focus();
       textarea.current?.setSelectionRange(start + shortcut.length, start + shortcut.length);
@@ -400,17 +576,18 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   }
 
   function chooseColor(color: string) {
-    updateStyle(colorPicker === "background" ? { backgroundColor: color } : { textColor: color });
-    setColorPicker(null);
+    updateStyle(formatPopover === "background" ? { backgroundColor: color } : { textColor: color });
+    setFormatPopover(null);
   }
 
   return (
     <form className="composer" onSubmit={onSubmit}>
+      <div className="format-popover-layer" ref={formatLayer}>
       <div className="format-toolbar" role="toolbar" aria-label="Message formatting">
         <select
           aria-label="Font family"
           value={style.fontFamily}
-          onChange={(event) => updateStyle({ fontFamily: event.target.value as ChatStyle["fontFamily"] })}
+          onChange={(event) => { setFormatPopover(null); updateStyle({ fontFamily: event.target.value as ChatStyle["fontFamily"] }); }}
         >
           {CHAT_FONT_FAMILIES.map((font) => <option value={font} key={font}>{font}</option>)}
         </select>
@@ -419,51 +596,46 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           aria-label="Outgoing font size"
           title="Font size sent with your messages"
           value={style.fontSize}
-          onChange={(event) => updateStyle({ fontSize: Number(event.target.value) })}
+          onChange={(event) => { setFormatPopover(null); updateStyle({ fontSize: Number(event.target.value) }); }}
         >
           {CHAT_FONT_SIZES.map((size) => <option value={size} key={size}>{size}</option>)}
         </select>
-        <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} onClick={() => updateStyle({ bold: !style.bold })}>B</button>
-        <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} onClick={() => updateStyle({ italic: !style.italic })}>I</button>
-        <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} onClick={() => updateStyle({ underline: !style.underline })}>U</button>
+        <button type="button" className="format-bold" aria-label="Bold" aria-pressed={style.bold} onClick={() => { setFormatPopover(null); updateStyle({ bold: !style.bold }); }}>B</button>
+        <button type="button" className="format-italic" aria-label="Italic" aria-pressed={style.italic} onClick={() => { setFormatPopover(null); updateStyle({ italic: !style.italic }); }}>I</button>
+        <button type="button" className="format-underline" aria-label="Underline" aria-pressed={style.underline} onClick={() => { setFormatPopover(null); updateStyle({ underline: !style.underline }); }}>U</button>
         <button
+          ref={formatPopover === "text" ? formatTrigger : undefined}
           type="button"
           className="color-well color-well--text"
           title="Text color"
           aria-label="Text color"
-          aria-expanded={colorPicker === "text"}
-          onClick={() => {
-            setEmojiOpen(false);
-            setColorPicker((current) => current === "text" ? null : "text");
-          }}
+          aria-haspopup="dialog"
+          aria-expanded={formatPopover === "text"}
+          onClick={() => setFormatPopover((current) => current === "text" ? null : "text")}
         >
           <span aria-hidden="true">A</span>
           <i aria-hidden="true" style={{ backgroundColor: style.textColor }} />
         </button>
         <button
+          ref={formatPopover === "background" ? formatTrigger : undefined}
           type="button"
           className="color-well color-well--background"
           title="Message highlight color"
           aria-label="Message highlight color"
-          aria-expanded={colorPicker === "background"}
-          onClick={() => {
-            setEmojiOpen(false);
-            setColorPicker((current) => current === "background" ? null : "background");
-          }}
+          aria-haspopup="dialog"
+          aria-expanded={formatPopover === "background"}
+          onClick={() => setFormatPopover((current) => current === "background" ? null : "background")}
         >
           <span aria-hidden="true">▧</span>
           <i aria-hidden="true" style={{ backgroundColor: style.backgroundColor }} />
         </button>
         <div className="emoji-control">
-          <button type="button" aria-label="Classic emojis" aria-expanded={emojiOpen} onClick={() => {
-            setColorPicker(null);
-            setEmojiOpen((open) => !open);
-          }}>☺</button>
+          <button ref={formatPopover === "emoji" ? formatTrigger : undefined} type="button" aria-label="Classic emojis" aria-haspopup="dialog" aria-expanded={formatPopover === "emoji"} onClick={() => setFormatPopover((current) => current === "emoji" ? null : "emoji")}>☺</button>
         </div>
       </div>
-      {colorPicker ? (
-        <div className="aim-color-picker" aria-label={`${colorPicker === "text" ? "Text" : "Message highlight"} color palette`}>
-          <strong>{colorPicker === "text" ? "Text color" : "Message highlight"}</strong>
+      {formatPopover === "text" || formatPopover === "background" ? (
+        <div className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`}>
+          <strong>{formatPopover === "text" ? "Text color" : "Message highlight"}</strong>
           <span>Basic colors:</span>
           <div className="aim-color-grid">
             {AIM_5_BASIC_COLORS.map((color, index) => (
@@ -472,7 +644,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
                 className="aim-color-swatch"
                 key={`${color}-${index}`}
                 aria-label={`Select ${color}`}
-                aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                aria-pressed={(formatPopover === "text" ? style.textColor : style.backgroundColor) === color}
                 style={{ backgroundColor: color }}
                 onClick={() => chooseColor(color)}
               />
@@ -486,7 +658,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
                 className="aim-color-swatch"
                 key={`${color}-${index}`}
                 aria-label={`Select ${color}`}
-                aria-pressed={(colorPicker === "text" ? style.textColor : style.backgroundColor) === color}
+                aria-pressed={(formatPopover === "text" ? style.textColor : style.backgroundColor) === color}
                 style={{ backgroundColor: color }}
                 onClick={() => chooseColor(color)}
               />
@@ -494,8 +666,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           </div>
         </div>
       ) : null}
-      {emojiOpen ? (
-        <div className="emoji-picker" aria-label="Classic AIM smiley picker">
+      {formatPopover === "emoji" ? (
+        <div className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker">
           {AIM_SMILEYS.map((smiley) => (
             <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
               <img src={smiley.src} alt="" aria-hidden="true" />
@@ -503,6 +675,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           ))}
         </div>
       ) : null}
+      </div>
       <textarea
         ref={textarea}
         value={draft}
@@ -536,7 +709,10 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           setMentionQuery(queryAt(value, event.target.selectionStart));
         }}
         onSelect={(event) => setMentionQuery(queryAt(event.currentTarget.value, event.currentTarget.selectionStart))}
-        onBlur={onBlur}
+        onBlur={(event) => {
+          onBlur?.();
+          if (!mentionSuggestions.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null);
+        }}
         placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
         aria-label="Message"
         onKeyDown={(event) => {
@@ -568,7 +744,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         }}
       />
       {matchingMentions.length ? (
-        <div id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant">
+        <div ref={mentionSuggestions} id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant">
           {matchingMentions.map((candidate, index) => (
             <button
               type="button"
@@ -589,14 +765,15 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   );
 }
 
-interface RoomControlsProps {
+export interface RoomSettingsInput {
   roomName: string;
   topic: string;
   conversationEnergy: ConversationEnergy;
+}
+
+interface RoomControlsProps extends RoomSettingsInput {
   disabled: boolean;
-  onRoomNameChange: (roomName: string) => void;
-  onTopicChange: (topic: string) => void;
-  onConversationEnergyChange: (energy: ConversationEnergy) => void;
+  onSave: (settings: RoomSettingsInput) => void | Promise<void>;
 }
 
 export function RoomControls({
@@ -604,47 +781,74 @@ export function RoomControls({
   topic,
   conversationEnergy,
   disabled,
-  onRoomNameChange,
-  onTopicChange,
-  onConversationEnergyChange,
+  onSave,
 }: RoomControlsProps) {
+  const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const current = { roomName, topic, conversationEnergy };
+  const normalized = { ...draft, roomName: draft.roomName.trim(), topic: draft.topic.trim() };
+  const valid = Boolean(normalized.roomName && normalized.topic);
+  const dirty = draft.roomName !== roomName || draft.topic !== topic || draft.conversationEnergy !== conversationEnergy;
+  const locked = disabled || saving;
+
+  useEffect(() => {
+    setDraft(current);
+    setSaveError("");
+  }, [roomName, topic, conversationEnergy]);
+
+  function cancel() {
+    setDraft(current);
+    setSaveError("");
+    setSaved(false);
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaved(false);
+    if (!valid || !dirty || locked) return;
+    setSaveError("");
+    setSaving(true);
+    try {
+      await onSave(normalized);
+      setDraft(normalized);
+      setSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
       <PanelTitle>Room Settings</PanelTitle>
+      <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
-        key={roomName}
         className="classic-input"
         type="text"
+        required
         maxLength={80}
-        defaultValue={roomName}
-        onBlur={(event) => {
-          const nextRoomName = event.currentTarget.value.trim() || "The Agent Room";
-          event.currentTarget.value = nextRoomName;
-          onRoomNameChange(nextRoomName);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
+        disabled={locked}
+        value={draft.roomName}
+        aria-invalid={!normalized.roomName}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, roomName: event.target.value })); }}
       />
       <p className="field-help">Shown in the room window and transcript header.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"
-        key={topic}
         className="classic-input"
         type="text"
+        required
         maxLength={160}
-        defaultValue={topic}
-        onBlur={(event) => {
-          const nextTopic = event.currentTarget.value.trim() || "Open conversation";
-          event.currentTarget.value = nextTopic;
-          onTopicChange(nextTopic);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
+        disabled={locked}
+        value={draft.topic}
+        aria-invalid={!normalized.topic}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, topic: event.target.value })); }}
       />
       <p className="field-help">A starting point, not a boundary. Changing it starts fresh agent context.</p>
       <hr />
@@ -652,15 +856,23 @@ export function RoomControls({
       <select
         id="conversation-energy"
         className="classic-input"
-        value={conversationEnergy}
-        disabled={disabled}
-        onChange={(event) => onConversationEnergyChange(event.target.value as ConversationEnergy)}
+        value={draft.conversationEnergy}
+        disabled={locked}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, conversationEnergy: event.target.value as ConversationEnergy })); }}
       >
         {CONVERSATION_ENERGY_LEVELS.map((energy) => (
           <option value={energy} key={energy}>{CONVERSATION_ENERGY_POLICIES[energy].label}</option>
         ))}
       </select>
-      <p className="field-help">{CONVERSATION_ENERGY_POLICIES[conversationEnergy].description}</p>
+      <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
+      {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
+      {saveError ? <p className="room-settings-error" role="alert">Could not save room settings. {saveError}</p> : null}
+      {saving ? <p className="room-settings-status" role="status">Saving room settings…</p> : saved ? <p className="room-settings-status" role="status">Room settings saved.</p> : null}
+      <div className="room-settings-actions">
+        <button type="button" className="classic-button" disabled={!dirty || saving} onClick={cancel}>Cancel</button>
+        <button type="submit" className="classic-button" disabled={!dirty || !valid || locked}>{saving ? "Saving…" : "Save changes"}</button>
+      </div>
+      </form>
     </aside>
   );
 }

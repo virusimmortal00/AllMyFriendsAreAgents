@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Improvements, ImprovementsMenuControl, improvementsRoute, resolveImprovementsAlias } from "./improvements";
-import { loadImprovement } from "./api";
+import { emergencyStopHeartbeat, loadHeartbeat, loadImprovement, loadImprovements } from "./api";
 
 vi.mock("./api", () => ({
   loadImprovements: vi.fn(async (scope: string) => ({ scope, items: [{ canonicalId: "known-id", revisionLabel: "r2", state: "IN_PROGRESS", risk: "GUARDED", updatedAt: "2026-08-21T12:00:00Z" }] })),
@@ -25,13 +25,50 @@ describe("Improvements interface", () => {
     expect(navigate).toHaveBeenCalledWith({ view: "list", scope: "all" });
   });
 
-  it("keeps the emergency stop visible and records an explicit stop action", async () => {
+  it("uses arrow keys, Home, and End for roving Improvements tabs", async () => {
+    const user = userEvent.setup(); const navigate = vi.fn();
+    render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={navigate} />);
+    const active = screen.getByRole("tab", { name: "Active" });
+    const all = screen.getByRole("tab", { name: "All" });
+    active.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(all);
+    expect(navigate).toHaveBeenLastCalledWith({ view: "list", scope: "all" });
+    await user.keyboard("{Home}");
+    expect(document.activeElement).toBe(active);
+    await user.keyboard("{End}");
+    expect(document.activeElement).toBe(all);
+    await user.keyboard("{ArrowLeft}");
+    expect(document.activeElement).toBe(active);
+  });
+
+  it("confirms emergency stop, cancels safely, and records only an explicit confirmed action", async () => {
     const user = userEvent.setup();
     render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
     const stop = await screen.findByRole("button", { name: "Emergency stop heartbeat" });
     await user.click(stop);
+    const dialog = screen.getByRole("alertdialog", { name: "Emergency stop heartbeat?" });
+    expect(dialog.getAttribute("aria-describedby")).toBeTruthy();
+    expect(emergencyStopHeartbeat).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(stop);
+    expect(emergencyStopHeartbeat).not.toHaveBeenCalled();
+    await user.click(stop);
+    await user.click(within(screen.getByRole("alertdialog", { name: "Emergency stop heartbeat?" })).getByRole("button", { name: "Emergency stop heartbeat" }));
     await waitFor(() => expect(screen.getByText("EMERGENCY STOPPED")).toBeTruthy());
+    expect(emergencyStopHeartbeat).toHaveBeenCalledOnce();
     expect(stop.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("reports an unavailable heartbeat and can reload it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadHeartbeat).mockRejectedValueOnce(new Error("Heartbeat connection failed"));
+    render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
+    expect(await screen.findByRole("button", { name: "Try heartbeat again" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Try heartbeat again" }));
+    expect(await screen.findByRole("button", { name: "Emergency stop heartbeat" })).toBeTruthy();
+    expect(screen.queryByText(/Heartbeat controls are unavailable/)).toBeNull();
   });
 
   it("shows canonical identity, all six status fields, qualified evidence, and milestones", async () => {
@@ -55,9 +92,19 @@ describe("Improvements interface", () => {
 
   it("turns a direct detail 404 into missing guidance", async () => {
     const navigate = vi.fn();
-    vi.mocked(loadImprovement).mockRejectedValueOnce(new Error("Improvement not found"));
+    vi.mocked(loadImprovement).mockRejectedValueOnce(Object.assign(new Error("Improvement not found"), { status: 404 }));
     render(<Improvements route={{ view: "detail", id: "gone" }} onNavigate={navigate} />);
     await waitFor(() => expect(navigate).toHaveBeenCalledWith({ view: "missing", id: "gone" }));
+  });
+
+  it("distinguishes a load failure from an empty list and offers a retry", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadImprovements).mockRejectedValueOnce(new Error("Connection interrupted"));
+    render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
+    expect(await screen.findByRole("heading", { name: "Could not load improvements" })).toBeTruthy();
+    expect(screen.queryByText("No improvements are available in this view.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("known-id")).toBeTruthy();
   });
 
   it("recognizes only formal Improvements paths; hashes remain aliases to verify", () => {
