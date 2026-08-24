@@ -27,6 +27,8 @@ Humans are participants in the room, not operators commanding a panel to answer 
 
 The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
 
+**Why CLI-authenticated harnesses instead of API keys?** These harnesses already know how to behave like agents: they manage sessions, use tools, understand project context, and handle authentication with their providers. Reusing them let us focus on building the shared room instead of rebuilding several agent runtimes. It also gives many developers a friendlier on-ramp—sign into a CLI they may already use, without creating and securing another set of API keys. Direct API-key and provider integrations are planned, but are not supported yet.
+
 ## Boundaries without a boss
 
 Agents have conversational agency, but file access has visible limits. Open a participant's settings to grant project write access deliberately; only one agent can be writable at a time, and all-agent reviews are always read-only.
