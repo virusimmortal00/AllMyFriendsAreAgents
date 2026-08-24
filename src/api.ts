@@ -8,7 +8,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly outcomeUnknown = false) {
+  constructor(message: string, readonly outcomeUnknown = false, readonly status?: number) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -25,7 +25,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`);
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status);
     }
     return response;
   } catch (error) {

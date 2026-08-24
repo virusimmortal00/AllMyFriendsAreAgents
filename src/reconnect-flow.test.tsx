@@ -143,9 +143,10 @@ describe("rendered reconnect recovery", () => {
 
   it("keeps an ambiguous POST pending across reconnect and resends only after an explicit click with the same client ID", async () => {
     const user = userEvent.setup();
+    let resolveResend!: (state: RoomState) => void;
     api.sendMessage
       .mockRejectedValueOnce(new ApiRequestError("The room connection was interrupted.", true))
-      .mockResolvedValueOnce(room("server-after"));
+      .mockImplementationOnce(() => new Promise<RoomState>((resolve) => { resolveResend = resolve; }));
     const composer = await renderConnected();
 
     await user.type(composer, "Did this land?");
@@ -169,6 +170,9 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2));
     expect(api.sendMessage.mock.calls[1]).toEqual([human.id, "Did this land?", originalClientId, []]);
+    expect((screen.getByRole("button", { name: "Sending…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Keep as draft" }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => resolveResend(room("server-after")));
     await waitFor(() => expect(screen.queryByText(/Not sent — send now\?/)).toBeNull());
   });
 
@@ -196,5 +200,17 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getByText("Before outage")).not.toBeNull();
     expect(screen.getByText("Arrived during recovery")).not.toBeNull();
     expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a failed style save and lets the user dismiss its error", async () => {
+    const user = userEvent.setup();
+    api.updateMyStyle.mockRejectedValueOnce(new Error("Style save failed"));
+    await renderConnected();
+    const bold = screen.getByRole("button", { name: "Bold" });
+    await user.click(bold);
+    await waitFor(() => expect(bold.getAttribute("aria-pressed")).toBe("false"));
+    expect(screen.getByRole("alert").textContent).toContain("Style save failed");
+    await user.click(screen.getByRole("button", { name: "Dismiss error" }));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

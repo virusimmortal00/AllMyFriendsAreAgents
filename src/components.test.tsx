@@ -159,9 +159,7 @@ describe("RoomControls", () => {
         topic="Weekend cooking"
         conversationEnergy="balanced"
         disabled={false}
-        onRoomNameChange={() => undefined}
-        onTopicChange={() => undefined}
-        onConversationEnergyChange={() => undefined}
+        onSave={() => undefined}
       />,
     );
 
@@ -176,21 +174,20 @@ describe("RoomControls", () => {
     expect(html).not.toContain("Review mode");
   });
 
-  it("keeps topic changes available while other room controls are locked", () => {
+  it("locks every room setting while changes cannot be safely saved", () => {
     const html = renderToStaticMarkup(
       <RoomControls
         roomName="Current Room"
         topic="Current topic"
         conversationEnergy="balanced"
         disabled
-        onRoomNameChange={() => undefined}
-        onTopicChange={() => undefined}
-        onConversationEnergyChange={() => undefined}
+        onSave={() => undefined}
       />,
     );
 
     expect(html).toMatch(/id="room-topic"[^>]+value="Current topic"/);
-    expect(html).not.toMatch(/id="room-topic"[^>]+disabled/);
+    expect(html).toMatch(/id="room-name"[^>]+disabled/);
+    expect(html).toMatch(/id="room-topic"[^>]+disabled/);
     expect(html).toMatch(/id="conversation-energy"[^>]+disabled/);
   });
 });

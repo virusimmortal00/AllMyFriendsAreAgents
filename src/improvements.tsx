@@ -59,25 +59,36 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
   const [items, setItems] = useState<readonly GovernedImprovementSummary[]>([]);
   const [detail, setDetail] = useState<GovernedImprovementDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reloadRevision, setReloadRevision] = useState(0);
   const [heartbeat, setHeartbeat] = useState<HeartbeatStatus | null>(null);
   const [heartbeatBusy, setHeartbeatBusy] = useState(false);
+  const [heartbeatError, setHeartbeatError] = useState("");
+  const [heartbeatReloadRevision, setHeartbeatReloadRevision] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setDetail(null);
-    if (route.view === "list") void loadImprovements(route.scope).then((data) => { if (!cancelled) setItems(data.items); }).catch(() => { if (!cancelled) setItems([]); }).finally(() => { if (!cancelled) setLoading(false); });
-    else if (route.view === "detail") void loadImprovement(route.id).then((data) => { if (!cancelled) setDetail(data); }).catch(() => { if (!cancelled) onNavigate({ view: "missing", id: route.id }); }).finally(() => { if (!cancelled) setLoading(false); });
+    setLoading(true); setLoadError(""); setDetail(null);
+    if (route.view === "list") void loadImprovements(route.scope).then((data) => { if (!cancelled) setItems(data.items); }).catch((error) => { if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error)); }).finally(() => { if (!cancelled) setLoading(false); });
+    else if (route.view === "detail") void loadImprovement(route.id).then((data) => { if (!cancelled) setDetail(data); }).catch((error) => {
+      if (cancelled) return;
+      if (error && typeof error === "object" && "status" in error && error.status === 404) onNavigate({ view: "missing", id: route.id });
+      else setLoadError(error instanceof Error ? error.message : String(error));
+    }).finally(() => { if (!cancelled) setLoading(false); });
     else setLoading(false);
     return () => { cancelled = true; };
-  }, [route.view, route.view === "list" ? route.scope : route.id]);
+  }, [route.view, route.view === "list" ? route.scope : route.id, reloadRevision]);
 
-  useEffect(() => { void loadHeartbeat().then(setHeartbeat).catch(() => setHeartbeat(null)); }, []);
+  useEffect(() => { void loadHeartbeat().then((value) => { setHeartbeat(value); setHeartbeatError(""); }).catch((error) => { setHeartbeat(null); setHeartbeatError(error instanceof Error ? error.message : String(error)); }); }, [heartbeatReloadRevision]);
 
   async function changeHeartbeat(action: "authorize" | "stop") {
     if (!heartbeat) return;
     setHeartbeatBusy(true);
+    setHeartbeatError("");
     try {
       setHeartbeat(await (action === "stop" ? emergencyStopHeartbeat(heartbeat.runtime.revision) : authorizeHeartbeat(heartbeat.runtime.revision)));
+    } catch (error) {
+      setHeartbeatError(error instanceof Error ? error.message : String(error));
     } finally {
       setHeartbeatBusy(false);
     }
@@ -89,8 +100,10 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
       <section className="heartbeat-control" aria-label="Bounded heartbeat controls">
         <div><strong>Bounded heartbeat:</strong> {!heartbeat ? "Unavailable" : heartbeat.runtime.emergencyStopped ? "EMERGENCY STOPPED" : heartbeat.runtime.enabled ? heartbeat.active ? "Running bounded work" : "Authorized, awaiting cadence" : "Disabled"}</div>
         {heartbeat && <><small>Policy {heartbeat.policy.version} · every {Math.round(heartbeat.policy.cadenceMs / 1000)}s · concurrency {heartbeat.policy.maxConcurrency} · at most {heartbeat.policy.maxDispatchedPerRun} actions/run · {heartbeat.policy.maxAttemptsPerRevision} attempts · {Math.round(heartbeat.policy.timeBudgetMs / 1000)}s budget · capabilities {heartbeat.policy.permittedCapabilities.join(", ")}</small><div className="heartbeat-actions"><button type="button" className="classic-button heartbeat-stop" disabled={heartbeatBusy || heartbeat.runtime.emergencyStopped} onClick={() => void changeHeartbeat("stop")}>Emergency stop heartbeat</button>{heartbeat.configured && !heartbeat.runtime.enabled && <button type="button" className="classic-button" disabled={heartbeatBusy} onClick={() => void changeHeartbeat("authorize")}>Authorize heartbeat</button>}</div></>}
+        {heartbeatBusy ? <p role="status">Updating heartbeat control…</p> : null}
+        {heartbeatError ? <div className="improvements-error" role="alert"><p>Heartbeat controls are unavailable. {heartbeatError}</p>{!heartbeat ? <button type="button" className="classic-button" onClick={() => setHeartbeatReloadRevision((value) => value + 1)}>Try heartbeat again</button> : null}</div> : null}
       </section>
-      {loading ? <p role="status">Loading improvements…</p> : route.view === "missing" ? <section className="improvements-missing" role="status"><h2>Improvement not found</h2><p><code>{route.id}</code> is not an existing canonical improvement ID. It may have been removed, or the link may be stale.</p><p><button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "active" })}>View Active improvements</button> <button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "all" })}>View All improvements</button></p></section> : route.view === "detail" && detail ? <Detail item={detail} /> : <><p>{scope === "active" ? "Current non-terminal improvements." : "All recorded improvements."}</p>{items.length ? <ul className="improvements-list">{items.map((item) => <li key={item.canonicalId}><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>{item.canonicalId}</a><span>{item.revisionLabel} · {item.state} · {item.risk}</span><small>Updated {new Date(item.updatedAt).toLocaleString()}</small></li>)}</ul> : <p>No improvements are available in this view.</p>}</>}
+      {loading ? <p role="status">Loading improvements…</p> : loadError ? <section className="improvements-load-error" role="alert"><h2>Could not load improvements</h2><p>{loadError}</p><button type="button" className="classic-button" onClick={() => setReloadRevision((value) => value + 1)}>Try again</button></section> : route.view === "missing" ? <section className="improvements-missing" role="status"><h2>Improvement not found</h2><p><code>{route.id}</code> is not an existing canonical improvement ID. It may have been removed, or the link may be stale.</p><p><button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "active" })}>View Active improvements</button> <button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "all" })}>View All improvements</button></p></section> : route.view === "detail" && detail ? <Detail item={detail} /> : <><p>{scope === "active" ? "Current non-terminal improvements." : "All recorded improvements."}</p>{items.length ? <ul className="improvements-list">{items.map((item) => <li key={item.canonicalId}><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>{item.canonicalId}</a><span>{item.revisionLabel} · {item.state} · {item.risk}</span><small>Updated {new Date(item.updatedAt).toLocaleString()}</small></li>)}</ul> : <p>No improvements are available in this view.</p>}</>}
     </div>
   </section>;
 }

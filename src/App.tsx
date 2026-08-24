@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
+import { AgentSettingsDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -9,7 +9,6 @@ import { loadPendingSend, savePendingSend, type PendingSend } from "./client-per
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
-import type { ConversationEnergy } from "../shared/conversation-energy";
 import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
@@ -98,6 +97,7 @@ export default function App() {
   const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
+  const [resendingPending, setResendingPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
@@ -123,6 +123,7 @@ export default function App() {
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
+  const styleSaveRevision = useRef(0);
   const { layerRef: actionsMenu, triggerRef: actionsTrigger } = useDismissibleLayer(menuOpen, () => setMenuOpen(false));
   const panelOverlayOpen = Boolean(mobilePanel && compactLayout);
   const { dialogRef: sidePanelRef, onDialogKeyDown: onSidePanelKeyDown } = useModalOverlay<HTMLDivElement>(() => setMobilePanel(null), null, panelOverlayOpen);
@@ -361,41 +362,34 @@ export default function App() {
     }
   }
 
-  function changeWritable(agent: WritableAgent) {
-    if (!human) return;
+  async function changeWritable(agent: WritableAgent) {
+    if (!human) throw new Error("Join the room before changing project permissions.");
+    await updateSettings({ writableAgent: agent, actorId: human.id });
     setRoom((current) => ({ ...current, settings: { ...current.settings, writableAgent: agent } }));
-    void withErrorHandling(() => updateSettings({ writableAgent: agent, actorId: human.id }));
   }
 
-  function changeConversationEnergy(conversationEnergy: ConversationEnergy) {
-    setRoom((current) => ({ ...current, settings: { ...current.settings, conversationEnergy } }));
-    void withErrorHandling(() => updateSettings({ conversationEnergy }));
-  }
-
-  function changeTopic(topic: string) {
-    const nextTopic = topic.trim() || "Open conversation";
-    if (nextTopic === room.settings.topic) return;
-    setRoom((current) => ({
-      ...current,
-      settings: { ...current.settings, topic: nextTopic },
-    }));
-    void withErrorHandling(() => updateSettings({ topic: nextTopic }));
-  }
-
-  function changeRoomName(roomName: string) {
-    const nextRoomName = roomName.trim() || "The Agent Room";
-    if (nextRoomName === room.settings.roomName) return;
-    setRoom((current) => ({ ...current, settings: { ...current.settings, roomName: nextRoomName } }));
-    void withErrorHandling(() => updateSettings({ roomName: nextRoomName }));
+  async function saveRoomSettings(settings: RoomSettingsInput) {
+    await updateSettings(settings);
+    setRoom((current) => ({ ...current, settings: { ...current.settings, ...settings } }));
   }
 
   function changeMyStyle(style: ChatStyle) {
     if (!human) return;
+    const previousHuman = human;
     const nextHuman = { ...human, style: sanitizeChatStyle(style, human.style) };
+    const revision = styleSaveRevision.current + 1;
+    styleSaveRevision.current = revision;
     setHuman(nextHuman);
     setSavedHuman(nextHuman);
     saveHumanProfile(nextHuman);
-    void withErrorHandling(() => updateMyStyle(human.id, nextHuman.style));
+    setClientError("");
+    void updateMyStyle(human.id, nextHuman.style).catch((error) => {
+      if (styleSaveRevision.current !== revision) return;
+      setHuman(previousHuman);
+      setSavedHuman(previousHuman);
+      saveHumanProfile(previousHuman);
+      setClientError(error instanceof Error ? error.message : String(error));
+    });
   }
 
   function changeTranscriptMagnification(direction: -1 | 1) {
@@ -436,8 +430,9 @@ export default function App() {
   }
 
   function resendPending() {
-    if (!pendingSend || !human || !connected) return;
+    if (!pendingSend || !human || !connected || resendingPending) return;
     const pending = pendingSend;
+    setResendingPending(true);
     void (async () => {
       try {
         setClientError("");
@@ -446,6 +441,8 @@ export default function App() {
         setPendingSend(null);
       } catch (error) {
         setClientError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setResendingPending(false);
       }
     })();
   }
@@ -469,6 +466,7 @@ export default function App() {
 
   function changeName() {
     composer.current?.flush();
+    styleSaveRevision.current += 1;
     setHuman(null);
     setSavedHuman(null);
     saveHumanProfile(null);
@@ -555,8 +553,8 @@ export default function App() {
             {pendingSend ? (
               <div className="pending-send" role="status">
                 <span><strong>Not sent — send now?</strong> {pendingSend.text}</span>
-                <button type="button" className="classic-button" disabled={!connected} onClick={resendPending}>Send now</button>
-                <button type="button" className="classic-button" onClick={returnPendingToDraft}>Keep as draft</button>
+                <button type="button" className="classic-button" disabled={!connected || resendingPending} onClick={resendPending}>{resendingPending ? "Sending…" : "Send now"}</button>
+                <button type="button" className="classic-button" disabled={resendingPending} onClick={returnPendingToDraft}>Keep as draft</button>
               </div>
             ) : null}
             <ComposerBoundary
@@ -599,9 +597,7 @@ export default function App() {
               topic={room.settings.topic}
               conversationEnergy={room.settings.conversationEnergy}
               disabled={working || !connected}
-              onRoomNameChange={changeRoomName}
-              onTopicChange={changeTopic}
-              onConversationEnergyChange={changeConversationEnergy}
+              onSave={saveRoomSettings}
             /> : null}
           </div>
           </>}
@@ -621,7 +617,7 @@ export default function App() {
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} returnFocusTo={workshopTrigger.current} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
 
-        {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
+        {clientError || room.error ? <div className="error-strip" role="alert"><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>

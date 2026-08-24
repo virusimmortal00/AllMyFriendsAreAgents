@@ -148,9 +148,11 @@ export function AgentSettingsDialog({
   health?: AgentHealth;
   writableAgent: WritableAgent;
   disabled: boolean;
-  onWritableChange: (agent: WritableAgent) => void;
+  onWritableChange: (agent: WritableAgent) => void | Promise<void>;
   onClose: () => void;
 }) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const canEdit = writableAgent === agent;
   const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
@@ -160,7 +162,20 @@ export function AgentSettingsDialog({
   const retryDescription = health?.retryAt
     ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
     : "";
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose);
+  const requestClose = () => { if (!saving) onClose(); };
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
+
+  async function changePermission(next: WritableAgent) {
+    setSaveError("");
+    setSaving(true);
+    try {
+      await onWritableChange(next);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div
@@ -170,7 +185,7 @@ export function AgentSettingsDialog({
       <section ref={dialogRef} className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
         <header className="agent-settings-titlebar">
           <h2 id="agent-settings-title">Agent Settings</h2>
-          <button type="button" aria-label="Close agent settings" onClick={onClose}>×</button>
+          <button type="button" aria-label="Close agent settings" disabled={saving} onClick={requestClose}>×</button>
         </header>
         <div className="agent-settings-body">
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
@@ -184,8 +199,8 @@ export function AgentSettingsDialog({
               <input
                 type="checkbox"
                 checked={canEdit}
-                disabled={disabled || !supportsProjectWrites}
-                onChange={(event) => onWritableChange(event.target.checked ? agent : "nobody")}
+                disabled={disabled || saving || !supportsProjectWrites}
+                onChange={(event) => void changePermission(event.target.checked ? agent : "nobody")}
               />
               Allow this agent to edit project files
             </label>
@@ -194,10 +209,12 @@ export function AgentSettingsDialog({
               : "This provider does not support project write access."}</p>
             {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
             {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
+            {saving ? <p className="agent-settings-status" role="status">Saving project permission…</p> : null}
+            {saveError ? <p className="agent-settings-error" role="alert">Could not save this permission. {saveError}</p> : null}
           </fieldset>
         </div>
         <footer className="agent-settings-actions">
-          <button type="button" className="classic-button" onClick={onClose}>Close</button>
+          <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Close</button>
         </footer>
       </section>
     </div>
@@ -605,14 +622,15 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   );
 }
 
-interface RoomControlsProps {
+export interface RoomSettingsInput {
   roomName: string;
   topic: string;
   conversationEnergy: ConversationEnergy;
+}
+
+interface RoomControlsProps extends RoomSettingsInput {
   disabled: boolean;
-  onRoomNameChange: (roomName: string) => void;
-  onTopicChange: (topic: string) => void;
-  onConversationEnergyChange: (energy: ConversationEnergy) => void;
+  onSave: (settings: RoomSettingsInput) => void | Promise<void>;
 }
 
 export function RoomControls({
@@ -620,47 +638,75 @@ export function RoomControls({
   topic,
   conversationEnergy,
   disabled,
-  onRoomNameChange,
-  onTopicChange,
-  onConversationEnergyChange,
+  onSave,
 }: RoomControlsProps) {
+  const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const current = { roomName, topic, conversationEnergy };
+  const normalized = { ...draft, roomName: draft.roomName.trim(), topic: draft.topic.trim() };
+  const valid = Boolean(normalized.roomName && normalized.topic);
+  const dirty = draft.roomName !== roomName || draft.topic !== topic || draft.conversationEnergy !== conversationEnergy;
+  const locked = disabled || saving;
+
+  useEffect(() => {
+    setDraft(current);
+    setSaveError("");
+    setSaved(false);
+  }, [roomName, topic, conversationEnergy]);
+
+  function cancel() {
+    setDraft(current);
+    setSaveError("");
+    setSaved(false);
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setSaved(false);
+    if (!valid || !dirty || locked) return;
+    setSaveError("");
+    setSaving(true);
+    try {
+      await onSave(normalized);
+      setDraft(normalized);
+      setSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
       <PanelTitle>Room Settings</PanelTitle>
+      <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
-        key={roomName}
         className="classic-input"
         type="text"
+        required
         maxLength={80}
-        defaultValue={roomName}
-        onBlur={(event) => {
-          const nextRoomName = event.currentTarget.value.trim() || "The Agent Room";
-          event.currentTarget.value = nextRoomName;
-          onRoomNameChange(nextRoomName);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
+        disabled={locked}
+        value={draft.roomName}
+        aria-invalid={!normalized.roomName}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, roomName: event.target.value })); }}
       />
       <p className="field-help">Shown in the room window and transcript header.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"
-        key={topic}
         className="classic-input"
         type="text"
+        required
         maxLength={160}
-        defaultValue={topic}
-        onBlur={(event) => {
-          const nextTopic = event.currentTarget.value.trim() || "Open conversation";
-          event.currentTarget.value = nextTopic;
-          onTopicChange(nextTopic);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
+        disabled={locked}
+        value={draft.topic}
+        aria-invalid={!normalized.topic}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, topic: event.target.value })); }}
       />
       <p className="field-help">A starting point, not a boundary. Changing it starts fresh agent context.</p>
       <hr />
@@ -668,15 +714,23 @@ export function RoomControls({
       <select
         id="conversation-energy"
         className="classic-input"
-        value={conversationEnergy}
-        disabled={disabled}
-        onChange={(event) => onConversationEnergyChange(event.target.value as ConversationEnergy)}
+        value={draft.conversationEnergy}
+        disabled={locked}
+        onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, conversationEnergy: event.target.value as ConversationEnergy })); }}
       >
         {CONVERSATION_ENERGY_LEVELS.map((energy) => (
           <option value={energy} key={energy}>{CONVERSATION_ENERGY_POLICIES[energy].label}</option>
         ))}
       </select>
-      <p className="field-help">{CONVERSATION_ENERGY_POLICIES[conversationEnergy].description}</p>
+      <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
+      {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
+      {saveError ? <p className="room-settings-error" role="alert">Could not save room settings. {saveError}</p> : null}
+      {saving ? <p className="room-settings-status" role="status">Saving room settings…</p> : saved ? <p className="room-settings-status" role="status">Room settings saved.</p> : null}
+      <div className="room-settings-actions">
+        <button type="button" className="classic-button" disabled={!dirty || saving} onClick={cancel}>Cancel</button>
+        <button type="submit" className="classic-button" disabled={!dirty || !valid || locked}>{saving ? "Saving…" : "Save changes"}</button>
+      </div>
+      </form>
     </aside>
   );
 }
