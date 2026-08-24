@@ -82,6 +82,22 @@ describe("identity-safe task API", () => {
     } finally { await api.close(); }
   });
 
+  it("accepts only current agents and room humans as task participants", async () => {
+    const api = await fixture();
+    try {
+      const created = await (await api.call("/api/tasks", { method: "POST", body: JSON.stringify({ title: "Roster-safe task" }) })).json() as { taskId: string; revision: number };
+      let revision = created.revision;
+      for (const participantId of ["cursor-gemini-flash", "cursor-glm"] as const) {
+        const response = await api.call(`/api/tasks/${created.taskId}/participants`, { method: "POST", body: JSON.stringify({ expectedRevision: revision, participantId, role: "reviewer" }) });
+        expect(response.status).toBe(200); revision = (await response.json() as { revision: number }).revision;
+      }
+      for (const participantId of ["codex-luna", "codex-terra", "claude-opus"] as const) {
+        const response = await api.call(`/api/tasks/${created.taskId}/participants`, { method: "POST", body: JSON.stringify({ expectedRevision: revision, participantId, role: "reviewer" }) });
+        expect(response.status).toBe(400);
+      }
+    } finally { await api.close(); }
+  });
+
   it("requires explicit developer capabilities and confines proposal/update authority", async () => {
     const api = await fixture();
     try {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type express from "express";
+import { isActiveAgentId } from "../shared/participants.js";
 import { createTask, TASK_LIFECYCLE_STATES, TASK_PARTICIPANT_ROLES, type TaskActor, type TaskChange, type TaskReference } from "../shared/task-domain.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
@@ -52,7 +53,7 @@ function expectedRevision(value: unknown) {
 }
 
 function validParticipant(value: unknown, humans: HumanPresenceRegistry) {
-  return typeof value === "string" && (Boolean(humans.get(value)) || ["codex-luna", "codex-terra", "codex-sol", "claude-sonnet", "claude-opus", "cursor-grok", "cursor-gemini", "cursor-composer", "you"].includes(value));
+  return typeof value === "string" && (Boolean(humans.get(value)) || value === "you" || isActiveAgentId(value));
 }
 
 export function registerTaskRoutes(input: {

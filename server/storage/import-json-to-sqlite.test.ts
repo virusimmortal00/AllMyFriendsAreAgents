@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style.js";
 import { RoomStore } from "../room-store.js";
@@ -113,6 +114,11 @@ describe("JSON to SQLite import", () => {
     expect(await reopenedStore.listAssignments()).toHaveLength(1);
     expect(await reopenedStore.listContinuations()).toHaveLength(1);
     reopenedStore.close();
+
+    const tampered = new DatabaseSync(databasePath);
+    tampered.prepare("UPDATE continuation_jobs SET projection_json = ? WHERE room_id = ? AND job_id = ?").run('{"schemaVersion":1}', DEFAULT_ROOM_ID, "imported-job");
+    tampered.close();
+    await expect(SqliteRoomRepository.open(projectRoot, databasePath)).rejects.toThrow(/Malformed SQLite continuation state/);
   });
 
   it("rejects importing a different room without explicit overwrite", async () => {
@@ -128,5 +134,27 @@ describe("JSON to SQLite import", () => {
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
       .rejects.toThrow("already contains a different default room");
+  });
+
+  it("removes governed destination records before an explicit overwrite import", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-overwrite-test-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    const actor = { id: "owner", roomRole: "owner" as const };
+    const source = await RoomStore.open(projectRoot, sourceStateDirectory);
+    await source.updateSettings({ roomName: "Replacement Room" });
+    expect((await source.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "source-task", title: "Source task", actor, now: "2026-08-24T12:00:00.000Z" }))).kind).toBe("created");
+
+    const destination = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect((await destination.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "destination-only-task", title: "Remove me", actor, now: "2026-08-24T11:00:00.000Z" }))).kind).toBe("created");
+    await destination.putAssignment({ assignmentId: "destination-assignment", improvementId: "old", developerMemberId: "old-dev", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "old-branch", observedHeadSha: "a".repeat(40), workspacePath: path.join(projectRoot, "old-worktree"), lifecycleStatus: "RECOVERABLE", recovery: { classification: "clean", reconciledAt: "2026-08-24T11:00:00.000Z", previousStatus: null, detail: "old" }, createdAt: "2026-08-24T11:00:00.000Z", updatedAt: "2026-08-24T11:00:00.000Z" });
+    destination.close();
+
+    await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite: true });
+    const replaced = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect((await replaced.listTasks()).items.map(({ taskId }) => taskId)).toEqual(["source-task"]);
+    expect(await replaced.listAssignments()).toEqual([]);
+    replaced.close();
   });
 });

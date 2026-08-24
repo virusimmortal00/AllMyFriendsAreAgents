@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task, TaskParticipantRole, TaskReferenceKind } from "../shared/task-domain";
 import { ApiRequestError, createRoomTask, loadTask, loadTasks, taskAction, updateRoomTask, type TaskDetailResponse } from "./api";
 
@@ -28,13 +28,22 @@ export function Tasks({ refreshKey = 0 }: { refreshKey?: number }) {
   const [createDescription, setCreateDescription] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editTitleRevision, setEditTitleRevision] = useState(0);
+  const [editDescriptionRevision, setEditDescriptionRevision] = useState(0);
+  const titleDirty = useRef(false);
+  const descriptionDirty = useRef(false);
 
   const refreshList = async () => { const page = await loadTasks(); setItems(page.items); };
-  const refreshDetail = async (id = selected) => { if (!id) return; const next = await loadTask(id); setDetail(next); setEditTitle(next.task.title); setEditDescription(next.task.description); };
+  const applyDetail = (next: TaskDetailResponse, resetEditors = false) => {
+    setDetail(next);
+    if (resetEditors || !titleDirty.current) { setEditTitle(next.task.title); setEditTitleRevision(next.task.revision); titleDirty.current = false; }
+    if (resetEditors || !descriptionDirty.current) { setEditDescription(next.task.description); setEditDescriptionRevision(next.task.revision); descriptionDirty.current = false; }
+  };
+  const refreshDetail = async (id = selected, resetEditors = false) => { if (!id) return; applyDetail(await loadTask(id), resetEditors); };
   useEffect(() => { let cancelled = false; setLoading(true); void loadTasks().then((page) => { if (!cancelled) setItems(page.items); }).catch((reason) => { if (!cancelled) setError(String(reason)); }).finally(() => { if (!cancelled) setLoading(false); }); return () => { cancelled = true; }; }, [refreshKey]);
-  useEffect(() => { if (!selected) { setDetail(null); return; } let cancelled = false; setLoading(true); void loadTask(selected).then((next) => { if (!cancelled) { setDetail(next); setEditTitle(next.task.title); setEditDescription(next.task.description); } }).catch((reason) => { if (!cancelled) { setDetail(null); setError(reason instanceof ApiRequestError && reason.status === 404 ? "That task no longer exists." : reason.message); } }).finally(() => { if (!cancelled) setLoading(false); }); return () => { cancelled = true; }; }, [selected]);
-  useEffect(() => { if (!selected) return; void loadTask(selected).then(setDetail).catch(() => undefined); }, [refreshKey, selected]);
-  useEffect(() => { const timer = window.setInterval(() => { void refreshList(); if (selected) void loadTask(selected).then(setDetail).catch(() => undefined); }, 5_000); return () => window.clearInterval(timer); }, [selected]);
+  useEffect(() => { if (!selected) { setDetail(null); return; } let cancelled = false; titleDirty.current = false; descriptionDirty.current = false; setLoading(true); void loadTask(selected).then((next) => { if (!cancelled) applyDetail(next, true); }).catch((reason) => { if (!cancelled) { setDetail(null); setError(reason instanceof ApiRequestError && reason.status === 404 ? "That task no longer exists." : reason.message); } }).finally(() => { if (!cancelled) setLoading(false); }); return () => { cancelled = true; }; }, [selected]);
+  useEffect(() => { if (!selected) return; void loadTask(selected).then((next) => applyDetail(next)).catch(() => undefined); }, [refreshKey, selected]);
+  useEffect(() => { const timer = window.setInterval(() => { void refreshList(); if (selected) void loadTask(selected).then((next) => applyDetail(next)).catch(() => undefined); }, 5_000); return () => window.clearInterval(timer); }, [selected]);
 
   async function create(event: React.FormEvent) {
     event.preventDefault(); if (!createTitle.trim()) return; setBusy(true); setError("");
@@ -52,9 +61,9 @@ export function Tasks({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   async function saveField(field: "title" | "description") {
-    if (!detail) return; const submitted = field === "title" ? editTitle : editDescription; setBusy(true); setError("");
-    try { await updateRoomTask(detail.task.taskId, detail.task.revision, field, submitted); await Promise.all([refreshDetail(detail.task.taskId), refreshList()]); setNotice("Task text saved."); }
-    catch (reason) { if (reason instanceof ApiRequestError && reason.status === 409) { const latest = await loadTask(detail.task.taskId); setDetail(latest); if (field === "title") setEditTitle(submitted); else setEditDescription(submitted); setNotice("A newer revision was loaded. Your typed value remains in the editor; review and save again."); } setError(reason instanceof Error ? reason.message : String(reason)); }
+    if (!detail) return; const submitted = field === "title" ? editTitle : editDescription; const editorRevision = field === "title" ? editTitleRevision : editDescriptionRevision; setBusy(true); setError("");
+    try { await updateRoomTask(detail.task.taskId, editorRevision, field, submitted); await Promise.all([refreshDetail(detail.task.taskId, true), refreshList()]); setNotice("Task text saved."); }
+    catch (reason) { if (reason instanceof ApiRequestError && reason.status === 409) { const latest = await loadTask(detail.task.taskId); applyDetail(latest); if (field === "title") { setEditTitle(submitted); setEditTitleRevision(latest.task.revision); titleDirty.current = true; } else { setEditDescription(submitted); setEditDescriptionRevision(latest.task.revision); descriptionDirty.current = true; } setNotice("A newer revision was loaded. Your typed value remains in the editor; review and save again."); } setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
 
@@ -65,7 +74,7 @@ export function Tasks({ refreshKey = 0 }: { refreshKey?: number }) {
       {loading && !detail ? <p role="status">Loading tasks…</p> : !selected ? <>
         <form className="task-create" onSubmit={create}><h3>Create task</h3><label>Title<input required maxLength={160} value={createTitle} onChange={(event) => setCreateTitle(event.target.value)} /></label><label>Description<textarea maxLength={8000} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} /></label><button className="classic-button" disabled={busy || !createTitle.trim()}>Create task</button></form>
         <TaskList items={items} onOpen={setSelected} />
-      </> : detail ? <TaskDetail detail={detail} busy={busy} editTitle={editTitle} editDescription={editDescription} setEditTitle={setEditTitle} setEditDescription={setEditDescription} saveField={saveField} mutate={mutate} /> : <div className="task-empty"><strong>Task unavailable.</strong><button type="button" className="classic-button" onClick={() => setSelected(null)}>Return to task list</button></div>}
+      </> : detail ? <TaskDetail detail={detail} busy={busy} editTitle={editTitle} editDescription={editDescription} setEditTitle={(value) => { titleDirty.current = true; setEditTitle(value); }} setEditDescription={(value) => { descriptionDirty.current = true; setEditDescription(value); }} saveField={saveField} mutate={mutate} /> : <div className="task-empty"><strong>Task unavailable.</strong><button type="button" className="classic-button" onClick={() => setSelected(null)}>Return to task list</button></div>}
     </div>
   </section>;
 }

@@ -38,14 +38,7 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
       initializeDefaultRoom: false,
     });
     try {
-      if (!sqliteStore.hasPersistedRoom() || options.overwrite) {
-        sqliteStore.replaceState(state, { overwrite: options.overwrite });
-      } else if (!sameRoomState(sqliteStore.snapshot(), state)) {
-        throw new Error("The SQLite database already contains a different default room. Pass overwrite=true to replace it.");
-      }
-      for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
-      sqliteStore.importTasks(tasks, taskEvents);
-      sqliteStore.importContinuations(continuationPolicy, continuations, continuationInbox, continuationAudit);
+      await sqliteStore.importRoomData({ state, assignments, tasks, taskEvents, continuationPolicy, continuations, continuationInbox, continuationAudit, overwrite: options.overwrite });
     } finally {
       sqliteStore.close();
     }
@@ -53,15 +46,6 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }
-}
-
-function sameRoomState(left: ReturnType<RoomStore["snapshot"]>, right: ReturnType<RoomStore["snapshot"]>) {
-  return JSON.stringify(left.messages) === JSON.stringify(right.messages)
-    && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
-    && JSON.stringify(left.settings) === JSON.stringify(right.settings)
-    && left.status === right.status
-    && left.activeAgent === right.activeAgent
-    && left.error === right.error;
 }
 
 function argument(name: string) {

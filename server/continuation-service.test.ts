@@ -21,7 +21,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 async function eventually(check: () => boolean | Promise<boolean>) { for (let i = 0; i < 100; i += 1) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 2)); } throw new Error("condition not reached"); }
 
-async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<ContinuationExecutorResult>) | ContinuationExecutor, now?: () => Date) {
+async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<ContinuationExecutorResult>) | ContinuationExecutor, now?: () => Date, options: { emergencyStopped?: () => boolean | Promise<boolean> } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-service-")); roots.push(root); const store = await RoomStore.open(root, path.join(root, "state"));
   await store.updateSettings({ projectPath: root, writableAgent: "codex-sol" });
   const actor = { id: "human", roomRole: "owner" as const }; let task = createTask({ roomId: CANONICAL_ROOM_ID, taskId: "task-1", title: "Durable work", actor, now: at });
@@ -30,7 +30,7 @@ async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<
   const assignment: AssignmentRecord = { assignmentId: "assignment-1", improvementId: "improvement-1", developerMemberId: "dev-1", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 2, manifestRevision: 3, pinnedBaseSha: "a".repeat(40), branch: "work", observedHeadSha: "a".repeat(40), workspacePath: root, lifecycleStatus: "ACTIVE", recovery: { classification: "clean", reconciledAt: at, previousStatus: null, detail: "test" }, createdAt: at, updatedAt: at };
   let authority = async (id: string, owner: string) => id === assignment.assignmentId && owner === assignment.agent ? { kind: "ok" as const, assignment, workspace: root } : { kind: "revoked" as const, reason: "Assignment mismatch." };
   const lifecycle = { authorityForContinuation: (id: string, owner: string) => authority(id, owner) } as unknown as AssignmentLifecycleService;
-  const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { now }); await service.initialize();
+  const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { now, ...options }); await service.initialize();
   return { store, service, task, assignment, setAuthority(next: typeof authority) { authority = next; }, async enable() { const policy = await service.policy(); expect(policy).toBeTruthy(); expect((await service.updatePolicy(policy!.revision, { enabled: true }, "human")).kind).toBe("accepted"); }, create: () => service.create({ owner: "codex-sol", developerMemberId: "dev-1", developerMemberConfigRevision: 1, taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId: "assignment-ref", objective: "Continue the approved task", trigger: "Explicit test trigger" }) };
 }
 
@@ -57,6 +57,23 @@ describe("ContinuationService", () => {
     await eventually(async () => (await value.service.list())[0]?.status === "RUNNING"); expect(await value.service.cancel(created.value.jobId)).toMatchObject({ kind: "ok", value: { status: "CANCELLED" } });
     execution.resolve({ summary: "too late", usage: { tokens: 1, toolCalls: 0 } }); await new Promise((resolve) => setTimeout(resolve, 5));
     expect(await value.service.inbox("codex-sol")).toEqual([]); expect((await value.service.list())[0]?.status).toBe("CANCELLED");
+  });
+
+  it("aborts active executors on shutdown and leaves durable restart recovery intact", async () => {
+    let abortedReason: unknown; const aborted = deferred<void>();
+    const value = await fixture((input) => new Promise<ContinuationExecutorResult>((_resolve, reject) => input.signal.addEventListener("abort", () => { abortedReason = input.signal.reason; aborted.resolve(); reject(new Error("executor aborted")); }, { once: true })));
+    await value.enable(); await value.create(); await eventually(() => value.service.activeExecutorCount() === 1);
+    expect(value.service.shutdown()).toBe(1); await aborted.promise; await eventually(() => value.service.activeExecutorCount() === 0);
+    expect(abortedReason).toBe("shutdown"); expect((await value.service.list())[0]?.status).toBe("RUNNING");
+    expect(await value.create()).toMatchObject({ kind: "rejected", reason: "Server is shutting down." });
+    const restarted = new ContinuationService(value.store, value.store, {} as AssignmentLifecycleService, { dispatch: async () => ({ summary: "unused", usage: { tokens: 0, toolCalls: 0 } }) });
+    await restarted.reconcile(); expect((await restarted.list())[0]).toMatchObject({ status: "BLOCKED", blocker: expect.stringContaining("server restart") });
+  });
+
+  it("persistently gates new continuations while the coordinator emergency stop is active", async () => {
+    let stopped = false; const value = await fixture(async () => ({ summary: "unused", usage: { tokens: 0, toolCalls: 0 } }), undefined, { emergencyStopped: () => stopped });
+    await value.enable(); stopped = true;
+    expect(await value.create()).toMatchObject({ kind: "rejected", reason: "Emergency stop is active." });
   });
 
   it("reconciles orphaned running jobs to blocked, never running", async () => {
@@ -145,7 +162,7 @@ describe("ContinuationService", () => {
     const context = await value.service.contextForAgent("codex-sol", { taskId: "task-1", characterBudget: 5, limit: 1 }); expect(context).toMatchObject([{ summary: "abcde", taskId: "task-1" }]);
     const provenance = { taskId: "task-1", assignmentId: "assignment-1", assignmentReferenceId: "assignment-ref", developerMemberId: "dev-1", developerMemberConfigRevision: 1 };
     expect(await value.service.contextForDeveloper("codex-sol", provenance)).toHaveLength(1); expect(await value.service.contextForDeveloper("codex-sol", { ...provenance, assignmentId: "historical-assignment" })).toEqual([]); expect(await value.service.contextForDeveloper("codex-sol", { ...provenance, assignmentReferenceId: "other-ref" })).toEqual([]); expect(await value.service.contextForDeveloper("codex-sol", { ...provenance, developerMemberConfigRevision: 2 })).toEqual([]);
-    let inbox = (await value.service.inbox("codex-sol"))[0]!; expect(inbox.status).toBe("UNREAD"); expect((await value.service.acknowledgeInbox(inbox.inboxEntryId)).kind).toBe("ok"); inbox = (await value.service.inbox("codex-sol"))[0]!; expect(inbox.status).toBe("ACKNOWLEDGED"); expect((await value.service.acknowledgeInbox(inbox.inboxEntryId, true)).kind).toBe("ok"); expect((await value.service.list())[0]?.status).toBe("ACKNOWLEDGED");
+    let inbox = (await value.service.inbox("codex-sol"))[0]!; expect(inbox.status).toBe("UNREAD"); expect((await value.service.acknowledgeInbox(inbox.inboxEntryId)).kind).toBe("ok"); inbox = (await value.service.inbox("codex-sol"))[0]!; expect(inbox.status).toBe("ACKNOWLEDGED"); expect(await value.service.acknowledgeInbox(inbox.inboxEntryId)).toMatchObject({ kind: "ok", value: { inboxRevision: inbox.inboxRevision, status: "ACKNOWLEDGED" } }); expect((await value.service.acknowledgeInbox(inbox.inboxEntryId, true)).kind).toBe("ok"); expect((await value.service.list())[0]?.status).toBe("ACKNOWLEDGED");
     await value.create(); await eventually(async () => (await value.service.list()).some((job) => job.status === "COMPLETED" && job.jobId !== inbox.jobId));
     clock = new Date("2026-09-01T12:00:00.000Z"); expect((await value.service.inbox("codex-sol")).map((entry) => entry.status).sort()).toEqual(["ARCHIVED", "CLOSED"]); expect((await value.service.list()).find((job) => job.jobId !== inbox.jobId)).toMatchObject({ resultDisposition: "ARCHIVED", jobRevision: 4 }); const reopened = await RoomStore.open(value.assignment.workspacePath, path.join(value.assignment.workspacePath, "state")); expect(await reopened.listContinuations()).toHaveLength(2); expect((await reopened.listContinuationAudit(inbox.jobId)).at(-1)?.action).toBe("ACKNOWLEDGED");
   });

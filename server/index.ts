@@ -69,14 +69,6 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   path.join(storageConfiguration.dataDirectory, "assignment-worktrees"),
 );
 await assignmentLifecycle.reconcile();
-const continuationExecutorUrl = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_URL?.trim() || "http://127.0.0.1/continuation-executor-not-configured";
-const continuationExecutor = new HttpContinuationExecutor(
-  continuationExecutorUrl,
-  process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN}` : undefined,
-  process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_PROGRESS_BASE_URL?.trim() || `http://127.0.0.1:${port}`,
-);
-const continuationService = new ContinuationService(store, store, assignmentLifecycle, continuationExecutor, { configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATIONS_ENABLED === "true", onTransition: () => broadcast() });
-await continuationService.initialize();
 const coordinatorConfigured = coordinatorEnabled();
 const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
 const coordinatorHeartbeat = new CoordinatorHeartbeat(
@@ -101,6 +93,18 @@ const coordinatorHeartbeat = new CoordinatorHeartbeat(
     onError: (error) => console.error("Coordinator heartbeat failed", error),
   },
 );
+const continuationExecutorUrl = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_URL?.trim() || "http://127.0.0.1/continuation-executor-not-configured";
+const continuationExecutor = new HttpContinuationExecutor(
+  continuationExecutorUrl,
+  process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_TOKEN}` : undefined,
+  process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_PROGRESS_BASE_URL?.trim() || `http://127.0.0.1:${port}`,
+);
+const continuationService = new ContinuationService(store, store, assignmentLifecycle, continuationExecutor, {
+  configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATIONS_ENABLED === "true",
+  onTransition: () => broadcast(),
+  emergencyStopped: () => coordinatorHeartbeat.status().runtime.emergencyStopped,
+});
+await continuationService.initialize();
 
 app.use(express.json({ limit: "64kb" }));
 
@@ -725,6 +729,7 @@ function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   activeGenerations.clear();
+  continuationService.shutdown();
   coordinatorHeartbeat.close();
   httpServer.close((error) => {
     if (error) {

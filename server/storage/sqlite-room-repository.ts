@@ -231,22 +231,28 @@ export class SqliteRoomRepository implements RoomRepository {
     await mkdir(databaseDirectory, { recursive: true, mode: 0o700 });
     await chmod(databaseDirectory, 0o700);
     const database = new DatabaseSync(databasePath, { timeout: 5_000, enableForeignKeyConstraints: true });
-    database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
-    await runSqliteMigrations(database);
-    await restrictDatabaseFiles(databasePath);
+    try {
+      database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;");
+      await runSqliteMigrations(database);
+      await restrictDatabaseFiles(databasePath);
 
-    const repository = new SqliteRoomRepository(databasePath, database, projectRoot);
-    repository.seedAgents();
-    if (!repository.hasPersistedRoom() && options.initializeDefaultRoom !== false) {
-      repository.replaceState(createDefaultRoomState(projectRoot));
-    } else if (repository.hasPersistedRoom()) {
-      repository.state = repository.loadState();
-      repository.setStatusSync("idle");
+      const repository = new SqliteRoomRepository(databasePath, database, projectRoot);
+      repository.seedAgents();
+      if (!repository.hasPersistedRoom() && options.initializeDefaultRoom !== false) {
+        repository.replaceState(createDefaultRoomState(projectRoot));
+      } else if (repository.hasPersistedRoom()) {
+        repository.state = repository.loadState();
+        repository.assertContinuationDurableState();
+        repository.setStatusSync("idle");
+      }
+      if (options.seedImprovements && repository.hasPersistedRoom()) {
+        seedWaveOneImprovements(database, DEFAULT_ROOM_ID);
+      }
+      return repository;
+    } catch (error) {
+      database.close();
+      throw error;
     }
-    if (options.seedImprovements && repository.hasPersistedRoom()) {
-      seedWaveOneImprovements(database, DEFAULT_ROOM_ID);
-    }
-    return repository;
   }
 
   close() {
@@ -267,7 +273,7 @@ export class SqliteRoomRepository implements RoomRepository {
       throw new Error("The SQLite database already contains the default room. Pass overwrite=true to replace it.");
     }
     const now = new Date().toISOString();
-    this.database.exec("BEGIN IMMEDIATE");
+    this.database.exec("SAVEPOINT replace_room_state");
     try {
       this.database.prepare(`
         INSERT INTO rooms(
@@ -301,6 +307,7 @@ export class SqliteRoomRepository implements RoomRepository {
         now,
         now,
       );
+      if (options.overwrite) this.clearGovernedStateForOverwrite();
       this.database.prepare("DELETE FROM messages WHERE room_id = ?").run(DEFAULT_ROOM_ID);
       this.database.prepare("DELETE FROM agent_sessions WHERE room_id = ?").run(DEFAULT_ROOM_ID);
       this.database.prepare("DELETE FROM room_agents WHERE room_id = ?").run(DEFAULT_ROOM_ID);
@@ -312,10 +319,36 @@ export class SqliteRoomRepository implements RoomRepository {
         INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, created_at, updated_at)
         VALUES (?, ?, 1, ?, '{}', ?, ?)
       `).run(DEFAULT_ROOM_ID, agent, position, now, now));
-      this.database.exec("COMMIT");
+      this.database.exec("RELEASE replace_room_state");
       this.state = structuredClone(state);
     } catch (error) {
+      this.database.exec("ROLLBACK TO replace_room_state; RELEASE replace_room_state;");
+      throw error;
+    }
+  }
+
+  async importRoomData(input: {
+    state: RoomState;
+    assignments: readonly AssignmentRecord[];
+    tasks: readonly Task[];
+    taskEvents: readonly TaskEvent[];
+    continuationPolicy: ContinuationPolicy | undefined;
+    continuations: readonly ContinuationRecord[];
+    continuationInbox: readonly ContinuationInboxEntry[];
+    continuationAudit: readonly ContinuationAuditEvent[];
+    overwrite?: boolean;
+  }) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (!this.hasPersistedRoom() || input.overwrite) this.replaceState(input.state, { overwrite: input.overwrite });
+      else if (!samePersistedRoomState(this.snapshot(), input.state)) throw new Error("The SQLite database already contains a different default room. Pass overwrite=true to replace it.");
+      for (const assignment of input.assignments) await this.putAssignment(assignment);
+      this.importTasks(input.tasks, input.taskEvents);
+      this.importContinuations(input.continuationPolicy, input.continuations, input.continuationInbox, input.continuationAudit);
+      this.database.exec("COMMIT");
+    } catch (error) {
       this.database.exec("ROLLBACK");
+      this.state = this.hasPersistedRoom() ? this.loadState() : undefined;
       throw error;
     }
   }
@@ -838,7 +871,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const normalizedInbox = inbox.map((raw) => { const value = normalizeContinuationInboxEntry(raw); if (!value) throw new Error("Invalid imported continuation inbox entry"); return value; });
     const normalizedEvents = events.map((raw) => { const value = normalizeContinuationAuditEvent(raw); if (!value) throw new Error("Invalid imported continuation audit event"); return value; });
     validateContinuationDurableState(normalizedPolicy, normalizedJobs, normalizedInbox, normalizedEvents, DEFAULT_ROOM_ID);
-    this.database.exec("BEGIN IMMEDIATE");
+    this.database.exec("SAVEPOINT import_continuations");
     try {
       if (normalizedPolicy) {
         const value = normalizedPolicy;
@@ -857,8 +890,8 @@ export class SqliteRoomRepository implements RoomRepository {
         if (!existing) this.database.prepare("INSERT INTO continuation_inbox(room_id, inbox_entry_id, job_id, owner_agent_id, inbox_revision, status, projection_json, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, entry.inboxEntryId, entry.jobId, entry.owner, entry.inboxRevision, entry.status, JSON.stringify(entry), entry.createdAt, entry.updatedAt, entry.expiresAt);
       }
       for (const event of normalizedEvents) { const existing = this.database.prepare("SELECT projection_json FROM continuation_job_events WHERE room_id = ? AND job_id = ? AND job_revision = ?").get(DEFAULT_ROOM_ID, event.jobId, event.jobRevision) as { projection_json: string } | undefined; if (existing && existing.projection_json !== JSON.stringify(event)) throw new Error(`Continuation audit ${event.eventId} diverges from SQLite`); if (!existing) this.insertContinuationAudit(event); }
-      this.database.exec("COMMIT");
-    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+      this.database.exec("RELEASE import_continuations");
+    } catch (error) { this.database.exec("ROLLBACK TO import_continuations; RELEASE import_continuations;"); throw error; }
   }
 
   async createTask(task: Task): Promise<CreateTaskResult> {
@@ -989,7 +1022,7 @@ export class SqliteRoomRepository implements RoomRepository {
 
   /** Imports canonical projections and append-only history without replacing newer local revisions. */
   importTasks(tasks: readonly Task[], events: readonly TaskEvent[]) {
-    this.database.exec("BEGIN IMMEDIATE");
+    this.database.exec("SAVEPOINT import_tasks");
     try {
       const imported = new Set<string>();
       for (const task of tasks) {
@@ -1011,9 +1044,9 @@ export class SqliteRoomRepository implements RoomRepository {
         if (!imported.has(event.taskId)) continue;
         insertEvent.run(event.roomId, event.taskId, event.revision, event.actorId, event.at, JSON.stringify(event.change), JSON.stringify(event.snapshot));
       }
-      this.database.exec("COMMIT");
+      this.database.exec("RELEASE import_tasks");
       return imported.size;
-    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+    } catch (error) { this.database.exec("ROLLBACK TO import_tasks; RELEASE import_tasks;"); throw error; }
   }
 
   private setStatusSync(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
@@ -1038,6 +1071,23 @@ export class SqliteRoomRepository implements RoomRepository {
     const policies = policyRows.map(parsePolicy); const jobs = jobRows.map((row) => normalizeContinuationRecord(parseJson(row.projection_json, undefined))); const inbox = inboxRows.map((row) => normalizeContinuationInboxEntry(parseJson(row.projection_json, undefined))); const events = eventRows.map((row) => normalizeContinuationAuditEvent(parseJson(row.projection_json, undefined)));
     if (policies.some((value) => !value) || jobs.some((value) => !value) || inbox.some((value) => !value) || events.some((value) => !value)) throw new Error("Malformed SQLite continuation state");
     validateContinuationDurableState(policies[0], jobs as ContinuationRecord[], inbox as ContinuationInboxEntry[], events as ContinuationAuditEvent[], DEFAULT_ROOM_ID);
+  }
+  private clearGovernedStateForOverwrite() {
+    this.database.prepare("DELETE FROM continuation_job_events WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM continuation_inbox WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM continuation_jobs WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM continuation_policies WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM canonical_task_links WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.exec("DROP TRIGGER canonical_task_events_immutable_update; DROP TRIGGER canonical_task_events_immutable_delete;");
+    this.database.prepare("DELETE FROM canonical_task_events WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM canonical_tasks WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.exec(`
+      CREATE TRIGGER canonical_task_events_immutable_update
+      BEFORE UPDATE ON canonical_task_events BEGIN SELECT RAISE(ABORT, 'task events are immutable'); END;
+      CREATE TRIGGER canonical_task_events_immutable_delete
+      BEFORE DELETE ON canonical_task_events BEGIN SELECT RAISE(ABORT, 'task events are immutable'); END;
+    `);
+    this.database.prepare("DELETE FROM assignment_records WHERE room_id = ?").run(DEFAULT_ROOM_ID);
   }
   private insertContinuationAudit(event: ContinuationAuditEvent) { this.database.prepare("INSERT INTO continuation_job_events(room_id, job_id, job_revision, event_id, occurred_at, projection_json) VALUES (?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, event.jobId, event.jobRevision, event.eventId, event.at, JSON.stringify(event)); }
 
@@ -1247,6 +1297,15 @@ function assignmentFromRow(row: Record<string, unknown>) {
   });
 }
 function capacityArchiveAudit(record: ContinuationRecord, fromStatus: ContinuationRecord["status"], at: string): ContinuationAuditEvent { return finalizeContinuationAudit(record, { schemaVersion: 1, eventId: `archive-${record.jobId}-${record.jobRevision}`, jobId: record.jobId, jobRevision: record.jobRevision, attempt: record.usage.attempts, trigger: record.trigger, policyRevision: record.policyRevision, provenanceHash: continuationProvenanceHash(record), at, action: "INBOX_ARCHIVED", fromStatus, toStatus: record.status, usage: record.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Inbox result archived by bounded retention policy.", nextEligibilityAt: record.nextEligibilityAt }); }
+
+function samePersistedRoomState(left: RoomState, right: RoomState) {
+  return JSON.stringify(left.messages) === JSON.stringify(right.messages)
+    && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
+    && JSON.stringify(left.settings) === JSON.stringify(right.settings)
+    && left.status === right.status
+    && left.activeAgent === right.activeAgent
+    && left.error === right.error;
+}
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {
   const id = milestone.id.trim();

@@ -48,4 +48,18 @@ describe("room task interface", () => {
     await screen.findByText(/typed value remains/);
     expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("My unsaved title");
   });
+
+  it("keeps each dirty editor pinned to its loaded revision while polling newer task state", async () => {
+    const user = userEvent.setup(); const view = render(<Tasks refreshKey={0} />);
+    await user.click(await screen.findByRole("button", { name: /Ship task workflow/ }));
+    const title = await screen.findByLabelText("Title"); await user.clear(title); await user.type(title, "My locally edited title");
+    const newer = { ...detail, task: { ...task, revision: 5, title: "Remote title", description: "Remote description" } };
+    vi.mocked(loadTask).mockResolvedValue(newer);
+    view.rerender(<Tasks refreshKey={1} />);
+    await screen.findByText("Revision 5");
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("My locally edited title");
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("Remote description");
+    await user.click(screen.getByRole("button", { name: "Save title" }));
+    await waitFor(() => expect(updateRoomTask).toHaveBeenCalledWith("task-1", 4, "title", "My locally edited title"));
+  });
 });

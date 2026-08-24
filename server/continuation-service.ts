@@ -54,9 +54,10 @@ export type ContinuationResult<T> = { readonly kind: "ok"; readonly value: T } |
 
 export class ContinuationService {
   private readonly active = new Map<string, AbortController>();
+  private closed = false;
   constructor(private readonly records: ContinuationRecordStore, private readonly rooms: RoomRepository,
     private readonly assignments: AssignmentLifecycleService, private readonly executor: ContinuationExecutor,
-    private readonly options: { readonly now?: () => Date; readonly onTransition?: () => void; readonly configuredEnabled?: boolean; readonly onError?: (message: string) => void } = {}) {}
+    private readonly options: { readonly now?: () => Date; readonly onTransition?: () => void; readonly configuredEnabled?: boolean; readonly onError?: (message: string) => void; readonly emergencyStopped?: () => boolean | Promise<boolean> } = {}) {}
 
   async initialize() {
     if (!await this.records.getContinuationPolicy()) {
@@ -79,11 +80,17 @@ export class ContinuationService {
   async list(owner?: AgentId) { return this.records.listContinuations(owner); }
   async audit(jobId: string) { return this.records.listContinuationAudit(jobId); }
   activeExecutorCount() { return this.active.size; }
+  shutdown() {
+    this.closed = true;
+    for (const controller of this.active.values()) controller.abort("shutdown");
+    return this.active.size;
+  }
   async inbox(owner: AgentId) { await this.archiveExpired(owner); return this.records.listContinuationInbox(owner); }
 
   async create(input: { owner: AgentId; developerMemberId: string; developerMemberConfigRevision: number; taskId: string; taskRevision: number; assignmentReferenceId: string; objective: string; trigger: string; budget?: Partial<ContinuationBudget> }): Promise<ContinuationResult<ContinuationRecord>> {
+    if (this.closed) return { kind: "rejected", reason: "Server is shutting down." };
     const policy = await this.currentPolicy(); if ("reason" in policy) return { kind: "rejected", reason: policy.reason };
-    if ((await this.rooms.getEmergencyStop()).active) return { kind: "rejected", reason: "Emergency stop is active." };
+    if (await this.emergencyStopActive()) return { kind: "rejected", reason: "Emergency stop is active." };
     const task = await this.rooms.getTask({ roomId: CANONICAL_ROOM_ID, taskId: input.taskId });
     const authority = await this.authority(task, input.taskRevision, input.assignmentReferenceId, input.owner);
     if ("reason" in authority) return { kind: "rejected", reason: authority.reason! };
@@ -104,6 +111,7 @@ export class ContinuationService {
   }
 
   async resume(jobId: string): Promise<ContinuationResult<ContinuationRecord>> {
+    if (this.closed) return { kind: "rejected", reason: "Server is shutting down." };
     const record = await this.records.getContinuation(jobId); if (!record) return { kind: "not_found" };
     if (record.status !== "BLOCKED") return { kind: "conflict", reason: "Only a blocked continuation can be resumed." };
     if (record.nextEligibilityAt && Date.parse(record.nextEligibilityAt) > Date.parse(this.now())) return { kind: "conflict", reason: "Retry backoff has not elapsed." };
@@ -129,6 +137,7 @@ export class ContinuationService {
     for (;;) {
       const entry = await this.records.getContinuationInboxEntry(inboxEntryId); if (!entry) return { kind: "not_found" };
       if (entry.status === "ARCHIVED" || entry.status === "CLOSED") return { kind: "conflict", reason: "Inbox entry is already closed or archived." };
+      if (entry.status === "ACKNOWLEDGED" && !close) return { kind: "ok", value: entry };
       const now = this.now(); const next = { ...entry, inboxRevision: entry.inboxRevision + 1, status: close ? "CLOSED" as const : "ACKNOWLEDGED" as const,
         acknowledgedAt: entry.acknowledgedAt ?? now, closedAt: close ? now : entry.closedAt, updatedAt: now };
       const changed = await this.records.compareAndSetContinuationInbox(entry.inboxRevision, next);
@@ -168,10 +177,10 @@ export class ContinuationService {
     for (const owner of new Set((await this.records.listContinuations()).map((r) => r.owner))) await this.archiveExpired(owner);
     return this.list();
   }
-  async enforceEmergencyStop() { if (!(await this.rooms.getEmergencyStop()).active) return; for (const record of await this.records.listContinuations()) if (continuationIsNonterminal(record)) await this.cancelWithReason(record, "Emergency stop is active."); }
+  async enforceEmergencyStop() { if (!await this.emergencyStopActive()) return; for (const record of await this.records.listContinuations()) if (continuationIsNonterminal(record)) await this.cancelWithReason(record, "Emergency stop is active."); }
   async cancelAll(reason: string) { for (const record of await this.records.listContinuations()) if (continuationIsNonterminal(record)) await this.cancelWithReason(record, reason); }
 
-  private scheduleRun(jobId: string) { void this.run(jobId).catch((error) => this.logError(error)); }
+  private scheduleRun(jobId: string) { if (!this.closed) void this.run(jobId).catch((error) => this.logError(error)); }
   private async run(jobId: string) {
     try { await this.runLifecycle(jobId); }
     catch (error) { try { await this.persistUnexpectedFailure(jobId, error); } catch (nested) { this.logError(nested); } throw error; }
@@ -209,7 +218,7 @@ export class ContinuationService {
     } catch (error) {
       const current = await this.records.getContinuation(jobId); if (!current || (current.status !== "RUNNING" && current.status !== "WAITING_TOOL")) return;
       const elapsed = addUsage(current.usage, Date.now() - started, { tokens: 0, toolCalls: 0 });
-      if (controller.signal.reason === "cancelled") return;
+      if (controller.signal.reason === "cancelled" || controller.signal.reason === "shutdown") return;
       const failureValidation = await this.revalidate(current); if ("reason" in failureValidation) { await this.failValidation(current, failureValidation.reason!); return; }
       if (controller.signal.reason === "time-budget") await this.finishFailure(current, "Time budget exhausted.", elapsed);
       else if (current.usage.attempts <= current.budget.retryLimit) {
@@ -239,7 +248,7 @@ export class ContinuationService {
     const policy = await this.currentPolicy(); if ("reason" in policy) return policy;
     if (record.policyVersion !== policy.policyVersion || record.policyRevision !== policy.revision) return { reason: "Continuation policy revision changed." };
     if (JSON.stringify(record.capabilities) !== JSON.stringify(SAFE_CAPABILITIES)) return { reason: "Continuation capability set changed." };
-    if ((await this.rooms.getEmergencyStop()).active) return { reason: "Emergency stop is active." };
+    if (await this.emergencyStopActive()) return { reason: "Emergency stop is active." };
     const task = await this.rooms.getTask(record.task); const validated = await this.authority(task, record.taskRevision, record.assignmentReferenceId, record.owner);
     if ("reason" in validated) return validated;
     if (JSON.stringify(epoch(validated.assignment)) !== JSON.stringify(record.authority)) return { reason: "Assignment authority epoch changed." };
@@ -258,6 +267,7 @@ export class ContinuationService {
   private async acknowledgeJob(jobId: string) { const job = await this.records.getContinuation(jobId); if (!job || !["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) return; const now = this.now(); const next = transition(job, "ACKNOWLEDGED", now, { resultDisposition: "CLOSED" }); await this.records.compareAndSetContinuation(job.jobRevision, next, audit(next, job.status, "ACKNOWLEDGED", now, "Inbox entry closed.")); }
   private async archiveExpired(owner: AgentId) { const now = this.now(); for (const entry of await this.records.listContinuationInbox(owner)) if ((entry.status === "UNREAD" || entry.status === "ACKNOWLEDGED") && Date.parse(entry.expiresAt) <= Date.parse(now)) { const next = { ...entry, inboxRevision: entry.inboxRevision + 1, status: "ARCHIVED" as const, updatedAt: now, closedAt: now }; await this.records.archiveContinuationInbox(entry.inboxRevision, next); } }
   private now() { return (this.options.now?.() ?? new Date()).toISOString(); }
+  private async emergencyStopActive() { return (await this.rooms.getEmergencyStop()).active || await this.options.emergencyStopped?.() === true; }
   private changed() { this.options.onTransition?.(); }
   private logError(error: unknown) { this.options.onError?.(publicError(error)); }
   private async persistUnexpectedFailure(jobId: string, error: unknown) { const current = await this.records.getContinuation(jobId); if (current && continuationIsNonterminal(current)) await this.finishFailure(current, `Continuation lifecycle failed: ${publicError(error)}`); }
