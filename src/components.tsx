@@ -393,7 +393,7 @@ export const Transcript = memo(function Transcript({
   );
 });
 
-export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
+export function WorkshopDialog({ data, loading, missing, error = "", connected = true, onRetry, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; error?: string; connected?: boolean; onRetry?: () => void; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
   const view = data?.improvement;
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
   const [presentation, setPresentation] = useState(() => workshopLayout(typeof window === "undefined" ? 1024 : window.innerWidth));
@@ -406,7 +406,11 @@ export function WorkshopDialog({ data, loading, missing, onClose, returnFocusTo 
     <section ref={dialogRef} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={onDialogKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
       <header className="agent-settings-titlebar"><h2 id="workshop-title">Improvement workshop</h2><button type="button" aria-label="Close improvement workshop" onClick={onClose}>×</button></header>
       <div className="workshop-body" aria-live="polite">
-        {loading ? <p>Loading improvement…</p> : missing || !view ? <p role="status">This improvement is unavailable or was deleted.</p> : <>
+        {loading ? <p role="status">Loading improvement…</p> : missing ? <p role="status">This improvement is unavailable or was deleted (verified not found).</p> : error || !view ? <div className="workshop-recovery" role="alert">
+          <p><strong>Could not load this improvement.</strong> {error || "The room returned an incomplete response."}</p>
+          {!connected ? <p>Retry is unavailable while the room is reconnecting.</p> : null}
+          <button type="button" className="classic-button" disabled={!connected} onClick={onRetry}>Retry</button>
+        </div> : <>
           <p><strong>{view.id}</strong> · revision {view.revision}</p>
           <dl className="workshop-facts"><dt>Lifecycle</dt><dd>{view.state}</dd><dt>Risk</dt><dd>{view.risk}</dd><dt>Technical consensus</dt><dd>{view.technicalConsensus.status} ({view.technicalConsensus.reviews.length} review{view.technicalConsensus.reviews.length === 1 ? "" : "s"})</dd><dt>Action authority</dt><dd>{view.actionAuthority.status}{view.actionAuthority.grantedByHuman ? " · human granted" : ""}</dd><dt>Current claim</dt><dd>{view.workClaim.status}{view.workClaim.holderMemberId ? ` · ${view.workClaim.holderMemberId}` : ""}</dd><dt>Emergency stop</dt><dd>{data.emergencyStop.active ? `ACTIVE${data.emergencyStop.reason ? ` · ${data.emergencyStop.reason}` : ""}` : "Clear"}</dd></dl>
           <h3>Active claims</h3><ul>{view.claims.length ? view.claims.map((claim) => <li key={claim.id}>{claim.statement}</li>) : <li>None recorded.</li>}</ul>

@@ -123,6 +123,35 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("offers bounded join recovery without overlapping a manual retry", async () => {
+    let resolveRetry!: (identity: { instanceId: string; protocolVersion: number }) => void;
+    api.checkReady
+      .mockRejectedValueOnce(new Error("Room is offline"))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
+    window.localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(human));
+    const user = userEvent.setup();
+    render(<App />);
+
+    const retry = await screen.findByRole("button", { name: "Retry now" });
+    expect(screen.getByText(/Automatic retry is scheduled/)).toBeTruthy();
+    await user.click(retry);
+    expect(api.checkReady).toHaveBeenCalledTimes(2);
+    expect((screen.getByRole("button", { name: "Retrying…" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Retrying…" }));
+    expect(api.checkReady).toHaveBeenCalledTimes(2);
+    act(() => resolveRetry({ instanceId: "ready", protocolVersion: ROOM_PROTOCOL_VERSION }));
+  });
+
+  it("returns from a failed join to name entry and clears the stale identity", async () => {
+    api.checkReady.mockRejectedValueOnce(new Error("Room is offline"));
+    window.localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(human));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Use a different name" }));
+    expect(screen.getByRole("textbox", { name: "What should everyone call you?" })).toBeTruthy();
+    expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBeNull();
+  });
+
   it("shows typing only for active generation IDs and returns to idle after success and provider failure", async () => {
     await renderConnected();
     expect(screen.getByText("Room is idle")).toBeTruthy();
@@ -319,5 +348,92 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getByRole("alert").textContent).toContain("Style save failed");
     await user.click(screen.getByRole("button", { name: "Dismiss error" }));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("distinguishes transient workshop failure from verified missing and preserves return focus", async () => {
+    api.loadWorkshop
+      .mockRejectedValueOnce(new ApiRequestError("Temporary workshop failure", false, 503))
+      .mockRejectedValueOnce(new ApiRequestError("Not found", false, 404));
+    const user = userEvent.setup();
+    await renderConnected([{ id: "ref", speaker: "you", text: "See [[improvement:imp-7]].", timestamp: "2026-08-21T12:00:00.000Z" }]);
+    const reference = screen.getByRole("button", { name: "Open Improvement imp-7" });
+    await user.click(reference);
+    const dialog = await screen.findByRole("dialog", { name: "Improvement workshop" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("Temporary workshop failure");
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(await within(dialog).findByText(/verified not found/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(document.activeElement).toBe(reference));
+  });
+
+  it("ignores a late workshop failure after the dialog closes", async () => {
+    let rejectLoad!: (error: Error) => void;
+    api.loadWorkshop.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectLoad = reject; }));
+    const user = userEvent.setup();
+    await renderConnected([{ id: "ref", speaker: "you", text: "See [[improvement:imp-late]].", timestamp: "2026-08-21T12:00:00.000Z" }]);
+    const reference = screen.getByRole("button", { name: "Open Improvement imp-late" });
+    await user.click(reference);
+    const dialog = await screen.findByRole("dialog", { name: "Improvement workshop" });
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    act(() => rejectLoad(new Error("Late workshop failure")));
+    await waitFor(() => expect(document.activeElement).toBe(reference));
+    expect(screen.queryByRole("dialog", { name: "Improvement workshop" })).toBeNull();
+    expect(screen.queryByText("Late workshop failure")).toBeNull();
+  });
+
+  it("identifies a failed room action, blocks duplicates, and permits only one safe retry after reconnect", async () => {
+    let rejectFirst!: (error: Error) => void;
+    let rejectRetry!: (error: Error) => void;
+    api.runAction
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRetry = reject; }));
+    const user = userEvent.setup();
+    await renderConnected();
+
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Continue discussion" }));
+    expect(api.runAction).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("Other room actions are unavailable");
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getAllByRole("menuitem").every((item) => (item as HTMLButtonElement).disabled)).toBe(true);
+    act(() => rejectFirst(new Error("Action service failed")));
+
+    const retry = await screen.findByRole("button", { name: "Retry once" });
+    expect(screen.getByRole("alert").textContent).toContain("Continue discussion failed");
+    act(() => ControlledEventSource.instances[0].fail());
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole("alert").textContent).toContain("Retry is unavailable while reconnecting");
+    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
+    act(() => ControlledEventSource.instances[1].emit(room("server-after")));
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    await user.click(retry);
+    expect(api.runAction).toHaveBeenCalledTimes(2);
+    act(() => rejectRetry(new Error("Retry failed")));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("The retry failed"));
+    expect(screen.queryByRole("button", { name: "Retry once" })).toBeNull();
+  });
+
+  it("does not offer duplicate-prone retry when a room action outcome is unknown", async () => {
+    api.runAction.mockRejectedValueOnce(new ApiRequestError("Connection interrupted", true));
+    const user = userEvent.setup();
+    await renderConnected();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Start roundtable" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("retrying could duplicate the action");
+    expect(screen.queryByRole("button", { name: "Retry once" })).toBeNull();
+  });
+
+  it("ignores a late room-action failure after identity reset", async () => {
+    let rejectAction!: (error: Error) => void;
+    api.runAction.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectAction = reject; }));
+    const user = userEvent.setup();
+    await renderConnected();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Continue discussion" }));
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    await user.click(screen.getByRole("button", { name: "Reset identity and change name" }));
+    act(() => rejectAction(new Error("Late action failure")));
+    expect(await screen.findByRole("textbox", { name: "What should everyone call you?" })).toBeTruthy();
+    expect(screen.queryByText("Late action failure")).toBeNull();
   });
 });

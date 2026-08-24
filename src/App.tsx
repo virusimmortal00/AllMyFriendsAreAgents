@@ -30,6 +30,16 @@ const EMPTY_ROOM: RoomState = {
 const MINIMUM_LOADING_MS = 450;
 const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";
 const ROOM_EVENT_STALE_MS = 9_000;
+type RoomAction = "ask" | "review" | "roundtable" | "continue";
+type ActionFailure = { action: RoomAction; target: AgentId | "all"; attempt: number; message: string; retrySafe: boolean };
+
+function roomActionLabel(action: RoomAction, target: AgentId | "all") {
+  const subject = target === "all" ? "all agents" : agentScreenName(target);
+  if (action === "continue") return "Continue discussion";
+  if (action === "roundtable") return "Start roundtable";
+  if (action === "review") return `Review with ${subject}`;
+  return `Ask ${subject}`;
+}
 
 function loadHumanProfile(): HumanPresence | null {
   if (typeof window === "undefined") return null;
@@ -52,7 +62,7 @@ function saveHumanProfile(human: HumanPresence | null) {
   else window.localStorage.removeItem(HUMAN_PROFILE_KEY);
 }
 
-export function LoadingScreen({ error = "" }: { error?: string }) {
+export function LoadingScreen({ error = "", joining = false, retrying = false, onRetry, onCancel }: { error?: string; joining?: boolean; retrying?: boolean; onRetry?: () => void; onCancel?: () => void }) {
   return (
     <main className="desktop">
       <section className="loading-window" aria-label="AllMyFriendsAreAgents loading">
@@ -65,6 +75,10 @@ export function LoadingScreen({ error = "" }: { error?: string }) {
           <span className="retro-spinner" aria-hidden="true" />
           <strong>Entering The Agent Room...</strong>
           <span>{error || "Loading the latest conversation"}</span>
+          {joining && error ? <div className="loading-dialog__actions">
+            <button type="button" className="classic-button" disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry now"}</button>
+            <button type="button" className="classic-button" disabled={retrying} onClick={onCancel}>Use a different name</button>
+          </div> : null}
         </div>
       </section>
     </main>
@@ -110,6 +124,8 @@ export default function App() {
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
   const [workshopLoading, setWorkshopLoading] = useState(false);
   const [workshopMissing, setWorkshopMissing] = useState(false);
+  const [workshopError, setWorkshopError] = useState("");
+  const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
@@ -119,6 +135,10 @@ export default function App() {
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
   const [human, setHuman] = useState<HumanPresence | null>(null);
   const [joinError, setJoinError] = useState("");
+  const [joinPending, setJoinPending] = useState(false);
+  const [joinRequestRevision, setJoinRequestRevision] = useState(0);
+  const [actionPending, setActionPending] = useState<{ action: RoomAction; target: AgentId | "all" } | null>(null);
+  const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
@@ -129,6 +149,9 @@ export default function App() {
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
   const styleSaveRevision = useRef(0);
+  const joinRequestId = useRef(0);
+  const actionRequestId = useRef(0);
+  const actionInFlight = useRef(false);
   const focusRouteHeading = useRef(Boolean(improvementsView));
   const actionsMenuFocusLast = useRef(false);
   const { layerRef: actionsMenu, triggerRef: actionsTrigger } = useDismissibleLayer(menuOpen, () => setMenuOpen(false));
@@ -146,19 +169,28 @@ export default function App() {
     let cancelled = false;
     let retryTimer: number | undefined;
     let attempt = 0;
+    let requestPending = false;
+    const effectRequestId = joinRequestId.current + 1;
+    joinRequestId.current = effectRequestId;
     const connect = async () => {
+      if (cancelled || requestPending) return;
+      requestPending = true;
+      setJoinPending(true);
       try {
         await checkReady();
         const joined = await joinRoom(savedHuman);
-        if (cancelled) return;
+        if (cancelled || joinRequestId.current !== effectRequestId) return;
         setHuman(joined);
         saveHumanProfile(joined);
         setJoinError("");
       } catch (error) {
-        if (cancelled) return;
-        setJoinError(error instanceof Error ? `${error.message} Retrying…` : "Connection lost. Retrying…");
+        if (cancelled || joinRequestId.current !== effectRequestId) return;
+        setJoinError(error instanceof Error ? `${error.message} Automatic retry is scheduled.` : "Connection lost. Automatic retry is scheduled.");
         retryTimer = window.setTimeout(() => void connect(), reconnectDelayMs(attempt));
         attempt += 1;
+      } finally {
+        requestPending = false;
+        if (!cancelled && joinRequestId.current === effectRequestId) setJoinPending(false);
       }
     };
     void connect();
@@ -166,7 +198,7 @@ export default function App() {
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [savedHuman?.id, savedHuman?.name]);
+  }, [savedHuman?.id, savedHuman?.name, joinRequestRevision]);
 
   useEffect(() => {
     if (!human) return;
@@ -340,10 +372,14 @@ export default function App() {
   useEffect(() => {
     if (!workshopId) return;
     let cancelled = false;
-    setWorkshop(null); setWorkshopMissing(false); setWorkshopLoading(true);
-    void loadWorkshop(workshopId).then((data) => { if (!cancelled) setWorkshop(data); }).catch(() => { if (!cancelled) setWorkshopMissing(true); }).finally(() => { if (!cancelled) setWorkshopLoading(false); });
+    setWorkshop(null); setWorkshopMissing(false); setWorkshopError(""); setWorkshopLoading(true);
+    void loadWorkshop(workshopId).then((data) => { if (!cancelled) setWorkshop(data); }).catch((error) => {
+      if (cancelled) return;
+      if (error instanceof ApiRequestError && error.status === 404) setWorkshopMissing(true);
+      else setWorkshopError(error instanceof Error ? error.message : String(error));
+    }).finally(() => { if (!cancelled) setWorkshopLoading(false); });
     return () => { cancelled = true; };
-  }, [workshopId]);
+  }, [workshopId, workshopRequestRevision]);
 
   const ready = hasInitialState && minimumLoadingComplete;
 
@@ -362,15 +398,6 @@ export default function App() {
   const activeGenerationAgents = Object.values(room.activeGenerations || {});
   const activeTypingAgents = [...new Set(activeGenerationAgents)];
   const working = activeGenerationAgents.length > 0;
-
-  async function withErrorHandling(action: () => Promise<unknown>) {
-    try {
-      setClientError("");
-      await action();
-    } catch (error) {
-      setClientError(error instanceof Error ? error.message : String(error));
-    }
-  }
 
   async function changeWritable(agent: WritableAgent) {
     if (!human) throw new Error("Join the room before changing project permissions.");
@@ -463,9 +490,29 @@ export default function App() {
     setPendingSend(null);
   }
 
-  function invoke(action: "ask" | "review" | "roundtable" | "continue", agent: AgentId | "all") {
+  function invoke(action: RoomAction, agent: AgentId | "all", attempt = 0) {
     setMenuOpen(false);
-    void withErrorHandling(() => runAction(action, agent));
+    if (!human || !connected || actionInFlight.current) return;
+    const requestId = actionRequestId.current + 1;
+    actionRequestId.current = requestId;
+    actionInFlight.current = true;
+    setActionPending({ action, target: agent });
+    setActionFailure(null);
+    setClientError("");
+    void runAction(action, agent).catch((error) => {
+      if (actionRequestId.current !== requestId) return;
+      setActionFailure({
+        action,
+        target: agent,
+        attempt,
+        message: error instanceof Error ? error.message : String(error),
+        retrySafe: !(error instanceof ApiRequestError && error.outcomeUnknown),
+      });
+    }).finally(() => {
+      if (actionRequestId.current !== requestId) return;
+      actionInFlight.current = false;
+      setActionPending(null);
+    });
   }
 
   function joinWithName(name: string) {
@@ -477,11 +524,29 @@ export default function App() {
     setSavedHuman(profile);
   }
 
+  function retryJoin() {
+    if (joinPending) return;
+    setJoinRequestRevision((current) => current + 1);
+  }
+
+  function cancelJoin() {
+    joinRequestId.current += 1;
+    setJoinPending(false);
+    setJoinError("");
+    setSavedHuman(null);
+    saveHumanProfile(null);
+  }
+
   function changeName() {
     if (!human || changeNameSubmitting.current) return;
     changeNameSubmitting.current = true;
     setChangeNameBusy(true);
     styleSaveRevision.current += 1;
+    actionRequestId.current += 1;
+    actionInFlight.current = false;
+    setActionPending(null);
+    setActionFailure(null);
+    setWorkshopId(null);
     composer.current?.discardDraft();
     saveDraftSnapshot(window.localStorage, human.id, { text: "", mentions: [] });
     savePendingSend(window.localStorage, human.id, null);
@@ -494,6 +559,7 @@ export default function App() {
   }
 
   function navigateImprovements(next: ImprovementsRoute | null, options: { focusHeading?: boolean } = {}) {
+    setWorkshopId(null);
     focusRouteHeading.current = options.focusHeading ?? Boolean(!next || next.view === "missing" || next.view === "detail");
     if (!next) {
       if (!improvementsView) return;
@@ -517,6 +583,7 @@ export default function App() {
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || []), [room.humans]);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
+    setWorkshopRequestRevision((current) => current + 1);
     setWorkshopId((current) => nextWorkshopId(current, { type: "open", id }));
   }, []);
 
@@ -552,7 +619,7 @@ export default function App() {
   }
 
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
-  if (!human) return <LoadingScreen error={joinError || "Joining the room"} />;
+  if (!human) return <LoadingScreen error={joinError || "Joining the room"} joining={Boolean(joinError)} retrying={joinPending} onRetry={retryJoin} onCancel={cancelJoin} />;
   if (!ready) return <LoadingScreen error={clientError} />;
 
   return (
@@ -589,9 +656,9 @@ export default function App() {
             <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); actionsMenuFocusLast.current = event.key === "ArrowUp"; setMenuOpen(true); } }} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu" role="menu" aria-label="Actions" onKeyDown={onActionsMenuKeyDown}>
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("roundtable", "all"); }}>Start roundtable</button>
-                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("review", "all"); }}>Review with all agents</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("roundtable", "all"); }}>Start roundtable</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setMenuOpen(false); actionsTrigger.current?.focus(); invoke("review", "all"); }}>Review with all agents</button>
               </div>
             ) : null}
           </div>
@@ -668,7 +735,7 @@ export default function App() {
             onClose={() => setConfiguredAgent(null)}
           />
         ) : null}
-        {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} returnFocusTo={workshopTrigger.current} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
+        {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
         {changeNameOpen && human ? <ConfirmationDialog
           title="Change your name?"
@@ -685,7 +752,12 @@ export default function App() {
           onCancel={() => setChangeNameOpen(false)}
         /> : null}
 
-        {clientError || room.error ? <div className="error-strip" role="alert"><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
+        {actionPending ? <div className="error-strip error-strip--pending" role="status"><span>{roomActionLabel(actionPending.action, actionPending.target)} is being requested. Other room actions are unavailable until it finishes.</span></div> : null}
+        {actionFailure ? <div className="error-strip" role="alert">
+          <span><strong>{roomActionLabel(actionFailure.action, actionFailure.target)} failed.</strong> {actionFailure.message} {!connected ? "Retry is unavailable while reconnecting." : !actionFailure.retrySafe ? "The result may be unknown, so retrying could duplicate the action." : actionFailure.attempt > 0 ? "The retry failed; close this error or choose a new action." : ""}</span>
+          {actionFailure.retrySafe && actionFailure.attempt === 0 ? <button type="button" className="error-strip__retry" disabled={!connected || Boolean(actionPending)} onClick={() => invoke(actionFailure.action, actionFailure.target, 1)}>Retry once</button> : null}
+          <button type="button" aria-label="Dismiss action error" disabled={Boolean(actionPending)} onClick={() => setActionFailure(null)}>×</button>
+        </div> : clientError || room.error ? <div className="error-strip" role="alert"><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
