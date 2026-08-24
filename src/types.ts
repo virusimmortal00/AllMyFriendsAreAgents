@@ -70,3 +70,7 @@ export interface HeartbeatStatus {
   audit: readonly { revision: number; kind: "AUTHORIZED" | "EMERGENCY_STOPPED"; actorId: string; at: string; reason: string }[];
 }
 export type { GovernedImprovementDetail, GovernedImprovementSummary, ImprovementStatusContract };
+export interface ContinuationPolicyView { revision: number; enabled: boolean; policyVersion: string; updatedAt: string; defaultBudget: { timeMs: number; tokenLimit: number; toolCallLimit: number; retryLimit: number } }
+export interface ContinuationJobView { jobId: string; jobRevision: number; owner: AgentId; task: { roomId: string; taskId: string }; taskRevision: number; assignmentId: string; objective: string; trigger: string; status: "QUEUED" | "RUNNING" | "WAITING_TOOL" | "BLOCKED" | "COMPLETED" | "FAILED" | "CANCELLED" | "ACKNOWLEDGED"; resultDisposition: string; resultSummary: string | null; blocker: string | null; nextEligibilityAt: string | null; updatedAt: string; usage: { elapsedMs: number; tokens: number; toolCalls: number; attempts: number } }
+export interface ContinuationInboxEntry { inboxEntryId: string; inboxRevision: number; owner: AgentId; jobId: string; task: { taskId: string }; assignmentId: string; status: "UNREAD" | "ACKNOWLEDGED" | "CLOSED" | "ARCHIVED"; summary: string; createdAt: string; expiresAt: string }
+export interface ContinuationDashboard { policy: ContinuationPolicyView; jobs: ContinuationJobView[] }

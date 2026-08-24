@@ -53,4 +53,10 @@ describe("mobile layout contract", () => {
   it("hides timestamps in the narrow transcript", () => {
     expect(mobileStyles).toMatch(/\.message time \{[^}]*display: none;/s);
   });
+
+  it("gives the task workflow the full mobile workspace without covering room controls", () => {
+    expect(mobileStyles).toMatch(/\.tasks-panel \{[^}]*width: 100%;[^}]*height: 100%;/s);
+    expect(mobileStyles).toMatch(/\.tasks-room-rail \{[^}]*display: none;/s);
+    expect(mobileStyles).toMatch(/\.task-columns form \{[^}]*grid-template-columns: 1fr;/s);
+  });
 });

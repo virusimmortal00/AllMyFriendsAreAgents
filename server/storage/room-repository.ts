@@ -16,6 +16,17 @@ import type {
   ImprovementMilestoneState,
 } from "../../shared/governed-improvements.js";
 import type { AssignmentRecordStore } from "../assignment-record.js";
+import type { ContinuationRecordStore } from "../continuation-record.js";
+import type {
+  Task,
+  TaskActor,
+  TaskChange,
+  TaskChangeResult,
+  TaskIdentity,
+  TaskLifecycleState,
+} from "../../shared/task-domain.js";
+
+export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
 export interface RevisionConflict {
   readonly kind: "conflict";
@@ -62,11 +73,42 @@ export interface EmergencyStopProjection extends EmergencyStop {
   readonly revision: number;
 }
 
+export type CreateTaskResult =
+  | { readonly kind: "created"; readonly task: Task }
+  | { readonly kind: "conflict"; readonly identity: TaskIdentity }
+  | { readonly kind: "rejected"; readonly reason: string };
+
+export interface TaskEvent {
+  readonly roomId: string;
+  readonly taskId: string;
+  readonly revision: number;
+  readonly actorId: string;
+  readonly at: string;
+  readonly change: "create" | TaskChange | { readonly kind: "fork"; readonly source: TaskIdentity };
+  readonly snapshot: Task;
+}
+
+export interface TaskListQuery {
+  readonly roomId?: string;
+  readonly states?: readonly TaskLifecycleState[];
+  readonly participantId?: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface TaskPage { readonly items: readonly Task[]; readonly nextCursor: string | null }
+
+export interface TaskDependencyQueryResult {
+  readonly dependencies: readonly TaskIdentity[];
+  readonly blockers: readonly TaskIdentity[];
+  readonly dependents: readonly TaskIdentity[];
+}
+
 export type EmergencyStopChangeResult =
   | { readonly kind: "accepted"; readonly emergencyStop: EmergencyStopProjection }
   | RevisionConflict;
 
-export interface RoomRepository extends AssignmentRecordStore {
+export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore {
   snapshot(): RoomState;
   addMessage(
     speaker: RoomMessage["speaker"],
@@ -111,4 +153,15 @@ export interface RoomRepository extends AssignmentRecordStore {
     actor: DomainActor,
     now: string,
   ): Promise<EmergencyStopChangeResult>;
+  createTask(task: Task): Promise<CreateTaskResult>;
+  /** Creates the initial projection and applies every supplied change in one atomic write. */
+  createTaskWithChanges(task: Task, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<CreateTaskResult>;
+  getTask(identity: TaskIdentity): Promise<Task | undefined>;
+  listTasks(query?: TaskListQuery): Promise<TaskPage>;
+  applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult>;
+  /** Persists every change and event together, or leaves the task untouched. */
+  applyTaskChanges(identity: TaskIdentity, expectedRevision: number, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<TaskChangeResult>;
+  listTaskEvents(identity: TaskIdentity, options?: { readonly afterRevision?: number; readonly limit?: number }): Promise<readonly TaskEvent[]>;
+  getTaskDependencies(identity: TaskIdentity): Promise<TaskDependencyQueryResult | undefined>;
+  forkTask(source: TaskIdentity, expectedRevision: number, newTaskId: string, actor: TaskActor, now: string, title?: string): Promise<TaskChangeResult>;
 }

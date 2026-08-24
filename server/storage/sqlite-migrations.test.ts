@@ -31,8 +31,15 @@ describe("SQLite migrations", () => {
         "emergency_stops",
         "emergency_stop_events",
         "assignment_records",
+        "canonical_tasks",
+        "canonical_task_events",
+        "canonical_task_links",
+        "continuation_policies",
+        "continuation_jobs",
+        "continuation_inbox",
+        "continuation_job_events",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 7 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 10 });
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(messageColumns).toContain("client_message_id");
       expect(messageColumns).toContain("mentions_json");
@@ -66,6 +73,7 @@ describe("SQLite migrations", () => {
         .toEqual({ text: "preserve transcript" });
       expect(database.prepare("SELECT COUNT(*) AS count FROM canonical_improvements").get()).toEqual({ count: 0 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM emergency_stops").get()).toEqual({ count: 0 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM canonical_tasks").get()).toEqual({ count: 0 });
     } finally {
       database.close();
     }

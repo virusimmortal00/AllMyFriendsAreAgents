@@ -155,7 +155,7 @@ pnpm run storage:import:sqlite -- \
   --database=.runtime/import-check/amfaa.sqlite
 ```
 
-The importer preserves its source and refuses to replace an existing room unless you pass `--overwrite`. PostgreSQL migrations exist, but the runtime adapter is not implemented.
+The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. PostgreSQL migrations exist, but the runtime adapter is not implemented.
 
 Every generation is journaled to `.allmyfriendsareagents/generations.jsonl` with its prompt, raw output, timing, parsed messages, and delivery outcome. Prompts may include room history and worktree diffs, so treat this file as sensitive.
 
@@ -223,6 +223,10 @@ The production API refuses a non-loopback bind unless you set both `ALL_MY_FRIEN
 The coordinator is off by default and requires explicit UI authorization. Even then, it is limited to analysis, sandbox edits, and tests: it cannot commit, push, merge, deploy, or publish upstream. A persistent emergency stop can abort active work.
 
 See [`docs/planning`](docs/planning) for the design records behind governed assignments, mentions, mobile containment, truthful typing state, and other in-progress work.
+
+The Tasks workspace keeps revisioned room-scoped coordination records. A task assignment reference grants no authority by itself.
+
+Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
 
 ## Build with us
 

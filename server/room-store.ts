@@ -34,6 +34,19 @@ import type {
   StoredImprovementMilestone,
 } from "../shared/governed-improvements.js";
 import { normalizeAssignmentRecord, type AssignmentRecord } from "./assignment-record.js";
+import {
+  applyTaskChange as applyDomainTaskChange,
+  forkTask as forkDomainTask,
+  type Task,
+  type TaskActor,
+  type TaskChange,
+  type TaskChangeResult,
+  type TaskIdentity,
+} from "../shared/task-domain.js";
+import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTaskState } from "./storage/task-storage.js";
+import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
+import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
+import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -109,21 +122,31 @@ export class RoomStore implements RoomRepository {
   readonly statePath: string;
   readonly improvementsPath: string;
   readonly assignmentsPath: string;
+  readonly tasksPath: string;
+  readonly continuationsPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
   private improvementQueue: Promise<void> = Promise.resolve();
   private assignmentQueue: Promise<void> = Promise.resolve();
+  private taskQueue: Promise<void> = Promise.resolve();
+  private continuationQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
+  private taskState: JsonTaskState;
+  private continuationState: JsonContinuationState;
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[]) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.assignmentsPath = path.join(stateDirectory, "assignments.json");
+    this.tasksPath = path.join(stateDirectory, "tasks.json");
+    this.continuationsPath = path.join(stateDirectory, "continuations.json");
     this.state = state;
     this.improvementState = improvementState;
     this.assignments = assignments;
+    this.taskState = taskState;
+    this.continuationState = continuationState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -132,6 +155,8 @@ export class RoomStore implements RoomRepository {
     const statePath = path.join(stateDirectory, "room.json");
     const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
+    const tasksPath = path.join(stateDirectory, "tasks.json");
+    const continuationsPath = path.join(stateDirectory, "continuations.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -149,6 +174,15 @@ export class RoomStore implements RoomRepository {
         if (error.code === "ENOENT") return [];
         throw error;
       });
+    const taskState = await readFile(tasksPath, "utf8")
+      .then((contents) => normalizeJsonTaskState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return emptyJsonTaskState();
+        throw error;
+      });
+    const continuationState = await readFile(continuationsPath, "utf8")
+      .then((contents) => normalizeJsonContinuationState(JSON.parse(contents), CANONICAL_ROOM_ID))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonContinuationState(); throw error; });
 
     try {
       await chmod(statePath, 0o600);
@@ -202,7 +236,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -218,7 +252,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState);
       await store.save();
       return store;
     }
@@ -519,6 +553,169 @@ export class RoomStore implements RoomRepository {
     await operation;
   }
 
+  async createTask(task: Task): Promise<CreateTaskResult> {
+    if (task.roomId !== CANONICAL_ROOM_ID) return { kind: "rejected", reason: `Room repository only owns room ${CANONICAL_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create") {
+      return { kind: "rejected", reason: "A newly persisted task must be a canonical revision 1 task" };
+    }
+    return this.mutateTasks<CreateTaskResult>((state) => {
+      const key = taskKey(task);
+      if (state.tasks[key]) return { result: { kind: "conflict" as const, identity: { roomId: task.roomId, taskId: task.taskId } } };
+      const snapshot = structuredClone(task);
+      const event: TaskEvent = { roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: task.attribution[0]!.actorId, at: task.createdAt, change: "create", snapshot };
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [key]: snapshot }, events: [...state.events, event] }, result: { kind: "created" as const, task: structuredClone(snapshot) } };
+    });
+  }
+
+  async createTaskWithChanges(task: Task, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<CreateTaskResult> {
+    if (task.roomId !== CANONICAL_ROOM_ID) return { kind: "rejected", reason: `Room repository only owns room ${CANONICAL_ROOM_ID}` };
+    if (task.revision !== 1 || task.lifecycleHistory[0]?.operation !== "create" || task.attribution[0]?.actorId !== actor.id) return { kind: "rejected", reason: "Atomic task creation requires a canonical revision 1 task from the same actor" };
+    return this.mutateTasks<CreateTaskResult>((state) => {
+      const key = taskKey(task);
+      if (state.tasks[key]) return { result: { kind: "conflict" as const, identity: { roomId: task.roomId, taskId: task.taskId } } };
+      let current = structuredClone(task);
+      const events: TaskEvent[] = [{ roomId: task.roomId, taskId: task.taskId, revision: 1, actorId: actor.id, at: task.createdAt, change: "create", snapshot: structuredClone(task) }];
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!state.tasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
+          if (change.kind === "add_dependency" && createsDependencyCycle({ ...state.tasks, [key]: current }, task, change.task)) return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
+        }
+        const changed = applyDomainTaskChange(current, current.revision, change, actor, now);
+        if (changed.kind !== "accepted") return { result: { kind: "rejected" as const, reason: changed.kind === "rejected" ? changed.reason : "Atomic task creation conflicted" } };
+        current = structuredClone(changed.task);
+        events.push({ roomId: task.roomId, taskId: task.taskId, revision: current.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot: current });
+      }
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [key]: current }, events: [...state.events, ...events] }, result: { kind: "created" as const, task: structuredClone(current) } };
+    });
+  }
+
+  async getTask(identity: TaskIdentity) {
+    await this.taskQueue;
+    const task = this.taskState.tasks[taskKey(identity)];
+    return task ? structuredClone(task) : undefined;
+  }
+
+  async listTasks(query: TaskListQuery = {}) {
+    await this.taskQueue;
+    return paginateTasks(Object.values(this.taskState.tasks), query);
+  }
+
+  async applyTaskChange(identity: TaskIdentity, expectedRevision: number, change: TaskChange, actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    return this.applyTaskChanges(identity, expectedRevision, [change], actor, now);
+  }
+
+  async applyTaskChanges(identity: TaskIdentity, expectedRevision: number, changes: readonly TaskChange[], actor: TaskActor, now: string): Promise<TaskChangeResult> {
+    return this.mutateTasks<TaskChangeResult>((state) => {
+      let current = state.tasks[taskKey(identity)];
+      if (!current) return { result: { kind: "rejected" as const, reason: `Task ${identity.taskId} does not exist in room ${identity.roomId}` } };
+      if (!changes.length) return { result: { kind: "rejected" as const, reason: "At least one task change is required" } };
+      const events: TaskEvent[] = [];
+      let stagedTasks = state.tasks;
+      let revision = expectedRevision;
+      for (const change of changes) {
+        if (change.kind === "add_dependency" || change.kind === "add_blocker") {
+          if (!stagedTasks[taskKey(change.task)]) return { result: { kind: "rejected" as const, reason: `Linked task ${change.task.taskId} does not exist in room ${change.task.roomId}` } };
+          if (change.kind === "add_dependency" && createsDependencyCycle(stagedTasks, identity, change.task)) return { result: { kind: "rejected" as const, reason: "Task dependency would create a direct or transitive cycle" } };
+        }
+        const result = applyDomainTaskChange(current, revision, change, actor, now);
+        if (result.kind !== "accepted") return { result };
+        current = structuredClone(result.task);
+        revision = current.revision;
+        stagedTasks = { ...stagedTasks, [taskKey(identity)]: current };
+        events.push({ roomId: identity.roomId, taskId: identity.taskId, revision: current.revision, actorId: actor.id, at: now, change: structuredClone(change), snapshot: current });
+      }
+      return { next: { schemaVersion: 1, tasks: stagedTasks, events: [...state.events, ...events] }, result: { kind: "accepted" as const, task: structuredClone(current) } };
+    });
+  }
+
+  async listTaskEvents(identity: TaskIdentity, options: { readonly afterRevision?: number; readonly limit?: number } = {}) {
+    await this.taskQueue;
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
+    return structuredClone(this.taskState.events.filter((event) => event.roomId === identity.roomId && event.taskId === identity.taskId && event.revision > (options.afterRevision ?? 0)).sort((a, b) => a.revision - b.revision).slice(0, limit));
+  }
+
+  async getTaskDependencies(identity: TaskIdentity) {
+    await this.taskQueue;
+    const task = this.taskState.tasks[taskKey(identity)];
+    if (!task) return undefined;
+    const dependents = Object.values(this.taskState.tasks).filter((candidate) => candidate.dependencies.some((dependency) => dependency.roomId === identity.roomId && dependency.taskId === identity.taskId)).map(({ roomId, taskId }) => ({ roomId, taskId }));
+    return { dependencies: structuredClone(task.dependencies), blockers: structuredClone(task.blockers), dependents };
+  }
+
+  async forkTask(source: TaskIdentity, expectedRevision: number, newTaskId: string, actor: TaskActor, now: string, title?: string): Promise<TaskChangeResult> {
+    return this.mutateTasks<TaskChangeResult>((state) => {
+      const current = state.tasks[taskKey(source)];
+      if (!current) return { result: { kind: "rejected" as const, reason: `Task ${source.taskId} does not exist in room ${source.roomId}` } };
+      if (current.revision !== expectedRevision) return { result: { kind: "conflict" as const, expectedRevision, actualRevision: current.revision } };
+      const identity = { roomId: source.roomId, taskId: newTaskId };
+      if (state.tasks[taskKey(identity)]) return { result: { kind: "rejected" as const, reason: `Task ${newTaskId} already exists` } };
+      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, title, actor, now });
+      if (result.kind !== "accepted") return { result };
+      const snapshot = structuredClone(result.task);
+      const event: TaskEvent = { roomId: snapshot.roomId, taskId: snapshot.taskId, revision: 1, actorId: actor.id, at: now, change: { kind: "fork", source }, snapshot };
+      return { next: { schemaVersion: 1, tasks: { ...state.tasks, [taskKey(snapshot)]: snapshot }, events: [...state.events, event] }, result: { kind: "accepted" as const, task: structuredClone(snapshot) } };
+    });
+  }
+
+  async getContinuationPolicy() { await this.continuationQueue; return this.continuationState.policy ? structuredClone(this.continuationState.policy) : undefined; }
+  async compareAndSetContinuationPolicy(expectedRevision: number, policy: ContinuationPolicy): Promise<CasResult<ContinuationPolicy>> {
+    const value = normalizeContinuationPolicy(policy); if (!value || value.roomId !== CANONICAL_ROOM_ID || value.revision !== expectedRevision + 1) throw new Error("Invalid continuation policy");
+    return this.mutateContinuations<CasResult<ContinuationPolicy>>((state) => {
+      const actual = state.policy?.revision ?? 0; if (actual !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: actual } };
+      if (state.policy && (state.policy.roomId !== value.roomId || state.policy.projectPathHash !== value.projectPathHash || state.policy.policyVersion !== value.policyVersion)) throw new Error("Continuation policy provenance is immutable");
+      return { next: { ...state, policy: value }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async listContinuations(owner?: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.jobs).filter((job) => !owner || job.owner === owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.jobId.localeCompare(b.jobId))); }
+  async getContinuation(jobId: string) { await this.continuationQueue; const job = this.continuationState.jobs[jobId]; return job ? structuredClone(job) : undefined; }
+  async createContinuation(record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || !continuationRecordIsCanonical(value, CANONICAL_ROOM_ID) || value.jobRevision !== 1 || value.status !== "QUEUED" || !continuationAuditMatches(null, value, audit)) throw new Error("Invalid initial continuation");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      if (state.jobs[value.jobId] || hasActiveOwner(state, value.owner)) return { result: { kind: "conflict" as const } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); const audit = normalizeContinuationAuditEvent(event); if (!value || value.jobRevision !== expectedRevision + 1) throw new Error("Invalid continuation CAS revision");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      const current = state.jobs[value.jobId]; if (!current) return { result: { kind: "not_found" as const } };
+      if (current.jobRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationRecordIsCanonical(value, CANONICAL_ROOM_ID) || !continuationRecordProvenanceMatches(current, value)) throw new Error("Continuation provenance is immutable");
+      if (!canTransitionContinuation(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationAuditMatches(current, value, audit)) throw new Error("Invalid continuation audit event");
+      if (hasActiveOwner(state, value.owner, value.jobId) && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(value.status)) return { result: { kind: "conflict" as const } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value }, events: [...state.events, audit!] }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number, event: ContinuationAuditEvent): Promise<CasResult<ContinuationRecord>> {
+    const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry); const audit = normalizeContinuationAuditEvent(event);
+    if (!job || !inbox || !continuationRecordIsCanonical(job, CANONICAL_ROOM_ID) || inbox.roomId !== CANONICAL_ROOM_ID || !continuationInboxStartsJobResult(inbox, job) || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      const current = state.jobs[job.jobId]; if (!current) return { result: { kind: "not_found" as const } };
+      if (current.jobRevision !== expectedRevision || state.inbox[inbox.inboxEntryId]) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationRecordProvenanceMatches(current, job)) throw new Error("Continuation provenance is immutable");
+      if (!canTransitionContinuation(current.status, job.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!continuationAuditMatches(current, job, audit)) throw new Error("Invalid completion audit event");
+      const nextInbox = { ...state.inbox, [inbox.inboxEntryId]: inbox };
+      const nextJobs = { ...state.jobs, [job.jobId]: job };
+      const nextEvents = [...state.events, audit!];
+      const live = Object.values(nextInbox).filter((item) => item.owner === inbox.owner && (item.status === "UNREAD" || item.status === "ACKNOWLEDGED")).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId));
+      for (const stale of live.slice(0, Math.max(0, live.length - Math.max(1, maxEntries)))) { const archivedInbox = { ...stale, inboxRevision: stale.inboxRevision + 1, status: "ARCHIVED" as const, updatedAt: inbox.createdAt, closedAt: inbox.createdAt }; if (!continuationInboxMutationMatches(stale, archivedInbox, true)) throw new Error("Invalid capacity inbox archive"); nextInbox[stale.inboxEntryId] = archivedInbox; const staleJob = nextJobs[stale.jobId]; if (staleJob?.resultDisposition === "INBOX") { const archivedJob = { ...staleJob, jobRevision: staleJob.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: inbox.createdAt }; const archiveEvent = capacityArchiveAudit(archivedJob, staleJob.status, inbox.createdAt); if (!continuationAuditMatches(staleJob, archivedJob, archiveEvent)) throw new Error("Invalid archived continuation projection"); nextJobs[stale.jobId] = archivedJob; nextEvents.push(archiveEvent); } }
+      return { next: { ...state, jobs: nextJobs, inbox: nextInbox, events: nextEvents }, result: { kind: "accepted" as const, value: structuredClone(job) } };
+    });
+  }
+  async listContinuationAudit(jobId: string) { await this.continuationQueue; return structuredClone(this.continuationState.events.filter((event) => event.jobId === jobId).sort((a, b) => a.jobRevision - b.jobRevision || a.eventId.localeCompare(b.eventId))); }
+  async listContinuationInbox(owner: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.inbox).filter((entry) => entry.owner === owner).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId))); }
+  async getContinuationInboxEntry(inboxEntryId: string) { await this.continuationQueue; const entry = this.continuationState.inbox[inboxEntryId]; return entry ? structuredClone(entry) : undefined; }
+  async compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
+    const value = normalizeContinuationInboxEntry(entry); if (!value || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox CAS revision");
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, value.status) || value.status === "ARCHIVED") return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxMutationMatches(current, value, false)) throw new Error("Invalid continuation inbox mutation or immutable provenance"); return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+  }
+  async archiveContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
+    const value = normalizeContinuationInboxEntry(entry); if (!value || value.status !== "ARCHIVED" || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox archive");
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxMutationMatches(current, value, true)) throw new Error("Invalid continuation inbox archive or immutable provenance"); const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; if (!continuationInboxMatchesJob(value, job)) throw new Error("Continuation inbox provenance does not match its job"); const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; const archiveEvent = capacityArchiveAudit(archivedJob, job.status, value.updatedAt); if (!continuationAuditMatches(job, archivedJob, archiveEvent)) throw new Error("Invalid archived continuation projection"); return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, archiveEvent] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+  }
+
   private async mutateImprovements<T>(
     mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
   ): Promise<T> {
@@ -548,6 +745,34 @@ export class RoomStore implements RoomRepository {
     return result;
   }
 
+  private async mutateTasks<T>(mutation: (state: JsonTaskState) => { next?: JsonTaskState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void;
+    let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.taskQueue.then(async () => {
+      try {
+        const mutationResult = mutation(this.taskState);
+        if (mutationResult.next) {
+          const temporaryPath = `${this.tasksPath}.tmp`;
+          await writeFile(temporaryPath, `${JSON.stringify(mutationResult.next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+          await rename(temporaryPath, this.tasksPath);
+          await chmod(this.tasksPath, 0o600);
+          this.taskState = mutationResult.next;
+        }
+        resolveResult(mutationResult.result);
+      } catch (error) { rejectResult(error); throw error; }
+    });
+    this.taskQueue = operation.catch(() => undefined);
+    return result;
+  }
+
+  private async mutateContinuations<T>(mutation: (state: JsonContinuationState) => { next?: JsonContinuationState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.continuationQueue.then(async () => { try { const changed = mutation(this.continuationState); if (changed.next) { const next = normalizeJsonContinuationState(changed.next, CANONICAL_ROOM_ID); const temporaryPath = `${this.continuationsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.continuationsPath); await chmod(this.continuationsPath, 0o600); this.continuationState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    this.continuationQueue = operation.catch(() => undefined); return result;
+  }
+
   private async save() {
     const operation = this.saveQueue.then(async () => {
       const temporaryPath = `${this.statePath}.tmp`;
@@ -558,6 +783,22 @@ export class RoomStore implements RoomRepository {
     this.saveQueue = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }
+function capacityArchiveAudit(record: ContinuationRecord, fromStatus: ContinuationRecord["status"], at: string): ContinuationAuditEvent { return finalizeContinuationAudit(record, { schemaVersion: 1, eventId: `archive-${record.jobId}-${record.jobRevision}`, jobId: record.jobId, jobRevision: record.jobRevision, attempt: record.usage.attempts, trigger: record.trigger, policyRevision: record.policyRevision, provenanceHash: continuationProvenanceHash(record), at, action: "INBOX_ARCHIVED", fromStatus, toStatus: record.status, usage: record.usage, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 }, result: "Inbox result archived by bounded retention policy.", nextEligibilityAt: record.nextEligibilityAt }); }
+
+function createsDependencyCycle(tasks: Record<string, Task>, source: TaskIdentity, target: TaskIdentity) {
+  if (source.roomId !== target.roomId || source.taskId === target.taskId) return true;
+  const visited = new Set<string>();
+  const visit = (identity: TaskIdentity): boolean => {
+    const key = taskKey(identity);
+    if (key === taskKey(source)) return true;
+    if (visited.has(key)) return false;
+    visited.add(key);
+    return (tasks[key]?.dependencies ?? []).some(visit);
+  };
+  return visit(target);
 }
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {
