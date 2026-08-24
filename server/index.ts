@@ -144,7 +144,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     generationCancellation.dispose();
   }
   if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
-  const permission = includeDiff || before.settings.writableAgent !== agent ? "read-only" : "writable";
+  const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit);
   await generationJournal.append({

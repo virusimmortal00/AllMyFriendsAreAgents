@@ -218,7 +218,7 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
       await fixture.repository.addMessage("you", "transcript must survive", "chat", undefined, undefined, {
         id: "human-test-id", name: "Tester",
       });
-      await fixture.repository.setSession("codex-terra", "session-to-preserve", "read-only");
+      await fixture.repository.setSession("codex-sol", "session-to-preserve", "read-only");
       const roomBefore = await fixture.roomArtifact();
       await fixture.repository.createImprovement(initial("imp-restart"));
       await fixture.repository.applyImprovementChange(
@@ -238,7 +238,7 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
       expect((await reopened.listImprovementEvents("imp-restart")).map(({ revision }) => revision)).toEqual([1, 2]);
       expect(await reopened.getEmergencyStop()).toMatchObject({ revision: 1, active: true, reason: "operator halt" });
       expect(reopened.snapshot().messages.at(-1)?.text).toBe("transcript must survive");
-      expect(reopened.snapshot().sessions["codex-terra"]?.id).toBe("session-to-preserve");
+      expect(reopened.snapshot().sessions["codex-sol"]?.id).toBe("session-to-preserve");
     } finally {
       fixture.close();
     }

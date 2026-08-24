@@ -18,6 +18,8 @@
   --cursor-grok: #c51f0c;
   --cursor-gemini: #187173;
   --cursor-composer: #78410d;
+  --cursor-gemini-flash: #173874;
+  --cursor-glm: #2a7204;
   --you: #101cda;
 }
 
@@ -338,6 +340,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .speaker--cursor-grok { color: var(--cursor-grok); }
 .speaker--cursor-gemini { color: var(--cursor-gemini); }
 .speaker--cursor-composer { color: var(--cursor-composer); }
+.speaker--cursor-gemini-flash { color: var(--cursor-gemini-flash); }
+.speaker--cursor-glm { color: var(--cursor-glm); }
 .speaker--you { color: var(--you); }
 .speaker--system, .speaker--nobody { color: #111; }
 

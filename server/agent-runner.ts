@@ -22,6 +22,7 @@ interface RunResult {
   sessionId: string;
   generationId: string;
   durationMs: number;
+  permission: "read-only" | "writable";
 }
 
 interface ProcessResult {
@@ -265,8 +266,10 @@ function parseCodexOutput(stdout: string) {
   return { sessionId, text };
 }
 
-function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolean) {
-  return includeDiff || !agentSupportsProjectWrites(agent) || state.settings.writableAgent !== agent ? "read-only" : "writable";
+function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolean, assignmentWorkspace?: string) {
+  return includeDiff || !assignmentWorkspace || !agentSupportsProjectWrites(agent) || state.settings.writableAgent !== agent
+    ? "read-only"
+    : "writable";
 }
 
 function resolveExecutionProjectPath(permission: "read-only" | "writable", projectPath: string, assignmentWorkspace?: string) {
@@ -342,7 +345,11 @@ function parseCursorOutput(stdout: string) {
 }
 
 function parseCursorModels(stdout: string) {
-  return new Set([...stdout.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
+  // `concurrently` enables FORCE_COLOR for its children, and Cursor honors it
+  // even when stdout is piped. Strip terminal formatting before comparing the
+  // account-specific catalog with our exact model IDs.
+  const plainText = stdout.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "");
+  return new Set([...plainText.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
 }
 
 export async function runAgent(
@@ -356,7 +363,7 @@ export async function runAgent(
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
-  const permission = resolvePermission(agent, state, includeDiff);
+  const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
   // Review turns deliberately stay rooted at the configured project and retain
   // the existing read-only source-control behavior. Only a writable generation
   // can receive the assignment worktree as its cwd.
@@ -403,7 +410,7 @@ export async function runAgent(
         cliStdout: result.stdout,
         cliStderr: result.stderr,
       });
-      return { sessionId, text: parsed.text, generationId, durationMs };
+      return { sessionId, text: parsed.text, generationId, durationMs, permission };
     }
 
     if (profile.provider === "cursor") {
@@ -427,7 +434,7 @@ export async function runAgent(
         cliStdout: result.stdout,
         cliStderr: result.stderr,
       });
-      return { sessionId, text: parsed.text, generationId, durationMs };
+      return { sessionId, text: parsed.text, generationId, durationMs, permission };
     }
 
     let sessionId = existing?.id || randomUUID();
@@ -474,7 +481,7 @@ export async function runAgent(
       cliStdout: result.stdout,
       cliStderr: result.stderr,
     });
-    return { sessionId, text: parsed.result, generationId, durationMs };
+    return { sessionId, text: parsed.result, generationId, durationMs, permission };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
       await journal?.append({
