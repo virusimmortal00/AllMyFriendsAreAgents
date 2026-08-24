@@ -1,7 +1,7 @@
 ---
 id: aim-window-controls
-status: proposed
-owner: unclaimed
+status: complete
+owner: sol
 reviewers: []
 depends_on: []
 reported_by: crimsonsunset
@@ -21,11 +21,11 @@ The AIM-style title-bar controls either perform clear, supported actions or stop
 
 # Current state
 
-The minimize and maximize/fullscreen controls were reported as nonfunctional. It is not yet clear whether they were intended as decoration or incomplete interactions.
+The browser application cannot minimize, maximize, or close its containing window. The AIM-style glyphs are therefore intentional decorative chrome: they are hidden from assistive technology, ignore pointer input, cannot receive focus, and use subdued flat styling instead of button affordances in loading, join, and room views.
 
 # Next action
 
-Inspect the title-bar implementation and product intent, then choose functional controls or explicitly decorative chrome before coding.
+Keep these glyphs decorative unless the application gains a documented, browser-supported window-management contract.
 
 # Evidence
 
@@ -33,4 +33,4 @@ Inspect the title-bar implementation and product intent, then choose functional 
 
 # Open questions
 
-- Should minimize collapse only the room panel, and should maximize enter browser fullscreen or expand within the app shell?
+- None. Browser window management is outside the room UI's supported behavior.

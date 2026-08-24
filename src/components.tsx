@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react";
+import { memo, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -32,6 +32,56 @@ function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperti
 
 export function PanelTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="panel-title">{children}</h2>;
+}
+
+export function ConfirmationDialog({
+  title,
+  description,
+  confirmLabel,
+  busyLabel = "Working…",
+  busy = false,
+  error = "",
+  returnFocusTo,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  description: ReactNode;
+  confirmLabel: string;
+  busyLabel?: string;
+  busy?: boolean;
+  error?: string;
+  returnFocusTo: HTMLElement | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const requestCancel = () => { if (!busy) onCancel(); };
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestCancel, returnFocusTo);
+
+  return (
+    <div className="modal-backdrop confirmation-backdrop" onMouseDown={onBackdropMouseDown}>
+      <section
+        ref={dialogRef}
+        className="agent-settings-window confirmation-window"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+      >
+        <header className="agent-settings-titlebar"><h2 id={titleId}>{title}</h2></header>
+        <div className="confirmation-body" id={descriptionId}>{description}</div>
+        {error ? <p className="confirmation-error" role="alert">{error}</p> : null}
+        <footer className="agent-settings-actions confirmation-actions">
+          <button type="button" className="classic-button" disabled={busy} onClick={requestCancel}>Cancel</button>
+          <button type="button" className="classic-button confirmation-confirm" disabled={busy} onClick={onConfirm}>{busy ? busyLabel : confirmLabel}</button>
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 export function TranscriptHeader({
@@ -153,6 +203,9 @@ export function AgentSettingsDialog({
 }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [confirmGrant, setConfirmGrant] = useState(false);
+  const permissionTrigger = useRef<HTMLInputElement>(null);
+  const permissionSubmitting = useRef(false);
   const canEdit = writableAgent === agent;
   const supportsProjectWrites = agentSupportsProjectWrites(agent);
   const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
@@ -166,15 +219,25 @@ export function AgentSettingsDialog({
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
 
   async function changePermission(next: WritableAgent) {
+    if (permissionSubmitting.current) return false;
+    permissionSubmitting.current = true;
     setSaveError("");
     setSaving(true);
     try {
       await onWritableChange(next);
+      return true;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
+      permissionSubmitting.current = false;
       setSaving(false);
     }
+  }
+
+  async function confirmPermissionGrant() {
+    if (permissionSubmitting.current) return;
+    if (await changePermission(agent)) setConfirmGrant(false);
   }
 
   return (
@@ -197,10 +260,16 @@ export function AgentSettingsDialog({
             <legend>Project permissions</legend>
             <label className="agent-permission-toggle">
               <input
+                ref={permissionTrigger}
                 type="checkbox"
                 checked={canEdit}
                 disabled={disabled || saving || !supportsProjectWrites}
-                onChange={(event) => void changePermission(event.target.checked ? agent : "nobody")}
+                onChange={(event) => {
+                  if (event.target.checked) {
+                    setSaveError("");
+                    setConfirmGrant(true);
+                  } else void changePermission("nobody");
+                }}
               />
               Allow this agent to edit project files
             </label>
@@ -217,6 +286,19 @@ export function AgentSettingsDialog({
           <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Close</button>
         </footer>
       </section>
+      {confirmGrant ? <ConfirmationDialog
+        title={replacingAgent ? "Transfer project write access?" : "Grant project write access?"}
+        description={replacingAgent
+          ? <p>This transfers project write access from <strong>{replacingAgent}</strong> to <strong>{agentScreenName(agent)}</strong>. Only one agent can hold write access.</p>
+          : <p>This grants <strong>{agentScreenName(agent)}</strong> permission to edit project files when explicitly asked.</p>}
+        confirmLabel={replacingAgent ? "Transfer write access" : "Grant write access"}
+        busyLabel="Saving permission…"
+        busy={saving}
+        error={saveError ? `Could not save this permission. ${saveError}` : ""}
+        returnFocusTo={permissionTrigger.current}
+        onConfirm={() => void confirmPermissionGrant()}
+        onCancel={() => setConfirmGrant(false)}
+      /> : null}
     </div>
   );
 }

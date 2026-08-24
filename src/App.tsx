@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
 import { adjacentTranscriptMagnification, loadTranscriptMagnification, saveTranscriptMagnification } from "./transcript-view";
-import { loadPendingSend, savePendingSend, type PendingSend } from "./client-persistence";
+import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
@@ -59,7 +59,7 @@ export function LoadingScreen({ error = "" }: { error?: string }) {
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1>AllMyFriendsAreAgents</h1>
-          <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
+          <div className="window-buttons window-buttons--decorative" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <div className="loading-dialog" role="status" aria-live="polite">
           <span className="retro-spinner" aria-hidden="true" />
@@ -79,7 +79,7 @@ export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (nam
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1>AllMyFriendsAreAgents</h1>
-          <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
+          <div className="window-buttons window-buttons--decorative" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <form className="name-entry" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onJoin(name.trim()); }}>
           <strong>Welcome to The Agent Room</strong>
@@ -100,6 +100,9 @@ export default function App() {
   const [resendingPending, setResendingPending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [changeNameOpen, setChangeNameOpen] = useState(false);
+  const [changeNameBusy, setChangeNameBusy] = useState(false);
+  const [changeNameConsequences, setChangeNameConsequences] = useState({ hasDraft: false, hasPending: false });
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [compactLayout, setCompactLayout] = useState(() => typeof window !== "undefined" && window.innerWidth <= 720);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
@@ -120,6 +123,8 @@ export default function App() {
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
+  const changeNameTrigger = useRef<HTMLButtonElement | null>(null);
+  const changeNameSubmitting = useRef(false);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
@@ -460,13 +465,22 @@ export default function App() {
 
   function joinWithName(name: string) {
     setJoinError("");
+    changeNameSubmitting.current = false;
+    setChangeNameBusy(false);
+    setChangeNameOpen(false);
     const profile = { id: crypto.randomUUID(), name, style: DEFAULT_PARTICIPANT_STYLES.you };
     setSavedHuman(profile);
   }
 
   function changeName() {
-    composer.current?.flush();
+    if (!human || changeNameSubmitting.current) return;
+    changeNameSubmitting.current = true;
+    setChangeNameBusy(true);
     styleSaveRevision.current += 1;
+    composer.current?.discardDraft();
+    saveDraftSnapshot(window.localStorage, human.id, { text: "", mentions: [] });
+    savePendingSend(window.localStorage, human.id, null);
+    setPendingSend(null);
     setHuman(null);
     setSavedHuman(null);
     saveHumanProfile(null);
@@ -514,7 +528,7 @@ export default function App() {
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1><span className="title-long">AllMyFriendsAreAgents — </span>{room.settings.roomName}</h1>
-          <div className="window-buttons" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
+          <div className="window-buttons window-buttons--decorative" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div>
         </header>
         <nav className="menu-bar" aria-label="Application menu">
           <button
@@ -529,7 +543,14 @@ export default function App() {
             aria-expanded={mobilePanel === "people"}
             onClick={() => { setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
-          <button type="button" onClick={() => { changeName(); navigateImprovements(null); }}>Change name</button>
+          <button ref={changeNameTrigger} type="button" aria-haspopup="dialog" aria-expanded={changeNameOpen} onClick={() => {
+            composer.current?.flush();
+            setChangeNameConsequences({
+              hasDraft: Boolean(loadDraftSnapshot(window.localStorage, human.id).text),
+              hasPending: Boolean(pendingSend),
+            });
+            setChangeNameOpen(true);
+          }}>Change name</button>
           <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
           <div className="menu-wrap" ref={actionsMenu}>
             <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
@@ -616,6 +637,20 @@ export default function App() {
         ) : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} returnFocusTo={workshopTrigger.current} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
+        {changeNameOpen && human ? <ConfirmationDialog
+          title="Change your name?"
+          description={<>
+            <p>Changing your name resets your room identity and clears the current room state on this device.</p>
+            {changeNameConsequences.hasPending ? <p><strong>Your unsent message will be deleted.</strong></p> : null}
+            {changeNameConsequences.hasDraft ? <p><strong>Your saved draft will be deleted.</strong></p> : null}
+          </>}
+          confirmLabel="Reset identity and change name"
+          busyLabel="Resetting identity…"
+          busy={changeNameBusy}
+          returnFocusTo={changeNameTrigger.current}
+          onConfirm={() => { changeName(); navigateImprovements(null); }}
+          onCancel={() => setChangeNameOpen(false)}
+        /> : null}
 
         {clientError || room.error ? <div className="error-strip" role="alert"><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
         <footer className="status-bar">

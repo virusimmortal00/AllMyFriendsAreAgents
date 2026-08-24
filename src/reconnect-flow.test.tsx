@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import App from "./App";
 import { ApiRequestError } from "./api";
-import { loadDraftSnapshot } from "./client-persistence";
+import { loadDraftSnapshot, saveDraftSnapshot, savePendingSend } from "./client-persistence";
 import type { HumanPresence, RoomState } from "./types";
 
 const api = vi.hoisted(() => ({
@@ -87,8 +87,9 @@ function room(instanceId: string, messages: RoomState["messages"] = []): RoomSta
   };
 }
 
-async function renderConnected(messages: RoomState["messages"] = []) {
+async function renderConnected(messages: RoomState["messages"] = [], beforeRender?: () => void) {
   window.localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(human));
+  beforeRender?.();
   render(<App />);
   await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(1));
   act(() => ControlledEventSource.instances[0].emit(room("server-before", messages)));
@@ -121,6 +122,39 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("warns before resetting identity and preserves room state and draft when canceled", async () => {
+    const user = userEvent.setup();
+    const composer = await renderConnected([{ id: "history", speaker: "codex-sol", text: "Keep the room", timestamp: "2026-08-21T12:00:00.000Z" }]);
+    await user.type(composer, "Keep my draft");
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Change your name?" });
+    expect(dialog.textContent).toContain("resets your room identity");
+    expect(dialog.textContent).toContain("saved draft will be deleted");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change name" }));
+    expect(screen.getByText("Keep the room")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep my draft");
+    expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("Keep my draft");
+  });
+
+  it("warns about an unsent message and clears identity persistence only after confirmation", async () => {
+    await renderConnected([], () => {
+      saveDraftSnapshot(window.localStorage, human.id, { text: "persisted draft", mentions: [] });
+      savePendingSend(window.localStorage, human.id, { clientMessageId: "pending-1", text: "unsent message" });
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Change your name?" });
+    expect(dialog.textContent).toContain("unsent message will be deleted");
+    expect(dialog.textContent).toContain("saved draft will be deleted");
+    await user.click(screen.getByRole("button", { name: "Reset identity and change name" }));
+    expect(await screen.findByRole("textbox", { name: "What should everyone call you?" })).toBeTruthy();
+    expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("");
+    expect(window.localStorage.getItem(`all-my-friends-are-agents-pending-send:${human.id}`)).toBeNull();
+    expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBeNull();
+  });
+
   it("uses one compact Improvements/Chat toggle without polluting history from chat menus", async () => {
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");

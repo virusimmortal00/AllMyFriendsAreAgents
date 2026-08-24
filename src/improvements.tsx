@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { authorizeHeartbeat, emergencyStopHeartbeat, loadHeartbeat, loadImprovement, loadImprovements } from "./api";
+import { ConfirmationDialog } from "./components";
 import type { GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, ImprovementStatusContract } from "./types";
 
 export type ImprovementsRoute = { view: "list"; scope: "active" | "all" } | { view: "detail"; id: string } | { view: "missing"; id: string };
@@ -65,6 +66,9 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
   const [heartbeatBusy, setHeartbeatBusy] = useState(false);
   const [heartbeatError, setHeartbeatError] = useState("");
   const [heartbeatReloadRevision, setHeartbeatReloadRevision] = useState(0);
+  const [confirmHeartbeatStop, setConfirmHeartbeatStop] = useState(false);
+  const heartbeatStopTrigger = useRef<HTMLButtonElement>(null);
+  const heartbeatSubmitting = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,14 +86,18 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
   useEffect(() => { void loadHeartbeat().then((value) => { setHeartbeat(value); setHeartbeatError(""); }).catch((error) => { setHeartbeat(null); setHeartbeatError(error instanceof Error ? error.message : String(error)); }); }, [heartbeatReloadRevision]);
 
   async function changeHeartbeat(action: "authorize" | "stop") {
-    if (!heartbeat) return;
+    if (!heartbeat || heartbeatSubmitting.current) return false;
+    heartbeatSubmitting.current = true;
     setHeartbeatBusy(true);
     setHeartbeatError("");
     try {
       setHeartbeat(await (action === "stop" ? emergencyStopHeartbeat(heartbeat.runtime.revision) : authorizeHeartbeat(heartbeat.runtime.revision)));
+      return true;
     } catch (error) {
       setHeartbeatError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
+      heartbeatSubmitting.current = false;
       setHeartbeatBusy(false);
     }
   }
@@ -99,10 +107,21 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
     <div className="improvements-body">
       <section className="heartbeat-control" aria-label="Bounded heartbeat controls">
         <div><strong>Bounded heartbeat:</strong> {!heartbeat ? "Unavailable" : heartbeat.runtime.emergencyStopped ? "EMERGENCY STOPPED" : heartbeat.runtime.enabled ? heartbeat.active ? "Running bounded work" : "Authorized, awaiting cadence" : "Disabled"}</div>
-        {heartbeat && <><small>Policy {heartbeat.policy.version} · every {Math.round(heartbeat.policy.cadenceMs / 1000)}s · concurrency {heartbeat.policy.maxConcurrency} · at most {heartbeat.policy.maxDispatchedPerRun} actions/run · {heartbeat.policy.maxAttemptsPerRevision} attempts · {Math.round(heartbeat.policy.timeBudgetMs / 1000)}s budget · capabilities {heartbeat.policy.permittedCapabilities.join(", ")}</small><div className="heartbeat-actions"><button type="button" className="classic-button heartbeat-stop" disabled={heartbeatBusy || heartbeat.runtime.emergencyStopped} onClick={() => void changeHeartbeat("stop")}>Emergency stop heartbeat</button>{heartbeat.configured && !heartbeat.runtime.enabled && <button type="button" className="classic-button" disabled={heartbeatBusy} onClick={() => void changeHeartbeat("authorize")}>Authorize heartbeat</button>}</div></>}
+        {heartbeat && <><small>Policy {heartbeat.policy.version} · every {Math.round(heartbeat.policy.cadenceMs / 1000)}s · concurrency {heartbeat.policy.maxConcurrency} · at most {heartbeat.policy.maxDispatchedPerRun} actions/run · {heartbeat.policy.maxAttemptsPerRevision} attempts · {Math.round(heartbeat.policy.timeBudgetMs / 1000)}s budget · capabilities {heartbeat.policy.permittedCapabilities.join(", ")}</small><div className="heartbeat-actions"><button ref={heartbeatStopTrigger} type="button" className="classic-button heartbeat-stop" aria-haspopup="dialog" aria-expanded={confirmHeartbeatStop} disabled={heartbeatBusy || heartbeat.runtime.emergencyStopped} onClick={() => { setHeartbeatError(""); setConfirmHeartbeatStop(true); }}>Emergency stop heartbeat</button>{heartbeat.configured && !heartbeat.runtime.enabled && <button type="button" className="classic-button" disabled={heartbeatBusy} onClick={() => void changeHeartbeat("authorize")}>Authorize heartbeat</button>}</div></>}
         {heartbeatBusy ? <p role="status">Updating heartbeat control…</p> : null}
         {heartbeatError ? <div className="improvements-error" role="alert"><p>Heartbeat controls are unavailable. {heartbeatError}</p>{!heartbeat ? <button type="button" className="classic-button" onClick={() => setHeartbeatReloadRevision((value) => value + 1)}>Try heartbeat again</button> : null}</div> : null}
       </section>
+      {confirmHeartbeatStop ? <ConfirmationDialog
+        title="Emergency stop heartbeat?"
+        description={<p>This immediately stops future automated scheduling and aborts active heartbeat work. A new explicit authorization is required to resume.</p>}
+        confirmLabel="Emergency stop heartbeat"
+        busyLabel="Stopping heartbeat…"
+        busy={heartbeatBusy}
+        error={heartbeatError ? `Heartbeat controls are unavailable. ${heartbeatError}` : ""}
+        returnFocusTo={heartbeatStopTrigger.current}
+        onConfirm={() => void changeHeartbeat("stop").then((stopped) => { if (stopped) setConfirmHeartbeatStop(false); })}
+        onCancel={() => setConfirmHeartbeatStop(false)}
+      /> : null}
       {loading ? <p role="status">Loading improvements…</p> : loadError ? <section className="improvements-load-error" role="alert"><h2>Could not load improvements</h2><p>{loadError}</p><button type="button" className="classic-button" onClick={() => setReloadRevision((value) => value + 1)}>Try again</button></section> : route.view === "missing" ? <section className="improvements-missing" role="status"><h2>Improvement not found</h2><p><code>{route.id}</code> is not an existing canonical improvement ID. It may have been removed, or the link may be stale.</p><p><button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "active" })}>View Active improvements</button> <button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "all" })}>View All improvements</button></p></section> : route.view === "detail" && detail ? <Detail item={detail} /> : <><p>{scope === "active" ? "Current non-terminal improvements." : "All recorded improvements."}</p>{items.length ? <ul className="improvements-list">{items.map((item) => <li key={item.canonicalId}><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>{item.canonicalId}</a><span>{item.revisionLabel} · {item.state} · {item.risk}</span><small>Updated {new Date(item.updatedAt).toLocaleString()}</small></li>)}</ul> : <p>No improvements are available in this view.</p>}</>}
     </div>
   </section>;

@@ -13,6 +13,7 @@ export interface ComposerSubmission {
 
 export interface ComposerBoundaryHandle {
   flush: () => void;
+  discardDraft: () => void;
   restoreDraft: (text: string, mentions?: MessageMention[]) => boolean;
 }
 
@@ -86,6 +87,7 @@ const ComposerSession = forwardRef<ComposerBoundaryHandle, ComposerBoundaryProps
 
   useImperativeHandle(ref, () => ({
     flush: () => persist(),
+    discardDraft: () => replaceDraft("", [], true),
     restoreDraft: (text, nextMentions = []) => {
       if (latest.current.text) return false;
       replaceDraft(text, nextMentions, true);

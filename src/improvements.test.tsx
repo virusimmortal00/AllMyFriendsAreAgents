@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Improvements, ImprovementsMenuControl, improvementsRoute, resolveImprovementsAlias } from "./improvements";
-import { loadHeartbeat, loadImprovement, loadImprovements } from "./api";
+import { emergencyStopHeartbeat, loadHeartbeat, loadImprovement, loadImprovements } from "./api";
 
 vi.mock("./api", () => ({
   loadImprovements: vi.fn(async (scope: string) => ({ scope, items: [{ canonicalId: "known-id", revisionLabel: "r2", state: "IN_PROGRESS", risk: "GUARDED", updatedAt: "2026-08-21T12:00:00Z" }] })),
@@ -25,12 +25,22 @@ describe("Improvements interface", () => {
     expect(navigate).toHaveBeenCalledWith({ view: "list", scope: "all" });
   });
 
-  it("keeps the emergency stop visible and records an explicit stop action", async () => {
+  it("confirms emergency stop, cancels safely, and records only an explicit confirmed action", async () => {
     const user = userEvent.setup();
     render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={() => undefined} />);
     const stop = await screen.findByRole("button", { name: "Emergency stop heartbeat" });
     await user.click(stop);
+    const dialog = screen.getByRole("alertdialog", { name: "Emergency stop heartbeat?" });
+    expect(dialog.getAttribute("aria-describedby")).toBeTruthy();
+    expect(emergencyStopHeartbeat).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(stop);
+    expect(emergencyStopHeartbeat).not.toHaveBeenCalled();
+    await user.click(stop);
+    await user.click(within(screen.getByRole("alertdialog", { name: "Emergency stop heartbeat?" })).getByRole("button", { name: "Emergency stop heartbeat" }));
     await waitFor(() => expect(screen.getByText("EMERGENCY STOPPED")).toBeTruthy());
+    expect(emergencyStopHeartbeat).toHaveBeenCalledOnce();
     expect(stop.hasAttribute("disabled")).toBe(true);
   });
 
