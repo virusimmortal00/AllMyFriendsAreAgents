@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +14,7 @@ import type { HumanPresenceRegistry } from "./human-presence.js";
 import type { HumanTaskSessions } from "./task-api.js";
 import { RoomStore } from "./room-store.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
+import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 
 const roots: string[] = []; const at = "2026-08-24T12:00:00.000Z";
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -76,6 +77,8 @@ describe("ContinuationService", () => {
   it("fences real waiting-tool progress by attempt, cancellation, and restart", async () => {
     const gate = deferred<void>(); const waiting = deferred<void>(); let input!: ContinuationExecutorInput;
     const value = await fixture(async (next) => { input = next; expect(await next.progress("WAITING_TOOL", "Waiting on test tool")).toBe(true); waiting.resolve(); await gate.promise; expect(await next.progress("RUNNING", "Tool finished")).toBe(true); return { summary: "tool result", usage: { tokens: 2, toolCalls: 1 } }; }); await value.enable(); await value.create(); await waiting.promise; expect((await value.service.list())[0]?.status).toBe("WAITING_TOOL"); gate.resolve(); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); expect(await input.progress("WAITING_TOOL", "stale terminal event")).toBe(false); expect((await value.service.audit((await value.service.list())[0]!.jobId)).map(({ action }) => action)).toEqual(["CREATED", "DISPATCHED", "WAITING_TOOL", "TOOL_RESUMED", "COMPLETED"]);
+    const statePath = path.join(value.assignment.workspacePath, "state", "continuations.json"); const original = await readFile(statePath, "utf8"); const state = JSON.parse(original); state.events.find((candidate: { action: string }) => candidate.action === "WAITING_TOOL").result = "forged intermediate result"; await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`); await expect(RoomStore.open(value.assignment.workspacePath, path.join(value.assignment.workspacePath, "state"))).rejects.toThrow(/audit/i); await writeFile(statePath, original);
+    const sqlite = await SqliteRoomRepository.open(value.assignment.workspacePath, path.join(value.assignment.workspacePath, "waiting-import.sqlite"), { seedImprovements: false }); expect(() => sqlite.importContinuations(state.policy, Object.values(state.jobs), Object.values(state.inbox), state.events)).toThrow(/audit/i); expect(await sqlite.listContinuations()).toEqual([]); sqlite.close();
 
     const cancelGate = deferred<void>(); let cancelledInput!: ContinuationExecutorInput; const cancelled = await fixture(async (next) => { cancelledInput = next; await next.progress("WAITING_TOOL", "waiting"); await cancelGate.promise; return { summary: "late", usage: { tokens: 1, toolCalls: 1 } }; }); await cancelled.enable(); const created = await cancelled.create(); if (created.kind !== "ok") throw new Error("create failed"); await eventually(async () => (await cancelled.service.list())[0]?.status === "WAITING_TOOL"); await cancelled.service.cancel(created.value.jobId); expect(await cancelledInput.progress("RUNNING", "late")).toBe(false); cancelGate.resolve(); expect((await cancelled.service.list())[0]?.status).toBe("CANCELLED");
 
@@ -100,6 +103,12 @@ describe("ContinuationService", () => {
     await value.enable(); await value.create(); await eventually(async () => (await value.service.list())[0]?.status === "BLOCKED");
     const blocked = (await value.service.list())[0]!; expect(blocked).toMatchObject({ usage: { attempts: 1 }, nextEligibilityAt: "2026-08-24T12:00:05.000Z" }); const retryAudit = (await value.service.audit(blocked.jobId)).at(-1)!; expect(retryAudit).toMatchObject({ action: "RETRY_BLOCKED", attempt: 1, result: "transient provider failure", nextEligibilityAt: "2026-08-24T12:00:05.000Z", attemptUsage: { tokens: 0, toolCalls: 0 } }); expect(retryAudit.attemptUsage.elapsedMs).toBe(blocked.usage.elapsedMs); expect(await value.service.resume(blocked.jobId)).toMatchObject({ kind: "conflict", reason: "Retry backoff has not elapsed." });
     clock = new Date("2026-08-24T12:00:05.000Z"); expect((await value.service.resume(blocked.jobId)).kind).toBe("ok"); const resumedAudit = (await value.service.audit(blocked.jobId)).at(-1)!; expect(resumedAudit).toMatchObject({ action: "RESUMED", attempt: 1, result: "Retry/resume authorized.", nextEligibilityAt: null, attemptUsage: { elapsedMs: 0, tokens: 0, toolCalls: 0 } }); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); expect((await value.service.list())[0]).toMatchObject({ usage: { attempts: 2, tokens: 4, toolCalls: 1 } }); expect((await value.service.audit(blocked.jobId)).at(-1)).toMatchObject({ action: "COMPLETED", attempt: 2, result: "Recovered", attemptUsage: { tokens: 4, toolCalls: 1 } });
+    const statePath = path.join(value.assignment.workspacePath, "state", "continuations.json"); const original = await readFile(statePath, "utf8"); const base = JSON.parse(original); const corruptions = [
+      (state: typeof base) => { state.events.find((candidate: { action: string }) => candidate.action === "RETRY_BLOCKED").nextEligibilityAt = "2026-08-24T12:00:06.000Z"; },
+      (state: typeof base) => { const retry = state.events.find((candidate: { action: string }) => candidate.action === "RETRY_BLOCKED"); const completed = state.events.find((candidate: { action: string }) => candidate.action === "COMPLETED"); retry.attemptUsage.tokens += 1; retry.usage.tokens += 1; completed.attemptUsage.tokens -= 1; },
+    ];
+    for (const [index, corrupt] of corruptions.entries()) { const state = structuredClone(base); corrupt(state); await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`); await expect(RoomStore.open(value.assignment.workspacePath, path.join(value.assignment.workspacePath, "state"))).rejects.toThrow(/audit/i); const sqlite = await SqliteRoomRepository.open(value.assignment.workspacePath, path.join(value.assignment.workspacePath, `retry-import-${index}.sqlite`), { seedImprovements: false }); expect(() => sqlite.importContinuations(state.policy, Object.values(state.jobs), Object.values(state.inbox), state.events)).toThrow(/audit/i); expect(await sqlite.listContinuations()).toEqual([]); sqlite.close(); }
+    await writeFile(statePath, original);
   });
 
   it("does not register an AbortController when cumulative time is already exhausted", async () => {

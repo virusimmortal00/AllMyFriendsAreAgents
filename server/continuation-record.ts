@@ -31,6 +31,7 @@ export interface ContinuationRecord {
   readonly trigger: string; readonly policyRevision: number; readonly policyVersion: typeof CONTINUATION_POLICY_VERSION;
   readonly capabilities: readonly ContinuationCapability[]; readonly status: ContinuationStatus; readonly budget: ContinuationBudget;
   readonly usage: ContinuationUsage; readonly cancellationRequested: boolean;
+  readonly auditHeadHash: string | null; readonly auditEventCount: number;
   readonly resultDisposition: "PENDING" | "INBOX" | "CLOSED" | "ARCHIVED"; readonly resultSummary: string | null;
   readonly blocker: string | null; readonly nextEligibilityAt: string | null; readonly createdAt: string;
   readonly startedAt: string | null; readonly updatedAt: string; readonly completedAt: string | null;
@@ -45,7 +46,7 @@ export interface ContinuationInboxEntry {
 export type ContinuationAuditAction = "CREATED" | "DISPATCHED" | "WAITING_TOOL" | "TOOL_RESUMED" | "RETRY_BLOCKED" | "RESUMED" | "COMPLETED" | "FAILED" | "CANCELLED" | "RESTART_INTERRUPTED" | "ACKNOWLEDGED" | "INBOX_ARCHIVED";
 export interface ContinuationAuditEvent {
   readonly schemaVersion: 1; readonly eventId: string; readonly jobId: string; readonly jobRevision: number;
-  readonly attempt: number; readonly trigger: string; readonly policyRevision: number; readonly provenanceHash: string; readonly at: string;
+  readonly attempt: number; readonly trigger: string; readonly policyRevision: number; readonly provenanceHash: string; readonly previousEventHash: string | null; readonly projectionHash: string; readonly eventHash: string; readonly at: string;
   readonly action: ContinuationAuditAction; readonly fromStatus: ContinuationStatus | null; readonly toStatus: ContinuationStatus;
   readonly usage: ContinuationUsage; readonly attemptUsage: { readonly elapsedMs: number; readonly tokens: number; readonly toolCalls: number }; readonly result: string | null; readonly nextEligibilityAt: string | null;
 }
@@ -94,7 +95,7 @@ export function normalizeContinuationRecord(value: unknown): ContinuationRecord 
     || !sha(a.pinnedBaseSha) || !boundedText(r.objective, 4_000) || !boundedText(r.trigger, 500)
     || !positive(r.policyRevision) || r.policyVersion !== CONTINUATION_POLICY_VERSION || !Array.isArray(r.capabilities)
     || r.capabilities.some((c) => !CONTINUATION_CAPABILITIES.includes(c)) || !CONTINUATION_STATUSES.includes(r.status as ContinuationStatus)
-    || !validBudget(r.budget) || !validUsage(r.usage) || typeof r.cancellationRequested !== "boolean"
+    || !validBudget(r.budget) || !validUsage(r.usage) || typeof r.cancellationRequested !== "boolean" || !nullableHash(r.auditHeadHash) || !nonnegative(r.auditEventCount)
     || !["PENDING", "INBOX", "CLOSED", "ARCHIVED"].includes(r.resultDisposition || "") || !nullableText(r.resultSummary, 16_000)
     || !nullableText(r.blocker, 2_000) || !nullableDate(r.nextEligibilityAt) || !validDate(r.createdAt) || !nullableDate(r.startedAt)
     || !validDate(r.updatedAt) || !nullableDate(r.completedAt)) return undefined;
@@ -112,7 +113,7 @@ export function normalizeContinuationInboxEntry(value: unknown): ContinuationInb
 export function normalizeContinuationAuditEvent(value: unknown): ContinuationAuditEvent | undefined {
   if (!value || typeof value !== "object") return undefined; const e = value as Partial<ContinuationAuditEvent>;
   if (e.schemaVersion !== 1 || !validId(e.eventId) || !validId(e.jobId) || !positive(e.jobRevision) || !nonnegative(e.attempt)
-    || !boundedText(e.trigger, 500) || !positive(e.policyRevision) || !hash(e.provenanceHash) || !validDate(e.at) || !["CREATED", "DISPATCHED", "WAITING_TOOL", "TOOL_RESUMED", "RETRY_BLOCKED", "RESUMED", "COMPLETED", "FAILED", "CANCELLED", "RESTART_INTERRUPTED", "ACKNOWLEDGED", "INBOX_ARCHIVED"].includes(e.action || "")
+    || !boundedText(e.trigger, 500) || !positive(e.policyRevision) || !hash(e.provenanceHash) || !nullableHash(e.previousEventHash) || !hash(e.projectionHash) || !hash(e.eventHash) || !validDate(e.at) || !["CREATED", "DISPATCHED", "WAITING_TOOL", "TOOL_RESUMED", "RETRY_BLOCKED", "RESUMED", "COMPLETED", "FAILED", "CANCELLED", "RESTART_INTERRUPTED", "ACKNOWLEDGED", "INBOX_ARCHIVED"].includes(e.action || "")
     || !(e.fromStatus === null || CONTINUATION_STATUSES.includes(e.fromStatus as ContinuationStatus)) || !CONTINUATION_STATUSES.includes(e.toStatus as ContinuationStatus)
     || !validUsage(e.usage) || !validAttemptUsage(e.attemptUsage) || !nullableText(e.result, 2_000) || !nullableDate(e.nextEligibilityAt)) return undefined;
   return structuredClone(e as ContinuationAuditEvent);
@@ -125,7 +126,24 @@ export function continuationRecordIsCanonical(record: ContinuationRecord, roomId
 export function continuationRecordProvenanceMatches(before: ContinuationRecord, after: ContinuationRecord) {
   return JSON.stringify(immutableProvenance(before)) === JSON.stringify(immutableProvenance(after));
 }
-export function continuationProvenanceHash(record: ContinuationRecord) { return createHash("sha256").update(JSON.stringify(immutableProvenance(record))).digest("hex"); }
+export function continuationProvenanceHash(record: ContinuationRecord) { return createHash("sha256").update(canonicalJson(immutableProvenance(record))).digest("hex"); }
+export type ContinuationAuditDraft = Omit<ContinuationAuditEvent, "previousEventHash" | "projectionHash" | "eventHash">;
+export function finalizeContinuationAudit(record: ContinuationRecord, draft: ContinuationAuditDraft): ContinuationAuditEvent {
+  const previousEventHash = record.auditHeadHash; const projectionHash = continuationProjectionHash(record);
+  const unsigned = { ...draft, previousEventHash, projectionHash }; const eventHash = createHash("sha256").update(canonicalJson(unsigned)).digest("hex");
+  (record as { auditHeadHash: string | null; auditEventCount: number }).auditHeadHash = eventHash; (record as { auditHeadHash: string | null; auditEventCount: number }).auditEventCount += 1;
+  return { ...unsigned, eventHash };
+}
+export function continuationAuditHashMatches(record: ContinuationRecord, event: ContinuationAuditEvent, previousHash: string | null) {
+  return continuationEventHashMatches(event, previousHash) && event.projectionHash === continuationProjectionHash(record) && record.auditHeadHash === event.eventHash && record.auditEventCount === record.jobRevision;
+}
+export function continuationEventHashMatches(event: ContinuationAuditEvent, previousHash: string | null) { const { eventHash, ...unsigned } = event; return event.previousEventHash === previousHash && eventHash === createHash("sha256").update(canonicalJson(unsigned)).digest("hex"); }
+function continuationProjectionHash(record: ContinuationRecord) { const { auditHeadHash: _head, auditEventCount: _count, ...projection } = record; return createHash("sha256").update(canonicalJson(projection)).digest("hex"); }
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+}
 export function continuationInboxProvenanceMatches(before: ContinuationInboxEntry, after: ContinuationInboxEntry) {
   return JSON.stringify({ schemaVersion: before.schemaVersion, inboxEntryId: before.inboxEntryId, jobId: before.jobId, owner: before.owner, roomId: before.roomId, task: before.task, taskRevision: before.taskRevision, assignmentId: before.assignmentId, summary: before.summary, relevance: before.relevance, createdAt: before.createdAt, expiresAt: before.expiresAt })
     === JSON.stringify({ schemaVersion: after.schemaVersion, inboxEntryId: after.inboxEntryId, jobId: after.jobId, owner: after.owner, roomId: after.roomId, task: after.task, taskRevision: after.taskRevision, assignmentId: after.assignmentId, summary: after.summary, relevance: after.relevance, createdAt: after.createdAt, expiresAt: after.expiresAt });
@@ -135,8 +153,19 @@ export function continuationInboxMatchesJob(entry: ContinuationInboxEntry, job: 
 }
 export function continuationInboxStartsJobResult(entry: ContinuationInboxEntry, job: ContinuationRecord) {
   return continuationInboxMatchesJob(entry, job) && entry.inboxRevision === 1 && entry.status === "UNREAD" && entry.summary === job.resultSummary
-    && entry.createdAt === job.completedAt && entry.updatedAt === entry.createdAt && Date.parse(entry.expiresAt) > Date.parse(entry.createdAt)
-    && entry.acknowledgedAt === null && entry.closedAt === null && job.status === "COMPLETED" && job.resultDisposition === "INBOX" && job.completedAt !== null;
+    && entry.createdAt === job.completedAt && continuationInboxProjectionIsValid(entry)
+    && job.status === "COMPLETED" && job.resultDisposition === "INBOX" && job.completedAt !== null;
+}
+export function continuationInboxProjectionIsValid(entry: ContinuationInboxEntry) {
+  return Date.parse(entry.updatedAt) >= Date.parse(entry.createdAt) && Date.parse(entry.expiresAt) > Date.parse(entry.createdAt)
+    && (entry.status === "UNREAD" ? entry.acknowledgedAt === null && entry.closedAt === null
+      : entry.status === "ACKNOWLEDGED" ? entry.acknowledgedAt !== null && entry.closedAt === null
+        : entry.closedAt !== null);
+}
+export function continuationInboxMutationMatches(before: ContinuationInboxEntry, after: ContinuationInboxEntry, archive: boolean) {
+  return after.inboxRevision === before.inboxRevision + 1 && continuationInboxProvenanceMatches(before, after)
+    && continuationInboxProjectionIsValid(after) && canTransitionContinuationInbox(before.status, after.status)
+    && (archive ? after.status === "ARCHIVED" : after.status !== "ARCHIVED");
 }
 export function continuationAuditMatches(before: ContinuationRecord | null, after: ContinuationRecord, candidate: ContinuationAuditEvent | undefined) {
   if (!candidate || !continuationProjectionMatches(before, after) || !continuationUsageProgresses(before, after)) return false;
@@ -147,7 +176,25 @@ export function continuationAuditMatches(before: ContinuationRecord | null, afte
     && candidate.trigger === after.trigger && candidate.policyRevision === after.policyRevision && candidate.provenanceHash === continuationProvenanceHash(after) && candidate.at === after.updatedAt
     && candidate.fromStatus === (before?.status ?? null) && candidate.toStatus === after.status && candidate.result === result
     && candidate.nextEligibilityAt === after.nextEligibilityAt && JSON.stringify(candidate.usage) === JSON.stringify(after.usage)
-    && JSON.stringify(candidate.attemptUsage) === JSON.stringify(attemptUsage);
+    && JSON.stringify(candidate.attemptUsage) === JSON.stringify(attemptUsage) && continuationAuditStepMatches(before?.status ?? null, candidate)
+    && continuationAuditHashMatches(after, candidate, before?.auditHeadHash ?? null);
+}
+export function continuationAuditStepMatches(from: ContinuationStatus | null, event: ContinuationAuditEvent) {
+  const fixed: Partial<Record<ContinuationAuditAction, string>> = { CREATED: "Queued by authorized developer.", DISPATCHED: "Executor dispatch started.", TOOL_RESUMED: "Tool work resumed.", RESUMED: "Retry/resume authorized.", ACKNOWLEDGED: "Inbox entry closed.", INBOX_ARCHIVED: "Inbox result archived by bounded retention policy." };
+  if (fixed[event.action] && event.result !== fixed[event.action]) return false;
+  const zero = event.attemptUsage.elapsedMs === 0 && event.attemptUsage.tokens === 0 && event.attemptUsage.toolCalls === 0;
+  if (event.action === "CREATED") return from === null && event.toStatus === "QUEUED" && event.nextEligibilityAt === null && zero;
+  if (event.action === "DISPATCHED") return from === "QUEUED" && event.toStatus === "RUNNING" && event.nextEligibilityAt === null && zero;
+  if (event.action === "WAITING_TOOL") return from === "RUNNING" && event.toStatus === "WAITING_TOOL" && !!event.result && event.nextEligibilityAt === null && zero;
+  if (event.action === "TOOL_RESUMED") return from === "WAITING_TOOL" && event.toStatus === "RUNNING" && event.nextEligibilityAt === null && zero;
+  if (event.action === "RETRY_BLOCKED") return (from === "RUNNING" || from === "WAITING_TOOL") && event.toStatus === "BLOCKED" && !!event.result && !!event.nextEligibilityAt && Date.parse(event.nextEligibilityAt) > Date.parse(event.at);
+  if (event.action === "RESTART_INTERRUPTED") return (from === "RUNNING" || from === "WAITING_TOOL") && event.toStatus === "BLOCKED" && event.result?.startsWith("Executor interrupted by server restart;") === true && event.nextEligibilityAt === event.at && zero;
+  if (event.action === "RESUMED") return from === "BLOCKED" && event.toStatus === "QUEUED" && event.nextEligibilityAt === null && zero;
+  if (event.action === "COMPLETED") return from === "RUNNING" && event.toStatus === "COMPLETED" && !!event.result && event.nextEligibilityAt === null;
+  if (event.action === "FAILED") return from !== null && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(from) && event.toStatus === "FAILED" && !!event.result && event.nextEligibilityAt === null;
+  if (event.action === "CANCELLED") return from !== null && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(from) && event.toStatus === "CANCELLED" && !!event.result && event.nextEligibilityAt === null;
+  if (event.action === "ACKNOWLEDGED") return from !== null && ["COMPLETED", "FAILED", "CANCELLED"].includes(from) && event.toStatus === "ACKNOWLEDGED" && event.nextEligibilityAt === null && zero;
+  return event.action === "INBOX_ARCHIVED" && from === "COMPLETED" && event.toStatus === "COMPLETED" && event.nextEligibilityAt === null && zero;
 }
 function immutableProvenance(record: ContinuationRecord) { return { schemaVersion: record.schemaVersion, jobId: record.jobId, roomId: record.roomId, projectPathHash: record.projectPathHash, owner: record.owner, task: record.task, taskRevision: record.taskRevision, assignmentReferenceId: record.assignmentReferenceId, authority: record.authority, objective: record.objective, trigger: record.trigger, policyRevision: record.policyRevision, policyVersion: record.policyVersion, capabilities: record.capabilities, budget: record.budget, createdAt: record.createdAt }; }
 export function continuationProjectionMatches(before: ContinuationRecord | null, after: ContinuationRecord) {
@@ -165,7 +212,7 @@ export function continuationProjectionMatches(before: ContinuationRecord | null,
   return after.completedAt === before.completedAt;
 }
 export function continuationProjectionIsValid(record: ContinuationRecord) {
-  if (Date.parse(record.updatedAt) < Date.parse(record.createdAt) || record.startedAt && Date.parse(record.startedAt) > Date.parse(record.updatedAt) || record.completedAt && Date.parse(record.completedAt) > Date.parse(record.updatedAt)) return false;
+  if (!record.auditHeadHash || record.auditEventCount !== record.jobRevision || Date.parse(record.updatedAt) < Date.parse(record.createdAt) || record.startedAt && Date.parse(record.startedAt) > Date.parse(record.updatedAt) || record.completedAt && Date.parse(record.completedAt) > Date.parse(record.updatedAt)) return false;
   if (record.status === "QUEUED") return record.resultDisposition === "PENDING" && record.resultSummary === null && record.blocker === null && record.nextEligibilityAt === null && record.completedAt === null && !record.cancellationRequested;
   if (record.status === "RUNNING") return record.startedAt !== null && record.resultDisposition === "PENDING" && record.resultSummary === null && record.blocker === null && record.nextEligibilityAt === null && record.completedAt === null && !record.cancellationRequested;
   if (record.status === "WAITING_TOOL") return record.startedAt !== null && record.resultDisposition === "PENDING" && record.resultSummary === null && record.blocker !== null && record.nextEligibilityAt === null && record.completedAt === null && !record.cancellationRequested;
@@ -182,6 +229,7 @@ function continuationUsageProgresses(before: ContinuationRecord | null, after: C
     && after.usage.attempts === before.usage.attempts + (dispatch ? 1 : 0) && Date.parse(after.updatedAt) >= Date.parse(before.updatedAt);
 }
 function auditActions(from: ContinuationStatus | null, after: ContinuationRecord): readonly ContinuationAuditAction[] { const to = after.status;
+  if (from === to) return ["INBOX_ARCHIVED"];
   if (from === null && to === "QUEUED") return ["CREATED"];
   if (from === "QUEUED" && to === "RUNNING") return ["DISPATCHED"];
   if (from === "RUNNING" && to === "WAITING_TOOL") return ["WAITING_TOOL"];
@@ -192,7 +240,6 @@ function auditActions(from: ContinuationStatus | null, after: ContinuationRecord
   if (to === "FAILED") return ["FAILED"];
   if (to === "CANCELLED") return ["CANCELLED"];
   if (to === "ACKNOWLEDGED") return ["ACKNOWLEDGED"];
-  if (from === to) return ["INBOX_ARCHIVED"];
   return [];
 }
 function auditResult(action: ContinuationAuditAction, record: ContinuationRecord): string | null {
@@ -216,4 +263,5 @@ function nullableDate(v: unknown) { return v === null || validDate(v); }
 function positive(v: unknown): v is number { return Number.isSafeInteger(v) && Number(v) > 0; }
 function nonnegative(v: unknown): v is number { return Number.isSafeInteger(v) && Number(v) >= 0; }
 function hash(v: unknown): v is string { return typeof v === "string" && /^[a-f0-9]{64}$/.test(v); }
+function nullableHash(v: unknown): v is string | null { return v === null || hash(v); }
 function sha(v: unknown): v is string { return typeof v === "string" && /^[a-f0-9]{40,64}$/.test(v); }
