@@ -225,7 +225,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 }
 .transcript-view-controls button:active:not(:disabled) { border-style: inset; }
 .transcript-view-controls button:disabled { color: #888; }
-.transcript-view-controls output { width: 48px; text-align: center; text-shadow: 1px 1px #000080; }
+.transcript-view-controls .transcript-magnification-reset { width: 52px; font: 700 12px/1 Tahoma, Arial, sans-serif; }
 
 .presence-panel, .controls-panel, .chat-panel, .right-rail { min-width: 0; min-height: 0; overflow: hidden; }
 .right-rail { display: grid; grid-template-rows: auto auto; align-content: start; gap: 9px; }
@@ -263,6 +263,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   border: 3px outset white;
   box-shadow: 6px 7px 0 rgba(0,0,0,.35);
 }
+.help-window { width: min(520px, calc(100vw - 28px)); max-height: calc(100vh - 28px); overflow: auto; color: #111; background: var(--chrome); border: 3px outset white; box-shadow: 6px 7px 0 rgba(0,0,0,.35); }
+.help-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.45 Tahoma, Arial, sans-serif; }
+.help-body h3 { margin: 14px 0 4px; color: var(--blue); font-size: 15px; }
+.help-body h3:first-child { margin-top: 0; }
+.help-body p { margin: 0; }
 .agent-settings-titlebar { display: flex; align-items: center; min-height: 38px; padding: 4px 5px 4px 10px; color: #fff; background: linear-gradient(90deg, var(--blue), var(--blue-bright)); }
 .agent-settings-titlebar h2 { flex: 1; margin: 0; font: 700 19px/1.2 "Trebuchet MS", Arial, sans-serif; }
 .agent-settings-titlebar button { width: 29px; height: 27px; padding: 0; color: #111; background: var(--chrome); border: 2px outset white; font: 800 21px/1 Arial, sans-serif; }
@@ -342,6 +347,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .speaker--system, .speaker--nobody { color: #111; }
 
 .composer { position: relative; z-index: 4; width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 112px; grid-template-rows: auto minmax(0, 1fr); gap: 7px 8px; padding: 8px; overflow: visible; border-top: 2px groove white; background: var(--chrome); }
+.format-popover-layer { display: contents; }
 .composer textarea { width: 100%; min-width: 0; min-height: 0; padding: 9px; resize: none; border: 2px inset white; background: #fff; font-size: 16px; }
 .format-toolbar {
   position: relative;
@@ -504,7 +510,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .transcript-header .panel-title { overflow: hidden; padding: 7px 124px 7px 10px; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
   .transcript-view-controls { right: 4px; }
   .transcript-view-controls button { width: 31px; height: 29px; }
-  .transcript-view-controls output { width: 45px; }
+  .transcript-view-controls .transcript-magnification-reset { width: 48px; }
   .transcript { overscroll-behavior: contain; padding: 10px 11px 18px; -webkit-overflow-scrolling: touch; }
   .message { grid-template-columns: 1fr; gap: 1px; margin-bottom: 13px; font-size: calc(16px * var(--transcript-magnification, 1)); line-height: 1.38; contain-intrinsic-size: auto 68px; }
   .message time { display: none; }
@@ -596,7 +602,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .controls-panel .field-help { margin: 7px 16px 0; font-size: 13px; }
   .controls-panel hr { margin: 20px 16px; }
   .modal-backdrop { padding: 7px; align-items: end; }
-  .agent-settings-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
+  .agent-settings-window, .help-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
   .workshop-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 0 -5px 0 rgba(0,0,0,.28); }
   .workshop-body { padding: 13px; } .workshop-facts { grid-template-columns: 115px minmax(0, 1fr); }
   .improvements-panel { padding: 5px; }

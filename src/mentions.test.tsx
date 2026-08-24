@@ -24,6 +24,7 @@ function MentionFlow() {
       onSubmit={(event) => event.preventDefault()}
     />
     <output aria-label="Mention metadata">{JSON.stringify(mentions)}</output>
+    <button type="button">Outside composer</button>
   </>;
 }
 
@@ -85,6 +86,17 @@ describe("participant mention autocomplete", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect((message as HTMLTextAreaElement).value).toBe("@ali");
+  });
+
+  it("dismisses suggestions when focus leaves the autocomplete", async () => {
+    const user = userEvent.setup();
+    render(<MentionFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await user.type(message, "@ali");
+    expect(screen.getByRole("listbox", { name: "Mention a participant" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Outside composer" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(message.value).toBe("@ali");
   });
 
   it("exposes stable disambiguators for humans with the same name", async () => {

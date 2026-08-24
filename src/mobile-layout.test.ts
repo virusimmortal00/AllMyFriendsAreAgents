@@ -40,8 +40,9 @@ describe("mobile layout contract", () => {
   });
 
   it("places formatting popovers above the toolbar clipping boundary", () => {
-    expect(components).toMatch(/<div className="format-toolbar"[\s\S]*?<\/div>\s*\{colorPicker \? \(/);
-    expect(components).toMatch(/\) : null\}\s*\{emojiOpen \? \(/);
+    expect(components).toMatch(/<div className="format-popover-layer"[\s\S]*?<div className="format-toolbar"/);
+    expect(components).toContain('formatPopover === "text" || formatPopover === "background"');
+    expect(components).toContain('formatPopover === "emoji"');
     expect(mobileStyles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;[^}]*inset:/s);
     expect(mobileStyles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
   });

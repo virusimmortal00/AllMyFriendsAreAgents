@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
+import { AgentSettingsDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -15,6 +15,7 @@ import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
+import { useDismissibleLayer, useModalOverlay } from "./overlay";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -98,7 +99,9 @@ export default function App() {
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [menuOpen, setMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
+  const [compactLayout, setCompactLayout] = useState(() => typeof window !== "undefined" && window.innerWidth <= 720);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
@@ -120,6 +123,15 @@ export default function App() {
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
+  const { layerRef: actionsMenu, triggerRef: actionsTrigger } = useDismissibleLayer(menuOpen, () => setMenuOpen(false));
+  const panelOverlayOpen = Boolean(mobilePanel && compactLayout);
+  const { dialogRef: sidePanelRef, onDialogKeyDown: onSidePanelKeyDown } = useModalOverlay<HTMLDivElement>(() => setMobilePanel(null), null, panelOverlayOpen);
+
+  useEffect(() => {
+    const updateCompactLayout = () => setCompactLayout(window.innerWidth <= 720);
+    window.addEventListener("resize", updateCompactLayout);
+    return () => window.removeEventListener("resize", updateCompactLayout);
+  }, []);
 
   useEffect(() => {
     if (!savedHuman) return;
@@ -317,18 +329,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!configuredAgent && !mobilePanel && !workshopId) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setConfiguredAgent(null);
-      setMobilePanel(null);
-      setWorkshopId((current) => nextWorkshopId(current, { type: "escape" }));
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [configuredAgent, mobilePanel, workshopId]);
-
-  useEffect(() => {
     if (!workshopId) return;
     let cancelled = false;
     setWorkshop(null); setWorkshopMissing(false); setWorkshopLoading(true);
@@ -404,6 +404,11 @@ export default function App() {
       saveTranscriptMagnification(next);
       return next;
     });
+  }
+
+  function resetTranscriptMagnification() {
+    saveTranscriptMagnification(100);
+    setTranscriptMagnification(100);
   }
 
   async function submitMessage({ text: message, mentions }: ComposerSubmission) {
@@ -528,24 +533,24 @@ export default function App() {
           >People</button>
           <button type="button" onClick={() => { changeName(); navigateImprovements(null); }}>Change name</button>
           <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => navigateImprovements(improvementsView ? null : { view: "list", scope: "active" })} />
-          <div className="menu-wrap">
-            <button type="button" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
+          <div className="menu-wrap" ref={actionsMenu}>
+            <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); navigateImprovements(null); }}>Actions</button>
             {menuOpen ? (
-              <div className="dropdown-menu">
-                <button type="button" disabled={working || !connected} onClick={() => invoke("continue", "all")}>Continue discussion</button>
-                <button type="button" disabled={working || !connected} onClick={() => invoke("roundtable", "all")}>Start roundtable</button>
-                <button type="button" disabled={working || !connected} onClick={() => invoke("review", "all")}>Review with all agents</button>
+              <div className="dropdown-menu" role="menu">
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("continue", "all"); }}>Continue discussion</button>
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("roundtable", "all"); }}>Start roundtable</button>
+                <button type="button" role="menuitem" disabled={working || !connected} onClick={() => { setMenuOpen(false); invoke("review", "all"); }}>Review with all agents</button>
               </div>
             ) : null}
           </div>
-          <button type="button" title="Agent project permissions are available from the gear beside each agent. Reviews are always read-only.">Help</button>
+          <button type="button" aria-haspopup="dialog" aria-expanded={helpOpen} onClick={() => { setMenuOpen(false); setMobilePanel(null); setHelpOpen(true); }}>Help</button>
         </nav>
 
         {connectionNotice ? <div className="connection-banner" role="status">{connectionNotice}</div> : null}
         <div className="workspace">
           {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : <>
           <section className="chat-panel beveled-inset">
-            <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} />
+            <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} onMagnificationReset={resetTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             {pendingSend ? (
               <div className="pending-send" role="status">
@@ -565,7 +570,7 @@ export default function App() {
               onSubmit={submitMessage}
             />
           </section>
-          {mobilePanel ? (
+          {panelOverlayOpen ? (
             <button
               type="button"
               className="mobile-panel-backdrop"
@@ -574,16 +579,22 @@ export default function App() {
             />
           ) : null}
           <div
+            ref={sidePanelRef}
             id="room-side-panel"
             className={`right-rail${mobilePanel ? " right-rail--open" : ""}`}
             data-mobile-panel={mobilePanel || undefined}
+            role={panelOverlayOpen ? "dialog" : undefined}
+            aria-modal={panelOverlayOpen ? "true" : undefined}
+            aria-labelledby={panelOverlayOpen ? "mobile-panel-title" : undefined}
+            tabIndex={panelOverlayOpen ? -1 : undefined}
+            onKeyDown={panelOverlayOpen ? onSidePanelKeyDown : undefined}
           >
             <header className="mobile-panel-header">
-              <strong>{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
+              <strong id="mobile-panel-title">{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
               <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
             </header>
-            <RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} />
-            <RoomControls
+            {!compactLayout || mobilePanel === "people" ? <RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /> : null}
+            {!compactLayout || mobilePanel === "room" ? <RoomControls
               roomName={room.settings.roomName}
               topic={room.settings.topic}
               conversationEnergy={room.settings.conversationEnergy}
@@ -591,7 +602,7 @@ export default function App() {
               onRoomNameChange={changeRoomName}
               onTopicChange={changeTopic}
               onConversationEnergyChange={changeConversationEnergy}
-            />
+            /> : null}
           </div>
           </>}
         </div>
@@ -608,6 +619,7 @@ export default function App() {
           />
         ) : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} returnFocusTo={workshopTrigger.current} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
+        {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
 
         {clientError || room.error ? <div className="error-strip" role="alert">{clientError || room.error}</div> : null}
         <footer className="status-bar">
