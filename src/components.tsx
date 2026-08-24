@@ -653,7 +653,6 @@ export function RoomControls({
   useEffect(() => {
     setDraft(current);
     setSaveError("");
-    setSaved(false);
   }, [roomName, topic, conversationEnergy]);
 
   function cancel() {

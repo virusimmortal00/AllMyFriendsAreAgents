@@ -40,6 +40,18 @@ describe("user-editable settings", () => {
     expect((screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("keeps the saved confirmation visible when the server values arrive", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => undefined);
+    const view = render(<RoomControls roomName="Original Room" topic="Original topic" conversationEnergy="balanced" disabled={false} onSave={onSave} />);
+    const roomName = screen.getByRole("textbox", { name: "Room name" });
+    await user.clear(roomName);
+    await user.type(roomName, "Saved Room");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    view.rerender(<RoomControls roomName="Saved Room" topic="Original topic" conversationEnergy="balanced" disabled={false} onSave={onSave} />);
+    expect(screen.getByRole("status").textContent).toBe("Room settings saved.");
+  });
+
   it("keeps project permission state unchanged and reports an inline save failure", async () => {
     const user = userEvent.setup();
     let rejectSave!: (error: Error) => void;
