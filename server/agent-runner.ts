@@ -295,7 +295,9 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
       if (detected) void terminateWith(detected);
     });
     child.on("error", (error) => {
-      fail(error);
+      if (settled || terminating) return;
+      terminating = true;
+      void supervisor.release(child).then(() => fail(error));
     });
     child.on("close", async (code) => {
       if (settled || terminating) return;

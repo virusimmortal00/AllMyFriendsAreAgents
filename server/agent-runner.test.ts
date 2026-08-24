@@ -278,6 +278,18 @@ describe("agent process cancellation", () => {
     expect(supervisor.activeCount).toBe(0);
   });
 
+  it("releases a tracked process when the executable cannot be spawned", async () => {
+    const supervisor = new AgentProcessSupervisor();
+
+    await expect(__testing.runProcess(
+      "__all_my_friends_missing_agent_command__",
+      [],
+      process.cwd(),
+      { supervisor, timeoutMs: 10_000 },
+    )).rejects.toMatchObject({ code: "ENOENT" });
+    expect(supervisor.activeCount).toBe(0);
+  });
+
   it("lets server shutdown await all owned agent processes", async () => {
     const supervisor = new AgentProcessSupervisor();
     const outcome = __testing.runProcess(
