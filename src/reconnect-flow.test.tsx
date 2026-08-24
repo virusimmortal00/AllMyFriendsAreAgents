@@ -31,6 +31,8 @@ class ControlledEventSource {
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: (() => void) | null = null;
   private readonly listeners = new Map<string, Array<() => void>>();
+  private version = 0;
+  private readonly streamId = `stream-${ControlledEventSource.instances.length + 1}`;
 
   constructor(readonly url: string) {
     ControlledEventSource.instances.push(this);
@@ -45,7 +47,18 @@ class ControlledEventSource {
   close() {}
 
   emit(room: RoomState) {
-    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(room) }));
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({
+      kind: "snapshot",
+      reason: "initial",
+      continuity: "fresh",
+      streamId: this.streamId,
+      version: this.version,
+      state: room,
+    }) }));
+  }
+
+  emitEvent(event: object) {
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) }));
   }
 
   fail() {
@@ -112,6 +125,9 @@ beforeEach(() => {
   api.loadRoom.mockResolvedValue(room("load-only"));
   api.loadWorkshop.mockRejectedValue(new Error("not used"));
   api.runAction.mockResolvedValue({ accepted: true });
+  api.sendMessage.mockImplementation(async (_humanId: string, _text: string, clientMessageId: string) => ({
+    accepted: true, duplicate: false, clientMessageId, messageId: `server-${clientMessageId}`,
+  }));
   api.updateMyStyle.mockResolvedValue(human);
   api.updateSettings.mockResolvedValue(room("settings"));
 });
@@ -123,6 +139,68 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("applies contiguous state and message deltas, deduplicates delivery, and resyncs a version gap", async () => {
+    const user = userEvent.setup();
+    const composer = await renderConnected([{ id: "before", speaker: "you", text: "Before", timestamp: "2026-08-24T12:00:00.000Z" }]);
+    const source = ControlledEventSource.instances[0];
+    const nextMessage = { id: "after", speaker: "codex-sol" as const, text: "After", timestamp: "2026-08-24T12:00:01.000Z" };
+    const { messages: _messages, ...deltaState } = room("server-before", [], { status: "working", activeGenerations: { active: "codex-sol" } });
+
+    act(() => source.emitEvent({
+      kind: "state-delta", streamId: "stream-1", fromVersion: 0, version: 1,
+      state: deltaState,
+    }));
+    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
+    expect(screen.getByText("Before")).toBeTruthy();
+    act(() => source.emitEvent({ kind: "messages-appended", streamId: "stream-1", fromVersion: 1, version: 2, messages: [nextMessage] }));
+    expect(await screen.findByText("After")).toBeTruthy();
+    act(() => source.emitEvent({ kind: "messages-appended", streamId: "stream-1", fromVersion: 1, version: 2, messages: [nextMessage] }));
+    expect(screen.getAllByText("After")).toHaveLength(1);
+
+    await user.type(composer, "preserved draft");
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
+    act(() => source.emitEvent({ kind: "messages-appended", streamId: "stream-1", fromVersion: 3, version: 4, messages: [] }));
+    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+    act(() => ControlledEventSource.instances[1].emit(room("server-restarted", [nextMessage])));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText("Before")).toBeNull();
+    expect(screen.getAllByText("After")).toHaveLength(1);
+  });
+
+  it("keeps one optimistic message through acknowledgement and replaces it once on the later delta", async () => {
+    const user = userEvent.setup();
+    const composer = await renderConnected();
+    await user.type(composer, "Optimistic once");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
+    const clientMessageId = api.sendMessage.mock.calls[0][2];
+    act(() => ControlledEventSource.instances[0].emitEvent({
+      kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
+      messages: [{ id: "authoritative", clientMessageId, humanId: human.id, speaker: "you", text: "Optimistic once", timestamp: "2026-08-24T12:00:00.000Z" }],
+    }));
+    expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
+  });
+
+  it("does not offer a duplicate retry when the authoritative delta beats an ambiguous POST failure", async () => {
+    let rejectSend!: (error: Error) => void;
+    api.sendMessage.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSend = reject; }));
+    const user = userEvent.setup();
+    const composer = await renderConnected();
+    await user.type(composer, "Delta won the race");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    const clientMessageId = api.sendMessage.mock.calls[0][2];
+    act(() => ControlledEventSource.instances[0].emitEvent({
+      kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
+      messages: [{ id: "delivered-first", clientMessageId, humanId: human.id, speaker: "you", text: "Delta won the race", timestamp: "2026-08-24T12:00:00.000Z" }],
+    }));
+    act(() => rejectSend(new ApiRequestError("Connection interrupted", true)));
+    await waitFor(() => expect(screen.getAllByText("Delta won the race")).toHaveLength(1));
+    expect(screen.queryByText(/Not sent — send now\?/)).toBeNull();
+  });
+
   it("offers bounded join recovery without overlapping a manual retry", async () => {
     let resolveRetry!: (identity: { instanceId: string; protocolVersion: number }) => void;
     api.checkReady
