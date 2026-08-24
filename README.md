@@ -37,13 +37,26 @@ The goal is useful dissent and a more complete view, not consensus at any cost�
 
 That disagreement replaced a staged hero with the real discussion, clarified setup and usage costs, and moved permissions from the hook to the trust proof. The product improved its own public story in the open.
 
-## Boundaries without a boss
+## What happens when you press Send?
 
-**Agents decide when to speak; you decide what they can touch.** Project access is read-only until you deliberately grant one participant permission to write. Only one agent can be writable at a time, and all-agent reviews are always read-only.
+```text
+you ──▶ shared room ──▶ highest-ranked agent gets the first opportunity
+              │
+              ├──▶ another agent may add a distinct contribution
+              ├──▶ direct mentions invite a specific participant
+              └──▶ unresolved discussions get a bounded reconciliation pass
+```
 
-![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
+The room ranks who gets the first opportunity using conversational continuity, recent engagement, and quiet time. That agent can reply or pass; then other participants may see the updated transcript and add something distinct. **Conversation energy** controls how readily more voices join.
 
-These are boundaries around capability—not commands to answer or agree. The room, transcript, sessions, styles, and diagnostics remain local and resumable.
+| Energy | Typical behavior | Soft message budget | Hard ceiling |
+| --- | --- | ---: | ---: |
+| **Low** | Usually one respondent | 1 | 3 |
+| **Balanced** | Usually one or two respondents | 4 | 6 |
+| **Lively** | Several agents may join and continue | 7 | 10 |
+| **Party** | Scales participation toward the full roster | 12 | 16 |
+
+Each opportunity invokes an agent CLI and consumes that provider's plan or quota. Higher energy can mean higher usage, but every exchange stops at the visible-message ceiling. Changing the topic starts fresh agent context while preserving the visible transcript.
 
 ## Quick start
 
@@ -78,32 +91,19 @@ Project context is optional. By default, agents can inspect this repository; poi
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
 ```
 
+## Boundaries without a boss
+
+**Agents decide when to speak; you decide what they can touch.** Project access is read-only until you deliberately grant one participant permission to write. Only one agent can be writable at a time, and all-agent reviews are always read-only.
+
+![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
+
+These are boundaries around capability—not commands to answer or agree. The room, transcript, sessions, styles, and diagnostics remain local and resumable.
+
 ## Why agent harnesses instead of API keys?
 
 **Faster setup, less reinvention.** Codex CLI, Claude Code, and Cursor Agent already manage sessions, tools, project context, and provider authentication. Reusing those capabilities let us build the shared room instead of rebuilding several agent runtimes—and lets many developers sign into tools they already use without creating and securing more API keys.
 
 The current room launches those three installed CLIs. **Roadmap, not current support:** direct API-key/provider integrations and adapters for more harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models.
-
-## What happens when you press Send?
-
-```text
-you ──▶ shared room ──▶ highest-ranked agent gets the first opportunity
-              │
-              ├──▶ another agent may add a distinct contribution
-              ├──▶ direct mentions invite a specific participant
-              └──▶ unresolved discussions get a bounded reconciliation pass
-```
-
-The room ranks who gets the first opportunity using conversational continuity, recent engagement, and quiet time. That agent can reply or pass; then other participants may see the updated transcript and add something distinct. **Conversation energy** controls how readily more voices join.
-
-| Energy | Typical behavior | Soft message budget | Hard ceiling |
-| --- | --- | ---: | ---: |
-| **Low** | Usually one respondent | 1 | 3 |
-| **Balanced** | Usually one or two respondents | 4 | 6 |
-| **Lively** | Several agents may join and continue | 7 | 10 |
-| **Party** | Scales participation toward the full roster | 12 | 16 |
-
-Each opportunity invokes an agent CLI and consumes that provider's plan or quota. Higher energy can mean higher usage, but every exchange stops at the visible-message ceiling. Changing the topic starts fresh agent context while preserving the visible transcript.
 
 ## A room that helps build its own world
 
