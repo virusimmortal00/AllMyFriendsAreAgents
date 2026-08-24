@@ -14,7 +14,7 @@ import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
-import { addHumanMessageOnce } from "./human-message.js";
+import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { projectPermissionAuditMessages, type ProjectPermissionActor } from "./project-permissions.js";
@@ -49,7 +49,7 @@ const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
 const store = await openRoomRepository(projectRoot, storageConfiguration);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
-const roomEvents = new RoomEventStream();
+const roomEvents = new RoomEventStream(serverIdentity.instanceId);
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
@@ -510,10 +510,12 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  const duplicate = store.snapshot().messages.some((message) =>
+  const duplicate = store.snapshot().messages.find((message) =>
     message.humanId === human.id && message.clientMessageId === clientMessageId
   );
-  if (duplicate) return response.status(200).json(publicRoomSnapshot());
+  if (duplicate) {
+    return response.status(200).json(messageMutationAcknowledgement({ inserted: false, message: duplicate }));
+  }
   let mentions;
   try {
     mentions = validateMessageMentions(request.body?.mentions, text, roomMentionCandidates(humans.list()));
@@ -521,7 +523,7 @@ app.post("/api/messages", async (request, response) => {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Message mentions are invalid." });
   }
   const accepted = await addHumanMessageOnce(store, human, text, clientMessageId, mentions);
-  if (!accepted.inserted) return response.status(200).json(publicRoomSnapshot());
+  if (!accepted.inserted) return response.status(200).json(messageMutationAcknowledgement(accepted));
   roomActivity.interrupt();
   broadcast();
 
@@ -533,7 +535,7 @@ app.post("/api/messages", async (request, response) => {
       latestHumanInvitesWholeRoom(conversationState),
     );
   }));
-  return response.status(202).json(publicRoomSnapshot());
+  return response.status(202).json(messageMutationAcknowledgement(accepted));
 });
 
 app.get("/api/developer/room", (request, response) => {
