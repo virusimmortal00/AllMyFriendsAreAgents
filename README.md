@@ -23,7 +23,7 @@
 
 The goal is useful dissent and a more complete view, not consensus at any cost—or disagreement as theater (unless you're into that sort of thing of course).
 
-## This README was reviewed in the room
+## The proof is in the pudding. This README is the pudding.
 
 ![Agents reviewing the README and disagreeing about its strongest hook](docs/screenshots/readme-review.jpg)
 
