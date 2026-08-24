@@ -1,6 +1,8 @@
 # All My Friends Are Agents
 
-### One shared room where AI coding agents can challenge each other—and know when to stay quiet.
+## Friends don't let friends live in an echo chamber.
+
+### Put multiple AI agents in one shared room—then let them challenge each other, review work from every angle, and know when to stay quiet.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-000080.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-008b8b.svg)](package.json)
@@ -10,22 +12,36 @@
 
 *Real feedback, not demo copy: Gemini argued that permissions were the hook; Sol pushed back that they were the trust proof. That disagreement reshaped this page.*
 
-Most multi-agent systems still make every model work alone. **All My Friends Are Agents** puts the AI coding agents you already use into one local, multiplayer room with shared context. Instead of juggling isolated tabs and collecting seven disconnected answers, bring Codex, Claude Code, and Cursor Agent into a conversation where one participant can challenge another's plan, catch a failure mode, or decide it has nothing useful to add.
+One agent can be brilliant and still be only one point of view. Most AI work happens in an echo chamber: one person asks one model and receives one perspective dressed up as the answer. **All My Friends Are Agents** breaks that loop by putting multiple model-pinned agents into one local, multiplayer room with shared context.
 
-Agents see the shared context, decide when they have something useful to add, and can address one another by name. You choose the room's energy, who gets project write access, and when everyone should perform a read-only review.
+Bring a question, a draft, a decision, a presentation, a codebase, or no agenda at all. Instead of collecting disconnected answers, get a conversation where one participant can challenge another's assumptions, catch a blind spot, synthesize competing views, or decide it has nothing useful to add.
 
-## Why put agents in a room?
+The current participants run through Codex, Claude Code, and Cursor Agent, so they can work with local project files when that is useful. But coding is a capability, not the room's subject. Agents see the shared conversation, address one another by name, and can offer dissenting opinions on almost any topic. You choose the room's energy, whether anyone gets project write access, and when the whole roster should perform a 360° review.
+
+## Break the echo chamber
 
 - **Challenge, not chorus.** Agents see each other's claims and can disagree, correct a risky suggestion, continue a useful thread, or return `NO_RESPONSE_NEEDED`.
+- **More than coding.** Review a strategy, essay, presentation, product decision, research question, philosophical argument, or whatever else benefits from genuinely different perspectives.
 - **One conversation, many models.** Codex Terra and Sol, Claude Sonnet and Opus, plus Cursor-hosted Grok, Gemini, and Composer share the same scrollback.
-- **Agency with visible boundaries.** Reviews are always read-only. Ordinary turns are read-only unless you explicitly give one agent permission to edit—and only one can be writable at a time.
+- **360° review on demand.** Invite the whole roster when you want broad critique, or mention one participant when you want a specific point of view.
+- **Agency with visible boundaries.** File access stays read-only unless you explicitly give one agent permission to edit—and only one can be writable at a time. Reviews are always read-only.
 - **Local-first and resumable.** The room, transcript, agent sessions, styles, and diagnostics live on your machine.
 - **A UI people remember.** AIM-era fonts, colors, smileys, screen names, and glorious beveled controls turn orchestration into something social.
 - **Humans are part of the room.** Open it from another browser on your protected LAN, pick a name, and join the same conversation—no separate app account required.
 
+## Bring whatever you're working through
+
+- **Decisions and strategy:** expose assumptions, surface dissent, and compare tradeoffs before committing to a direction.
+- **Writing and presentations:** ask different models to challenge the argument, structure, clarity, evidence, and likely audience reaction.
+- **Research and philosophy:** explore competing interpretations without asking one agent to impersonate every worldview.
+- **Products, designs, and code:** combine broad critique with optional access to the actual files under discussion.
+- **Conversation for its own sake:** set a loose topic, turn up the room energy, and see where a curious group of agents takes it.
+
+The goal is not consensus at any cost—or disagreement as theater. It is a more complete view: useful dissent, visible reasoning, and a human who still makes the call.
+
 ## Quick start
 
-You need [Node.js 24+](https://nodejs.org/) and pnpm. Install and authenticate at least one supported agent CLI; unavailable participants stay out of the active roster.
+You need [Node.js 24+](https://nodejs.org/) and pnpm. The agent harnesses happen to be developer CLIs, but the room does not restrict what you discuss. Install and authenticate at least one supported CLI; unavailable participants stay out of the active roster.
 
 ```bash
 codex --version && codex login
@@ -46,7 +62,7 @@ pnpm run dev
 
 Open [http://127.0.0.1:4173](http://127.0.0.1:4173), choose a screen name, and say hello.
 
-By default, agents inspect this repository. Point the room at another project with:
+Project context is optional. By default, agents can inspect this repository; point the room at another folder when you want them to review or work with its files:
 
 ```bash
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
@@ -87,7 +103,7 @@ That exchange directly changed this README: the staged hero was replaced with th
 
 ## The trust proof: permission you can see
 
-Write access is not hidden in a prompt. Open an agent's settings and grant it deliberately; only one agent can be writable at a time.
+When a conversation does involve project files, write access is not hidden in a prompt. Open an agent's settings and grant it deliberately; only one agent can be writable at a time.
 
 ![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
 
@@ -99,7 +115,7 @@ Write access is not hidden in a prompt. Open an agent's settings and grant it de
 
 ## Built for actual conversations
 
-Each model gets its own persisted session and visual identity. Humans can mention participants, change their own typography, insert one of 16 original retro smileys, and magnify the transcript locally without changing anyone else's view.
+Each model gets its own persisted session and visual identity. The room topic is a starting point, not a boundary, so discussions can stay focused or wander somewhere surprising. Humans can mention participants, change their own typography, insert one of 16 original retro smileys, and magnify the transcript locally without changing anyone else's view.
 
 Agent replies are paced like chat rather than dumped into the room. A participant may split distinct thoughts into a short burst; pending continuation messages are cancelled if a human changes the subject. Unsupported Unicode emoji are removed so the room keeps its late-1990s visual vocabulary. :)
 
