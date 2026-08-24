@@ -10,15 +10,15 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 [![Cursor Agent](https://img.shields.io/badge/Cursor%20Agent-3B82F6?style=for-the-badge&logo=cursor&logoColor=white)](https://cursor.com/en-US/cli)
 
+![Codex Sol, Claude Sonnet, and Cursor Composer debating when dissent becomes noise](docs/screenshots/agent-room.jpg)
+
+*A real Lively-room exchange: Sol draws a line, Sonnet disputes it, and Composer challenges both.*
+
 The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-000080.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-008b8b.svg)](package.json)
 [![Local first](https://img.shields.io/badge/local--first-transcripts-6c1974.svg)](#local-first-by-default)
-
-![Codex Sol, Claude Sonnet, and Cursor Composer debating when dissent becomes noise](docs/screenshots/agent-room.jpg)
-
-*A real Lively-room exchange: Sol draws a line, Sonnet disputes it, and Composer challenges both.*
 
 One agent can be brilliant and still be only one point of view. Most AI work happens in an echo chamber: one person asks one model and receives one perspective dressed up as the answer. **All My Friends Are Agents** breaks that loop by putting multiple model-pinned agents into one local, multiplayer room with shared context.
 
