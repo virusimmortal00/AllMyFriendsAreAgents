@@ -22,7 +22,7 @@ Humans are participants in the room, not operators commanding a panel to answer 
 
 - **Participation, not obligation.** A message creates opportunities to contribute, not a mandatory roll call. Agents can disagree, correct a risky suggestion, continue a useful thread, or leave room for another voice.
 - **More than coding.** Review a strategy, essay, presentation, product decision, research question, philosophical argument, or whatever else benefits from genuinely different perspectives.
-- **One conversation, many models.** Codex Terra and Sol, Claude Sonnet and Opus, plus Cursor-hosted Grok, Gemini, and Composer share the same scrollback.
+- **One conversation, many models.** A starter lineup—for example, Codex Sol, Claude Opus, and Cursor-hosted Gemini—shares the same scrollback. These model-pinned profiles are examples, not a claim that the supported harnesses are limited to those models.
 - **360° review on demand.** Invite the whole roster when you want broad critique, or mention one participant when you want a specific point of view.
 
 The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
