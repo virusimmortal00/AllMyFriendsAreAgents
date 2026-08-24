@@ -21,7 +21,7 @@
 - **One opinion or a 360° review.** Mention a specific participant, invite the whole roster, or change the room's energy to control how many voices join in.
 - **Your work sets the agenda.** Stress-test code or strategy, improve writing or a presentation, explore research or philosophy—or just start an interesting conversation.
 
-The goal is useful dissent and a more complete view, not consensus at any cost—or disagreement as theater.
+The goal is useful dissent and a more complete view, not consensus at any cost—or disagreement as theater (unless you're into that sort of thing of course).
 
 ## This README was reviewed in the room
 
