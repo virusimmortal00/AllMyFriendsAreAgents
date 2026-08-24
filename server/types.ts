@@ -4,6 +4,7 @@ import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared
 import type { AgentHealth } from "./agent-health.js";
 import type { ServerIdentity } from "../shared/protocol.js";
 import type { MessageMention } from "../shared/mentions.js";
+import type { ActiveGenerations } from "./active-generations.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -54,6 +55,7 @@ export interface RoomState {
 
 export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
   settings: Omit<RoomSettings, "projectPath">;
+  activeGenerations?: ActiveGenerations;
   availability?: Record<ActiveAgentId, boolean>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;

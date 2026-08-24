@@ -71,7 +71,7 @@ function memoryStorage(): Storage {
   };
 }
 
-function room(instanceId: string, messages: RoomState["messages"] = []): RoomState {
+function room(instanceId: string, messages: RoomState["messages"] = [], state: Partial<RoomState> = {}): RoomState {
   return {
     messages,
     settings: {
@@ -84,6 +84,7 @@ function room(instanceId: string, messages: RoomState["messages"] = []): RoomSta
     status: "idle",
     humans: [human],
     server: { instanceId, protocolVersion: ROOM_PROTOCOL_VERSION },
+    ...state,
   };
 }
 
@@ -122,6 +123,78 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("shows typing only for active generation IDs and returns to idle after success and provider failure", async () => {
+    await renderConnected();
+    expect(screen.getByText("Room is idle")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      status: "working",
+      activeAgent: "claude-opus",
+      activeGenerations: { successful: "codex-sol" },
+    })));
+    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      status: "working",
+      activeAgent: "claude-opus",
+      activeGenerations: {},
+    })));
+    expect(screen.getByText("Room is idle")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      status: "working",
+      activeGenerations: { failing: "claude-sonnet" },
+    })));
+    expect(screen.getByText("Claude [Claude Sonnet 5] is typing...")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      status: "idle",
+      activeGenerations: {},
+      agentHealth: {
+        "claude-sonnet": {
+          status: "cooldown",
+          reason: "provider_error",
+          message: "Provider disconnected.",
+          since: "2026-08-24T12:00:00.000Z",
+        },
+      },
+    })));
+    expect(screen.getByText("Room is idle")).toBeTruthy();
+  });
+
+  it("replaces stale typing state with the authoritative reconnect snapshot", async () => {
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      status: "working",
+      activeGenerations: { abandoned: "cursor-gemini" },
+    })));
+    expect(screen.getByText("Cursor [Gemini 3.1 Pro] is typing...")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].fail());
+    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
+    act(() => ControlledEventSource.instances[1].emit(room("server-after", [], {
+      status: "working",
+      activeAgent: "cursor-gemini",
+      activeGenerations: {},
+    })));
+
+    await waitFor(() => expect(screen.getByText("Room is idle")).toBeTruthy());
+    expect(screen.queryByText(/typing\.\.\./)).toBeNull();
+  });
+
+  it("uses a collective label for different overlapping agents and a specific label when overlap has one agent", async () => {
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      activeGenerations: { first: "codex-sol", second: "codex-sol" },
+    })));
+    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      activeGenerations: { first: "codex-sol", second: "claude-opus" },
+    })));
+    expect(screen.getByText("Agents are typing...")).toBeTruthy();
+  });
+
   it("warns before resetting identity and preserves room state and draft when canceled", async () => {
     const user = userEvent.setup();
     const composer = await renderConnected([{ id: "history", speaker: "codex-sol", text: "Keep the room", timestamp: "2026-08-21T12:00:00.000Z" }]);

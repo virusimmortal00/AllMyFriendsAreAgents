@@ -50,6 +50,7 @@ export interface RoomState {
   };
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
+  activeGenerations?: Record<string, AgentId>;
   error?: string;
   availability?: Record<ActiveAgentId, boolean>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;

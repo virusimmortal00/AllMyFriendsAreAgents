@@ -28,6 +28,7 @@ import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
+import { ActiveGenerationTracker } from "./active-generations.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -49,6 +50,7 @@ const storageConfiguration = resolveStorageConfiguration(projectRoot);
 const store = await openRoomRepository(projectRoot, storageConfiguration);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
 const roomEvents = new RoomEventStream();
+const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
@@ -95,7 +97,7 @@ function roomSnapshot() {
 }
 
 function publicRoomSnapshot() {
-  return { ...publicRoomState(roomSnapshot()), agentHealth: agentHealth.snapshot(), server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot()), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), server: serverIdentity };
 }
 
 function broadcast() {
@@ -132,7 +134,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   let result;
   try {
     const assignmentWorkspace = includeDiff ? undefined : await assignmentLifecycle.workspaceForAgent(agent);
-    result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal, assignmentWorkspace);
+    result = await runAgent(agent, before, instruction, includeDiff, generationJournal, generationCancellation.signal, assignmentWorkspace, activeGenerations);
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
     if (!activeAgent) throw error;
@@ -347,7 +349,12 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 }
 
 app.get("/api/state", async (_request, response) => {
-  response.json({ ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)), agentHealth: agentHealth.snapshot(), server: serverIdentity });
+  response.json({
+    ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)),
+    activeGenerations: activeGenerations.snapshot(),
+    agentHealth: agentHealth.snapshot(),
+    server: serverIdentity,
+  });
 });
 
 app.get("/api/ready", (_request, response) => {
@@ -696,6 +703,7 @@ let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  activeGenerations.clear();
   coordinatorHeartbeat.close();
   httpServer.close((error) => {
     if (error) {

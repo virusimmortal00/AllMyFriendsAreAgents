@@ -359,7 +359,9 @@ export default function App() {
     roomRevealed.current = true;
   }, [ready, room.messages.length, connectionEpoch]);
 
-  const working = room.status === "working";
+  const activeGenerationAgents = Object.values(room.activeGenerations || {});
+  const activeTypingAgents = [...new Set(activeGenerationAgents)];
+  const working = activeGenerationAgents.length > 0;
 
   async function withErrorHandling(action: () => Promise<unknown>) {
     try {
@@ -505,8 +507,8 @@ export default function App() {
   }
 
   const statusText = working
-    ? room.activeAgent
-      ? `${agentScreenName(room.activeAgent)} is typing...`
+    ? activeTypingAgents.length === 1
+      ? `${agentScreenName(activeTypingAgents[0])} is typing...`
       : "Agents are typing..."
     : room.status === "error"
       ? "Room needs attention"
