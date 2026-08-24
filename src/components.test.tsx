@@ -8,44 +8,35 @@ import { LoadingScreen, NameEntry } from "./App";
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
     const html = renderToStaticMarkup(<RoomRoster availability={{
-      "codex-terra": true,
       "codex-sol": true,
-      "claude-sonnet": false,
-      "claude-opus": true,
+      "claude-sonnet": true,
       "cursor-grok": true,
       "cursor-gemini": true,
       "cursor-composer": true,
-    }} agentHealth={{
-      "claude-opus": {
-        status: "cooldown",
-        reason: "rate_limit",
-        message: "Provider usage limit reached.",
-        since: "2026-08-21T17:00:00.000Z",
-        retryAt: "2026-08-21T17:15:00.000Z",
-      },
-    }} humans={[
+      "cursor-gemini-flash": true,
+      "cursor-glm": true,
+    }} agentHealth={{}} humans={[
       { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("6 agents");
+    expect(html).toContain("7 agents");
     expect(html).toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
-    expect(html).toContain("Codex [gpt-5.6 Terra]");
+    expect(html).not.toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
-    expect(html).toContain("Claude [Claude Opus 5]");
-    expect(html).toContain("presence-status--cooldown");
-    expect(html).toContain("Provider usage limit reached.");
-    expect(html).toContain("Cooling down until");
+    expect(html).not.toContain("Claude [Claude Opus 5]");
     expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Cursor [Gemini 3.1 Pro]");
     expect(html).toContain("Cursor [Composer 2.5]");
+    expect(html).toContain("Cursor [Gemini 3.7 Flash]");
+    expect(html).toContain("Cursor [GLM 5.2]");
     expect(html).toContain("Alice (You)");
     expect(html).toContain("Bob");
-    expect(html).not.toContain("Claude [Claude Sonnet 5]");
+    expect(html).toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
+    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(7);
     expect(html).not.toContain("Configure You");
   });
 });
@@ -54,7 +45,7 @@ describe("AgentSettingsDialog", () => {
   it("shows one agent's connection and project permission away from room settings", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
-        agent="codex-terra"
+        agent="cursor-grok"
         available
         writableAgent="codex-sol"
         disabled={false}
@@ -64,7 +55,7 @@ describe("AgentSettingsDialog", () => {
     );
 
     expect(html).toContain('role="dialog"');
-    expect(html).toContain("Codex [gpt-5.6 Terra]");
+    expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Connected to the room");
     expect(html).toContain("Allow this agent to edit project files");
     expect(html).toContain("remove edit access from Codex [gpt-5.6 Sol]");
@@ -74,9 +65,9 @@ describe("AgentSettingsDialog", () => {
   it("shows the selected agent's edit permission as enabled", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
-        agent="codex-terra"
+        agent="codex-sol"
         available
-        writableAgent="codex-terra"
+        writableAgent="codex-sol"
         disabled={false}
         onWritableChange={() => undefined}
         onClose={() => undefined}
@@ -89,7 +80,7 @@ describe("AgentSettingsDialog", () => {
   it("explains a participant-local provider cooldown", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
-        agent="claude-opus"
+        agent="claude-sonnet"
         available
         health={{
           status: "cooldown",

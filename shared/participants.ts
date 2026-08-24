@@ -9,6 +9,7 @@ export const AGENT_PROFILES = {
     conversationalName: "Luna",
     supportsProjectWrites: true,
   },
+  // Retained for historical transcript rendering. Terra is no longer active.
   "codex-terra": {
     id: "codex-terra",
     provider: "codex",
@@ -36,6 +37,8 @@ export const AGENT_PROFILES = {
     conversationalName: "Claude",
     supportsProjectWrites: true,
   },
+  // Retained for historical transcript rendering. Opus is disabled because its
+  // cost and provider-wide quota impact are disproportionate for room turns.
   "claude-opus": {
     id: "claude-opus",
     provider: "claude",
@@ -72,6 +75,24 @@ export const AGENT_PROFILES = {
     conversationalName: "Composer",
     supportsProjectWrites: true,
   },
+  "cursor-gemini-flash": {
+    id: "cursor-gemini-flash",
+    provider: "cursor",
+    displayName: "Cursor",
+    modelId: "gemini-3.7-flash-high",
+    modelLabel: "Gemini 3.7 Flash",
+    conversationalName: "Flash",
+    supportsProjectWrites: true,
+  },
+  "cursor-glm": {
+    id: "cursor-glm",
+    provider: "cursor",
+    displayName: "Cursor",
+    modelId: "glm-5.2-high",
+    modelLabel: "GLM 5.2",
+    conversationalName: "GLM",
+    supportsProjectWrites: true,
+  },
 } as const;
 
 export type AgentId = keyof typeof AGENT_PROFILES;
@@ -80,13 +101,13 @@ export type ParticipantId = "you" | AgentId;
 export type SpeakerId = ParticipantId | "system";
 
 export const AGENT_IDS = [
-  "codex-terra",
   "codex-sol",
   "claude-sonnet",
-  "claude-opus",
   "cursor-grok",
   "cursor-gemini",
   "cursor-composer",
+  "cursor-gemini-flash",
+  "cursor-glm",
 ] as const satisfies readonly AgentId[];
 export type ActiveAgentId = (typeof AGENT_IDS)[number];
 export type WritableAgent = ActiveAgentId | "nobody";

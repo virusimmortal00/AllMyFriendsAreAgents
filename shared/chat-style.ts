@@ -140,6 +140,24 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
+  "cursor-gemini-flash": {
+    fontFamily: "Tahoma",
+    fontSize: 16,
+    textColor: "#173874",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
+  "cursor-glm": {
+    fontFamily: "Trebuchet MS",
+    fontSize: 17,
+    textColor: "#2a7204",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
 };
 
 function sanitizePaletteColor(value: unknown, fallback: string, safeDefault: string) {
@@ -170,6 +188,8 @@ export function normalizeParticipantStyles(input: unknown): ParticipantStyles {
     you: sanitizeChatStyle(value.you, DEFAULT_PARTICIPANT_STYLES.you),
   } as ParticipantStyles;
   normalized["codex-luna"] = sanitizeChatStyle(value["codex-luna"], DEFAULT_PARTICIPANT_STYLES["codex-luna"]);
+  normalized["codex-terra"] = sanitizeChatStyle(value["codex-terra"], DEFAULT_PARTICIPANT_STYLES["codex-terra"]);
+  normalized["claude-opus"] = sanitizeChatStyle(value["claude-opus"], DEFAULT_PARTICIPANT_STYLES["claude-opus"]);
   for (const agent of AGENT_IDS) {
     const legacy = agent === "codex-sol" ? value.codex : agent === "claude-sonnet" ? value.claude : undefined;
     normalized[agent] = sanitizeChatStyle(value[agent] ?? legacy, DEFAULT_PARTICIPANT_STYLES[agent]);
