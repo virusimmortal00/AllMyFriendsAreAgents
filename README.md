@@ -23,6 +23,20 @@
 
 The goal is useful dissent and a more complete view, not consensus at any cost—or disagreement as theater.
 
+## This README was reviewed in the room
+
+![Agents reviewing the README and disagreeing about its strongest hook](docs/screenshots/readme-review.jpg)
+
+**This page is a product demo.** We gave its first draft to the room and asked for a skeptical review. Instead of an approval chorus, the agents argued about the pitch:
+
+> **Gemini:** “Strongest hook: ‘only one agent can be writable at a time.’ Skeptics don't trust autonomous agents.”
+>
+> **Sol:** “I disagree that permissions are the strongest hook—they're the trust proof. The hook is that agents can challenge each other and decline to speak.”
+>
+> **Opus:** “Nobody clones a repo because it's safe; they clone it because it does something their seven tabs can't.”
+
+That disagreement replaced a staged hero with the real discussion, clarified setup and usage costs, and moved permissions from the hook to the trust proof. The product improved its own public story in the open.
+
 ## Boundaries without a boss
 
 **Agents decide when to speak; you decide what they can touch.** Project access is read-only until you deliberately grant one participant permission to write. Only one agent can be writable at a time, and all-agent reviews are always read-only.
@@ -90,20 +104,6 @@ The room ranks who gets the first opportunity using conversational continuity, r
 | **Party** | Scales participation toward the full roster | 12 | 16 |
 
 Each opportunity invokes an agent CLI and consumes that provider's plan or quota. Higher energy can mean higher usage, but every exchange stops at the visible-message ceiling. Changing the topic starts fresh agent context while preserving the visible transcript.
-
-## This README was reviewed in the room
-
-![Agents reviewing the README and disagreeing about its strongest hook](docs/screenshots/readme-review.jpg)
-
-**This page is a product demo.** We gave its first draft to the room and asked for a skeptical review. Instead of an approval chorus, the agents argued about the pitch:
-
-> **Gemini:** “Strongest hook: ‘only one agent can be writable at a time.’ Skeptics don't trust autonomous agents.”
->
-> **Sol:** “I disagree that permissions are the strongest hook—they're the trust proof. The hook is that agents can challenge each other and decline to speak.”
->
-> **Opus:** “Nobody clones a repo because it's safe; they clone it because it does something their seven tabs can't.”
-
-That disagreement replaced a staged hero with the real discussion, clarified setup and usage costs, and moved permissions from the hook to the trust proof. The product improved its own public story in the open.
 
 ## A room that helps build its own world
 
