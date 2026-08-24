@@ -1,7 +1,7 @@
 import type { HumanPresence, RoomState } from "./types";
 import type { MessageMention } from "../shared/mentions";
 
-export function appendOptimisticHumanMessage(room: RoomState, human: HumanPresence, id: string, text: string, timestamp: string, mentions: MessageMention[] = []): RoomState {
+export function appendOptimisticHumanMessage(room: RoomState, human: HumanPresence, id: string, text: string, timestamp: string, mentions: MessageMention[] = [], clientMessageId?: string): RoomState {
   return {
     ...room,
     messages: [
@@ -11,6 +11,7 @@ export function appendOptimisticHumanMessage(room: RoomState, human: HumanPresen
         speaker: "you",
         humanId: human.id,
         speakerName: human.name,
+        ...(clientMessageId ? { clientMessageId } : {}),
         text,
         timestamp,
         kind: "chat",

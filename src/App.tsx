@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, RoomControls, RoomRoster, Transcript, TranscriptHeader, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
@@ -15,6 +15,8 @@ import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
 import { useDismissibleLayer, useModalOverlay } from "./overlay";
+import { reconcileRoomEvent } from "./room-reconciliation";
+import type { RoomProtocolPosition } from "../shared/protocol";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -108,7 +110,13 @@ export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (nam
 }
 
 export default function App() {
-  const [room, setRoom] = useState<RoomState>(EMPTY_ROOM);
+  const [room, setRoomState] = useState<RoomState>(EMPTY_ROOM);
+  const roomRef = useRef(room);
+  const setRoom = useCallback((action: SetStateAction<RoomState>) => {
+    const next = typeof action === "function" ? action(roomRef.current) : action;
+    roomRef.current = next;
+    setRoomState(next);
+  }, []);
   const [savedHuman, setSavedHuman] = useState(loadHumanProfile);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [resendingPending, setResendingPending] = useState(false);
@@ -147,6 +155,7 @@ export default function App() {
   const changeNameSubmitting = useRef(false);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
+  const roomPosition = useRef<RoomProtocolPosition | undefined>(undefined);
   const restoreDistance = useRef<number | undefined>(undefined);
   const styleSaveRevision = useRef(0);
   const joinRequestId = useRef(0);
@@ -239,10 +248,23 @@ export default function App() {
       source.onmessage = (event) => {
         if (source !== events) return;
         lastEventAt = Date.now();
-        const next = JSON.parse(event.data) as RoomState;
-        if (next.server && next.server.protocolVersion !== ROOM_PROTOCOL_VERSION) {
+        let input: unknown;
+        try {
+          input = JSON.parse(event.data);
+        } catch {
+          beginResync(source);
+          return;
+        }
+        let nextRoom: RoomState | undefined;
+        const result = reconcileRoomEvent(roomRef.current, roomPosition.current, input);
+        if (result.kind === "resync") {
+          beginResync(source);
+          return;
+        }
+        if (result.kind === "ignored") return;
+        if (result.kind === "incompatible") {
           composer.current?.flush();
-          const reloadMarker = `${next.server.instanceId}:${next.server.protocolVersion}`;
+          const reloadMarker = `${result.instanceId}:${result.protocolVersion}`;
           const reloadKey = "all-my-friends-are-agents-protocol-reload";
           if (window.sessionStorage.getItem(reloadKey) !== reloadMarker) {
             window.sessionStorage.setItem(reloadKey, reloadMarker);
@@ -253,18 +275,20 @@ export default function App() {
           source.close();
           return;
         }
+        nextRoom = result.room;
+        roomPosition.current = result.position;
         window.sessionStorage.removeItem("all-my-friends-are-agents-protocol-reload");
         const previousInstance = serverInstance.current;
-        if (next.server?.instanceId) serverInstance.current = next.server.instanceId;
-        setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
-        setPendingSend((current) => current && next.messages.some((message) => message.clientMessageId === current.clientMessageId) ? null : current);
+        if (nextRoom.server?.instanceId) serverInstance.current = nextRoom.server.instanceId;
+        setRoom(nextRoom);
+        setPendingSend((current) => current && nextRoom!.messages.some((message) => message.clientMessageId === current.clientMessageId && !message.id.startsWith("pending-")) ? null : current);
         setHasInitialState(true);
         setConnected(true);
         setClientError("");
         reconnectAttempt = 0;
         if (disconnected) {
           setConnectionEpoch((current) => current + 1);
-          if (previousInstance && next.server?.instanceId && previousInstance !== next.server.instanceId) {
+          if (previousInstance && nextRoom.server?.instanceId && previousInstance !== nextRoom.server.instanceId) {
             showTemporaryNotice("Server updated — reconnected.");
           } else {
             showTemporaryNotice("Reconnected.");
@@ -272,10 +296,22 @@ export default function App() {
         }
         disconnected = false;
       };
+      const beginResync = (failedSource: EventSource) => {
+        if (failedSource !== events) return;
+        failedSource.close();
+        events = undefined;
+        roomPosition.current = undefined;
+        if (!disconnected) restoreDistance.current = scrollDistanceFromBottom(transcript.current);
+        disconnected = true;
+        setConnected(false);
+        setConnectionNotice("Room stream changed — resynchronizing…");
+        scheduleReconnect();
+      };
       source.onerror = () => {
         if (source !== events) return;
         source.close();
         events = undefined;
+        roomPosition.current = undefined;
         if (!disconnected) restoreDistance.current = scrollDistanceFromBottom(transcript.current);
         disconnected = true;
         setConnected(false);
@@ -300,6 +336,7 @@ export default function App() {
 
     setConnected(false);
     setHasInitialState(false);
+    roomPosition.current = undefined;
     connectEvents();
     watchdogTimer = window.setInterval(() => {
       const source = events;
@@ -446,19 +483,17 @@ export default function App() {
     if (!message || !human || !connected) return { restoreOnFailure: false };
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
-    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions));
+    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
     try {
       setClientError("");
-      const next = await sendMessage(human.id, message, clientMessageId, mentions);
-      setRoom((current) => {
-        const stillPending = current.messages.some(({ id }) => id === optimisticId);
-        if (!stillPending && current.messages.length >= next.messages.length) return current;
-        return { ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth };
-      });
+      await sendMessage(human.id, message, clientMessageId, mentions);
       return { restoreOnFailure: false };
     } catch (error) {
+      const delivered = roomRef.current.messages.some(({ clientMessageId: deliveredId, id }) =>
+        deliveredId === clientMessageId && !id.startsWith("pending-")
+      );
       setRoom((current) => discardOptimisticMessage(current, optimisticId));
-      if (error instanceof ApiRequestError && error.outcomeUnknown) {
+      if (error instanceof ApiRequestError && error.outcomeUnknown && !delivered) {
         setPendingSend({ clientMessageId, text: message, mentions });
       }
       setClientError(error instanceof Error ? error.message : String(error));
@@ -473,8 +508,7 @@ export default function App() {
     void (async () => {
       try {
         setClientError("");
-        const next = await sendMessage(human.id, pending.text, pending.clientMessageId, pending.mentions || []);
-        setRoom((current) => ({ ...next, availability: current.availability, agentHealth: next.agentHealth || current.agentHealth }));
+        await sendMessage(human.id, pending.text, pending.clientMessageId, pending.mentions || []);
         setPendingSend(null);
       } catch (error) {
         setClientError(error instanceof Error ? error.message : String(error));
