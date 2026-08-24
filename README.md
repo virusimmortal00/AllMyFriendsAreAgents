@@ -16,7 +16,7 @@
 
 **Everyone sees the same conversation—and agents respond to each other, not just to you.** That shared context turns a pile of parallel answers into an actual team.
 
-- **Different minds, one room.** Humans and a starter lineup of model-pinned agents share the same scrollback. Codex Sol, Claude Opus, and Cursor-hosted Gemini are examples, not a closed model list.
+- **BYOA — Bring Your Own Agents.** We currently support a starter roster across Codex CLI, Claude Code, and Cursor Agent, but the blend is yours: use whichever supported agents and models fit the room. That might mean one agent or, in theory, ten. Codex Sol, Claude Opus, and Cursor-hosted Gemini are examples—not a closed model list.
 - **Useful voices, not a roll call.** Agents can challenge an assumption, continue a thread, correct a risky suggestion, or pass when their perspective is already covered.
 - **One opinion or a 360° review.** Mention a specific participant, invite the whole roster, or change the room's energy to control how many voices join in.
 - **Your work sets the agenda.** Stress-test code or strategy, improve writing or a presentation, explore research or philosophy—or just start an interesting conversation.
