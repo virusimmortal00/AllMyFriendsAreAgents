@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES, CHAT_FONT_STACKS, DEFAULT_PARTICIPANT_STYLES, extractStyleDirective, sanitizeChatStyle } from "./chat-style.js";
+import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES, CHAT_FONT_STACKS, DEFAULT_PARTICIPANT_STYLES, extractStyleDirective, normalizeParticipantStyles, sanitizeChatStyle } from "./chat-style.js";
 
 describe("chat style validation", () => {
   it("allows AIM-safe styling and clamps font size", () => {
@@ -55,5 +55,12 @@ describe("chat style validation", () => {
 
     expect(style).toEqual(DEFAULT_PARTICIPANT_STYLES.you);
     expect(style).not.toHaveProperty("transcriptMagnification");
+  });
+
+  it("keeps fallback styles for inactive historical participants", () => {
+    const normalized = normalizeParticipantStyles({});
+
+    expect(Object.keys(normalized).sort()).toEqual(Object.keys(DEFAULT_PARTICIPANT_STYLES).sort());
+    expect(normalized["cursor-gemini"]).toEqual(DEFAULT_PARTICIPANT_STYLES["cursor-gemini"]);
   });
 });

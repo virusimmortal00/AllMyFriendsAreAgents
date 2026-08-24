@@ -1,4 +1,4 @@
-import { AGENT_IDS, type ParticipantId } from "./participants.js";
+import type { ParticipantId } from "./participants.js";
 
 export const CHAT_FONT_FAMILIES = [
   "Arial",
@@ -184,15 +184,13 @@ export function sanitizeChatStyle(input: unknown, fallback: ChatStyle): ChatStyl
 
 export function normalizeParticipantStyles(input: unknown): ParticipantStyles {
   const value = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  const normalized = {
-    you: sanitizeChatStyle(value.you, DEFAULT_PARTICIPANT_STYLES.you),
-  } as ParticipantStyles;
-  normalized["codex-luna"] = sanitizeChatStyle(value["codex-luna"], DEFAULT_PARTICIPANT_STYLES["codex-luna"]);
-  normalized["codex-terra"] = sanitizeChatStyle(value["codex-terra"], DEFAULT_PARTICIPANT_STYLES["codex-terra"]);
-  normalized["claude-opus"] = sanitizeChatStyle(value["claude-opus"], DEFAULT_PARTICIPANT_STYLES["claude-opus"]);
-  for (const agent of AGENT_IDS) {
-    const legacy = agent === "codex-sol" ? value.codex : agent === "claude-sonnet" ? value.claude : undefined;
-    normalized[agent] = sanitizeChatStyle(value[agent] ?? legacy, DEFAULT_PARTICIPANT_STYLES[agent]);
+  const normalized = {} as ParticipantStyles;
+  for (const participant of Object.keys(DEFAULT_PARTICIPANT_STYLES) as ParticipantId[]) {
+    const legacy = participant === "codex-sol" ? value.codex : participant === "claude-sonnet" ? value.claude : undefined;
+    normalized[participant] = sanitizeChatStyle(
+      value[participant] ?? legacy,
+      DEFAULT_PARTICIPANT_STYLES[participant],
+    );
   }
   return normalized;
 }
