@@ -4,6 +4,7 @@ import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { MessageMutationAcknowledgement, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
+import type { ContinuationDashboard, ContinuationInboxEntry } from "./types";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -147,3 +148,9 @@ export async function authorizeHeartbeat(expectedRevision: number) {
 export async function emergencyStopHeartbeat(expectedRevision: number) {
   return request("/api/heartbeat/emergency-stop", { method: "POST", body: JSON.stringify({ expectedRevision, actorId: "local-human-operator", reason: "Emergency stop requested from the visible control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
 }
+
+export async function loadContinuations(): Promise<ContinuationDashboard> { return request("/api/continuations", { method: "GET", cache: "no-store" }).then((response) => response.json()); }
+export async function setContinuationPolicy(expectedRevision: number, enabled: boolean) { return request("/api/continuations/policy", { method: "PATCH", body: JSON.stringify({ expectedRevision, enabled }) }).then((response) => response.json()); }
+export async function continuationAction(jobId: string, action: "cancel" | "resume") { return request(`/api/continuations/${encodeURIComponent(jobId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
+export async function loadContinuationInbox(owner: AgentId): Promise<ContinuationInboxEntry[]> { return request(`/api/continuations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store" }).then((response) => response.json()); }
+export async function acknowledgeContinuationInbox(inboxEntryId: string, close: boolean) { return request(`/api/continuations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }

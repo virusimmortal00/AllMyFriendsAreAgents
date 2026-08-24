@@ -23,11 +23,16 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
       .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     await copyFile(path.join(options.sourceStateDirectory, "tasks.json"), path.join(normalizationDirectory, "tasks.json"))
       .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+    await copyFile(path.join(options.sourceStateDirectory, "continuations.json"), path.join(normalizationDirectory, "continuations.json"))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     const legacyStore = await RoomStore.open(options.projectRoot, normalizationDirectory);
     const state = legacyStore.snapshot();
     const assignments = await legacyStore.listAssignments();
     const tasks = (await legacyStore.listTasks()).items;
     const taskEvents = (await Promise.all(tasks.map((task) => legacyStore.listTaskEvents(task)))).flat();
+    const continuationPolicy = await legacyStore.getContinuationPolicy();
+    const continuations = await legacyStore.listContinuations();
+    const continuationInbox = (await Promise.all([...new Set(continuations.map((job) => job.owner))].map((owner) => legacyStore.listContinuationInbox(owner)))).flat();
     const sqliteStore = await SqliteRoomRepository.open(options.projectRoot, options.databasePath, {
       initializeDefaultRoom: false,
     });
@@ -39,10 +44,11 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
       }
       for (const assignment of assignments) await sqliteStore.putAssignment(assignment);
       sqliteStore.importTasks(tasks, taskEvents);
+      sqliteStore.importContinuations(continuationPolicy, continuations, continuationInbox);
     } finally {
       sqliteStore.close();
     }
-    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, tasks: tasks.length, taskEvents: taskEvents.length };
+    return { messages: state.messages.length, sessions: Object.keys(state.sessions).length, assignments: assignments.length, tasks: tasks.length, taskEvents: taskEvents.length, continuations: continuations.length, continuationInbox: continuationInbox.length };
   } finally {
     await rm(normalizationDirectory, { recursive: true, force: true });
   }
@@ -67,7 +73,7 @@ async function main() {
   const databasePath = path.resolve(argument("database") || path.join(sourceStateDirectory, "amfaa.sqlite"));
   const overwrite = process.argv.includes("--overwrite");
   const imported = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite });
-  console.log(`Imported ${imported.messages} messages, ${imported.sessions} agent sessions, ${imported.assignments} assignments, and ${imported.tasks} tasks into ${databasePath}`);
+  console.log(`Imported ${imported.messages} messages, ${imported.sessions} agent sessions, ${imported.assignments} assignments, ${imported.tasks} tasks, and ${imported.continuations} continuations into ${databasePath}`);
   console.log("The source JSON file was not modified. Set ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite only after verification.");
 }
 

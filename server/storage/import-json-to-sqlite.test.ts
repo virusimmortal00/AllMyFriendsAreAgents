@@ -9,6 +9,7 @@ import { SqliteRoomRepository } from "./sqlite-room-repository.js";
 import type { AssignmentRecord } from "../assignment-record.js";
 import { createTask } from "../../shared/task-domain.js";
 import { DEFAULT_ROOM_ID } from "./sqlite-room-repository.js";
+import { CONTINUATION_POLICY_VERSION, projectPathHash, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -46,6 +47,10 @@ describe("JSON to SQLite import", () => {
     const taskIdentity = { roomId: DEFAULT_ROOM_ID, taskId: "imported-task" };
     await legacyStore.createTask(createTask({ ...taskIdentity, title: "Imported canonical task", actor: { id: "owner" }, now: "2026-08-21T01:00:00.000Z" }));
     await legacyStore.applyTaskChange(taskIdentity, 1, { kind: "set_description", description: "history survives" }, { id: "owner" }, "2026-08-21T01:01:00.000Z");
+    const continuationPolicy: ContinuationPolicy = { schemaVersion: 1, policyVersion: CONTINUATION_POLICY_VERSION, revision: 1, roomId: DEFAULT_ROOM_ID, projectPathHash: projectPathHash(projectRoot), enabled: true, maxConcurrentPerAgent: 1, defaultBudget: { timeMs: 1000, tokenLimit: 10, toolCallLimit: 2, retryLimit: 0 }, maxInboxEntriesPerAgent: 10, inboxTtlMs: 1000, retryBackoffMs: 100, updatedAt: "2026-08-21T01:02:00.000Z", updatedBy: "owner" };
+    await legacyStore.compareAndSetContinuationPolicy(0, continuationPolicy);
+    const continuation: ContinuationRecord = { schemaVersion: 1, jobId: "imported-job", jobRevision: 1, roomId: DEFAULT_ROOM_ID, projectPathHash: projectPathHash(projectRoot), owner: "codex-sol", task: taskIdentity, taskRevision: 2, assignmentReferenceId: "assignment-ref", authority: { assignmentId: assignment.assignmentId, developerMemberId: assignment.developerMemberId, developerMemberConfigRevision: assignment.developerMemberConfigRevision, agent: assignment.agent, fencingToken: assignment.fencingToken, manifestRevision: assignment.manifestRevision, pinnedBaseSha: assignment.pinnedBaseSha }, objective: "Preserve continuation", trigger: "migration test", policyRevision: 1, policyVersion: CONTINUATION_POLICY_VERSION, capabilities: ["ANALYZE"], status: "QUEUED", budget: continuationPolicy.defaultBudget, usage: { elapsedMs: 0, tokens: 0, toolCalls: 0, attempts: 0 }, cancellationRequested: false, resultDisposition: "PENDING", resultSummary: null, blocker: null, nextEligibilityAt: null, createdAt: "2026-08-21T01:03:00.000Z", startedAt: null, updatedAt: "2026-08-21T01:03:00.000Z", completedAt: null };
+    await legacyStore.createContinuation(continuation);
     const sourcePath = path.join(sourceStateDirectory, "room.json");
     const sourceState = JSON.parse(await readFile(sourcePath, "utf8"));
     sourceState.sessions["codex-terra"] = { id: "retired-session", permission: "read-only" };
@@ -53,6 +58,8 @@ describe("JSON to SQLite import", () => {
     const sourceBefore = await readFile(sourcePath, "utf8");
     const sourceTasksPath = path.join(sourceStateDirectory, "tasks.json");
     const sourceTasksBefore = await readFile(sourceTasksPath, "utf8");
+    const sourceContinuationsPath = path.join(sourceStateDirectory, "continuations.json");
+    const sourceContinuationsBefore = await readFile(sourceContinuationsPath, "utf8");
 
     const result = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
 
@@ -61,8 +68,10 @@ describe("JSON to SQLite import", () => {
     expect(result.assignments).toBe(1);
     expect(result.tasks).toBe(1);
     expect(result.taskEvents).toBe(2);
+    expect(result.continuations).toBe(1);
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
     expect(await readFile(sourceTasksPath, "utf8")).toBe(sourceTasksBefore);
+    expect(await readFile(sourceContinuationsPath, "utf8")).toBe(sourceContinuationsBefore);
     const importedStore = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
     expect(importedStore.snapshot().sessions["codex-sol"]?.id).toBe("imported-session");
@@ -78,15 +87,18 @@ describe("JSON to SQLite import", () => {
     expect(await importedStore.getAssignment("imported-assignment")).toEqual(assignment);
     expect(await importedStore.getTask(taskIdentity)).toMatchObject({ revision: 2, description: "history survives" });
     expect((await importedStore.listTaskEvents(taskIdentity)).map(({ revision }) => revision)).toEqual([1, 2]);
+    expect(await importedStore.getContinuation("imported-job")).toEqual(continuation);
     importedStore.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(result);
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
     expect(await readFile(sourceTasksPath, "utf8")).toBe(sourceTasksBefore);
+    expect(await readFile(sourceContinuationsPath, "utf8")).toBe(sourceContinuationsBefore);
     const reopenedStore = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect((await reopenedStore.listTaskEvents(taskIdentity)).map(({ revision }) => revision)).toEqual([1, 2]);
     expect((await reopenedStore.listTasks()).items).toHaveLength(1);
     expect(await reopenedStore.listAssignments()).toHaveLength(1);
+    expect(await reopenedStore.listContinuations()).toHaveLength(1);
     reopenedStore.close();
   });
 

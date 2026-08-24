@@ -45,6 +45,8 @@ import {
 } from "../shared/task-domain.js";
 import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTaskState } from "./storage/task-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
+import { canTransitionContinuation, canTransitionContinuationInbox, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
+import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -121,25 +123,30 @@ export class RoomStore implements RoomRepository {
   readonly improvementsPath: string;
   readonly assignmentsPath: string;
   readonly tasksPath: string;
+  readonly continuationsPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
   private improvementQueue: Promise<void> = Promise.resolve();
   private assignmentQueue: Promise<void> = Promise.resolve();
   private taskQueue: Promise<void> = Promise.resolve();
+  private continuationQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
   private taskState: JsonTaskState;
+  private continuationState: JsonContinuationState;
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.assignmentsPath = path.join(stateDirectory, "assignments.json");
     this.tasksPath = path.join(stateDirectory, "tasks.json");
+    this.continuationsPath = path.join(stateDirectory, "continuations.json");
     this.state = state;
     this.improvementState = improvementState;
     this.assignments = assignments;
     this.taskState = taskState;
+    this.continuationState = continuationState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -149,6 +156,7 @@ export class RoomStore implements RoomRepository {
     const improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
     const tasksPath = path.join(stateDirectory, "tasks.json");
+    const continuationsPath = path.join(stateDirectory, "continuations.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -172,6 +180,9 @@ export class RoomStore implements RoomRepository {
         if (error.code === "ENOENT") return emptyJsonTaskState();
         throw error;
       });
+    const continuationState = await readFile(continuationsPath, "utf8")
+      .then((contents) => normalizeJsonContinuationState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonContinuationState(); throw error; });
 
     try {
       await chmod(statePath, 0o600);
@@ -225,7 +236,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -241,7 +252,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState);
       await store.save();
       return store;
     }
@@ -646,6 +657,53 @@ export class RoomStore implements RoomRepository {
     });
   }
 
+  async getContinuationPolicy() { await this.continuationQueue; return this.continuationState.policy ? structuredClone(this.continuationState.policy) : undefined; }
+  async compareAndSetContinuationPolicy(expectedRevision: number, policy: ContinuationPolicy): Promise<CasResult<ContinuationPolicy>> {
+    const value = normalizeContinuationPolicy(policy); if (!value) throw new Error("Invalid continuation policy");
+    return this.mutateContinuations<CasResult<ContinuationPolicy>>((state) => {
+      const actual = state.policy?.revision ?? 0; if (actual !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: actual } };
+      return { next: { ...state, policy: value }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async listContinuations(owner?: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.jobs).filter((job) => !owner || job.owner === owner).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.jobId.localeCompare(b.jobId))); }
+  async getContinuation(jobId: string) { await this.continuationQueue; const job = this.continuationState.jobs[jobId]; return job ? structuredClone(job) : undefined; }
+  async createContinuation(record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== 1 || value.status !== "QUEUED") throw new Error("Invalid initial continuation");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      if (state.jobs[value.jobId] || hasActiveOwner(state, value.owner)) return { result: { kind: "conflict" as const } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== expectedRevision + 1) throw new Error("Invalid continuation CAS revision");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      const current = state.jobs[value.jobId]; if (!current) return { result: { kind: "not_found" as const } };
+      if (current.jobRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!canTransitionContinuation(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (hasActiveOwner(state, value.owner, value.jobId) && ["QUEUED", "RUNNING", "WAITING_TOOL", "BLOCKED"].includes(value.status)) return { result: { kind: "conflict" as const } };
+      return { next: { ...state, jobs: { ...state.jobs, [value.jobId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } };
+    });
+  }
+  async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number): Promise<CasResult<ContinuationRecord>> {
+    const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry);
+    if (!job || !inbox || job.status !== "COMPLETED" || job.jobId !== inbox.jobId || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
+    return this.mutateContinuations<CasResult<ContinuationRecord>>((state) => {
+      const current = state.jobs[job.jobId]; if (!current) return { result: { kind: "not_found" as const } };
+      if (current.jobRevision !== expectedRevision || state.inbox[inbox.inboxEntryId]) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      if (!canTransitionContinuation(current.status, job.status)) return { result: { kind: "conflict" as const, actualRevision: current.jobRevision } };
+      const nextInbox = { ...state.inbox, [inbox.inboxEntryId]: inbox };
+      const live = Object.values(nextInbox).filter((item) => item.owner === inbox.owner && item.status !== "ARCHIVED").sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId));
+      for (const stale of live.slice(0, Math.max(0, live.length - Math.max(1, maxEntries)))) nextInbox[stale.inboxEntryId] = { ...stale, inboxRevision: stale.inboxRevision + 1, status: "ARCHIVED", updatedAt: inbox.createdAt, closedAt: inbox.createdAt };
+      return { next: { ...state, jobs: { ...state.jobs, [job.jobId]: job }, inbox: nextInbox }, result: { kind: "accepted" as const, value: structuredClone(job) } };
+    });
+  }
+  async listContinuationInbox(owner: AgentId) { await this.continuationQueue; return structuredClone(Object.values(this.continuationState.inbox).filter((entry) => entry.owner === owner).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.inboxEntryId.localeCompare(b.inboxEntryId))); }
+  async getContinuationInboxEntry(inboxEntryId: string) { await this.continuationQueue; const entry = this.continuationState.inbox[inboxEntryId]; return entry ? structuredClone(entry) : undefined; }
+  async compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
+    const value = normalizeContinuationInboxEntry(entry); if (!value || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox CAS revision");
+    return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(current.status, value.status)) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value } }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
+  }
+
   private async mutateImprovements<T>(
     mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
   ): Promise<T> {
@@ -694,6 +752,13 @@ export class RoomStore implements RoomRepository {
     });
     this.taskQueue = operation.catch(() => undefined);
     return result;
+  }
+
+  private async mutateContinuations<T>(mutation: (state: JsonContinuationState) => { next?: JsonContinuationState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.continuationQueue.then(async () => { try { const changed = mutation(this.continuationState); if (changed.next) { const temporaryPath = `${this.continuationsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(changed.next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.continuationsPath); await chmod(this.continuationsPath, 0o600); this.continuationState = changed.next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    this.continuationQueue = operation.catch(() => undefined); return result;
   }
 
   private async save() {

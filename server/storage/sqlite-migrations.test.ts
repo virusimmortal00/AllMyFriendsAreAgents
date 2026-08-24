@@ -34,8 +34,11 @@ describe("SQLite migrations", () => {
         "canonical_tasks",
         "canonical_task_events",
         "canonical_task_links",
+        "continuation_policies",
+        "continuation_jobs",
+        "continuation_inbox",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 8 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 9 });
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(messageColumns).toContain("client_message_id");
       expect(messageColumns).toContain("mentions_json");

@@ -141,6 +141,17 @@ export class AssignmentLifecycleService {
     return assignment.workspacePath;
   }
 
+  /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
+  async authorityForContinuation(assignmentId: string, agent: AgentId): Promise<{ assignment: AssignmentRecord; workspace: string } | undefined> {
+    const assignments = await this.reconcile();
+    const assignment = assignments.find((candidate) => candidate.assignmentId === assignmentId && candidate.agent === agent);
+    if (!assignment || !["ACTIVE", "RECOVERABLE"].includes(assignment.lifecycleStatus)) return undefined;
+    if (this.rooms.snapshot().settings.writableAgent !== agent) return undefined;
+    const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
+    if (governed.kind !== "ok") return undefined;
+    return { assignment, workspace: assignment.workspacePath };
+  }
+
   /** Cleanup is intentionally conservative: it only marks merged clean work complete. */
   async cleanup(): Promise<readonly AssignmentRecord[]> {
     const assignments = await this.reconcile();

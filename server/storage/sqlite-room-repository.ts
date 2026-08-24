@@ -44,6 +44,7 @@ import {
 } from "../../shared/task-domain.js";
 import { paginateTasks } from "./task-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./room-repository.js";
+import { canTransitionContinuation, canTransitionContinuationInbox, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
 
 export const DEFAULT_ROOM_ID = CANONICAL_ROOM_ID;
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -744,6 +745,85 @@ export class SqliteRoomRepository implements RoomRepository {
       value.developerMemberConfigRevision, value.agent, value.fencingToken, value.manifestRevision,
       value.pinnedBaseSha, value.branch, value.observedHeadSha, value.workspacePath,
       value.lifecycleStatus, JSON.stringify(value.recovery), value.createdAt, value.updatedAt);
+  }
+
+  async getContinuationPolicy() {
+    const row = this.database.prepare("SELECT projection_json FROM continuation_policies WHERE room_id = ?").get(DEFAULT_ROOM_ID) as { projection_json: string } | undefined;
+    return row ? normalizeContinuationPolicy(parseJson(row.projection_json, undefined)) : undefined;
+  }
+  async compareAndSetContinuationPolicy(expectedRevision: number, policy: ContinuationPolicy): Promise<CasResult<ContinuationPolicy>> {
+    const value = normalizeContinuationPolicy(policy); if (!value) throw new Error("Invalid continuation policy");
+    if (expectedRevision === 0) {
+      const result = this.database.prepare("INSERT OR IGNORE INTO continuation_policies(room_id, revision, projection_json, updated_at) VALUES (?, ?, ?, ?)").run(DEFAULT_ROOM_ID, value.revision, JSON.stringify(value), value.updatedAt);
+      return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", actualRevision: (await this.getContinuationPolicy())?.revision };
+    }
+    const result = this.database.prepare("UPDATE continuation_policies SET revision = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND revision = ?").run(value.revision, JSON.stringify(value), value.updatedAt, DEFAULT_ROOM_ID, expectedRevision);
+    return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", actualRevision: (await this.getContinuationPolicy())?.revision };
+  }
+  async listContinuations(owner?: AgentId) {
+    const rows = (owner
+      ? this.database.prepare("SELECT projection_json FROM continuation_jobs WHERE room_id = ? AND owner_agent_id = ? ORDER BY updated_at DESC, job_id").all(DEFAULT_ROOM_ID, owner)
+      : this.database.prepare("SELECT projection_json FROM continuation_jobs WHERE room_id = ? ORDER BY updated_at DESC, job_id").all(DEFAULT_ROOM_ID)) as unknown as Array<{ projection_json: string }>;
+    return rows.map((row) => normalizeContinuationRecord(parseJson(row.projection_json, undefined))).filter((value): value is ContinuationRecord => Boolean(value));
+  }
+  async getContinuation(jobId: string) { const row = this.database.prepare("SELECT projection_json FROM continuation_jobs WHERE room_id = ? AND job_id = ?").get(DEFAULT_ROOM_ID, jobId) as { projection_json: string } | undefined; return row ? normalizeContinuationRecord(parseJson(row.projection_json, undefined)) : undefined; }
+  async createContinuation(record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== 1 || value.status !== "QUEUED") throw new Error("Invalid initial continuation");
+    try { this.database.prepare("INSERT INTO continuation_jobs(room_id, job_id, owner_agent_id, job_revision, status, projection_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, value.jobId, value.owner, value.jobRevision, value.status, JSON.stringify(value), value.createdAt, value.updatedAt); return { kind: "accepted", value: structuredClone(value) }; }
+    catch (error) { if (String(error).includes("UNIQUE constraint failed")) return { kind: "conflict" }; throw error; }
+  }
+  async compareAndSetContinuation(expectedRevision: number, record: ContinuationRecord): Promise<CasResult<ContinuationRecord>> {
+    const value = normalizeContinuationRecord(record); if (!value || value.jobRevision !== expectedRevision + 1) throw new Error("Invalid continuation CAS revision");
+    const before = await this.getContinuation(value.jobId); if (!before) return { kind: "not_found" }; if (before.jobRevision !== expectedRevision || !canTransitionContinuation(before.status, value.status)) return { kind: "conflict", actualRevision: before.jobRevision };
+    try { const result = this.database.prepare("UPDATE continuation_jobs SET job_revision = ?, status = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND job_id = ? AND job_revision = ?").run(value.jobRevision, value.status, JSON.stringify(value), value.updatedAt, DEFAULT_ROOM_ID, value.jobId, expectedRevision); if (result.changes) return { kind: "accepted", value: structuredClone(value) }; const existing = await this.getContinuation(value.jobId); return existing ? { kind: "conflict", actualRevision: existing.jobRevision } : { kind: "not_found" }; }
+    catch (error) { if (String(error).includes("UNIQUE constraint failed")) return { kind: "conflict" }; throw error; }
+  }
+  async completeContinuation(expectedRevision: number, record: ContinuationRecord, entry: ContinuationInboxEntry, maxEntries: number): Promise<CasResult<ContinuationRecord>> {
+    const job = normalizeContinuationRecord(record); const inbox = normalizeContinuationInboxEntry(entry); if (!job || !inbox || job.status !== "COMPLETED" || job.jobId !== inbox.jobId || job.jobRevision !== expectedRevision + 1) throw new Error("Invalid atomic completion");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const beforeRow = this.database.prepare("SELECT projection_json FROM continuation_jobs WHERE room_id = ? AND job_id = ?").get(DEFAULT_ROOM_ID, job.jobId) as { projection_json: string } | undefined;
+      const before = beforeRow ? normalizeContinuationRecord(parseJson(beforeRow.projection_json, undefined)) : undefined;
+      if (!before || before.jobRevision !== expectedRevision || !canTransitionContinuation(before.status, job.status)) { this.database.exec("ROLLBACK"); return before ? { kind: "conflict", actualRevision: before.jobRevision } : { kind: "not_found" }; }
+      const changed = this.database.prepare("UPDATE continuation_jobs SET job_revision = ?, status = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND job_id = ? AND job_revision = ?").run(job.jobRevision, job.status, JSON.stringify(job), job.updatedAt, DEFAULT_ROOM_ID, job.jobId, expectedRevision);
+      if (!changed.changes) { const row = this.database.prepare("SELECT job_revision FROM continuation_jobs WHERE room_id = ? AND job_id = ?").get(DEFAULT_ROOM_ID, job.jobId) as { job_revision: number } | undefined; this.database.exec("ROLLBACK"); return row ? { kind: "conflict", actualRevision: row.job_revision } : { kind: "not_found" }; }
+      this.database.prepare("INSERT INTO continuation_inbox(room_id, inbox_entry_id, job_id, owner_agent_id, inbox_revision, status, projection_json, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, inbox.inboxEntryId, inbox.jobId, inbox.owner, inbox.inboxRevision, inbox.status, JSON.stringify(inbox), inbox.createdAt, inbox.updatedAt, inbox.expiresAt);
+      const rows = this.database.prepare("SELECT projection_json FROM continuation_inbox WHERE room_id = ? AND owner_agent_id = ? AND status <> 'ARCHIVED' ORDER BY created_at, inbox_entry_id").all(DEFAULT_ROOM_ID, inbox.owner) as unknown as Array<{ projection_json: string }>;
+      for (const stale of rows.map((row) => normalizeContinuationInboxEntry(parseJson(row.projection_json, undefined))).filter((v): v is ContinuationInboxEntry => Boolean(v)).slice(0, Math.max(0, rows.length - Math.max(1, maxEntries)))) { const archived = { ...stale, inboxRevision: stale.inboxRevision + 1, status: "ARCHIVED" as const, updatedAt: inbox.createdAt, closedAt: inbox.createdAt }; this.database.prepare("UPDATE continuation_inbox SET inbox_revision = ?, status = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND inbox_entry_id = ? AND inbox_revision = ?").run(archived.inboxRevision, archived.status, JSON.stringify(archived), archived.updatedAt, DEFAULT_ROOM_ID, archived.inboxEntryId, stale.inboxRevision); }
+      this.database.exec("COMMIT"); return { kind: "accepted", value: structuredClone(job) };
+    } catch (error) { this.database.exec("ROLLBACK"); if (String(error).includes("UNIQUE constraint failed")) return { kind: "conflict" }; throw error; }
+  }
+  async listContinuationInbox(owner: AgentId) { const rows = this.database.prepare("SELECT projection_json FROM continuation_inbox WHERE room_id = ? AND owner_agent_id = ? ORDER BY created_at DESC, inbox_entry_id").all(DEFAULT_ROOM_ID, owner) as unknown as Array<{ projection_json: string }>; return rows.map((row) => normalizeContinuationInboxEntry(parseJson(row.projection_json, undefined))).filter((value): value is ContinuationInboxEntry => Boolean(value)); }
+  async getContinuationInboxEntry(inboxEntryId: string) { const row = this.database.prepare("SELECT projection_json FROM continuation_inbox WHERE room_id = ? AND inbox_entry_id = ?").get(DEFAULT_ROOM_ID, inboxEntryId) as { projection_json: string } | undefined; return row ? normalizeContinuationInboxEntry(parseJson(row.projection_json, undefined)) : undefined; }
+  async compareAndSetContinuationInbox(expectedRevision: number, entry: ContinuationInboxEntry): Promise<CasResult<ContinuationInboxEntry>> {
+    const value = normalizeContinuationInboxEntry(entry); if (!value || value.inboxRevision !== expectedRevision + 1) throw new Error("Invalid inbox CAS revision");
+    const before = await this.getContinuationInboxEntry(value.inboxEntryId); if (!before) return { kind: "not_found" }; if (before.inboxRevision !== expectedRevision || !canTransitionContinuationInbox(before.status, value.status)) return { kind: "conflict", actualRevision: before.inboxRevision };
+    const changed = this.database.prepare("UPDATE continuation_inbox SET inbox_revision = ?, status = ?, projection_json = ?, updated_at = ?, expires_at = ? WHERE room_id = ? AND inbox_entry_id = ? AND inbox_revision = ?").run(value.inboxRevision, value.status, JSON.stringify(value), value.updatedAt, value.expiresAt, DEFAULT_ROOM_ID, value.inboxEntryId, expectedRevision);
+    if (changed.changes) return { kind: "accepted", value: structuredClone(value) }; const existing = await this.getContinuationInboxEntry(value.inboxEntryId); return existing ? { kind: "conflict", actualRevision: existing.inboxRevision } : { kind: "not_found" };
+  }
+  importContinuations(policy: ContinuationPolicy | undefined, jobs: readonly ContinuationRecord[], inbox: readonly ContinuationInboxEntry[]) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (policy) {
+        const value = normalizeContinuationPolicy(policy); if (!value) throw new Error("Invalid imported continuation policy");
+        const existing = this.database.prepare("SELECT projection_json FROM continuation_policies WHERE room_id = ?").get(DEFAULT_ROOM_ID) as { projection_json: string } | undefined;
+        if (existing && existing.projection_json !== JSON.stringify(value)) throw new Error("Imported continuation policy diverges from SQLite");
+        if (!existing) this.database.prepare("INSERT INTO continuation_policies(room_id, revision, projection_json, updated_at) VALUES (?, ?, ?, ?)").run(DEFAULT_ROOM_ID, value.revision, JSON.stringify(value), value.updatedAt);
+      }
+      for (const raw of jobs) {
+        const job = normalizeContinuationRecord(raw); if (!job || job.roomId !== DEFAULT_ROOM_ID) throw new Error("Invalid imported continuation job");
+        const existing = this.database.prepare("SELECT projection_json FROM continuation_jobs WHERE room_id = ? AND job_id = ?").get(DEFAULT_ROOM_ID, job.jobId) as { projection_json: string } | undefined;
+        if (existing && existing.projection_json !== JSON.stringify(job)) throw new Error(`Continuation ${job.jobId} diverges from SQLite`);
+        if (!existing) this.database.prepare("INSERT INTO continuation_jobs(room_id, job_id, owner_agent_id, job_revision, status, projection_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, job.jobId, job.owner, job.jobRevision, job.status, JSON.stringify(job), job.createdAt, job.updatedAt);
+      }
+      for (const raw of inbox) {
+        const entry = normalizeContinuationInboxEntry(raw); if (!entry || entry.roomId !== DEFAULT_ROOM_ID) throw new Error("Invalid imported continuation inbox entry");
+        const existing = this.database.prepare("SELECT projection_json FROM continuation_inbox WHERE room_id = ? AND inbox_entry_id = ?").get(DEFAULT_ROOM_ID, entry.inboxEntryId) as { projection_json: string } | undefined;
+        if (existing && existing.projection_json !== JSON.stringify(entry)) throw new Error(`Inbox entry ${entry.inboxEntryId} diverges from SQLite`);
+        if (!existing) this.database.prepare("INSERT INTO continuation_inbox(room_id, inbox_entry_id, job_id, owner_agent_id, inbox_revision, status, projection_json, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(DEFAULT_ROOM_ID, entry.inboxEntryId, entry.jobId, entry.owner, entry.inboxRevision, entry.status, JSON.stringify(entry), entry.createdAt, entry.updatedAt, entry.expiresAt);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
   async createTask(task: Task): Promise<CreateTaskResult> {

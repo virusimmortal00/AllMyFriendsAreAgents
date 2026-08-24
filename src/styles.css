@@ -718,3 +718,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
+.continuation-workspace { min-width: 0; overflow: auto; padding: 12px; }
+.continuation-inbox-entry { margin-top: 10px; padding: 8px; border: 1px solid #8a8a8a; background: #fffef1; }
+.continuation-inbox-entry .classic-button { margin: 8px 6px 0 0; }

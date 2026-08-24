@@ -224,6 +224,10 @@ The coordinator is off by default and requires explicit UI authorization. Even t
 
 See [`docs/planning`](docs/planning) for the design records behind governed assignments, mentions, mobile containment, truthful typing state, and other in-progress work.
 
+The Tasks workspace keeps revisioned room-scoped coordination records. A task assignment reference grants no authority by itself.
+
+Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
+
 ## Build with us
 
 Run the same checks before opening a pull request:
