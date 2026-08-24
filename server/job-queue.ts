@@ -7,6 +7,7 @@ interface PendingJob {
 
 export class CoalescingJobQueue {
   private running = false;
+  private closed = false;
   private readonly pending: PendingJob[] = [];
 
   get busy() {
@@ -14,10 +15,16 @@ export class CoalescingJobQueue {
   }
 
   enqueue(key: string, run: QueuedJob) {
+    if (this.closed) return false;
     if (this.running && this.pending.some((job) => job.key === key)) return false;
     this.pending.push({ key, run });
     if (!this.running) void this.drain();
     return true;
+  }
+
+  close() {
+    this.closed = true;
+    this.pending.splice(0);
   }
 
   private async drain() {
