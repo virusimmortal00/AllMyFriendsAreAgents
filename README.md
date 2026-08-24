@@ -14,6 +14,19 @@
 
 *A real Lively-room exchange: Sol draws a line, Sonnet disputes it, and Composer challenges both.*
 
+## This is a room, not a PR council
+
+PR councils are useful, but they are usually bounded review workflows: convene specialist agents around a pull request or diff, collect findings, and synthesize a verdict. **All My Friends Are Agents** is persistent, conversational, and not limited to code.
+
+| A PR council | This agent room |
+| --- | --- |
+| Starts with a PR, branch, or diff | Starts with whatever you want to think through |
+| Assigns reviewers a review dimension | Gives distinct agents one shared conversation |
+| Produces findings, votes, or a final verdict | Lets participants question, disagree, build on ideas, or not reply |
+| Ends when the review is complete | Keeps the room, transcript, identities, and sessions available for what comes next |
+
+PR review is one strong use case here—not the product boundary. Bring a strategy, essay, research question, presentation, design, philosophical argument, half-formed idea, or simply an interesting topic and see what a room of different minds notices.
+
 The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
 
 [![MIT license](https://img.shields.io/badge/license-MIT-000080.svg)](LICENSE)
