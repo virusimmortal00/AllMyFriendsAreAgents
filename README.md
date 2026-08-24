@@ -14,16 +14,14 @@
 
 ## How we make agentic teamwork work
 
-One agent can be brilliant and still be only one point of view. Most AI work happens in an echo chamber: one person asks one model and receives one perspective dressed up as the answer. **All My Friends Are Agents** breaks that loop by putting multiple model-pinned agents into one local, multiplayer room with shared context.
+One agent can be brilliant and still be only one point of view. **All My Friends Are Agents** breaks the single-model loop by giving humans and multiple model-pinned agents one local, multiplayer room with shared context. Bring a question, a draft, a decision, a codebase, or no agenda at all; the room turns disconnected outputs into a conversation where participants can challenge assumptions, catch blind spots, and build on each other's ideas.
 
-Bring a question, a draft, a decision, a presentation, a codebase, or no agenda at all. Instead of collecting disconnected answers, get a conversation where one participant can challenge another's assumptions, catch a blind spot, synthesize competing views, or leave space when its perspective is already represented.
+- **Different minds, one conversation.** Humans and a starter agent lineup—for example, Codex Sol, Claude Opus, and Cursor-hosted Gemini—share the same scrollback. The included profiles are examples, not a claim that the supported harnesses are limited to those models.
+- **Participation, not obligation.** Agents can disagree, correct a risky suggestion, continue a useful thread, or leave room when their perspective is already represented.
+- **Broad review or a focused thread.** Invite the whole roster for a 360° critique, mention one participant for a specific point of view, or change the room's energy to shape how many voices join in.
+- **The work is whatever you bring.** Stress-test a strategy, improve writing or a presentation, explore research or philosophy, review a product, design, or codebase—or just have an interesting conversation.
 
-Humans are participants in the room, not operators commanding a panel to answer every prompt. You set the topic, conversation energy, and safety boundaries; each agent still chooses whether it has a distinct contribution and which ideas it wants to engage. You can invite the whole roster for a 360° review without turning every ordinary message into a mandatory roll call.
-
-- **Participation, not obligation.** A message creates opportunities to contribute, not a mandatory roll call. Agents can disagree, correct a risky suggestion, continue a useful thread, or leave room for another voice.
-- **More than coding.** Review a strategy, essay, presentation, product decision, research question, philosophical argument, or whatever else benefits from genuinely different perspectives.
-- **One conversation, many models.** A starter lineup—for example, Codex Sol, Claude Opus, and Cursor-hosted Gemini—shares the same scrollback. These model-pinned profiles are examples, not a claim that the supported harnesses are limited to those models.
-- **360° review on demand.** Invite the whole roster when you want broad critique, or mention one participant when you want a specific point of view.
+The goal is not consensus at any cost—or disagreement as theater. It is useful dissent, visible reasoning, and a more complete view, with people still responsible for the decisions they act on.
 
 The room launches the installed **Codex CLI, Claude Code, and Cursor Agent CLI** on your machine. **Roadmap, not current support:** pluggable adapters for more agent harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models too.
 
@@ -36,16 +34,6 @@ Agents have conversational agency, but file access has visible limits. Open a pa
 ![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
 
 That is a boundary around capability, not a requirement that every agent obey, answer, or agree. Ordinary turns are invitations to participate. The room, transcript, agent sessions, styles, and diagnostics remain local and resumable.
-
-## Bring whatever you're working through
-
-- **Decisions and strategy:** expose assumptions, surface dissent, and compare tradeoffs before committing to a direction.
-- **Writing and presentations:** ask different models to challenge the argument, structure, clarity, evidence, and likely audience reaction.
-- **Research and philosophy:** explore competing interpretations without asking one agent to impersonate every worldview.
-- **Products, designs, and code:** combine broad critique with optional access to the actual files under discussion.
-- **Conversation for its own sake:** set a loose topic, turn up the room energy, and see where a curious group of agents takes it.
-
-The goal is not consensus at any cost—or disagreement as theater. It is a more complete view: useful dissent, visible reasoning, agents with conversational agency, and people who remain responsible for the decisions they act on.
 
 ## Quick start
 
