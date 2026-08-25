@@ -105,7 +105,19 @@ These are boundaries around capability—not commands to answer or agree. The ro
 
 **Faster setup, less reinvention.** Codex CLI, Claude Code, Cursor Agent, and OpenCode already manage sessions, tools, project context, and provider authentication. Reusing those capabilities let us build the shared room instead of rebuilding several agent runtimes—and lets many developers sign into tools they already use without creating and securing more API keys.
 
-The room launches whichever supported CLIs are installed and selected in **Manage room agents**. OpenCode uses its configured provider and model, so its opt-in catalog entry does not pin you to one underlying model. **Roadmap, not current support:** direct API-key/provider integrations and adapters for more harnesses.
+The room discovers models at runtime and stores room-scoped participant instances, so two participants can use the same harness with different names, models, styles, and sessions. Cursor uses its account catalog; OpenCode preserves `provider/model` identity and reported variants. Codex and Claude do not expose a complete stable catalog, so the UI labels documented aliases and configured defaults as incomplete instead of inventing support.
+
+Every new and resumed invocation pins the selected model. OpenCode receives `--model provider/model` and an optional variant. Changing provider, model, variant, or reasoning invalidates the old provider session while retaining participant identity and history. A removed model stays visible but cannot run until an authorized administrator chooses a replacement.
+
+### Claim the server owner before configuring providers
+
+Room screen names and presence cookies are deliberately not administrative identity. Set a long random `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` on the server, open **Manage room agents**, and use that proof once to create the durable `OWNER` credential. Existing rooms keep ordinary chat and history working but fail closed for model discovery, roster changes, provider setup, and write grants until bootstrap completes.
+
+The owner can create durable `ADMIN` or `MEMBER` identities and delegate narrow capabilities. Privileged requests are checked server-side and mutating requests require a per-session CSRF token; grant changes immediately invalidate the affected privileged sessions. Control identities, password hashes, and redacted audit events live in a mode-`0600` control-plane file separate from public room presence and profiles.
+
+Owner transfer and recovery are intentionally unavailable through ordinary room APIs. A local operator can run `pnpm control:owner transfer-owner <existing-username>` or set `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_RECOVERY_PASSWORD` and run `pnpm control:owner recover-owner`; both require the server-side bootstrap proof, revoke affected sessions, and append a redacted audit event.
+
+Provider credentials remain owned by Codex, Claude Code, Cursor Agent, OpenCode, or the operating-system keychain. The provider-setup UI currently returns fixed **server-local handoff** commands such as `codex login` or `opencode auth login`; it never proxies or scrapes an interactive terminal and never stores API keys or OAuth tokens. The browser may be on a different host than the server, so run those commands on the server host, then use Refresh. All four handoff initiations and refresh outcomes are durably audited with bounded, redacted metadata.
 
 ## A room that helps build its own world
 
@@ -193,6 +205,9 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR` | Runtime data directory |
 | `ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR` | Durable assignment worktrees outside the source checkout; relative paths resolve beside the checkout |
 | `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY` | Maximum parallel CLI processes for bulk actions; default `3` |
+| `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` | Single-use local-operator proof for claiming the durable server owner; use 32+ random characters |
+| `ALL_MY_FRIENDS_ARE_AGENTS_CODEX_COMMAND` | Absolute path or alternate name for Codex CLI |
+| `ALL_MY_FRIENDS_ARE_AGENTS_CLAUDE_COMMAND` | Absolute path or alternate name for Claude Code |
 | `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` | Absolute path or alternate name for Cursor Agent |
 | `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` | Absolute path or alternate name for OpenCode |
 | `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |

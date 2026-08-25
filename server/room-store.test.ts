@@ -31,9 +31,27 @@ describe("room style persistence", () => {
 
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
     expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [
-      { agentId: "claude-opus", enabled: true },
-      { agentId: "codex-sol", enabled: false },
+      expect.objectContaining({ agentId: "claude-opus", enabled: true, harness: "claude", modelId: "claude-opus-5" }),
+      expect.objectContaining({ agentId: "codex-sol", enabled: false, harness: "codex", modelId: "gpt-5.6-sol" }),
     ] });
+  });
+
+  it("invalidates only the reconfigured participant session while preserving identity and history", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-model-change-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
+    const first = { agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const second = { agentId: "agent-22222222-2222-4222-8222-222222222222", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    await store.updateRoster(1, [first, second]);
+    await store.setSession(first.agentId, "alpha-session", "read-only");
+    await store.setSession(second.agentId, "beta-session", "read-only");
+    await store.addMessage(first.agentId, "historical alpha");
+    await store.updateRoster(2, [{ ...first, modelId: "gpt-5.6-luna" }, second]);
+    const state = store.snapshot();
+    expect(state.sessions[first.agentId]).toBeUndefined();
+    expect(state.sessions[second.agentId]?.id).toBe("beta-session");
+    expect(state.roster?.entries[0]).toMatchObject({ agentId: first.agentId, modelId: "gpt-5.6-luna", configurationRevision: 2, sessionInvalidationReason: expect.stringContaining("invalidated") });
+    expect(state.messages.at(-1)).toMatchObject({ speaker: first.agentId, speakerName: "Alpha", text: "historical alpha" });
   });
 
   it("migrates legacy Codex and Claude state into model-specific participants", async () => {
@@ -66,8 +84,8 @@ describe("room style persistence", () => {
     const snapshot = (await RoomStore.open(projectRoot, stateDirectory)).snapshot();
     expect(snapshot.messages.map(({ speaker }) => speaker)).toEqual(["codex-sol", "claude-sonnet"]);
     expect(snapshot.sessions).toEqual({
-      "codex-sol": { id: "codex-session", permission: "writable" },
-      "claude-sonnet": { id: "claude-session", permission: "read-only" },
+      "codex-sol": expect.objectContaining({ id: "codex-session", permission: "writable", configurationRevision: 1 }),
+      "claude-sonnet": expect.objectContaining({ id: "claude-session", permission: "read-only", configurationRevision: 1 }),
     });
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
     expect(snapshot.settings.roomName).toBe("The Agent Room");

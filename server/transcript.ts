@@ -32,7 +32,7 @@ function entriesFor(messages: RoomMessage[]) {
 
 function formatEntry(entry: TranscriptEntry, text = entry.text) {
   const speaker = isAgentId(entry.speaker)
-    ? AGENT_PROFILES[entry.speaker].conversationalName.toUpperCase()
+    ? (entry.speakerName || AGENT_PROFILES[entry.speaker]?.conversationalName || entry.speaker).toUpperCase()
     : (entry.speakerName || entry.speaker).toUpperCase();
   return `[${speaker}]\n${text}`;
 }

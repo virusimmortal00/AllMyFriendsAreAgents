@@ -4,11 +4,13 @@ import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentEntry } from "../shared/roster.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
 import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
+import { selectedModelAvailability } from "../shared/model-discovery.js";
+import type { ModelDiscoveryService } from "./model-discovery.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -18,6 +20,8 @@ const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
 const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
+const CODEX_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CODEX_COMMAND?.trim() || "codex";
+const CLAUDE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CLAUDE_COMMAND?.trim() || "claude";
 const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 
@@ -477,16 +481,18 @@ function runTimeout(permission: "read-only" | "writable", includeDiff: boolean) 
   return permission === "writable" ? WRITABLE_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS;
 }
 
-function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
+function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false, effort?: string) {
   const sessionArgs = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
+  const effortArgs = effort ? ["--effort", effort] : [];
   return permission === "writable"
-    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", ...sessionArgs]
+    ? ["-p", "--output-format", "json", "--model", model, ...effortArgs, "--permission-mode", "acceptEdits", ...sessionArgs]
     : [
         "-p",
         "--output-format",
         "json",
         "--model",
         model,
+        ...effortArgs,
         "--permission-mode",
         "plan",
         "--tools",
@@ -499,13 +505,15 @@ function claudeArgs(permission: "read-only" | "writable", sessionId: string, mod
       ];
 }
 
-function codexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
-  if (sessionId) return ["exec", "resume", "--model", model, sessionId, "-", "--json"];
+function codexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string, effort?: string) {
+  const effortArgs = effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : [];
+  if (sessionId) return ["exec", "resume", "--model", model, ...effortArgs, sessionId, "-", "--json"];
   return [
     "exec",
     "--json",
     "--model",
     model,
+    ...effortArgs,
     "--sandbox",
     permission === "writable" ? "workspace-write" : "read-only",
     "-C",
@@ -514,8 +522,8 @@ function codexArgs(permission: "read-only" | "writable", projectPath: string, mo
   ];
 }
 
-function confinedCodexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
-  const args = codexArgs(permission, projectPath, model, sessionId);
+function confinedCodexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string, effort?: string) {
+  const args = codexArgs(permission, projectPath, model, sessionId, effort);
   const sandboxIndex = args.indexOf("--sandbox");
   if (sandboxIndex >= 0) args[sandboxIndex + 1] = "danger-full-access";
   const optionIndex = sessionId ? 2 : 1;
@@ -556,7 +564,7 @@ function parseCursorModels(stdout: string) {
   return new Set([...plainText.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
 }
 
-function opencodeArgs(permission: "read-only" | "writable", projectPath: string, sessionId?: string) {
+function opencodeArgs(permission: "read-only" | "writable", projectPath: string, sessionId?: string, model?: string, variant?: string) {
   return [
     "run",
     "--format",
@@ -565,6 +573,8 @@ function opencodeArgs(permission: "read-only" | "writable", projectPath: string,
     projectPath,
     "--agent",
     permission === "writable" ? "build" : "plan",
+    ...(model ? ["--model", model] : []),
+    ...(variant ? ["--variant", variant] : []),
     ...(permission === "writable" ? ["--auto"] : []),
     ...(sessionId ? ["--session", sessionId] : []),
   ];
@@ -609,6 +619,7 @@ export async function runAgent(
   supervisor?: AgentProcessSupervisor,
   assignmentId?: string,
   writerGrant?: ConfinedWriterGrant,
+  discoveryService?: ModelDiscoveryService,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -617,9 +628,20 @@ export async function runAgent(
   // the existing read-only source-control behavior. Only a writable generation
   // can receive the assignment worktree as its cwd.
   const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
-  const profile = AGENT_PROFILES[agent];
+  const participant = roomAgentEntry(state.roster, agent);
+  const profile = participant ? {
+    provider: participant.harness!, modelId: participant.modelId!, conversationalName: participant.conversationalName!,
+  } : AGENT_PROFILES[agent];
+  if (!participant || !profile) throw new Error("The participant is not configured in this room.");
+  if (discoveryService) {
+    const availability = selectedModelAvailability({ harness: participant.harness!, ...(participant.providerId ? { providerId: participant.providerId } : {}), modelId: participant.modelId!, ...(participant.variant ? { variant: participant.variant } : {}) }, await discoveryService.discover(participant.harness!));
+    if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "The participant's harness or selected model is unavailable.");
+  }
   const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
-  const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
+  const fingerprint = participantConfigurationFingerprint(participant);
+  const storedSession = state.sessions[agent];
+  const legacyCompatibleSession = !storedSession?.configurationFingerprint && Boolean(AGENT_PROFILES[agent]) && (participant.configurationRevision || 1) === 1;
+  const existing = storedSession?.permission === permission && (storedSession.configurationFingerprint === fingerprint || legacyCompatibleSession) ? storedSession : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
@@ -650,9 +672,9 @@ export async function runAgent(
       let result: ProcessResult;
       try {
         const args = secureWriterRequested
-          ? confinedCodexArgs(permission, projectPath, profile.modelId, resumedSessionId)
-          : codexArgs(permission, projectPath, profile.modelId, resumedSessionId);
-        const invocation = await execution("codex", args);
+          ? confinedCodexArgs(permission, projectPath, profile.modelId, resumedSessionId, participant.reasoningEffort)
+          : codexArgs(permission, projectPath, profile.modelId, resumedSessionId, participant.reasoningEffort);
+        const invocation = await execution(CODEX_COMMAND, args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
           input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
@@ -669,9 +691,9 @@ export async function runAgent(
         });
         resumedSessionId = undefined;
         const args = secureWriterRequested
-          ? confinedCodexArgs(permission, projectPath, profile.modelId)
-          : codexArgs(permission, projectPath, profile.modelId);
-        const invocation = await execution("codex", args);
+          ? confinedCodexArgs(permission, projectPath, profile.modelId, undefined, participant.reasoningEffort)
+          : codexArgs(permission, projectPath, profile.modelId, undefined, participant.reasoningEffort);
+        const invocation = await execution(CODEX_COMMAND, args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
           input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
@@ -727,7 +749,8 @@ export async function runAgent(
     if (profile.provider === "opencode") {
       let resumedSessionId = existing?.id;
       const invoke = async (sessionId?: string) => {
-        const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId));
+        const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
+        const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
         return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
           environment: harnessEnvironment(invocation.env, permission),
           trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
@@ -763,7 +786,7 @@ export async function runAgent(
     let sessionId = existing?.id || randomUUID();
     let result: ProcessResult;
     try {
-      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)));
+      const invocation = await execution(CLAUDE_COMMAND, claudeArgs(permission, sessionId, profile.modelId, Boolean(existing), participant.reasoningEffort));
       result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
         environment: invocation.env,
         trustedEnvironment: secureWriterRequested,
@@ -789,7 +812,7 @@ export async function runAgent(
         } : {}),
       });
       sessionId = randomUUID();
-      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId));
+      const invocation = await execution(CLAUDE_COMMAND, claudeArgs(permission, sessionId, profile.modelId, false, participant.reasoningEffort));
       result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
         environment: invocation.env,
         trustedEnvironment: secureWriterRequested,

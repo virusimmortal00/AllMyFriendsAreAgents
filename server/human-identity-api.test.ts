@@ -120,9 +120,9 @@ describe("adversarial human identity API", () => {
       method: "PATCH",
       body: JSON.stringify({ actorId: victim.id, humanId: victim.id, writableAgent: "codex-sol" }),
     }, attackerCookie);
-    expect(permissionAttack.status).toBe(200);
+    expect(permissionAttack.status).toBe(401);
     const room = await (await jsonCall(base, "/api/state")).json() as { messages: Array<{ humanId?: string; kind?: string }> };
-    expect(room.messages.findLast(({ kind }) => kind === "status")?.humanId).toBe(attacker.id);
+    expect(room.messages.findLast(({ kind }) => kind === "status")?.humanId).not.toBe(attacker.id);
 
     const victimResume = await jsonCall(base, "/api/humans", {
       method: "POST",

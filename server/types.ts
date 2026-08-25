@@ -33,6 +33,10 @@ export interface HumanPresence {
 export interface AgentSession {
   id: string;
   permission: "read-only" | "writable";
+  configurationFingerprint?: string;
+  configurationRevision?: number;
+  invalidatedAt?: string;
+  invalidationReason?: string;
 }
 
 export interface RoomSettings {

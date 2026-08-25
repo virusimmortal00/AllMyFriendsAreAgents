@@ -42,7 +42,7 @@ describe("SQLite room repository", () => {
     expect(await stale.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
     first.close(); stale.close();
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [{ agentId: "claude-opus", enabled: true }] });
+    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, harness: "claude", modelId: "claude-opus-5" })] });
     reopened.close();
   });
 
@@ -69,7 +69,7 @@ describe("SQLite room repository", () => {
     expect(snapshot.settings.roomName).toBe("SQLite Room");
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
     expect(snapshot.settings.participantStyles.you).toEqual(humanStyle);
-    expect(snapshot.sessions["codex-sol"]).toEqual({ id: "sqlite-session", permission: "writable" });
+    expect(snapshot.sessions["codex-sol"]).toEqual(expect.objectContaining({ id: "sqlite-session", permission: "writable", configurationRevision: 1 }));
     expect(snapshot.messages.at(-1)).toMatchObject({
       speaker: "you",
       speakerName: "Robby",
@@ -83,6 +83,38 @@ describe("SQLite room repository", () => {
     expect((await stat(databasePath)).mode & 0o777).toBe(0o600);
     expect((await stat(`${databasePath}-wal`)).mode & 0o777).toBe(0o600);
     expect((await stat(`${databasePath}-shm`)).mode & 0o777).toBe(0o600);
+    reopened.close();
+  });
+
+  it("keeps same-harness participant identities, models, styles, sessions, and attribution distinct across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-dynamic-roster-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const alpha = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const beta = { agentId: "agent-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    expect(await store.updateRoster(1, [alpha, beta])).toMatchObject({ kind: "accepted" });
+    const alphaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#173874" };
+    const betaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#6c1739" };
+    await store.updateParticipantStyle(alpha.agentId, alphaStyle);
+    await store.updateParticipantStyle(beta.agentId, betaStyle);
+    await store.setSession(alpha.agentId, "alpha-session", "read-only");
+    await store.setSession(beta.agentId, "beta-session", "read-only");
+    await store.addMessage(alpha.agentId, "Alpha history");
+    await store.addMessage(beta.agentId, "Beta history");
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const snapshot = reopened.snapshot();
+    expect(snapshot.roster?.entries).toEqual([expect.objectContaining(alpha), expect.objectContaining(beta)]);
+    expect(snapshot.settings.participantStyles[alpha.agentId]).toEqual(alphaStyle);
+    expect(snapshot.settings.participantStyles[beta.agentId]).toEqual(betaStyle);
+    expect(snapshot.sessions[alpha.agentId]?.id).toBe("alpha-session");
+    expect(snapshot.sessions[beta.agentId]?.id).toBe("beta-session");
+    expect(snapshot.messages.slice(-2)).toEqual([
+      expect.objectContaining({ speaker: alpha.agentId, speakerName: "Alpha", text: "Alpha history" }),
+      expect.objectContaining({ speaker: beta.agentId, speakerName: "Beta", text: "Beta history" }),
+    ]);
     reopened.close();
   });
 

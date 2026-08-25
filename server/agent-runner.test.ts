@@ -26,6 +26,8 @@ describe("Codex JSONL parsing", () => {
       "exec", "resume", "--model", "gpt-5.6-terra", "terra-session", "-", "--json",
     ]);
     expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
+    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-sol", "sol-session", "high")).toContain("model_reasoning_effort=\"high\"");
+    expect(__testing.claudeArgs("read-only", "claude-session", "claude-sonnet-5", true, "high")).toEqual(expect.arrayContaining(["--model", "claude-sonnet-5", "--effort", "high", "--resume", "claude-session"]));
     expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toEqual([
       "exec", "--skip-git-repo-check", "--json", "--model", "gpt-5.6-sol", "--sandbox", "danger-full-access", "-C", "/tmp/project", "-",
     ]);
@@ -67,6 +69,9 @@ describe("Codex JSONL parsing", () => {
     ]);
     expect(__testing.opencodeArgs("writable", "/tmp/worktree", "ses_123")).toEqual([
       "run", "--format", "json", "--dir", "/tmp/worktree", "--agent", "build", "--auto", "--session", "ses_123",
+    ]);
+    expect(__testing.opencodeArgs("read-only", "/tmp/project", "ses_456", "anthropic/claude-sonnet", "high")).toEqual([
+      "run", "--format", "json", "--dir", "/tmp/project", "--agent", "plan", "--model", "anthropic/claude-sonnet", "--variant", "high", "--session", "ses_456",
     ]);
   });
 
