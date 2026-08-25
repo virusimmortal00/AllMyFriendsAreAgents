@@ -46,4 +46,25 @@ describe("roster manager", () => {
     expect(screen.queryByText("Sol")).toBeNull();
     expect(screen.queryByLabelText("Harness")).toBeNull();
   });
+
+  it("treats a matching configured default as available for explicit migration confirmation", async () => {
+    const agentId = "agent-88888888-8888-4888-8888-888888888888";
+    const entry = { agentId, conversationalName: "Alpha", providerId: "openai", modelId: "configured", enabled: true, supportsProjectWrites: true, configurationRevision: 1, selectionConfirmationRequired: true, sessionInvalidationReason: "Confirm this selection." };
+    const discovery = { status: "discovery_unsupported", discoveredAt: new Date(0).toISOString(), models: [], configuredDefault: { providerId: "openai", modelId: "configured" } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 1, entries: [entry] }, catalog: [], modelDiscovery: discovery }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ ...entry, selectionConfirmationRequired: undefined, sessionInvalidationReason: "" }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByText("Alpha");
+    await user.click(screen.getByText("Edit configuration"));
+    expect(screen.queryByRole("option", { name: /currently unavailable/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Confirm selected OpenCode model" }));
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).toMatchObject({ agentId, sessionInvalidationReason: "" });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).not.toHaveProperty("selectionConfirmationRequired");
+  });
 });

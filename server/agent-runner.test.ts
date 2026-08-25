@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { AgentProcessSupervisor, __testing } from "./agent-runner.js";
+import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
+import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
 
 describe("OpenCode runtime contract", () => {
@@ -29,13 +30,36 @@ describe("OpenCode runtime contract", () => {
   });
 
   it("maps room permissions without replacing OpenCode provider configuration", () => {
-    expect(__testing.opencodeEnvironment({ PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" }, "read-only")).toMatchObject({
+    const environment = { PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" };
+    expect(__testing.opencodeEnvironment(environment, "read-only")).toMatchObject({
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
         webfetch: "allow", websearch: "allow", lsp: "allow",
       }),
     });
+    expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
+  });
+
+  it("resumes only matching or historically OpenCode sessions", () => {
+    const codex = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+    const openCode = { agentId: "opencode-configured", conversationalName: "OpenCode", modelId: "configured", enabled: true, configurationRevision: 1 };
+    const unversioned = { id: "legacy", permission: "read-only" as const };
+    expect(__testing.resumableOpenCodeSession("codex-sol", codex, unversioned, "read-only")).toBeUndefined();
+    expect(__testing.resumableOpenCodeSession("opencode-configured", openCode, unversioned, "read-only")).toBe(unversioned);
+    const fingerprinted = { ...unversioned, configurationFingerprint: JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol" }) };
+    expect(__testing.resumableOpenCodeSession("codex-sol", codex, fingerprinted, "read-only")).toBe(fingerprinted);
+  });
+
+  it("rejects migrated confirmations and unavailable models before invoking OpenCode", async () => {
+    const participant = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    };
+    await expect(runAgent(participant.agentId, { ...state, roster: { ...state.roster, entries: [{ ...participant, selectionConfirmationRequired: true, sessionInvalidationReason: "Confirm selection." }] } }, "Join if useful.")).rejects.toThrow("Confirm selection.");
+    const unavailable = { discover: async () => ({ status: "available" as const, models: [], discoveredAt: new Date(0).toISOString() }) } as unknown as ModelDiscoveryService;
+    await expect(runAgent(participant.agentId, state, "Join if useful.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, unavailable)).rejects.toThrow("selected OpenCode model is no longer available");
   });
 
   it("recognizes stale OpenCode sessions without treating provider failures as recoverable", () => {
@@ -125,10 +149,10 @@ describe("room prompt context", () => {
     expect(prompt).toContain(`Alice: ${JSON.stringify(state.humans[0].style)}`);
     expect(prompt).toContain(`Bob: ${JSON.stringify(state.humans[1].style)}`);
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
-    expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
+    expect(prompt).toContain(`OpenCode [openai/gpt-5.6-sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
     expect(prompt).not.toContain(`Claude [Claude Opus 5]:`);
-    expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
+    expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
     expect(prompt).toContain("backgroundColor highlights your message text only");

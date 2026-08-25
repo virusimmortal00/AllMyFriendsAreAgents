@@ -169,6 +169,14 @@ export function agentSupportsProjectWrites(agent: AgentId) {
   return AGENT_PROFILES[agent]?.supportsProjectWrites ?? true;
 }
 
+export function historicalAgentProvider(agent: AgentId) {
+  return (LEGACY_AGENT_PROFILES as Record<string, AgentProfile>)[agent]?.provider;
+}
+
+export function historicalAgentProfile(agent: AgentId) {
+  return (LEGACY_AGENT_PROFILES as Record<string, AgentProfile>)[agent];
+}
+
 export function normalizeWritableAgent(value: unknown): WritableAgent {
   if (value === "nobody") return "nobody";
   return isActiveAgentId(value) && agentSupportsProjectWrites(value) ? value : "nobody";

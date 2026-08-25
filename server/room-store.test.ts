@@ -124,6 +124,21 @@ describe("room style persistence", () => {
     expect((await RoomStore.open(projectRoot, stateDirectory)).snapshot().sessions).toEqual({});
   });
 
+  it("preserves a matching session fingerprint from the previous OpenCode reference format", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    await mkdir(stateDirectory);
+    const agentId = "agent-77777777-7777-4777-8777-777777777777";
+    await writeFile(path.join(stateDirectory, "room.json"), JSON.stringify({
+      ...createDefaultRoomState(projectRoot),
+      roster: { schemaVersion: 2, revision: 2, entries: [{ agentId, conversationalName: "Alpha", harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 2 }] },
+      sessions: { [agentId]: { id: "portable-session", permission: "read-only", configurationFingerprint: JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol" }) } },
+    }), "utf8");
+
+    expect((await RoomStore.open(projectRoot, stateDirectory)).snapshot().sessions[agentId]).toMatchObject({ id: "portable-session", configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }) });
+  });
+
   it("persists participant preferences while retaining each message's original snapshot", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);

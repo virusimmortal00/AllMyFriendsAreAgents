@@ -1,4 +1,4 @@
-import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, registerParticipantProfile, type ActiveAgentId } from "./participants.js";
+import { AGENT_IDS, historicalAgentProfile, isActiveAgentId, isAgentId, registerParticipantProfile, type ActiveAgentId } from "./participants.js";
 import { validDiscoveryId, type ModelReference } from "./model-discovery.js";
 
 export const MAX_ROOM_AGENTS = 32;
@@ -38,14 +38,14 @@ function legacyProviderId(provider: string) {
 }
 
 export function legacyRosterEntry(agentId: string, enabled: boolean): NormalizedRoomAgentRosterEntry | undefined {
-  const profile = AGENT_PROFILES[agentId];
+  const profile = historicalAgentProfile(agentId);
   if (!profile) return undefined;
   const providerId = legacyProviderId(profile.provider);
   return { agentId, conversationalName: profile.conversationalName, ...(providerId ? { providerId } : {}), modelId: profile.modelId, enabled, supportsProjectWrites: profile.supportsProjectWrites, configurationRevision: 1, ...(profile.provider !== "opencode" ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run.", selectionConfirmationRequired: true } : {}) };
 }
 
 function register(entry: NormalizedRoomAgentRosterEntry) {
-  if (!AGENT_PROFILES[entry.agentId]) registerParticipantProfile({ id: entry.agentId, provider: "opencode", displayName: "OpenCode", modelId: entry.modelId, modelLabel: entry.providerId ? `${entry.providerId}/${entry.modelId}` : entry.modelId, conversationalName: entry.conversationalName, supportsProjectWrites: entry.supportsProjectWrites });
+  registerParticipantProfile({ id: entry.agentId, provider: "opencode", displayName: "OpenCode", modelId: entry.modelId, modelLabel: entry.providerId ? `${entry.providerId}/${entry.modelId}` : entry.modelId, conversationalName: entry.conversationalName, supportsProjectWrites: entry.supportsProjectWrites });
   return entry;
 }
 
@@ -100,5 +100,17 @@ export function roomAgentEnabled(roster: RoomAgentRoster, agent: ActiveAgentId) 
 export function roomAgentEntry(roster: RoomAgentRoster | undefined, agent: ActiveAgentId) { return normalizeRoomAgentRoster(roster).entries.find((entry) => entry.agentId === agent); }
 export function roomAgentModelReference(entry: RoomAgentRosterEntry): ModelReference { const normalized = normalizedEntry(entry); if (!normalized?.modelId) throw new Error("Invalid participant execution configuration."); return { ...(normalized.providerId ? { providerId: normalized.providerId } : {}), modelId: normalized.modelId, ...(normalized.variant ? { variant: normalized.variant } : {}), ...(normalized.reasoningEffort ? { reasoningEffort: normalized.reasoningEffort } : {}) }; }
 export function participantConfigurationFingerprint(entry: RoomAgentRosterEntry) { return JSON.stringify(roomAgentModelReference(entry)); }
+export function participantConfigurationFingerprintMatches(stored: string | undefined, entry: RoomAgentRosterEntry) {
+  const current = participantConfigurationFingerprint(entry);
+  if (stored === current) return true;
+  if (!stored) return false;
+  try {
+    const legacy = JSON.parse(stored) as Record<string, unknown>;
+    if (legacy.harness !== "opencode" || Object.keys(legacy).some((key) => !["harness", "providerId", "modelId", "variant", "reasoningEffort"].includes(key))) return false;
+    return JSON.stringify({ ...(typeof legacy.providerId === "string" ? { providerId: legacy.providerId } : {}), modelId: legacy.modelId, ...(typeof legacy.variant === "string" ? { variant: legacy.variant } : {}), ...(typeof legacy.reasoningEffort === "string" ? { reasoningEffort: legacy.reasoningEffort } : {}) }) === current;
+  } catch {
+    return false;
+  }
+}
 export function roomAgentTurnEpoch(roster: RoomAgentRoster, agent: ActiveAgentId): RoomAgentTurnEpoch | undefined { const entry = normalizedEntry(roster.entries.find((candidate) => candidate.agentId === agent && candidate.enabled)); return entry ? { agentId: agent, rosterRevision: roster.revision, configurationRevision: entry.configurationRevision || 1 } : undefined; }
 export function roomAgentTurnEpochIsCurrent(roster: RoomAgentRoster, epoch: RoomAgentTurnEpoch) { const entry = normalizedEntry(roster.entries.find((candidate) => candidate.agentId === epoch.agentId && candidate.enabled)); return roster.revision === epoch.rosterRevision && entry?.configurationRevision === epoch.configurationRevision; }

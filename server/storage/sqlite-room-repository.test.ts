@@ -1,6 +1,7 @@
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style.js";
 import { SqliteRoomRepository } from "./sqlite-room-repository.js";
@@ -44,6 +45,56 @@ describe("SQLite room repository", () => {
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, providerId: "anthropic", modelId: "claude-opus-5" })] });
     reopened.close();
+  });
+
+  it("persists administrator confirmation for migrated built-in selections across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-confirmation-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const confirmed = store.snapshot().roster!.entries.map(({ selectionConfirmationRequired: _confirmation, sessionInvalidationReason: _reason, ...entry }) => entry);
+    expect(await store.updateRoster(1, confirmed)).toMatchObject({ kind: "accepted" });
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster?.entries.every((entry) => !entry.selectionConfirmationRequired)).toBe(true);
+    reopened.close();
+  });
+
+  it("keeps matching legacy OpenCode fingerprints but permanently deletes rejected stale sessions", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-session-migration-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const agentId = "agent-66666666-6666-4666-8666-666666666666";
+    const firstSelection = { agentId, conversationalName: "Alpha", providerId: "openai", modelId: "first", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const secondSelection = { ...firstSelection, modelId: "second" };
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await store.updateRoster(1, [firstSelection])).toMatchObject({ kind: "accepted" });
+    await store.setSession(agentId, "portable-session", "read-only");
+    store.close();
+
+    const database = new DatabaseSync(databasePath);
+    database.prepare("UPDATE agent_sessions SET configuration_fingerprint = ? WHERE agent_id = ?")
+      .run(JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "first" }), agentId);
+    database.close();
+    const portable = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(portable.snapshot().sessions[agentId]?.id).toBe("portable-session");
+    expect(await portable.updateRoster(2, [secondSelection])).toMatchObject({ kind: "accepted" });
+    await portable.setSession(agentId, "stale-session", "read-only");
+    portable.close();
+
+    const tampered = new DatabaseSync(databasePath);
+    tampered.prepare("UPDATE agent_sessions SET configuration_fingerprint = ? WHERE agent_id = ?")
+      .run(JSON.stringify({ providerId: "openai", modelId: "first" }), agentId);
+    tampered.close();
+    const rejected = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(rejected.snapshot().sessions[agentId]).toBeUndefined();
+    expect(await rejected.updateRoster(3, [firstSelection])).toMatchObject({ kind: "accepted" });
+    rejected.close();
+
+    const reverted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reverted.snapshot().sessions[agentId]).toBeUndefined();
+    reverted.close();
   });
 
 

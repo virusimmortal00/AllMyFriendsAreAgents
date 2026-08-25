@@ -83,7 +83,6 @@ export function registerRosterRoutes(input: {
     const invalidSelection = entries.find((entry) => {
       const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
       if (previous && participantConfigurationFingerprint(previous) === participantConfigurationFingerprint(entry)) return false;
-      if (!entry.agentId.startsWith("agent-")) return false;
       return !selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery).available;
     });
     if (invalidSelection) return response.status(400).json({ error: "The selected OpenCode provider/model/variant is not currently available." });

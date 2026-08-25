@@ -34,14 +34,20 @@ describe("OpenCode model discovery", () => {
     await expect(new ModelDiscoveryService(async () => ({ stdout: "not a catalog", stderr: "" })).discover()).resolves.toMatchObject({ status: "error" });
   });
 
-  it("honors cancellation signals and never converts an aborted request into catalog data", async () => {
+  it("honors cancellation signals without caching the aborted caller's result", async () => {
     const controller = new AbortController();
     const execute = vi.fn<DiscoveryExecutor>(async (_command, _args, signal) => {
-      expect(signal).toBe(controller.signal);
-      throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      if (signal) {
+        expect(signal).toBe(controller.signal);
+        throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      }
+      return { stdout: "provider/model\n", stderr: "" };
     });
     controller.abort();
-    await expect(new ModelDiscoveryService(execute).discover(false, controller.signal)).resolves.toMatchObject({ status: "error", models: [] });
+    const service = new ModelDiscoveryService(execute);
+    await expect(service.discover(false, controller.signal)).resolves.toMatchObject({ status: "error", models: [] });
+    await expect(service.discover()).resolves.toMatchObject({ status: "available", models: [expect.objectContaining({ modelId: "model" })] });
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it("coalesces fresh requests and refreshes stale or explicitly refreshed entries", async () => {

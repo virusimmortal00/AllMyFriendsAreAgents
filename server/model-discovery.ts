@@ -133,11 +133,13 @@ export class ModelDiscoveryService {
   ) {}
 
   async discover(refresh = false, signal?: AbortSignal) {
-    const cached = this.cache;
-    if (!refresh && cached && cached.expiresAt > this.now()) return cached.promise;
-    const promise = this.discoverUncached(signal).catch((error): ModelDiscoveryResult => ({
+    const resolve = () => this.discoverUncached(signal).catch((error): ModelDiscoveryResult => ({
       ...classifyError(error), models: [], discoveredAt: new Date(this.now()).toISOString(),
     }));
+    if (signal) return resolve();
+    const cached = this.cache;
+    if (!refresh && cached && cached.expiresAt > this.now()) return cached.promise;
+    const promise = resolve();
     this.cache = { expiresAt: this.now() + this.ttlMs, promise };
     return promise;
   }

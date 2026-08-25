@@ -3,8 +3,8 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentEntry } from "../shared/roster.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, historicalAgentProvider, type ActiveAgentId } from "../shared/participants.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprintMatches, roomAgentEntry, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -467,6 +467,14 @@ function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-o
   } : environment;
 }
 
+function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable") {
+  if (!storedSession || storedSession.permission !== permission) return undefined;
+  const legacyCompatibleSession = !storedSession.configurationFingerprint
+    && historicalAgentProvider(agent) === "opencode"
+    && (participant.configurationRevision || 1) === 1;
+  return participantConfigurationFingerprintMatches(storedSession.configurationFingerprint, participant) || legacyCompatibleSession ? storedSession : undefined;
+}
+
 export async function runAgent(
   agent: AgentId,
   state: RoomState,
@@ -498,10 +506,8 @@ export async function runAgent(
     if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected OpenCode model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "OpenCode or the selected model is unavailable.");
   }
   const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
-  const fingerprint = participantConfigurationFingerprint(participant);
   const storedSession = state.sessions[agent];
-  const legacyCompatibleSession = !storedSession?.configurationFingerprint && AGENT_PROFILES[agent]?.provider === "opencode" && (participant.configurationRevision || 1) === 1;
-  const existing = storedSession?.permission === permission && (storedSession.configurationFingerprint === fingerprint || legacyCompatibleSession) ? storedSession : undefined;
+  const existing = resumableOpenCodeSession(agent, participant, storedSession, permission);
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
@@ -606,4 +612,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, runTimeout, opencodeArgs, runProcess };

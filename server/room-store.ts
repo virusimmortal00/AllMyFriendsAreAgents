@@ -47,7 +47,7 @@ import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTas
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -72,7 +72,7 @@ function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), stor
     const entry = agent ? roomAgentEntry(roster, agent) : undefined;
     const fingerprint = entry ? participantConfigurationFingerprint(entry) : undefined;
     const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
-    const portableOpenCodeSession = session?.configurationFingerprint === fingerprint
+    const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
       || !session?.configurationFingerprint && rawHarness === "opencode";
     if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
       sessions[agent] = { ...session, configurationFingerprint: fingerprint, configurationRevision: entry.configurationRevision || 1 };

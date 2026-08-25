@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_IDS } from "./participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
+import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
   it("defaults to the public roster without Gemini Pro", () => {
@@ -68,6 +68,20 @@ describe("room roster contract", () => {
       entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 3 }],
     });
     expect(roster.entries[0]).not.toHaveProperty("sessionInvalidationReason");
+  });
+
+  it("refreshes registered participant profiles when a roster name or model changes", () => {
+    const agentId = "agent-33333333-3333-4333-8333-333333333333";
+    normalizeRoomAgentRoster({ schemaVersion: 3, revision: 1, entries: [{ agentId, conversationalName: "Before", providerId: "openai", modelId: "before", enabled: true }] });
+    normalizeRoomAgentRoster({ schemaVersion: 3, revision: 2, entries: [{ agentId, conversationalName: "After", providerId: "anthropic", modelId: "after", enabled: true }] });
+    expect(AGENT_PROFILES[agentId]).toMatchObject({ conversationalName: "After", modelId: "after", modelLabel: "anthropic/after" });
+  });
+
+  it("recognizes fingerprints from the previous OpenCode reference format only when the selection matches", () => {
+    const entry = { agentId: "agent-44444444-4444-4444-8444-444444444444", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6", variant: "high", enabled: true };
+    expect(participantConfigurationFingerprintMatches(JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6", variant: "high" }), entry)).toBe(true);
+    expect(participantConfigurationFingerprintMatches(JSON.stringify({ harness: "codex", providerId: "openai", modelId: "gpt-5.6", variant: "high" }), entry)).toBe(false);
+    expect(participantConfigurationFingerprintMatches(participantConfigurationFingerprint(entry), entry)).toBe(true);
   });
 
   it("fails legacy or malformed projections back to the safe default", () => {

@@ -151,7 +151,7 @@ describe("rendered reconnect recovery", () => {
       kind: "state-delta", streamId: "stream-1", fromVersion: 0, version: 1,
       state: deltaState,
     }));
-    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
+    expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
     expect(screen.getByText("Before")).toBeTruthy();
     act(() => source.emitEvent({ kind: "messages-appended", streamId: "stream-1", fromVersion: 1, version: 2, messages: [nextMessage] }));
     expect(await screen.findByText("After")).toBeTruthy();
@@ -263,7 +263,7 @@ describe("rendered reconnect recovery", () => {
       activeAgent: "claude-opus",
       activeGenerations: { successful: "codex-sol" },
     })));
-    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
+    expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
 
     act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
       status: "working",
@@ -276,7 +276,7 @@ describe("rendered reconnect recovery", () => {
       status: "working",
       activeGenerations: { failing: "claude-sonnet" },
     })));
-    expect(screen.getByText("Claude [Claude Sonnet 5] is typing...")).toBeTruthy();
+    expect(screen.getByText("OpenCode [anthropic/claude-sonnet-5] is typing...")).toBeTruthy();
 
     act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
       status: "idle",
@@ -318,15 +318,15 @@ describe("rendered reconnect recovery", () => {
     act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
       activeGenerations: { first: "codex-sol", second: "codex-sol" },
     })));
-    expect(screen.getByText("Codex [gpt-5.6 Sol] is typing...")).toBeTruthy();
-    expect(screen.getByRole("status", { name: "Codex [gpt-5.6 Sol] is generating a response" })).toBeTruthy();
+    expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
+    expect(screen.getByRole("status", { name: "OpenCode [openai/gpt-5.6-sol] is generating a response" })).toBeTruthy();
 
     act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
       activeGenerations: { first: "codex-sol", second: "claude-sonnet" },
     })));
     expect(screen.getByText("Agents are typing...")).toBeTruthy();
-    expect(screen.getByRole("status", { name: "Codex [gpt-5.6 Sol] is generating a response" })).toBeTruthy();
-    expect(screen.getByRole("status", { name: "Claude [Claude Sonnet 5] is generating a response" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "OpenCode [openai/gpt-5.6-sol] is generating a response" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "OpenCode [anthropic/claude-sonnet-5] is generating a response" })).toBeTruthy();
   });
 
   it("warns before resetting identity and preserves room state and draft when canceled", async () => {
