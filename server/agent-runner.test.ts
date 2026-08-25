@@ -26,6 +26,12 @@ describe("Codex JSONL parsing", () => {
       "exec", "resume", "--model", "gpt-5.6-terra", "terra-session", "-", "--json",
     ]);
     expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
+    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toEqual([
+      "exec", "--skip-git-repo-check", "--json", "--model", "gpt-5.6-sol", "--sandbox", "danger-full-access", "-C", "/tmp/project", "-",
+    ]);
+    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol", "sol-session")).toEqual([
+      "exec", "resume", "--skip-git-repo-check", "--model", "gpt-5.6-sol", "sol-session", "-", "--json",
+    ]);
   });
 
   it("pins Cursor sessions to a model and maps room permissions to CLI modes", () => {
@@ -261,6 +267,24 @@ describe("Codex runtime recovery", () => {
       Database_Url: "postgres://mixed-case-live",
       All_My_Friends_Are_Agents_Data_Dir: "/mixed-case-live",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
+  });
+
+  it("preserves only an explicitly trusted confined-writer environment", async () => {
+    const environment = {
+      PATH: process.env.PATH,
+      HOME: "/var/empty",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET: "/tmp/broker.sock",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: "broker-token",
+    };
+    const command = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
+    const filtered = await __testing.runProcess(process.execPath, command, process.cwd(), { environment });
+    const trusted = await __testing.runProcess(process.execPath, command, process.cwd(), { environment, trustedEnvironment: true });
+
+    expect(JSON.parse(filtered.stdout)).not.toHaveProperty("ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN");
+    expect(JSON.parse(trusted.stdout)).toMatchObject({
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET: "/tmp/broker.sock",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: "broker-token",
+    });
   });
 });
 

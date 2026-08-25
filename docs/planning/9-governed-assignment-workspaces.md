@@ -1,6 +1,6 @@
 # #9: Governed assignment-scoped developer workspaces
 
-**Status**: Implemented (Phase 1) — Git boundary, concurrency, and landing gates still open
+**Status**: Implemented through Phase 2 — concurrency and landing gates still open
 **Ticket**: [#9](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/9) — “Build governed assignment-scoped developer workspaces”
 **Branch**: `main` for Phase 1; each follow-on uses an isolated task worktree
 **Base**: `main`
@@ -31,12 +31,17 @@ Concretely, this ticket:
 ```text
 Phase 1: trusted single writer — shipped
   ↓
-Phase 2: adversarial Git boundary — in progress
+Phase 2: adversarial Git boundary — implemented, pending independent acceptance
   ↓
 Phase 3: broker-gated concurrent writers
   ↓
 Phase 4: independently authorized merge and deployment
 ```
+
+The trusted single-writer lifecycle remains the default. The Phase 2 broker and
+confined launch path activate only through the explicit
+`assignment-git-broker/v1` capability. Concurrency remains disabled, and explicit
+reviews continue through the existing read-only adapter.
 
 ## Decisions
 
@@ -110,8 +115,10 @@ existing read-only source-control adapter.
 | [`server/storage/sqlite-room-repository.ts`](../../server/storage/sqlite-room-repository.ts) | SQLite assignment persistence. |
 | [`server/storage/migrations/sqlite/0007_assignment_lifecycle.sql`](../../server/storage/migrations/sqlite/0007_assignment_lifecycle.sql) | Assignment schema and uniqueness constraints. |
 | [`server/storage/import-json-to-sqlite.ts`](../../server/storage/import-json-to-sqlite.ts) | JSON-to-SQLite assignment backfill. |
-| `server/git-security-broker.ts` | Planned Phase 2 broker and confinement contract; reconcile the final name after implementation. |
-| `server/git-security-broker.test.ts` | Planned Phase 2 adversarial boundary coverage; reconcile the final name after implementation. |
+| [`server/git-security-boundary.ts`](../../server/git-security-boundary.ts) | Assignment-scoped operation broker, claim/path/ref validation, serialization, and hash-chained audit. |
+| [`server/git-broker-server.ts`](../../server/git-broker-server.ts) | Token-authenticated Unix-socket endpoint and narrow Git shim. |
+| [`server/writer-confinement.ts`](../../server/writer-confinement.ts) | Attested fail-closed macOS/Linux writer confinement. |
+| [`server/git-security-boundary.test.ts`](../../server/git-security-boundary.test.ts) | Real-Git adversarial broker, ingress, and confinement coverage. |
 
 Existing migration, import, developer-team, and runner test files are modified with
 the corresponding contract coverage. The Phase 3 and Phase 4 file inventory will
@@ -131,7 +138,7 @@ be added when those designs lock; no placeholder files are created.
 287/287 tests, the production build passes, and an independent reviewer accepted
 all seven recorded criteria.
 
-### Phase 2: Assignment-scoped Git security boundary — In progress
+### Phase 2: Assignment-scoped Git security boundary — Implemented, pending independent acceptance
 
 - Bind broker requests to assignment identity, branch, base, head, path, claim,
   manifest, and developer-team revision.
@@ -140,9 +147,15 @@ all seven recorded criteria.
   configuration, hooks, remotes, credentials, and option/environment bypasses.
 - Prove protected state remains unchanged under adversarial attempts.
 
-**Outcome:** A writable process fails closed unless the verified broker can enforce
-the assignment boundary, while the trusted single-writer mode and read-only review
-path still work.
+**Outcome:** The broker exposes only status, diff, stage, and commit; revalidates
+developer identity, persisted claim/manifest fencing, canonical repository and
+workspace identity, branch, base, and observed head for every serialized
+operation; and writes hash-chained results including malformed and unauthenticated
+ingress. Writer startup attests the Unix socket, owner/mode, shim digest, tokenized
+liveness, and current manifest before macOS or Linux confinement starts. The
+worktree `.git` pointer and direct Git executable are hidden or denied inside the
+writer, closing replacement and copy-and-run bypasses. The trusted single-writer
+mode and read-only review path remain available.
 
 ### Phase 3: Controlled concurrent writers
 
@@ -193,4 +206,4 @@ unchanged as stash `0266f87e3b76b762f79f7b176cf6abb387a77a47` and was not mixed 
 
 _Created: 2026-08-21_
 _Planning session: traced the existing developer-team, claim/manifest, runner, storage, and read-only source-control paths and incorporated the agent-room threat-model decisions._
-_Last reconciled: 2026-08-21 (PR #10, live commit `b688c9f`)_
+_Last reconciled: 2026-08-21 (Phase 2 rebased onto `origin/main` at `9210c0f`)_
