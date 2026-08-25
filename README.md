@@ -231,6 +231,8 @@ Durable continuations are also experimental and disabled by default. When explic
 
 Background investigations are a separate experimental lane and are disabled by default. An agent may request one after a credible room signal, but the server binds the request to current evidence, permits only local read-only inspection, requires a fresh provider session, and enforces one nonterminal lane per agent plus a global executor cap. Room activity can still cancel stale foreground chat without cancelling the investigation. Tool-boundary checkpoints, lifecycle events, usage, and summaries are persisted in `investigations.json`; restart recovery can resume only from a validated checkpoint. Results wait in the Investigations inbox and are injected into a later foreground turn as bounded untrusted context—never posted automatically and never merged with the raw investigation session. The shared emergency stop, project identity, policy revisions, and shutdown all fail closed.
 
+Run `pnpm run canary:investigations` for a provider-free live smoke test using a real isolated room server and deterministic loopback executor. The retained report and the limited real-provider follow-up are documented in [`docs/testing/investigation-canary.md`](docs/testing/investigation-canary.md).
+
 ## Build with us
 
 Run the same checks before opening a pull request:

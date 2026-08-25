@@ -12,6 +12,7 @@
     "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
+    "canary:investigations": "tsx scripts/investigation-canary.ts",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
