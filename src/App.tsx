@@ -19,6 +19,7 @@ import { reconcileRoomEvent } from "./room-reconciliation";
 import type { RoomProtocolPosition } from "../shared/protocol";
 import { Tasks, TasksMenuControl } from "./tasks";
 import { Continuations, ContinuationsMenuControl } from "./continuations";
+import { Investigations, InvestigationsMenuControl } from "./investigations";
 import { Contributions } from "./contributions";
 import { RosterManagerDialog } from "./roster-manager";
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
@@ -145,6 +146,7 @@ export default function App() {
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
   const [tasksView, setTasksView] = useState(false);
   const [continuationsView, setContinuationsView] = useState(false);
+  const [investigationsView, setInvestigationsView] = useState(false);
   const [contributionsView, setContributionsView] = useState(false);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
@@ -692,17 +694,18 @@ export default function App() {
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "room"}
-            onClick={() => { setTasksView(false); setContinuationsView(false); setContributionsView(false); setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setMobilePanel((panel) => panel === "room" ? null : "room"); navigateImprovements(null); }}
           >Room</button>
           <button
             type="button"
             aria-controls="room-side-panel"
             aria-expanded={mobilePanel === "people"}
-            onClick={() => { setTasksView(false); setContinuationsView(false); setContributionsView(false); setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
+            onClick={() => { setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setMobilePanel((panel) => panel === "people" ? null : "people"); navigateImprovements(null); }}
           >People</button>
           <button ref={changeNameTrigger} type="button" aria-haspopup="dialog" aria-expanded={changeNameOpen} onClick={() => {
             setTasksView(false);
             setContinuationsView(false);
+            setInvestigationsView(false);
             setContributionsView(false);
             composer.current?.flush();
             setChangeNameConsequences({
@@ -711,17 +714,18 @@ export default function App() {
             });
             setChangeNameOpen(true);
           }}>Change name</button>
-          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => { setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(improvementsView ? null : { view: "list", scope: "active" }); }} />
-          <TasksMenuControl active={tasksView} onOpen={() => { setTasksView((open) => !open); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); setMobilePanel(null); }} />
-          <ContinuationsMenuControl active={continuationsView} onOpen={() => { setContinuationsView((open) => !open); setTasksView(false); setContributionsView(false); navigateImprovements(null); setMobilePanel(null); }} />
+          <ImprovementsMenuControl active={Boolean(improvementsView)} onOpen={() => { setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements(improvementsView ? null : { view: "list", scope: "active" }); }} />
+          <TasksMenuControl active={tasksView} onOpen={() => { setTasksView((open) => !open); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements(null); setMobilePanel(null); }} />
+          <ContinuationsMenuControl active={continuationsView} onOpen={() => { setContinuationsView((open) => !open); setTasksView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements(null); setMobilePanel(null); }} />
+          <InvestigationsMenuControl active={investigationsView} onOpen={() => { setInvestigationsView((open) => !open); setContinuationsView(false); setTasksView(false); setContributionsView(false); navigateImprovements(null); setMobilePanel(null); }} />
           <div className="menu-wrap" ref={actionsMenu}>
             <button ref={actionsTrigger} type="button" aria-haspopup="menu" aria-expanded={menuOpen} onKeyDown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); actionsMenuFocusLast.current = event.key === "ArrowUp"; setMenuOpen(true); } }} onClick={() => { setMenuOpen((open) => !open); }}>Actions</button>
             {menuOpen ? (
               <div className="dropdown-menu" role="menu" aria-label="Actions" onKeyDown={onActionsMenuKeyDown}>
-                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
-                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("roundtable", "all"); }}>Start roundtable</button>
-                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("review", "all"); }}>Review with all agents</button>
-                <button type="button" role="menuitem" disabled={!connected || working || Boolean(actionPending)} onClick={() => { setMenuOpen(false); setContributionsView(true); setTasksView(false); setContinuationsView(false); navigateImprovements(null); setMobilePanel(null); }}>Reviewed contributions</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setInvestigationsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("continue", "all"); }}>Continue discussion</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setInvestigationsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("roundtable", "all"); }}>Start roundtable</button>
+                <button type="button" role="menuitem" disabled={working || !connected || Boolean(actionPending)} onClick={() => { setContributionsView(false); setInvestigationsView(false); setMenuOpen(false); actionsTrigger.current?.focus(); invoke("review", "all"); }}>Review with all agents</button>
+                <button type="button" role="menuitem" disabled={!connected || working || Boolean(actionPending)} onClick={() => { setMenuOpen(false); setContributionsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); navigateImprovements(null); setMobilePanel(null); }}>Reviewed contributions</button>
               </div>
             ) : null}
           </div>
@@ -730,7 +734,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className="workspace">
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : investigationsView ? <><Investigations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} onMagnificationReset={resetTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />
