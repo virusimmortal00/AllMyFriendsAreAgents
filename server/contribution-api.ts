@@ -2,9 +2,9 @@ import type express from "express";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
 import type { ContributionService, CreateHandoffInput } from "./contribution-service.js";
-import type { HumanTaskSessions } from "./task-api.js";
+import type { HumanSessions } from "./human-session.js";
 
-export function registerContributionRoutes(input: { app: express.Express; service?: ContributionService; developers: DeveloperTeamRegistry; humans: HumanPresenceRegistry; sessions: HumanTaskSessions }) {
+export function registerContributionRoutes(input: { app: express.Express; service?: ContributionService; developers: DeveloperTeamRegistry; humans: HumanPresenceRegistry; sessions: HumanSessions }) {
   const { app, service, developers, humans, sessions } = input;
   const human = (request: express.Request) => { const id = sessions.humanId(request.header("cookie")); return id && humans.get(id) ? id : null; };
   const send = (response: express.Response, result: Awaited<ReturnType<ContributionService["approve"]>>) => {

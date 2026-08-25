@@ -5,11 +5,11 @@ import { registerContributionRoutes } from "./contribution-api.js";
 import type { ContributionService } from "./contribution-service.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import { HumanPresenceRegistry } from "./human-presence.js";
-import { HumanTaskSessions } from "./task-api.js";
+import { HUMAN_SESSION_COOKIE, HumanSessions } from "./human-session.js";
 
 describe("exact contribution gate API", () => {
   it("requires a joined human for external approvals and never accepts caller actor identity", async () => {
-    const humans = new HumanPresenceRegistry(); const joined = humans.join({ name: "Ada" }); const sessions = new HumanTaskSessions(); const cookie = `amfaa_task_session=${sessions.issue(joined.id)}`;
+    const humans = new HumanPresenceRegistry(); const joined = humans.join({ name: "Ada" }); const sessions = new HumanSessions(); const cookie = `${HUMAN_SESSION_COOKIE}=${sessions.issue(joined.id)}`;
     const approve = vi.fn(async () => ({ kind: "rejected", reason: "bounded" })); const execute = vi.fn(); const service = { list: () => [], get: () => undefined, approve, execute, audit: () => [] } as unknown as ContributionService;
     const app = express(); app.use(express.json()); registerContributionRoutes({ app, service, humans, sessions, developers: {} as DeveloperTeamRegistry }); const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve)); const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {

@@ -11,7 +11,7 @@
     "dev": "concurrently -k -n api,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
     "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b --force && vite build",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
