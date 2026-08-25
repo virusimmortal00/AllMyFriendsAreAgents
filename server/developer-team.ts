@@ -18,7 +18,12 @@ export type DeveloperCapability =
   | "TASK_READ"
   | "TASK_PROPOSE"
   | "TASK_UPDATE"
-  | "CONTINUATION_RUN";
+  | "CONTINUATION_RUN"
+  | "GITHUB_READ"
+  | "GITHUB_COMMENT"
+  | "GITHUB_PUBLISH_DRAFT"
+  | "GITHUB_PR_METADATA"
+  | "GITHUB_REQUEST_REVIEW";
 
 export type DeveloperPresence = "SLEEPING" | "AVAILABLE" | "WORKING" | "COOLING_DOWN" | "OFFLINE";
 

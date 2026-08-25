@@ -38,6 +38,10 @@ import { registerContinuationRoutes } from "./continuation-api.js";
 import { AssignmentGitBroker, claimsFor, resolveGitCommonDirectory } from "./git-security-boundary.js";
 import { AssignmentGitBrokerServer } from "./git-broker-server.js";
 import { resolveGitExecutablePath, WRITER_BOUNDARY_ACTIVATION, WRITER_BOUNDARY_REVISION, type ConfinedWriterGrant } from "./writer-confinement.js";
+import { GitHubRestClient } from "./github-client.js";
+import { GitHubContributionStore } from "./github-contribution-store.js";
+import { GitHubContributionBroker } from "./github-contribution-broker.js";
+import { registerGitHubContributionRoutes } from "./github-contribution-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -70,6 +74,17 @@ const humans = new HumanPresenceRegistry();
 const humanTaskSessions = new HumanTaskSessions();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
+const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
+const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
+const githubContributionStore = githubToken && githubRepository
+  ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
+  : undefined;
+const githubContributionBroker = githubContributionStore && githubToken && githubRepository
+  ? new GitHubContributionBroker(
+    store, store, developerTeam, githubContributionStore, new GitHubRestClient(githubToken), projectRepositoryPath,
+    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main",
+  )
+  : undefined;
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
@@ -119,6 +134,7 @@ const continuationService = new ContinuationService(store, store, assignmentLife
 await continuationService.initialize();
 
 app.use(express.json({ limit: "64kb" }));
+registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
