@@ -1,6 +1,6 @@
 ---
 id: scoped-github-contribution-broker
-status: active
+status: done
 owner: developer-team
 reviewers: [independent-review]
 depends_on: [governed-assignment-workspaces, first-class-tasks]
@@ -25,17 +25,18 @@ Assigned agents can read or contribute to one configured GitHub repository throu
 
 # Current state
 
-Implementation is isolated on `codex/issue-18-github-broker`. It is not merged and is not live. The broker is default-off unless a repository and server token are configured. Merge and deployment are deliberately reserved for issue #20.
+Merged to `main` through PR #44 at `d20d3c0466f811d040305827a23b948c2a2c5dfc`. The broker remains default-off unless a repository and server token are configured. Merge and deployment remain deliberately reserved for issue #20.
 
 # Next action
 
-Complete adversarial/API coverage, run the full verification and isolated canary, obtain independent review, then publish a review-ready PR.
+No action remains in this bounded phase. Continue exact publication, merge, and deployment gating in #20.
 
 # Evidence
 
 - `server/github-contribution-broker.test.ts`
-- `pnpm test`
-- `pnpm build`
+- PR #44; merge `d20d3c0466f811d040305827a23b948c2a2c5dfc`
+- `pnpm test` — 454 passed, one platform-specific skip
+- `pnpm build` — passed
 
 # Open questions
 

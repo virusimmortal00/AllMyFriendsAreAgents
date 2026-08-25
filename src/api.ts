@@ -73,6 +73,18 @@ export async function updateRoomTask(taskId: string, expectedRevision: number, f
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify({ expectedRevision, [field]: value }) }).then((response) => response.json() as Promise<Task>);
 }
 
+export async function loadContributions() {
+  return request("/api/contributions", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadContribution(id: string) {
+  return request(`/api/contributions/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function contributionGate(id: string, action: "approve" | "execute", kind: "publication" | "merge" | "deployment", body: Record<string, unknown>) {
+  return request(`/api/contributions/${encodeURIComponent(id)}/${action}/${kind}`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.json());
+}
+
 export async function checkReady(): Promise<ServerIdentity> {
   return request("/api/ready", { method: "GET", cache: "no-store" }, READY_TIMEOUT_MS).then((response) => response.json());
 }

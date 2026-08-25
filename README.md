@@ -198,6 +198,8 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY` | Optional `owner/repository` scope for the default-off GitHub contribution broker |
 | `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN` | Server-held GitHub token; never forwarded to an agent process |
 | `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH` | Protected publication base; default `main` |
+| `ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL` | Optional exact-commit/artifact deployment executor |
+| `ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN` | Optional server-held bearer token for that executor |
 
 Run an isolated development copy without touching an existing room:
 
@@ -233,6 +235,8 @@ The Tasks workspace keeps revisioned room-scoped coordination records. A task as
 Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
 
 The optional GitHub contribution broker is also disabled unless both its repository and server-held token are configured. Developer identities receive independently grantable read, comment, draft-publication, metadata, and review-request capabilities. Every request is rebound to a current task, assignment, work claim, manifest, branch, base, and head; the agent never receives the GitHub credential. Merge and deployment remain unavailable.
+
+Reviewed contribution handoffs build on that broker. A distinct reviewer accepts immutable source evidence, then a joined human records separate exact publication, merge, and deployment approvals. Each approval is single-use and cannot authorize a later stage. Deployment remains unavailable unless its executor is explicitly configured.
 
 ## Build with us
 
