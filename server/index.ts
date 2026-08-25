@@ -129,6 +129,7 @@ const investigationExecutor = new HttpInvestigationExecutor(
 const investigationService = new InvestigationService(investigationStore, store, investigationExecutor, {
   configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATIONS_ENABLED === "true",
   maxConcurrentGlobal: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY"),
+  defaultTokenLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT"),
   emergencyStopped: () => coordinatorHeartbeat.status().runtime.emergencyStopped,
   onTransition: () => broadcast(), onError: (error) => console.error("Investigation lifecycle failed", error),
 });

@@ -10,7 +10,7 @@ import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId } from "./types.js";
 
 export const DEFAULT_INVESTIGATION_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 60_000, tokenLimit: 6_000, toolCallLimit: 16, retryLimit: 1 });
-const MAX_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 300_000, tokenLimit: 64_000, toolCallLimit: 40, retryLimit: 2 });
+const MAX_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 300_000, tokenLimit: 96_000, toolCallLimit: 40, retryLimit: 2 });
 const CAPABILITIES = ["READ_PROJECT", "READ_OBSERVABILITY", "RUN_READ_ONLY_TESTS"] as const;
 
 export interface InvestigationExecutorInput {
@@ -59,10 +59,10 @@ export type InvestigationResult<T> = { readonly kind: "ok"; readonly value: T } 
 export class InvestigationService {
   private readonly active = new Map<string, AbortController>(); private closed = false; private pumping = false;
   constructor(private readonly store: InvestigationStore, private readonly rooms: RoomRepository, private readonly executor: InvestigationExecutor, private readonly options: {
-    now?: () => Date; configuredEnabled?: boolean; maxConcurrentGlobal?: number; emergencyStopped?: () => boolean | Promise<boolean>; onTransition?: () => void; onError?: (error: unknown) => void;
+    now?: () => Date; configuredEnabled?: boolean; maxConcurrentGlobal?: number; defaultTokenLimit?: number; emergencyStopped?: () => boolean | Promise<boolean>; onTransition?: () => void; onError?: (error: unknown) => void;
   } = {}) {}
   async initialize() {
-    if (!await this.store.policy()) { const now = this.now(); const policy: InvestigationPolicy = { schemaVersion: 1, policyVersion: INVESTIGATION_POLICY_VERSION, revision: 1, enabled: this.options.configuredEnabled === true, projectPathHash: investigationProjectHash(this.rooms.snapshot().settings.projectPath), maxConcurrentGlobal: Math.max(1, Math.min(8, this.options.maxConcurrentGlobal ?? 2)), maxConcurrentPerAgent: 1, defaultBudget: DEFAULT_INVESTIGATION_BUDGET, maxInboxEntriesPerAgent: 20, inboxTtlMs: 7 * 24 * 60 * 60_000, updatedAt: now, updatedBy: "server-initialization" }; await this.store.setPolicy(0, policy); }
+    if (!await this.store.policy()) { const now = this.now(); const defaultBudget = boundedBudget(this.options.defaultTokenLimit === undefined ? {} : { tokenLimit: this.options.defaultTokenLimit }); if (!defaultBudget) throw new Error("Configured investigation default token limit is outside the bounded policy range."); const policy: InvestigationPolicy = { schemaVersion: 1, policyVersion: INVESTIGATION_POLICY_VERSION, revision: 1, enabled: this.options.configuredEnabled === true, projectPathHash: investigationProjectHash(this.rooms.snapshot().settings.projectPath), maxConcurrentGlobal: Math.max(1, Math.min(8, this.options.maxConcurrentGlobal ?? 2)), maxConcurrentPerAgent: 1, defaultBudget, maxInboxEntriesPerAgent: 20, inboxTtlMs: 7 * 24 * 60 * 60_000, updatedAt: now, updatedBy: "server-initialization" }; await this.store.setPolicy(0, policy); }
     await this.reconcile(); this.schedulePump();
   }
   async policy() { return this.store.policy(); } async list(owner?: AgentId) { return this.store.list(owner); } async audit(id: string) { return this.store.audit(id); }
