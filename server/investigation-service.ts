@@ -10,7 +10,7 @@ import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId } from "./types.js";
 
 export const DEFAULT_INVESTIGATION_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 60_000, tokenLimit: 6_000, toolCallLimit: 16, retryLimit: 1 });
-const MAX_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 300_000, tokenLimit: 16_000, toolCallLimit: 40, retryLimit: 2 });
+const MAX_BUDGET: InvestigationBudget = Object.freeze({ timeMs: 300_000, tokenLimit: 64_000, toolCallLimit: 40, retryLimit: 2 });
 const CAPABILITIES = ["READ_PROJECT", "READ_OBSERVABILITY", "RUN_READ_ONLY_TESTS"] as const;
 
 export interface InvestigationExecutorInput {
