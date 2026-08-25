@@ -10,7 +10,8 @@ import {
   type Improvement,
   type ImprovementChange,
 } from "../../shared/improvement-domain.js";
-import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
+import { AGENT_PROFILES, SUPPORTED_AGENT_IDS, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../../shared/participants.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, validateRosterEntries, type RoomAgentRosterEntry } from "../../shared/roster.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
 import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, normalizeStoredImprovement, paginateImprovements } from "./improvement-storage.js";
@@ -71,6 +72,7 @@ interface RoomRow {
   status: RoomState["status"];
   active_agent: string | null;
   error: string | null;
+  roster_revision: number;
 }
 
 interface MessageRow {
@@ -278,8 +280,8 @@ export class SqliteRoomRepository implements RoomRepository {
       this.database.prepare(`
         INSERT INTO rooms(
           id, slug, name, topic, writable_agent, conversation_energy, project_path,
-          participant_styles_json, status, active_agent, error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          participant_styles_json, status, active_agent, error, roster_revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           slug = excluded.slug,
           name = excluded.name,
@@ -291,6 +293,7 @@ export class SqliteRoomRepository implements RoomRepository {
           status = excluded.status,
           active_agent = excluded.active_agent,
           error = excluded.error,
+          roster_revision = excluded.roster_revision,
           updated_at = excluded.updated_at
       `).run(
         DEFAULT_ROOM_ID,
@@ -304,6 +307,7 @@ export class SqliteRoomRepository implements RoomRepository {
         state.status,
         state.activeAgent || null,
         state.error || null,
+        normalizeRoomAgentRoster(state.roster).revision,
         now,
         now,
       );
@@ -315,10 +319,10 @@ export class SqliteRoomRepository implements RoomRepository {
       for (const [agent, session] of Object.entries(state.sessions) as Array<[AgentId, AgentSession]>) {
         this.upsertSession(agent, session.id, session.permission);
       }
-      AGENT_IDS.forEach((agent, position) => this.database.prepare(`
+      normalizeRoomAgentRoster(state.roster).entries.forEach((entry, position) => this.database.prepare(`
         INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, created_at, updated_at)
-        VALUES (?, ?, 1, ?, '{}', ?, ?)
-      `).run(DEFAULT_ROOM_ID, agent, position, now, now));
+        VALUES (?, ?, ?, ?, '{}', ?, ?)
+      `).run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, now, now));
       this.database.exec("RELEASE replace_room_state");
       this.state = structuredClone(state);
     } catch (error) {
@@ -374,6 +378,45 @@ export class SqliteRoomRepository implements RoomRepository {
     state.settings = { ...state.settings, ...update };
     this.persistSettings(state.settings);
     this.state = state;
+  }
+
+  async updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]) {
+    const validated = validateRosterEntries(entries);
+    if (!validated) throw new Error("Invalid room roster entries.");
+    const state = this.snapshot();
+    const current = normalizeRoomAgentRoster(state.roster);
+    if (current.revision !== expectedRevision) return { kind: "conflict" as const, expectedRevision, actualRevision: current.revision };
+    const roster = { revision: current.revision + 1, entries: structuredClone(validated) };
+    const enabled = new Set(enabledRoomAgentIds(roster));
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const now = new Date().toISOString();
+      const updated = this.database.prepare("UPDATE rooms SET roster_revision = ?, updated_at = ? WHERE id = ? AND roster_revision = ?")
+        .run(roster.revision, now, DEFAULT_ROOM_ID, expectedRevision);
+      if (updated.changes !== 1) {
+        const latest = this.database.prepare("SELECT roster_revision FROM rooms WHERE id = ?").get(DEFAULT_ROOM_ID) as { roster_revision: number };
+        this.database.exec("ROLLBACK");
+        return { kind: "conflict" as const, expectedRevision, actualRevision: latest.roster_revision };
+      }
+      this.database.prepare("DELETE FROM room_agents WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+      const insert = this.database.prepare("INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, created_at, updated_at) VALUES (?, ?, ?, ?, '{}', ?, ?)");
+      roster.entries.forEach((entry, position) => insert.run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, now, now));
+      for (const agent of Object.keys(state.sessions) as AgentId[]) if (!enabled.has(agent as never)) {
+        this.database.prepare("DELETE FROM agent_sessions WHERE room_id = ? AND agent_id = ?").run(DEFAULT_ROOM_ID, agent);
+        delete state.sessions[agent];
+      }
+      if (state.settings.writableAgent !== "nobody" && !enabled.has(state.settings.writableAgent)) {
+        state.settings.writableAgent = "nobody";
+        this.persistSettings(state.settings);
+      }
+      this.database.exec("COMMIT");
+      state.roster = roster;
+      this.state = state;
+      return { kind: "accepted" as const, roster: structuredClone(roster) };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async changeTopic(topic: string) {
@@ -1140,7 +1183,7 @@ export class SqliteRoomRepository implements RoomRepository {
         model_id = excluded.model_id,
         updated_at = excluded.updated_at
     `);
-    for (const agent of AGENT_IDS) {
+    for (const agent of SUPPORTED_AGENT_IDS) {
       const profile = AGENT_PROFILES[agent];
       statement.run(agent, profile.displayName, profile.provider, profile.modelId, now, now);
     }
@@ -1159,11 +1202,16 @@ export class SqliteRoomRepository implements RoomRepository {
       projectPath: configuredProjectPath || row.project_path || this.projectRoot,
       participantStyles,
     };
+    const storedRosterEntries = (this.database.prepare("SELECT agent_id, enabled FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number }>)
+      .flatMap((entry) => isActiveAgentId(entry.agent_id) ? [{ agentId: entry.agent_id, enabled: Boolean(entry.enabled) }] : []);
+    const roster = normalizeRoomAgentRoster({ revision: row.roster_revision, entries: storedRosterEntries });
+    const enabledAgents = new Set(enabledRoomAgentIds(roster));
+    if (settings.writableAgent !== "nobody" && !enabledAgents.has(settings.writableAgent)) settings.writableAgent = "nobody";
     const messages = (this.database.prepare("SELECT * FROM messages WHERE room_id = ? ORDER BY row_id").all(DEFAULT_ROOM_ID) as unknown as MessageRow[])
       .map((message) => messageFromRow(message, participantStyles));
     const sessions: Partial<Record<AgentId, AgentSession>> = {};
     for (const session of this.database.prepare("SELECT * FROM agent_sessions WHERE room_id = ?").all(DEFAULT_ROOM_ID) as unknown as SessionRow[]) {
-      if (isActiveAgentId(session.agent_id) && (session.permission === "read-only" || session.permission === "writable")) {
+      if (isActiveAgentId(session.agent_id) && enabledAgents.has(session.agent_id) && (session.permission === "read-only" || session.permission === "writable")) {
         sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission };
       }
     }
@@ -1171,6 +1219,7 @@ export class SqliteRoomRepository implements RoomRepository {
       messages,
       sessions,
       settings,
+      roster,
       status: row.status === "working" || row.status === "error" ? row.status : "idle",
       ...(isAgentId(row.active_agent) ? { activeAgent: row.active_agent } : {}),
       ...(row.error ? { error: row.error } : {}),
@@ -1312,6 +1361,7 @@ function samePersistedRoomState(left: RoomState, right: RoomState) {
   return JSON.stringify(left.messages) === JSON.stringify(right.messages)
     && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
     && JSON.stringify(left.settings) === JSON.stringify(right.settings)
+    && JSON.stringify(normalizeRoomAgentRoster(left.roster)) === JSON.stringify(normalizeRoomAgentRoster(right.roster))
     && left.status === right.status
     && left.activeAgent === right.activeAgent
     && left.error === right.error;

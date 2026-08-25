@@ -39,12 +39,13 @@ describe("SQLite migrations", () => {
         "continuation_inbox",
         "continuation_job_events",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 11 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 12 });
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(messageColumns).toContain("client_message_id");
       expect(messageColumns).toContain("mentions_json");
+      expect((database.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("roster_revision");
     } finally {
       database.close();
     }
@@ -76,6 +77,29 @@ describe("SQLite migrations", () => {
       expect(database.prepare("SELECT COUNT(*) AS count FROM canonical_improvements").get()).toEqual({ count: 0 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM emergency_stops").get()).toEqual({ count: 0 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM canonical_tasks").get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("removes Gemini Pro from a legacy live roster and revokes its durable authority", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: true });
+    try {
+      database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, "0001_initial.sql"), "utf8"));
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)").run("2026-08-21T00:00:00Z");
+      database.prepare(`INSERT INTO rooms(id, slug, name, topic, writable_agent, conversation_energy, project_path, participant_styles_json, status, active_agent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run("room-1", "legacy", "Legacy", "Topic", "cursor-gemini", "balanced", "/tmp/project", "{}", "working", "cursor-gemini", "now", "now");
+      database.prepare("INSERT INTO agents(id, display_name, provider, model_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run("cursor-gemini", "Cursor", "cursor", "gemini-3.1-pro", "now", "now");
+      database.prepare("INSERT INTO room_agents(room_id, agent_id, enabled, position, created_at, updated_at) VALUES (?, ?, 1, 0, ?, ?)")
+        .run("room-1", "cursor-gemini", "now", "now");
+      database.prepare("INSERT INTO agent_sessions(room_id, agent_id, provider_session_id, permission, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run("room-1", "cursor-gemini", "session", "writable", "now");
+
+      await runSqliteMigrations(database);
+      expect(database.prepare("SELECT COUNT(*) AS count FROM room_agents WHERE agent_id = 'cursor-gemini'").get()).toEqual({ count: 0 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_id = 'cursor-gemini'").get()).toEqual({ count: 0 });
+      expect(database.prepare("SELECT writable_agent, status, active_agent FROM rooms WHERE id = 'room-1'").get()).toEqual({ writable_agent: "nobody", status: "idle", active_agent: null });
     } finally {
       database.close();
     }

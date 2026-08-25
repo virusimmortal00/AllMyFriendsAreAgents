@@ -261,15 +261,15 @@ describe("room message policy", () => {
       speaker: "you",
       humanId: "alice",
       speakerName: "Alice",
-      text: "@Gemini any thoughts?",
+      text: "@Flash any thoughts?",
       timestamp: "2026-08-21T12:00:00.000Z",
-      mentions: [{ targetKind: "agent", targetId: "cursor-gemini", label: "Gemini", revision: 1, start: 0, end: 7 }],
+      mentions: [{ targetKind: "agent", targetId: "cursor-gemini-flash", label: "Flash", revision: 1, start: 0, end: 6 }],
     }]);
 
-    expect(rankRoomAgents(state, () => 0)[0]).toBe("cursor-gemini");
+    expect(rankRoomAgents(state, () => 0)[0]).toBe("cursor-gemini-flash");
     const turns = roomMessageTurns(state);
     expect(turns).toHaveLength(AGENT_IDS.length);
-    expect(turns.find(({ agent }) => agent === "cursor-gemini")?.instruction).toContain("use NO_RESPONSE_NEEDED");
+    expect(turns.find(({ agent }) => agent === "cursor-gemini-flash")?.instruction).toContain("use NO_RESPONSE_NEEDED");
   });
 
   it.each([

@@ -5,6 +5,7 @@ import type { AgentHealth } from "./agent-health.js";
 import type { ServerIdentity } from "../shared/protocol.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
+import type { RoomAgentRoster } from "../shared/roster.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -47,6 +48,7 @@ export interface RoomState {
   messages: RoomMessage[];
   sessions: Partial<Record<AgentId, AgentSession>>;
   settings: RoomSettings;
+  roster?: RoomAgentRoster;
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
   error?: string;
@@ -56,7 +58,7 @@ export interface RoomState {
 export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
   settings: Omit<RoomSettings, "projectPath">;
   activeGenerations?: ActiveGenerations;
-  availability?: Record<ActiveAgentId, boolean>;
+  availability?: Partial<Record<ActiveAgentId, boolean>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
 }

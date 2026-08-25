@@ -12,6 +12,41 @@ afterEach(async () => {
 });
 
 describe("SQLite room repository", () => {
+  it("atomically persists ordering, disabled entries, empty rosters, and revision conflicts", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-roster-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    await store.setSession("codex-sol", "active-session", "read-only");
+    expect(await store.updateRoster(1, [
+      { agentId: "cursor-gemini", enabled: true },
+      { agentId: "claude-opus", enabled: false },
+    ])).toMatchObject({ kind: "accepted", roster: { revision: 2 } });
+    expect(store.snapshot().sessions).toEqual({});
+    expect(await store.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
+    expect(await store.updateRoster(2, [])).toMatchObject({ kind: "accepted", roster: { revision: 3, entries: [] } });
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster).toEqual({ revision: 3, entries: [] });
+    reopened.close();
+  });
+
+  it("uses database compare-and-swap across concurrent repository instances", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-roster-cas-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const first = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const stale = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await first.updateRoster(1, [{ agentId: "claude-opus", enabled: true }])).toMatchObject({ kind: "accepted" });
+    expect(await stale.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
+    first.close(); stale.close();
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [{ agentId: "claude-opus", enabled: true }] });
+    reopened.close();
+  });
+
+
   it("persists messages, settings, styles, bursts, and sessions across restarts", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-room-"));
     temporaryDirectories.push(projectRoot);

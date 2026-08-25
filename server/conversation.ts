@@ -4,6 +4,7 @@ import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
 import { isNoResponseNeeded, visibleAgentChatText } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
 
 export interface ConversationTurn {
   agent: AgentId;
@@ -73,7 +74,7 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   }
   const recent = messages.slice(Math.max(0, messages.length - 24));
 
-  return [...AGENT_IDS].sort((left, right) => {
+  return enabledRoomAgentIds(normalizeRoomAgentRoster(state.roster)).sort((left, right) => {
     const score = (agent: AgentId) => {
       const lastSpoke = messages.findLastIndex(({ speaker }) => speaker === agent);
       const quietDistance = lastSpoke < 0 ? 12 : Math.max(0, messages.length - 1 - lastSpoke);
@@ -117,7 +118,7 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
   });
 }
 
-export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3) {
+export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS) {
   const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
   if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false };
   const visibleMessages = visibleAgentChatText(text)
@@ -126,7 +127,7 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     .filter((message) => message && message !== "NO_RESPONSE_NEEDED")
     .slice(0, Math.max(0, Math.min(3, visibleMessageLimit)));
   const combinedText = visibleMessages.join("\n");
-  const otherAgents = AGENT_IDS.filter((candidate) => candidate !== agent);
+  const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
   const mentionedAgents = otherAgents.filter((candidate) => {
     const profile = AGENT_PROFILES[candidate];
     const namePattern = new RegExp(`\\b${profile.conversationalName}\\b`, "i");

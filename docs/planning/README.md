@@ -12,6 +12,7 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 - [Participant mentions and autocomplete](participant-mentions.md)
 - [Scoped GitHub contribution broker](18-scoped-github-contribution-broker.md)
 - [Exact-commit contribution gates](20-exact-commit-contribution-gates.md)
+- [Persistent live room roster](48-persistent-live-roster.md)
 
 ## Working rules
 

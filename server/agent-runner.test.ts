@@ -374,6 +374,19 @@ describe("agent process cancellation", () => {
     expect(supervisor.activeCount).toBe(0);
   });
 
+  it("lets a roster agent scope terminate work that also belongs to an assignment", async () => {
+    const supervisor = new AgentProcessSupervisor();
+    const outcome = __testing.runProcess(
+      process.execPath,
+      ["-e", "setInterval(() => undefined, 1000)"],
+      process.cwd(),
+      { supervisor, scope: ["agent:codex-sol", "assignment:one"], timeoutMs: 10_000 },
+    ).catch((error: unknown) => error);
+    await supervisor.terminateScope("agent:codex-sol");
+    await expect(outcome).resolves.toMatchObject({ name: "ProcessExecutionError" });
+    expect(supervisor.activeCount).toBe(0);
+  });
+
   it.skipIf(process.platform === "win32")("terminates descendants with the cancelled agent process", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "agent-process-tree-"));
     const pidPath = path.join(directory, "grandchild.pid");

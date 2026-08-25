@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
-import { AGENT_IDS, AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../shared/participants.js";
+import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
@@ -29,6 +29,7 @@ import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-ap
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
@@ -47,6 +48,7 @@ import { ContributionStore } from "./contribution-store.js";
 import { ContributionService } from "./contribution-service.js";
 import { GovernedContributionExecutor, UnavailableContributionExecutor } from "./contribution-executor.js";
 import { registerContributionRoutes } from "./contribution-api.js";
+import { registerRosterRoutes } from "./roster-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -156,6 +158,10 @@ function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
 }
 
+function currentEnabledAgents() {
+  return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
+}
+
 function publicRoomSnapshot() {
   return { ...publicRoomState(roomSnapshot()), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), server: serverIdentity };
 }
@@ -186,6 +192,11 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
+  const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
+  const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
+  if (!agentStillEnabled()) {
+    return { cancelled: true };
+  }
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
@@ -231,6 +242,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       writerGrant,
     );
   } catch (error) {
+    if (!agentStillEnabled()) {
+      await store.clearSession(agent);
+      return { cancelled: true };
+    }
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
     if (!activeAgent) throw error;
     await agentHealth.recordFailure(activeAgent, error);
@@ -242,10 +257,14 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (gitBrokerRoot) await rm(gitBrokerRoot, { recursive: true, force: true });
     generationCancellation.dispose();
   }
+  if (!agentStillEnabled()) {
+    await store.clearSession(agent);
+    return { cancelled: true };
+  }
   if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
-  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit);
+  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents());
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
@@ -259,7 +278,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     styleUpdate: parsed.styleUpdate,
   });
 
-  if (!roomActivity.isCurrent(activityRevision)) {
+  if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
     await store.clearSession(agent);
     await generationJournal.append({
       type: "generation.delivery",
@@ -288,14 +307,15 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     firstDelayMs: firstDelay,
     cancel: () => store.clearSession(agent),
     deliver: async (visibleMessage, sequence) => {
+      if (!agentStillEnabled()) return false;
       if (!burstStarted) {
         await store.setSession(agent, result.sessionId, permission);
-        if (!roomActivity.isCurrent(activityRevision)) return false;
+        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-        if (!roomActivity.isCurrent(activityRevision)) return false;
+        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         burstStarted = true;
       }
-      if (!roomActivity.isCurrent(activityRevision)) return false;
+      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
       await store.addMessage(
         agent,
         visibleMessage,
@@ -336,8 +356,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     return { cancelled: true };
   }
   if (!burstStarted) {
+    if (!agentStillEnabled()) return { cancelled: true };
     await store.setSession(agent, result.sessionId, permission);
-    if (!roomActivity.isCurrent(activityRevision)) {
+    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       await store.clearSession(agent);
       await generationJournal.append({
         type: "generation.delivery",
@@ -351,7 +372,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       return { cancelled: true };
     }
     if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-    if (!roomActivity.isCurrent(activityRevision)) {
+    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       await store.clearSession(agent);
       await generationJournal.append({
         type: "generation.delivery",
@@ -447,7 +468,7 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 
 app.get("/api/state", async (_request, response) => {
   response.json({
-    ...(await roomStateWithAvailability(roomSnapshot, cliAvailability)),
+    ...(await roomStateWithAvailability(roomSnapshot, () => cliAvailability(currentEnabledAgents()))),
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
     server: serverIdentity,
@@ -560,6 +581,7 @@ app.post("/api/humans", (request, response) => {
 
 registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam, broadcast });
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -581,7 +603,7 @@ app.patch("/api/settings", async (request, response) => {
     if (!roomName || roomName.length > 80) return response.status(400).json({ error: "Room name must be between 1 and 80 characters." });
     allowed.roomName = roomName;
   }
-  if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
+  if (update.writableAgent === "nobody" || (isAgentId(update.writableAgent) && currentEnabledAgents().includes(update.writableAgent))) {
     const writableAgent = normalizeWritableAgent(update.writableAgent);
     if (writableAgent !== previousWritableAgent) {
       permissionActor = actor;
@@ -626,7 +648,7 @@ app.post("/api/messages", async (request, response) => {
   }
   let mentions;
   try {
-    mentions = validateMessageMentions(request.body?.mentions, text, roomMentionCandidates(humans.list()));
+    mentions = validateMessageMentions(request.body?.mentions, text, roomMentionCandidates(humans.list(), currentEnabledAgents()));
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Message mentions are invalid." });
   }
@@ -748,8 +770,11 @@ app.post("/api/actions", async (request, response) => {
   if (target !== "all" && target !== "both" && !isActiveAgentId(target)) {
     return response.status(400).json({ error: "Unknown action target." });
   }
+  if (target !== "all" && target !== "both" && !currentEnabledAgents().includes(target)) {
+    return response.status(409).json({ error: "That agent is not enabled in this room." });
+  }
 
-  const agents: AgentId[] = target === "all" || target === "both" ? [...AGENT_IDS] : [target];
+  const agents: AgentId[] = target === "all" || target === "both" ? currentEnabledAgents() : [target];
   jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
     const turns = agents.map((agent) => ({
       agent,

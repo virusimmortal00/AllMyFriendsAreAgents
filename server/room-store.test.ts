@@ -12,6 +12,30 @@ afterEach(async () => {
 });
 
 describe("room style persistence", () => {
+  it("persists revisioned live roster changes and clears deactivated authority", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-roster-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.updateSettings({ writableAgent: "codex-sol" });
+    await store.setSession("codex-sol", "active-session", "writable");
+
+    const accepted = await store.updateRoster(1, [
+      { agentId: "claude-opus", enabled: true },
+      { agentId: "codex-sol", enabled: false },
+    ]);
+    expect(accepted).toMatchObject({ kind: "accepted", roster: { revision: 2 } });
+    expect(store.snapshot().sessions).toEqual({});
+    expect(store.snapshot().settings.writableAgent).toBe("nobody");
+    expect(await store.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [
+      { agentId: "claude-opus", enabled: true },
+      { agentId: "codex-sol", enabled: false },
+    ] });
+  });
+
   it("migrates legacy Codex and Claude state into model-specific participants", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);
