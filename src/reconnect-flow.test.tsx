@@ -7,7 +7,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import App from "./App";
 import { ApiRequestError } from "./api";
-import { loadDraftSnapshot, saveDraftSnapshot, savePendingSend } from "./client-persistence";
+import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend } from "./client-persistence";
 import type { HumanPresence, RoomState } from "./types";
 
 const api = vi.hoisted(() => ({
@@ -167,6 +167,29 @@ describe("rendered reconnect recovery", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByText("Before")).toBeNull();
     expect(screen.getAllByText("After")).toHaveLength(1);
+  });
+
+  it("adopts and persists a replacement identity after the server loses its session map", async () => {
+    const replacement: HumanPresence = {
+      ...human,
+      id: "replacement-human-5678",
+    };
+    const pending = { clientMessageId: "pending-across-restart", text: "still needs confirmation" };
+    api.joinRoom.mockResolvedValueOnce(human).mockResolvedValueOnce(replacement);
+    const user = userEvent.setup();
+    const composer = await renderConnected([], () => savePendingSend(window.localStorage, human.id, pending));
+    await user.type(composer, "survives identity replacement");
+    composer.blur();
+
+    act(() => ControlledEventSource.instances[0].fail());
+    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
+
+    expect(api.joinRoom).toHaveBeenLastCalledWith(human);
+    expect(JSON.parse(window.localStorage.getItem("all-my-friends-are-agents-human") || "null")).toEqual(replacement);
+    expect(loadDraftSnapshot(window.localStorage, replacement.id).text).toBe("survives identity replacement");
+    expect(loadPendingSend(window.localStorage, replacement.id)).toEqual(pending);
+    act(() => ControlledEventSource.instances[1].emit(room("server-after", [], { humans: [replacement] })));
+    expect((await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("survives identity replacement");
   });
 
   it("keeps one optimistic message through acknowledgement and replaces it once on the later delta", async () => {

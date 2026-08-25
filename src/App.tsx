@@ -211,7 +211,7 @@ export default function App() {
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [savedHuman?.id, savedHuman?.name, joinRequestRevision]);
+  }, [Boolean(savedHuman), joinRequestRevision]);
 
   useEffect(() => {
     if (!human) return;
@@ -328,8 +328,17 @@ export default function App() {
       try {
         await checkReady();
         if (cancelled) return;
-        await joinRoom(currentHuman);
+        const joined = await joinRoom(currentHuman);
         if (cancelled) return;
+        if (joined.id !== currentHuman.id) {
+          composer.current?.flush();
+          saveDraftSnapshot(window.localStorage, joined.id, loadDraftSnapshot(window.localStorage, currentHuman.id));
+          savePendingSend(window.localStorage, joined.id, loadPendingSend(window.localStorage, currentHuman.id));
+        }
+        setHuman(joined);
+        setSavedHuman(joined);
+        saveHumanProfile(joined);
+        if (joined.id !== currentHuman.id) return;
         connectEvents();
       } catch (error) {
         if (cancelled) return;
