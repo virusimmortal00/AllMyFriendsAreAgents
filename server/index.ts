@@ -15,7 +15,7 @@ import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorState
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
-import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
+import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
@@ -501,6 +501,8 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
   if (!accepted) presenceConversationScheduled = false;
 }
 
+const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresence);
+
 app.get("/api/state", async (_request, response) => {
   response.json({
     ...(await roomStateWithAvailability(roomSnapshot, () => cliAvailability(currentEnabledAgents()))),
@@ -595,16 +597,11 @@ app.get("/api/events", (request, response) => {
   if (!connection) return response.status(401).json({ error: "Join the room before connecting." });
   roomEvents.connect(request, response, publicRoomSnapshot(), () => {
     const departure = humans.disconnect(human.id);
-    if (departure?.becameAbsent) {
-      void announceHumanPresence(departure.human, "left").catch((error) => console.error("Failed to announce room departure", error));
-    } else {
-      broadcast();
-    }
+    broadcast();
+    if (departure) presenceAnnouncements.departure(departure.human, departure.becameAbsent);
   });
   broadcast();
-  if (connection.becamePresent) {
-    void announceHumanPresence(connection.human, "joined").catch((error) => console.error("Failed to announce room arrival", error));
-  }
+  presenceAnnouncements.arrival(connection.human, connection.becamePresent);
 });
 
 app.post("/api/humans", (request, response) => {
@@ -855,6 +852,7 @@ async function shutdown(signal: string) {
   jobs.close();
   roomActivity.interrupt();
   activeGenerations.clear();
+  presenceAnnouncements.shutdown();
   continuationService.shutdown();
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
