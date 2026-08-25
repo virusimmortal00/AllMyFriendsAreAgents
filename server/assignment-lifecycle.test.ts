@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createImprovement, type DomainActor } from "../shared/improvement-domain.js";
 import { __testing as runnerTesting } from "./agent-runner.js";
 import { ASSIGNMENT_LIFECYCLE_METADATA, type AssignmentRecord } from "./assignment-record.js";
-import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
+import { AssignmentLifecycleService, __testing } from "./assignment-lifecycle.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { DeveloperTeamRegistry, hashToken, type DeveloperTeamMemberRevision } from "./developer-team.js";
 import { RoomStore } from "./room-store.js";
@@ -60,6 +60,7 @@ function assignmentRecord(workspacePath: string): AssignmentRecord {
     assignmentId: "persisted-1", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 3,
     agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/assignment-persisted",
     observedHeadSha: "b".repeat(40), workspacePath, lifecycleStatus: "RECOVERABLE",
+    lifecycleRevision: 1, cancelledAt: null, disposedAt: null, lastOperationKey: null,
     recovery: { classification: "dirty", reconciledAt: "2099-01-01T00:00:00.000Z", previousStatus: "ACTIVE", detail: "preserved" },
     createdAt: "2099-01-01T00:00:00.000Z", updatedAt: "2099-01-01T00:00:00.000Z",
   };
@@ -100,6 +101,17 @@ describe("assignment record persistence", () => {
 });
 
 describe("trusted single-writer assignment lifecycle", () => {
+  it("accepts a clean assignment owned by a repository that is itself a linked worktree", async () => {
+    const container = await mkdtemp(path.join(os.tmpdir(), "amfaa-linked-repository-")); directories.push(container);
+    const source = path.join(container, "source"); const repository = path.join(container, "repository"); const worktrees = path.join(container, "worktrees");
+    await mkdir(source); await git(source, "init", "-b", "main"); await git(source, "config", "user.email", "test@example.com"); await git(source, "config", "user.name", "Test");
+    await writeFile(path.join(source, "tracked.txt"), "base\n"); await git(source, "add", "tracked.txt"); await git(source, "commit", "-m", "base");
+    await git(source, "worktree", "add", "-b", "candidate", repository, "HEAD"); await mkdir(worktrees);
+    const workspace = path.join(worktrees, "assignment"); await git(repository, "worktree", "add", "-b", "assignment-branch", workspace, "HEAD");
+    const record = { ...assignmentRecord(await realpath(workspace)), branch: "assignment-branch" };
+    expect(await __testing.disposableWorkspace(repository, await realpath(worktrees), record)).toEqual({ kind: "ok", value: true });
+  });
+
   it("pins a base, creates a unique branch/worktree, and rejects a second writer", async () => {
     const { service, base } = await repositoryFixture();
     const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-1", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
@@ -151,6 +163,30 @@ describe("trusted single-writer assignment lifecycle", () => {
     await writeFile(path.join(created.value.workspacePath, "done.txt"), "done\n"); await git(created.value.workspacePath, "add", "done.txt"); await git(created.value.workspacePath, "commit", "-m", "done");
     await git(root, "merge", "--ff-only", created.value.branch);
     expect((await service.reconcile())[0]).toMatchObject({ lifecycleStatus: "COMPLETED", recovery: { classification: "merged" } });
+  });
+
+  it("cancels authority before process cleanup, preserves dirty work, and releases the writer gate", async () => {
+    const { service } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-cancel", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    await writeFile(path.join(created.value.workspacePath, "keep.txt"), "preserve\n");
+    const cancelled = await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-one" });
+    expect(cancelled).toMatchObject({ kind: "ok", value: { lifecycleStatus: "CANCELLED", lifecycleRevision: 2, lastOperationKey: "cancel-one" } });
+    expect((await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "cancel-conflict" })).kind).toBe("conflict");
+    expect(await stat(path.join(created.value.workspacePath, "keep.txt"))).toBeTruthy();
+    expect((await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-dirty", confirmDisposable: true })).kind).toBe("rejected");
+    expect((await service.create(`Bearer ${token}`, { assignmentId: "assignment-next", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 })).kind).toBe("ok");
+  });
+
+  it("disposes only an explicitly confirmed clean cancelled worktree and is idempotent", async () => {
+    const { service } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-dispose", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-dispose" });
+    const disposed = await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-one", confirmDisposable: true });
+    expect(disposed).toMatchObject({ kind: "ok", value: { lifecycleStatus: "DISPOSED", lifecycleRevision: 3 } });
+    await expect(stat(created.value.workspacePath)).rejects.toBeTruthy();
+    expect(await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-one", confirmDisposable: true })).toEqual(disposed);
   });
 
   it("exposes prototype metadata without publication operations and scopes writable cwd only", () => {

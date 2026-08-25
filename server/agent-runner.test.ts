@@ -305,6 +305,27 @@ describe("agent process cancellation", () => {
     expect(supervisor.activeCount).toBe(0);
   });
 
+  it.skipIf(process.platform === "win32")("kills independently grouped descendants during server shutdown", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "agent-shutdown-tree-"));
+    const pidPath = path.join(directory, "descendant.pid");
+    const supervisor = new AgentProcessSupervisor();
+    const script = [
+      "const { spawn } = require('node:child_process')", "const { writeFileSync } = require('node:fs')",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: 'ignore', detached: true })",
+      "child.unref()", "writeFileSync(process.argv[1], String(child.pid))", "setInterval(() => undefined, 1000)",
+    ].join(";");
+    const outcome = __testing.runProcess(process.execPath, ["-e", script, pidPath], process.cwd(), { supervisor, timeoutMs: 10_000 }).catch((error: unknown) => error);
+    let descendantPid = 0;
+    for (let attempt = 0; attempt < 100 && descendantPid === 0; attempt += 1) {
+      try { descendantPid = Number(await readFile(pidPath, "utf8")); } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+    }
+    expect(descendantPid).toBeGreaterThan(0);
+    await supervisor.shutdown();
+    await expect(outcome).resolves.toMatchObject({ name: "ProcessExecutionError" });
+    expect(() => process.kill(descendantPid, 0)).toThrow();
+    await rm(directory, { recursive: true, force: true });
+  });
+
   it("cancels an active generation promptly", async () => {
     const controller = new AbortController();
     const outcome = __testing.runProcess(
@@ -319,6 +340,16 @@ describe("agent process cancellation", () => {
     await expect(outcome).resolves.toMatchObject({ name: "ProcessCancelledError" });
   });
 
+  it("terminates only processes in the requested assignment scope", async () => {
+    const supervisor = new AgentProcessSupervisor();
+    const first = __testing.runProcess(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], process.cwd(), { supervisor, scope: "first", timeoutMs: 10_000 }).catch((error: unknown) => error);
+    const second = __testing.runProcess(process.execPath, ["-e", "setTimeout(() => process.stdout.write('ok'), 150)"], process.cwd(), { supervisor, scope: "second", timeoutMs: 10_000 });
+    await supervisor.terminateScope("first");
+    await expect(first).resolves.toMatchObject({ name: "ProcessExecutionError" });
+    await expect(second).resolves.toMatchObject({ stdout: "ok" });
+    expect(supervisor.activeCount).toBe(0);
+  });
+
   it.skipIf(process.platform === "win32")("terminates descendants with the cancelled agent process", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "agent-process-tree-"));
     const pidPath = path.join(directory, "grandchild.pid");
@@ -326,7 +357,8 @@ describe("agent process cancellation", () => {
     const script = [
       "const { spawn } = require('node:child_process')",
       "const { writeFileSync } = require('node:fs')",
-      "const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: 'ignore' })",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], { stdio: 'ignore', detached: true })",
+      "child.unref()",
       "writeFileSync(process.argv[1], String(child.pid))",
       "setInterval(() => undefined, 1000)",
     ].join(";");

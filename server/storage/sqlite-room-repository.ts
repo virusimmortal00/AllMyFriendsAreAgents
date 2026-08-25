@@ -768,17 +768,23 @@ export class SqliteRoomRepository implements RoomRepository {
       INSERT INTO assignment_records(
         room_id, assignment_id, improvement_id, developer_member_id, developer_member_config_revision,
         agent_id, fencing_token, manifest_revision, pinned_base_sha, branch_name, observed_head_sha,
-        workspace_path, lifecycle_status, recovery_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workspace_path, lifecycle_status, lifecycle_revision, cancelled_at, disposed_at, last_operation_key,
+        recovery_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(room_id, assignment_id) DO UPDATE SET
         observed_head_sha = excluded.observed_head_sha,
         lifecycle_status = excluded.lifecycle_status,
+        lifecycle_revision = excluded.lifecycle_revision,
+        cancelled_at = excluded.cancelled_at,
+        disposed_at = excluded.disposed_at,
+        last_operation_key = excluded.last_operation_key,
         recovery_json = excluded.recovery_json,
         updated_at = excluded.updated_at
     `).run(DEFAULT_ROOM_ID, value.assignmentId, value.improvementId, value.developerMemberId,
       value.developerMemberConfigRevision, value.agent, value.fencingToken, value.manifestRevision,
       value.pinnedBaseSha, value.branch, value.observedHeadSha, value.workspacePath,
-      value.lifecycleStatus, JSON.stringify(value.recovery), value.createdAt, value.updatedAt);
+      value.lifecycleStatus, value.lifecycleRevision ?? 1, value.cancelledAt ?? null, value.disposedAt ?? null,
+      value.lastOperationKey ?? null, JSON.stringify(value.recovery), value.createdAt, value.updatedAt);
   }
 
   async getContinuationPolicy() {
@@ -1291,6 +1297,10 @@ function assignmentFromRow(row: Record<string, unknown>) {
     observedHeadSha: row.observed_head_sha,
     workspacePath: row.workspace_path,
     lifecycleStatus: row.lifecycle_status,
+    lifecycleRevision: Number(row.lifecycle_revision || 1),
+    cancelledAt: row.cancelled_at ?? null,
+    disposedAt: row.disposed_at ?? null,
+    lastOperationKey: row.last_operation_key ?? null,
     recovery: parseJson(row.recovery_json as string, undefined),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

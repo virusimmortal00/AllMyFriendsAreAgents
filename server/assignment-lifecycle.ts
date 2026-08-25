@@ -28,9 +28,17 @@ export interface CreateAssignmentInput {
   readonly manifestRevision: number;
 }
 
+export interface AssignmentMutationInput {
+  readonly assignmentId: string;
+  readonly expectedRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface DisposeAssignmentInput extends AssignmentMutationInput { readonly confirmDisposable: boolean; }
+
 export class AssignmentLifecycleService {
   readonly metadata = ASSIGNMENT_LIFECYCLE_METADATA;
-  private createQueue: Promise<void> = Promise.resolve();
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly records: AssignmentRecordStore,
@@ -40,11 +48,12 @@ export class AssignmentLifecycleService {
     private readonly worktreesRoot: string,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly singleWriter = true,
+    private readonly processes?: { terminateScope(scope: string): Promise<void> },
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
-    const operation = this.createQueue.then(() => this.createLocked(authorization, input));
-    this.createQueue = operation.then(() => undefined, () => undefined);
+    const operation = this.mutationQueue.then(() => this.createLocked(authorization, input));
+    this.mutationQueue = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
@@ -96,6 +105,10 @@ export class AssignmentLifecycleService {
       observedHeadSha,
       workspacePath,
       lifecycleStatus: "ACTIVE",
+      lifecycleRevision: 1,
+      cancelledAt: null,
+      disposedAt: null,
+      lastOperationKey: null,
       recovery: { classification: "clean", reconciledAt: timestamp, previousStatus: null, detail: "New trusted single-writer worktree" },
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -109,6 +122,9 @@ export class AssignmentLifecycleService {
   async reconcile(): Promise<readonly AssignmentRecord[]> {
     const reconciled: AssignmentRecord[] = [];
     for (const assignment of await this.records.listAssignments()) {
+      if (assignment.lifecycleStatus === "CANCELLED" || assignment.lifecycleStatus === "DISPOSED") {
+        reconciled.push(assignment); continue;
+      }
       const evidence = await inspect(this.repositoryPath, assignment);
       const lifecycleStatus = evidence.classification === "missing" ? "MISSING"
         : evidence.classification === "merged" ? "COMPLETED"
@@ -164,6 +180,63 @@ export class AssignmentLifecycleService {
     return assignments;
   }
 
+  cancel(authorization: string | undefined, input: AssignmentMutationInput) {
+    const operation = this.mutationQueue.then(() => this.cancelLocked(authorization, input));
+    this.mutationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async cancelLocked(authorization: string | undefined, input: AssignmentMutationInput): Promise<AssignmentResult<AssignmentRecord>> {
+    if (!this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR")) return { kind: "unauthorized" };
+    if (!validMutation(input)) return { kind: "rejected", reason: "Valid assignment, expected revision, and idempotency key are required" };
+    const assignment = await this.records.getAssignment(input.assignmentId);
+    if (!assignment) return { kind: "not_found" };
+    const revision = assignment.lifecycleRevision ?? 1;
+    if (assignment.lifecycleStatus === "CANCELLED" && assignment.lastOperationKey === input.idempotencyKey) return { kind: "ok", value: assignment };
+    if (assignment.lifecycleStatus === "CANCELLED") return { kind: "conflict", reason: "Assignment was already cancelled by another operation" };
+    if (revision !== input.expectedRevision) return { kind: "conflict", reason: `Assignment lifecycle revision is ${revision}` };
+    if (assignment.lifecycleStatus === "DISPOSED") return { kind: "conflict", reason: "Disposed assignments cannot be cancelled" };
+    const timestamp = this.now();
+    const cancelled: AssignmentRecord = {
+      ...assignment, lifecycleStatus: "CANCELLED", lifecycleRevision: revision + 1, cancelledAt: timestamp,
+      lastOperationKey: input.idempotencyKey, updatedAt: timestamp,
+      recovery: { ...assignment.recovery, reconciledAt: timestamp, previousStatus: assignment.lifecycleStatus, detail: "Assignment write authority was explicitly cancelled; workspace preserved" },
+    };
+    // Persist revocation before waiting for any process cleanup.
+    await this.records.putAssignment(cancelled);
+    await this.processes?.terminateScope(assignment.assignmentId);
+    return { kind: "ok", value: cancelled };
+  }
+
+  dispose(authorization: string | undefined, input: DisposeAssignmentInput) {
+    const operation = this.mutationQueue.then(() => this.disposeLocked(authorization, input));
+    this.mutationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async disposeLocked(authorization: string | undefined, input: DisposeAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
+    if (!this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR")) return { kind: "unauthorized" };
+    if (!validMutation(input) || input.confirmDisposable !== true) return { kind: "rejected", reason: "Explicit disposable confirmation is required" };
+    const assignment = await this.records.getAssignment(input.assignmentId);
+    if (!assignment) return { kind: "not_found" };
+    const revision = assignment.lifecycleRevision ?? 1;
+    if (assignment.lifecycleStatus === "DISPOSED" && assignment.lastOperationKey === input.idempotencyKey) return { kind: "ok", value: assignment };
+    if (revision !== input.expectedRevision) return { kind: "conflict", reason: `Assignment lifecycle revision is ${revision}` };
+    if (assignment.lifecycleStatus !== "CANCELLED" && assignment.lifecycleStatus !== "COMPLETED") return { kind: "conflict", reason: "Only cancelled or completed assignments can be disposed" };
+    const safety = await disposableWorkspace(this.repositoryPath, this.worktreesRoot, assignment);
+    if (safety.kind !== "ok") return safety;
+    await git(this.repositoryPath, ["worktree", "remove", assignment.workspacePath]);
+    await git(this.repositoryPath, ["branch", "-d", assignment.branch]).catch(() => "");
+    const timestamp = this.now();
+    const disposed: AssignmentRecord = {
+      ...assignment, lifecycleStatus: "DISPOSED", lifecycleRevision: revision + 1, disposedAt: timestamp,
+      lastOperationKey: input.idempotencyKey, updatedAt: timestamp,
+      recovery: { classification: "missing", reconciledAt: timestamp, previousStatus: assignment.lifecycleStatus, detail: "Explicitly confirmed clean assignment worktree was disposed" },
+    };
+    await this.records.putAssignment(disposed);
+    return { kind: "ok", value: disposed };
+  }
+
   private async validateGovernance(memberId: string, memberRevision: number, input: {
     improvementId: string; fencingToken: number; manifestRevision: number;
   }): Promise<AssignmentResult<{ repositoryBaseCommit: string }>> {
@@ -191,6 +264,23 @@ function isWritableAssignment(assignment: AssignmentRecord) {
   return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE" || assignment.lifecycleStatus === "MISSING";
 }
 
+async function disposableWorkspace(repositoryPath: string, worktreesRoot: string, assignment: AssignmentRecord): Promise<AssignmentResult<true>> {
+  const [repository, root, workspace] = await Promise.all([realpath(repositoryPath), realpath(worktreesRoot), realpath(assignment.workspacePath).catch(() => "")]);
+  if (!workspace || workspace === repository || path.relative(root, workspace).startsWith("..") || path.relative(root, workspace) === "") {
+    return { kind: "rejected", reason: "Recorded assignment workspace is outside the configured external worktree root" };
+  }
+  if (workspace !== assignment.workspacePath) return { kind: "rejected", reason: "Recorded assignment workspace path was substituted" };
+  const branch = await git(workspace, ["branch", "--show-current"]).catch(() => "");
+  if (branch !== assignment.branch) return { kind: "rejected", reason: "Assignment branch identity changed" };
+  const common = await git(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "");
+  const repositoryCommon = await git(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "");
+  const expectedCommon = await realpath(repositoryCommon).catch(() => "");
+  if (!common || await realpath(common).catch(() => "") !== expectedCommon) return { kind: "rejected", reason: "Assignment Git common directory changed" };
+  const dirty = await git(workspace, ["status", "--porcelain", "--untracked-files=normal"]);
+  if (dirty) return { kind: "rejected", reason: "Dirty assignment work is preserved and cannot be disposed" };
+  return { kind: "ok", value: true };
+}
+
 async function inspect(repositoryPath: string, assignment: AssignmentRecord): Promise<{ classification: AssignmentRecoveryClassification; head?: string; detail: string }> {
   if (!await exists(assignment.workspacePath)) return { classification: "missing", detail: "Recorded assignment workspace is missing" };
   const canonical = await realpath(assignment.workspacePath).catch(() => "");
@@ -216,4 +306,7 @@ async function gitResult(cwd: string, args: readonly string[]) {
 async function branchExists(cwd: string, branch: string) { return (await gitResult(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])) === 0; }
 async function exists(value: string) { return stat(value).then(() => true).catch(() => false); }
 function validId(value: string) { return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/.test(value); }
+function validMutation(value: AssignmentMutationInput) { return validId(value.assignmentId) && Number.isSafeInteger(value.expectedRevision) && value.expectedRevision >= 1 && validId(value.idempotencyKey); }
 function slug(value: string) { return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48); }
+
+export const __testing = { disposableWorkspace };
