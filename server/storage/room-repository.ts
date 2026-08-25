@@ -10,6 +10,7 @@ import type {
 } from "../../shared/improvement-domain.js";
 import type { AgentId, RoomMessage, RoomSettings, RoomState } from "../types.js";
 import type { MessageMention } from "../../shared/mentions.js";
+import type { RoomContinuationWorkRequest } from "../../shared/protocol.js";
 import type {
   AddImprovementMilestoneResult,
   ImprovementLedgerRecords,
@@ -121,7 +122,7 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     kind?: RoomMessage["kind"],
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[] },
+    human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
   ): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
   updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult>;

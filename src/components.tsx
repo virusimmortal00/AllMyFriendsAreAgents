@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -85,48 +85,6 @@ export function ConfirmationDialog({
   );
 }
 
-export function TranscriptHeader({
-  roomName,
-  magnification,
-  onMagnificationChange,
-  onMagnificationReset,
-}: {
-  roomName: string;
-  magnification: number;
-  onMagnificationChange: (direction: -1 | 1) => void;
-  onMagnificationReset: () => void;
-}) {
-  return (
-    <header className="transcript-header">
-      <PanelTitle>{roomName}</PanelTitle>
-      <div className="transcript-view-controls" aria-label="Local transcript magnification">
-        <button
-          type="button"
-          aria-label="Decrease transcript magnification"
-          title="Make the transcript smaller on this device"
-          disabled={magnification <= 75}
-          onClick={() => onMagnificationChange(-1)}
-        >−</button>
-        <button
-          type="button"
-          className="transcript-magnification-reset"
-          aria-label={`Reset transcript magnification from ${magnification}% to 100%`}
-          title="Reset transcript magnification to 100%"
-          disabled={magnification === 100}
-          onClick={onMagnificationReset}
-        >{magnification}%</button>
-        <button
-          type="button"
-          aria-label="Increase transcript magnification"
-          title="Make the transcript larger on this device"
-          disabled={magnification >= 150}
-          onClick={() => onMagnificationChange(1)}
-        >+</button>
-      </div>
-    </header>
-  );
-}
-
 export function RoomRoster({
   availability,
   agentHealth,
@@ -135,6 +93,7 @@ export function RoomRoster({
   currentHumanId,
   onConfigureAgent,
   agents = AGENT_IDS,
+  onOpenRoomProperties,
   onManageRoster,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
@@ -144,20 +103,15 @@ export function RoomRoster({
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
   agents?: readonly ActiveAgentId[];
+  onOpenRoomProperties?: (trigger: HTMLButtonElement) => void;
   onManageRoster?: (trigger: HTMLButtonElement) => void;
 }) {
   const healthText = (health: AgentHealth) => health.status === "cooldown"
     ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
     : "Unavailable";
   const presentAgents = agents.filter((agent) => availability?.[agent] !== false);
-  const agentCount = presentAgents.length;
-  const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
-  const humanLabel = `${humans.length} ${humans.length === 1 ? "human" : "humans"}`;
-
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
-      <PanelTitle>Who&apos;s Here</PanelTitle>
-      <div className="presence-summary"><span><strong>{agentLabel}</strong> and <strong>{humanLabel}</strong> are here.</span>{onManageRoster ? <button type="button" onClick={(event) => onManageRoster(event.currentTarget)}>Manage</button> : null}</div>
       <div className="presence-list" role="list">
         {presentAgents.map((agent) => {
           const active = activeAgents?.has(agent) ?? false;
@@ -199,6 +153,10 @@ export function RoomRoster({
           </div>
         ))}
       </div>
+      {onOpenRoomProperties || onManageRoster ? <footer className="presence-footer">
+        {onOpenRoomProperties ? <button type="button" onClick={(event) => onOpenRoomProperties(event.currentTarget)}>Properties...</button> : null}
+        {onManageRoster ? <button type="button" onClick={(event) => onManageRoster(event.currentTarget)}>Manage agents...</button> : null}
+      </footer> : null}
     </aside>
   );
 }
@@ -323,22 +281,112 @@ export function AgentSettingsDialog({
 }
 
 const TIME_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
+const MESSAGE_URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+const MESSAGE_MARKDOWN_LINK_START_PATTERN = /\[([^\]\r\n]+)\]\(/;
 
 function formatTime(timestamp: string) {
   return TIME_FORMATTER.format(new Date(timestamp));
 }
 
+function splitUrlPunctuation(candidate: string) {
+  let href = candidate;
+  let trailing = "";
+  const detachLast = () => {
+    trailing = `${href.at(-1) || ""}${trailing}`;
+    href = href.slice(0, -1);
+  };
+
+  while (/[.,!?;:]$/.test(href)) detachLast();
+  for (const [opening, closing] of [["(", ")"], ["[", "]"], ["{", "}"]] as const) {
+    while (href.endsWith(closing) && href.split(closing).length > href.split(opening).length) detachLast();
+  }
+  return { href, trailing };
+}
+
+function safeMessageUrl(href: string) {
+  try {
+    const parsed = new URL(href);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function plainLinkedMessageText(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let offset = 0;
+  for (const match of text.matchAll(MESSAGE_URL_PATTERN)) {
+    const start = match.index;
+    const candidate = match[0];
+    const { href: label, trailing } = splitUrlPunctuation(candidate);
+    const href = /^www\./i.test(label) ? `https://${label}` : label;
+    if (!safeMessageUrl(href)) continue;
+
+    if (start > offset) parts.push(<Fragment key={`${keyPrefix}-text-${offset}`}>{renderAimSmileys(text.slice(offset, start))}</Fragment>);
+    parts.push(<a className="message-link" href={href} target="_blank" rel="noopener noreferrer" key={`${keyPrefix}-url-${start}`}>{label}</a>);
+    if (trailing) parts.push(trailing);
+    offset = start + candidate.length;
+  }
+  if (offset < text.length) parts.push(<Fragment key={`${keyPrefix}-text-${offset}`}>{renderAimSmileys(text.slice(offset))}</Fragment>);
+  return parts;
+}
+
+function markdownDestinationEnd(text: string, start: number) {
+  let nestedParentheses = 0;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (/\s|[<>"']/.test(character)) return -1;
+    if (character === "(") {
+      nestedParentheses += 1;
+    } else if (character === ")") {
+      if (nestedParentheses === 0) return index;
+      nestedParentheses -= 1;
+    }
+  }
+  return -1;
+}
+
+function linkedMessageText(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let offset = 0;
+  let searchOffset = 0;
+  while (searchOffset < text.length) {
+    const match = text.slice(searchOffset).match(MESSAGE_MARKDOWN_LINK_START_PATTERN);
+    if (!match || match.index === undefined) break;
+    const start = searchOffset + match.index;
+    const label = match[1];
+    const destinationStart = start + match[0].length;
+    const destinationEnd = markdownDestinationEnd(text, destinationStart);
+    if (destinationEnd < 0) {
+      searchOffset = destinationStart;
+      continue;
+    }
+    const href = text.slice(destinationStart, destinationEnd);
+    if (!safeMessageUrl(href)) {
+      searchOffset = destinationEnd + 1;
+      continue;
+    }
+
+    if (start > offset) parts.push(...plainLinkedMessageText(text.slice(offset, start), `${keyPrefix}-plain-${offset}`));
+    parts.push(<a className="message-link" href={href} target="_blank" rel="noopener noreferrer" key={`${keyPrefix}-markdown-${start}`}>{renderAimSmileys(label)}</a>);
+    offset = destinationEnd + 1;
+    searchOffset = offset;
+  }
+  if (offset < text.length) parts.push(...plainLinkedMessageText(text.slice(offset), `${keyPrefix}-plain-${offset}`));
+  return parts;
+}
+
 function messageText(text: string, onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void) {
   const references = improvementReferences(text);
-  if (!references.length) return renderAimSmileys(text);
+  if (!references.length) return linkedMessageText(text, "message");
   const parts: React.ReactNode[] = [];
   let offset = 0;
   references.forEach((reference) => {
-    parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
+    parts.push(...linkedMessageText(text.slice(offset, reference.start), `reference-${reference.start}`));
     parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
     offset = reference.end;
   });
-  parts.push(...renderAimSmileys(text.slice(offset)));
+  parts.push(...linkedMessageText(text.slice(offset), `reference-tail-${offset}`));
   return parts;
 }
 
@@ -390,11 +438,13 @@ const TranscriptMessage = memo(function TranscriptMessage({
 export const Transcript = memo(function Transcript({
   messages,
   magnification,
+  showTimestamps = true,
   transcriptRef,
   onOpenImprovement,
 }: {
   messages: RoomMessage[];
   magnification: number;
+  showTimestamps?: boolean;
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -443,7 +493,7 @@ export const Transcript = memo(function Transcript({
     <div className="transcript-shell">
       <div
         ref={transcriptRef}
-        className="transcript beveled-inset"
+        className={`transcript beveled-inset${showTimestamps ? "" : " transcript--timestamps-hidden"}`}
         role="log"
         aria-live="polite"
         aria-label="Room transcript"
@@ -506,7 +556,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <h3>Getting around</h3>
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
-        <p>Use − and + above the transcript to change its size on this device. Select the percentage to reset it to 100%.</p>
+        <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
       </div>
@@ -532,6 +582,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   const [formatPopover, setFormatPopover] = useState<"emoji" | "text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const mentionSuggestions = useRef<HTMLDivElement>(null);
+  const formatPopoverElement = useRef<HTMLDivElement>(null);
+  const [formatPopoverPosition, setFormatPopoverPosition] = useState<{ left: number; top: number } | null>(null);
   const { layerRef: formatLayer, triggerRef: formatTrigger } = useDismissibleLayer(Boolean(formatPopover), () => setFormatPopover(null));
   const pendingEditRange = useRef<{ start: number; end: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<{ start: number; end: number; text: string } | null>(null);
@@ -541,6 +593,50 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
     : [];
 
   useEffect(() => setActiveMention(0), [mentionQuery?.text]);
+
+  useLayoutEffect(() => {
+    if (!formatPopover) {
+      setFormatPopoverPosition(null);
+      return;
+    }
+
+    function positionPopover() {
+      const trigger = formatTrigger.current;
+      const popover = formatPopoverElement.current;
+      if (!trigger || !popover) return;
+
+      const triggerBounds = trigger.getBoundingClientRect();
+      const popoverBounds = popover.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const viewportWidth = viewport?.width ?? window.innerWidth;
+      const viewportHeight = viewport?.height ?? window.innerHeight;
+      const margin = 8;
+      const gap = 5;
+      const minLeft = viewportLeft + margin;
+      const maxLeft = viewportLeft + viewportWidth - popoverBounds.width - margin;
+      const centeredLeft = triggerBounds.left + triggerBounds.width / 2 - popoverBounds.width / 2;
+      const above = triggerBounds.top - popoverBounds.height - gap;
+      const below = triggerBounds.bottom + gap;
+      const maxTop = viewportTop + viewportHeight - popoverBounds.height - margin;
+
+      setFormatPopoverPosition({
+        left: Math.max(minLeft, Math.min(centeredLeft, maxLeft)),
+        top: above >= viewportTop + margin ? above : Math.max(viewportTop + margin, Math.min(below, maxTop)),
+      });
+    }
+
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    window.visualViewport?.addEventListener("resize", positionPopover);
+    window.visualViewport?.addEventListener("scroll", positionPopover);
+    return () => {
+      window.removeEventListener("resize", positionPopover);
+      window.visualViewport?.removeEventListener("resize", positionPopover);
+      window.visualViewport?.removeEventListener("scroll", positionPopover);
+    };
+  }, [formatPopover, formatTrigger]);
 
   function queryAt(value: string, cursor: number) {
     const before = value.slice(0, cursor);
@@ -652,7 +748,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         </div>
       </div>
       {formatPopover === "text" || formatPopover === "background" ? (
-        <div className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`}>
+        <div ref={formatPopoverElement} className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`} style={formatPopoverPosition ?? { visibility: "hidden" }}>
           <strong>{formatPopover === "text" ? "Text color" : "Message highlight"}</strong>
           <span>Basic colors:</span>
           <div className="aim-color-grid">
@@ -685,7 +781,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         </div>
       ) : null}
       {formatPopover === "emoji" ? (
-        <div className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker">
+        <div ref={formatPopoverElement} className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker" style={formatPopoverPosition ?? { visibility: "hidden" }}>
           {AIM_SMILEYS.map((smiley) => (
             <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
               <img src={smiley.src} alt="" aria-hidden="true" />
@@ -731,7 +827,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           onBlur?.();
           if (!mentionSuggestions.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null);
         }}
-        placeholder={sendDisabled ? "Connection lost — your draft is saved" : "Message everyone in this room..."}
+        placeholder={sendDisabled ? "Connection lost — your draft is saved" : undefined}
         aria-label="Message"
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
@@ -792,6 +888,10 @@ export interface RoomSettingsInput {
 interface RoomControlsProps extends RoomSettingsInput {
   disabled: boolean;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;
+  onCancel?: () => void;
+  onSaved?: () => void;
+  showTitle?: boolean;
+  propertySheet?: boolean;
 }
 
 export function RoomControls({
@@ -800,6 +900,10 @@ export function RoomControls({
   conversationEnergy,
   disabled,
   onSave,
+  onCancel,
+  onSaved,
+  showTitle = true,
+  propertySheet = false,
 }: RoomControlsProps) {
   const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
   const [saving, setSaving] = useState(false);
@@ -820,18 +924,23 @@ export function RoomControls({
     setDraft(current);
     setSaveError("");
     setSaved(false);
+    onCancel?.();
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function save(closeAfter: boolean) {
     setSaved(false);
-    if (!valid || !dirty || locked) return;
+    if (!valid || locked) return;
+    if (!dirty) {
+      if (closeAfter) onSaved?.();
+      return;
+    }
     setSaveError("");
     setSaving(true);
     try {
       await onSave(normalized);
       setDraft(normalized);
       setSaved(true);
+      if (closeAfter) onSaved?.();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -839,14 +948,20 @@ export function RoomControls({
     }
   }
 
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    await save(true);
+  }
+
   return (
     <aside className="controls-panel beveled-inset" aria-label="Room controls">
-      <PanelTitle>Room Settings</PanelTitle>
+      {showTitle ? <PanelTitle>Room Settings</PanelTitle> : null}
       <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
         className="classic-input"
+        data-dialog-initial-focus={propertySheet ? "" : undefined}
         type="text"
         required
         maxLength={80}
@@ -855,7 +970,7 @@ export function RoomControls({
         aria-invalid={!normalized.roomName}
         onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, roomName: event.target.value })); }}
       />
-      <p className="field-help">Shown in the room window and transcript header.</p>
+      <p className="field-help">Shown in the room window title bar.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"
@@ -887,10 +1002,61 @@ export function RoomControls({
       {saveError ? <p className="room-settings-error" role="alert">Could not save room settings. {saveError}</p> : null}
       {saving ? <p className="room-settings-status" role="status">Saving room settings…</p> : saved ? <p className="room-settings-status" role="status">Room settings saved.</p> : null}
       <div className="room-settings-actions">
-        <button type="button" className="classic-button" disabled={!dirty || saving} onClick={cancel}>Cancel</button>
-        <button type="submit" className="classic-button" disabled={!dirty || !valid || locked}>{saving ? "Saving…" : "Save changes"}</button>
+        {propertySheet ? <>
+          <button type="submit" className="classic-button" data-default-button disabled={!valid || locked}>{saving ? "Saving…" : "OK"}</button>
+          <button type="button" className="classic-button" disabled={saving} onClick={cancel}>Cancel</button>
+          <button type="button" className="classic-button" disabled={!dirty || !valid || locked} onClick={() => void save(false)}>Apply</button>
+        </> : <>
+          <button type="button" className="classic-button" disabled={!dirty || saving} onClick={cancel}>Cancel</button>
+          <button type="submit" className="classic-button" disabled={!dirty || !valid || locked}>{saving ? "Saving…" : "Save changes"}</button>
+        </>}
       </div>
       </form>
     </aside>
+  );
+}
+
+export function RoomSettingsDialog({
+  returnFocusTo,
+  onClose,
+  ...controls
+}: RoomControlsProps & { returnFocusTo: HTMLElement | null; onClose: () => void }) {
+  const titleId = useId();
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
+
+  return (
+    <div className="modal-backdrop room-settings-backdrop" onMouseDown={onBackdropMouseDown}>
+      <section ref={dialogRef} className="agent-settings-window room-settings-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
+        <header className="agent-settings-titlebar">
+          <h2 id={titleId}>Room Properties</h2>
+          <button type="button" aria-label="Close Room Properties" onClick={onClose}>×</button>
+        </header>
+        <RoomControls {...controls} showTitle={false} propertySheet onCancel={onClose} onSaved={onClose} />
+      </section>
+    </div>
+  );
+}
+
+export function PeopleDialog({
+  returnFocusTo,
+  onClose,
+  ...roster
+}: React.ComponentProps<typeof RoomRoster> & { returnFocusTo: HTMLElement | null; onClose: () => void }) {
+  const titleId = useId();
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
+
+  return (
+    <div className="modal-backdrop people-backdrop" onMouseDown={onBackdropMouseDown}>
+      <section ref={dialogRef} className="agent-settings-window people-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
+        <header className="agent-settings-titlebar">
+          <h2 id={titleId}>People in this room</h2>
+          <button type="button" aria-label="Close people" onClick={onClose}>×</button>
+        </header>
+        <RoomRoster {...roster} />
+        <footer className="agent-settings-actions">
+          <button type="button" className="classic-button" onClick={onClose}>Close</button>
+        </footer>
+      </section>
+    </div>
   );
 }

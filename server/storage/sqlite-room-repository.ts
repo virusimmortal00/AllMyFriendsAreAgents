@@ -25,6 +25,7 @@ import type {
   RoomRepository,
 } from "./room-repository.js";
 import { runSqliteMigrations } from "./sqlite-migrations.js";
+import type { RoomContinuationWorkRequest } from "../../shared/protocol.js";
 import type {
   AddImprovementMilestoneResult,
   EvidenceSourceClass,
@@ -89,6 +90,7 @@ interface MessageRow {
   burst_sequence: number | null;
   created_at: string;
   mentions_json: string | null;
+  continuation_request_json: string | null;
 }
 
 interface SessionRow {
@@ -175,6 +177,7 @@ function messageFromRow(row: MessageRow, participantStyles: RoomSettings["partic
     ? sanitizeChatStyle(rawStyle, participantStyles[participant])
     : undefined;
   const mentions = parseJson<NonNullable<RoomMessage["mentions"]>>(row.mentions_json, []);
+  const continuationRequest = parseJson<RoomContinuationWorkRequest | undefined>(row.continuation_request_json, undefined);
   return {
     id: row.id,
     speaker,
@@ -188,6 +191,7 @@ function messageFromRow(row: MessageRow, participantStyles: RoomSettings["partic
     ...(row.speaker_name ? { speakerName: row.speaker_name } : {}),
     ...(row.client_message_id ? { clientMessageId: row.client_message_id } : {}),
     ...(mentions.length ? { mentions } : {}),
+    ...(continuationRequest ? { continuationRequest } : {}),
   };
 }
 
@@ -198,7 +202,7 @@ function messageFor(
   kind: RoomMessage["kind"] = "chat",
   style?: ChatStyle,
   burst?: { burstId: string; sequence: number },
-  human?: { id: string; name: string; clientMessageId?: string; mentions?: RoomMessage["mentions"] },
+  human?: { id: string; name: string; clientMessageId?: string; mentions?: RoomMessage["mentions"]; continuationRequest?: RoomContinuationWorkRequest },
 ): RoomMessage {
   const participant = isParticipantId(speaker) ? speaker : undefined;
   const messageStyle = participant
@@ -216,6 +220,7 @@ function messageFor(
     ...(!human && speaker !== "you" && speaker !== "system" ? { speakerName: AGENT_PROFILES[speaker]?.conversationalName || speaker } : {}),
     ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
     ...(human?.mentions?.length ? { mentions: structuredClone(human.mentions) } : {}),
+    ...(human?.continuationRequest ? { continuationRequest: structuredClone(human.continuationRequest) } : {}),
   };
 }
 
@@ -372,7 +377,7 @@ export class SqliteRoomRepository implements RoomRepository {
     kind: RoomMessage["kind"] = "chat",
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
-    human?: { id: string; name: string; clientMessageId?: string },
+    human?: { id: string; name: string; clientMessageId?: string; mentions?: RoomMessage["mentions"]; continuationRequest?: RoomContinuationWorkRequest },
   ) {
     const state = this.snapshot();
     const message = messageFor(state, speaker, text, kind, style, burst, human);
@@ -1258,8 +1263,8 @@ export class SqliteRoomRepository implements RoomRepository {
     this.database.prepare(`
       INSERT INTO messages(
         id, room_id, speaker, speaker_name, human_id, text, kind, style_json,
-        burst_id, burst_sequence, client_message_id, created_at, mentions_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        burst_id, burst_sequence, client_message_id, created_at, mentions_json, continuation_request_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       message.id,
       DEFAULT_ROOM_ID,
@@ -1274,6 +1279,7 @@ export class SqliteRoomRepository implements RoomRepository {
       message.clientMessageId || null,
       message.timestamp,
       message.mentions?.length ? JSON.stringify(message.mentions) : null,
+      message.continuationRequest ? JSON.stringify(message.continuationRequest) : null,
     );
   }
 

@@ -2,7 +2,7 @@ import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 import type { AgentHealth } from "./agent-health.js";
-import type { ServerIdentity } from "../shared/protocol.js";
+import type { RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
@@ -22,6 +22,7 @@ export interface RoomMessage {
   speakerName?: string;
   clientMessageId?: string;
   mentions?: MessageMention[];
+  continuationRequest?: RoomContinuationWorkRequest;
 }
 
 export interface HumanPresence {

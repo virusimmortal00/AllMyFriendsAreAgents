@@ -19,8 +19,9 @@ describe("RoomRoster", () => {
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("6 agents");
-    expect(html).toContain("2 humans");
+    expect(html).not.toContain("8 entities");
+    expect(html).not.toContain("6 agents");
+    expect(html).not.toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).not.toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
@@ -169,7 +170,7 @@ describe("RoomControls", () => {
 
     expect(html).toContain('value="Weekend cooking"');
     expect(html).toContain('value="Weekend Room"');
-    expect(html).toContain("Shown in the room window and transcript header.");
+    expect(html).toContain("Shown in the room window title bar.");
     expect(html).toContain("A starting point, not a boundary. Changing it starts fresh agent context.");
     expect(html).toContain("Conversation energy");
     expect(html).toContain("Usually one or two agents join in.");
@@ -217,6 +218,72 @@ describe("ChatComposer", () => {
 });
 
 describe("Transcript message styling", () => {
+  it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{
+          id: "linked-message",
+          speaker: "you",
+          text: "Docs: https://example.com/guide?q=chat. Mirror: www.example.org/docs! Unsafe javascript:alert(1) stays text :-) ",
+          timestamp: "2026-08-19T12:00:00.000Z",
+        }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<a class="message-link" href="https://example.com/guide?q=chat" target="_blank" rel="noopener noreferrer">https://example.com/guide?q=chat</a>.');
+    expect(html).toContain('<a class="message-link" href="https://www.example.org/docs" target="_blank" rel="noopener noreferrer">www.example.org/docs</a>!');
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain("Unsafe javascript:alert(1) stays text");
+    expect(html).toContain('/smileys/smile.png');
+  });
+
+  it("keeps URLs clickable alongside improvement references", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "mixed-links", speaker: "you", text: "See [[improvement:imp-7]] at (https://example.com/issues/7).", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+        onOpenImprovement={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Open Improvement imp-7"');
+    expect(html).toContain('<a class="message-link" href="https://example.com/issues/7"');
+    expect(html).toContain('</a>).');
+  });
+
+  it("renders safe Markdown-style links with their human-readable label", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "markdown-link", speaker: "you", text: "Opened [PR #58](https://github.com/example/project/pull/58). Read ([docs](https://example.com)) and [API](https://example.com/a_(b)).", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<a class="message-link" href="https://github.com/example/project/pull/58" target="_blank" rel="noopener noreferrer">PR #58</a>.');
+    expect(html).toContain('Read (<a class="message-link" href="https://example.com" target="_blank" rel="noopener noreferrer">docs</a>)');
+    expect(html).toContain('<a class="message-link" href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer">API</a>.');
+    expect(html).not.toContain('href="https://example.com)"');
+    expect(html).not.toContain("[PR #58]");
+  });
+
+  it("applies the timestamp visibility preference without changing message content", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "hidden-time", speaker: "you", text: "Still readable", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        showTimestamps={false}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain("transcript--timestamps-hidden");
+    expect(html).toContain("Still readable");
+  });
+
   it("renders mixed participant snapshots while keeping names and timestamps application-controlled", () => {
     const html = renderToStaticMarkup(
       <Transcript

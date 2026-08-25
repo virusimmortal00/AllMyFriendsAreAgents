@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Tasks, TasksMenuControl } from "./tasks";
-import { ApiRequestError, createRoomTask, loadTask, loadTasks, taskAction, updateRoomTask } from "./api";
+import { ApiRequestError, createRoomTask, loadTask, loadTasks, sendContinuationWorkRequest, taskAction, updateRoomTask } from "./api";
 
 const task = { roomId: "room", taskId: "task-1", title: "Ship task workflow", description: "Complete API and UI", state: "active" as const, participants: [{ participantId: "human-1", role: "owner" as const, addedAt: "2026-08-21T12:00:00Z", addedBy: "human-1" }], dependencies: [], blockers: [], references: [], forkedFrom: null, revision: 4, createdAt: "2026-08-21T12:00:00Z", updatedAt: "2026-08-21T12:10:00Z", attribution: [], lifecycleHistory: [] };
 const detail = { task, relationships: { dependencies: [], blockers: [], dependents: [] }, history: [{ revision: 1, actorId: "human-1", at: "2026-08-21T12:00:00Z", change: "create" }] };
 
 vi.mock("./api", async (original) => {
   const actual = await original<typeof import("./api")>();
-  return { ...actual, loadTasks: vi.fn(async () => ({ items: [task], nextCursor: null })), loadTask: vi.fn(async () => detail), createRoomTask: vi.fn(async (title: string, description: string) => ({ ...task, taskId: "task-2", title, description, revision: 1, state: "draft" })), taskAction: vi.fn(async () => task), updateRoomTask: vi.fn(async () => task) };
+  return { ...actual, loadTasks: vi.fn(async () => ({ items: [task], nextCursor: null })), loadTask: vi.fn(async () => detail), createRoomTask: vi.fn(async (title: string, description: string) => ({ ...task, taskId: "task-2", title, description, revision: 1, state: "draft" })), taskAction: vi.fn(async () => task), updateRoomTask: vi.fn(async () => task), sendContinuationWorkRequest: vi.fn(async () => ({ accepted: true, duplicate: false, clientMessageId: "message-1", messageId: "room-message-1", continuation: { outcome: "queued", jobId: "job-1", status: "QUEUED" } })) };
 });
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -47,6 +47,15 @@ describe("room task interface", () => {
     await user.click(screen.getByRole("button", { name: "Save title" }));
     await screen.findByText(/typed value remains/);
     expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("My unsaved title");
+  });
+
+  it("starts a governed continuation from an exact assignment reference", async () => {
+    const user = userEvent.setup(); const linked = { ...detail, task: { ...task, references: [{ id: "assignment-ref", kind: "assignment" as const, targetId: "assignment-1", completionState: "unfinished" as const, addedAt: task.updatedAt, addedBy: "human-1" }] } };
+    vi.mocked(loadTask).mockResolvedValue(linked); render(<Tasks />); await user.click(await screen.findByRole("button", { name: /Ship task workflow/ }));
+    await user.type(await screen.findByLabelText("Continuation objective for assignment-1"), "Run the remaining checks");
+    await user.click(screen.getByRole("button", { name: "Start continuation" }));
+    await waitFor(() => expect(sendContinuationWorkRequest).toHaveBeenCalledWith(linked.task, "assignment-ref", "Run the remaining checks"));
+    expect(await screen.findByText("Continuation queued: job-1")).toBeTruthy();
   });
 
   it("keeps each dirty editor pinned to its loaded revision while polling newer task state", async () => {
