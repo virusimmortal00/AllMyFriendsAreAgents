@@ -10,7 +10,7 @@ interface Contribution { contributionId: string; revision: number; stage: Stage;
 }
 interface Audit { eventId: string; action: string; actorId: string; at: string; outcome: string; detail: string; externalResultId: string | null }
 
-export function ContributionsMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) { return <button type="button" aria-pressed={active} onClick={onOpen}>{active ? "Chat" : "Contributions"}</button>; }
+export function ContributionsMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) { return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Contributions</button>; }
 
 export function Contributions({ refreshKey = 0 }: { refreshKey?: number }) {
   const [items, setItems] = useState<Contribution[]>([]); const [selected, setSelected] = useState<string | null>(null); const [detail, setDetail] = useState<{ contribution: Contribution; audit: Audit[] } | null>(null);

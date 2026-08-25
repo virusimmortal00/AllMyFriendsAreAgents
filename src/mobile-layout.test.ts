@@ -15,14 +15,13 @@ describe("mobile layout contract", () => {
     expect(styles).toMatch(/\.composer textarea \{[^}]*width: 100%;[^}]*min-width: 0;/s);
   });
 
-  it("makes narrow navigation intentionally horizontally scrollable", () => {
-    expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow-x: auto;[^}]*overflow-y: hidden;/s);
-    expect(mobileStyles).toMatch(/\.menu-bar > button, \.menu-bar > \.menu-wrap \{[^}]*flex: 0 0 auto;/s);
-    expect(mobileStyles).toMatch(/\.menu-bar button \{[^}]*white-space: nowrap;/s);
+  it("keeps the compact classic menu bar visible instead of turning it into a mobile scroller", () => {
+    expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow: visible;/s);
+    expect(mobileStyles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*white-space: nowrap;/s);
   });
 
   it("contains long room names and message content", () => {
-    expect(mobileStyles).toMatch(/\.transcript-header \.panel-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s);
+    expect(styles).not.toContain("transcript-header");
     expect(styles).toMatch(/\.transcript \{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;/s);
     expect(styles).toMatch(/\.message > div \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;[^}]*word-break: break-word;/s);
     expect(styles).toMatch(/\.chat-panel \{[^}]*contain: inline-size;/s);
@@ -30,11 +29,10 @@ describe("mobile layout contract", () => {
     expect(styles).toMatch(/\.agent-settings-window \{[^}]*min-width: 0;[^}]*max-width: 100%;/s);
   });
 
-  it("moves secondary room controls into an off-canvas panel", () => {
-    expect(mobileStyles).toMatch(/\.right-rail \{[^}]*position: fixed;[^}]*translateX\(100%\)/s);
-    expect(mobileStyles).toMatch(/\.right-rail--open \{[^}]*translateX\(0\)/s);
-    expect(mobileStyles).toContain('.right-rail[data-mobile-panel="people"] .controls-panel');
-    expect(mobileStyles).toContain('.right-rail[data-mobile-panel="room"] .presence-panel');
+  it("uses dialogs for secondary room controls and removes the desktop rail on mobile", () => {
+    expect(mobileStyles).toMatch(/\.right-rail \{[^}]*display: none;/s);
+    expect(mobileStyles).toMatch(/\.room-settings-window \.controls-panel \{[^}]*max-height:/s);
+    expect(mobileStyles).toMatch(/\.people-window \.presence-panel \{[^}]*max-height:/s);
   });
 
   it("uses horizontally scrollable formatting controls instead of wrapping", () => {
@@ -46,17 +44,21 @@ describe("mobile layout contract", () => {
     expect(components).toMatch(/<div className="format-popover-layer"[\s\S]*?<div className="format-toolbar"/);
     expect(components).toContain('formatPopover === "text" || formatPopover === "background"');
     expect(components).toContain('formatPopover === "emoji"');
-    expect(mobileStyles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;[^}]*inset:/s);
-    expect(mobileStyles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
+    expect(styles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;/s);
+    expect(styles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
+    expect(components).toContain("triggerBounds.top - popoverBounds.height - gap");
+    expect(components).toContain("Math.min(centeredLeft, maxLeft)");
   });
 
-  it("hides timestamps in the narrow transcript", () => {
-    expect(mobileStyles).toMatch(/\.message time \{[^}]*display: none;/s);
+  it("lets the timestamp preference control narrow and wide transcripts consistently", () => {
+    expect(styles).toMatch(/\.transcript--timestamps-hidden \.message \{[^}]*grid-template-columns: 1fr;/s);
+    expect(styles).toMatch(/\.transcript--timestamps-hidden \.message time \{[^}]*display: none;/s);
+    expect(mobileStyles).not.toMatch(/(^|\n)\s*\.message time \{[^}]*display: none;/s);
   });
 
-  it("gives the task workflow the full mobile workspace without covering room controls", () => {
+  it("gives non-chat workflows the full workspace", () => {
     expect(mobileStyles).toMatch(/\.tasks-panel \{[^}]*width: 100%;[^}]*height: 100%;/s);
-    expect(mobileStyles).toMatch(/\.tasks-room-rail \{[^}]*display: none;/s);
+    expect(styles).toMatch(/\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(mobileStyles).toMatch(/\.task-columns form \{[^}]*grid-template-columns: 1fr;/s);
   });
 });

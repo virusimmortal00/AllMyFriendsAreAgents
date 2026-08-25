@@ -12,11 +12,10 @@ describe("intentional title-bar presentation", () => {
   it.each([
     ["loading", <LoadingScreen />],
     ["join", <NameEntry onJoin={() => undefined} />],
-  ])("renders %s window glyphs as hidden, non-button decoration", (_view, ui) => {
+  ])("does not render fake %s window controls", (_view, ui) => {
     const { container } = render(ui);
     const chrome = container.querySelector(".window-buttons--decorative");
-    expect(chrome?.getAttribute("aria-hidden")).toBe("true");
-    expect(chrome?.querySelectorAll("span")).toHaveLength(3);
+    expect(chrome).toBeNull();
     expect(screen.queryByRole("button", { name: /minimize|maximize|close/i })).toBeNull();
   });
 });
@@ -38,8 +37,6 @@ describe("consequential-action confirmation", () => {
     />);
     const dialog = screen.getByRole("alertdialog", { name: "Confirm consequence?" });
     expect(dialog.getAttribute("aria-describedby")).toBeTruthy();
-    expect(document.activeElement).toBe(dialog);
-    await user.tab();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
     await user.tab({ shift: true });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Confirm action" }));

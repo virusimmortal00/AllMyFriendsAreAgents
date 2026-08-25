@@ -3,7 +3,7 @@ import type { Task, TaskParticipantRole, TaskReferenceKind } from "../shared/tas
 import { ApiRequestError, createRoomTask, loadTask, loadTasks, taskAction, updateRoomTask, type TaskDetailResponse } from "./api";
 
 export function TasksMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) {
-  return <button type="button" aria-pressed={active} onClick={onOpen}>{active ? "Chat" : "Tasks"}</button>;
+  return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Tasks</button>;
 }
 
 function TaskList({ items, onOpen }: { items: readonly Task[]; onOpen: (id: string) => void }) {

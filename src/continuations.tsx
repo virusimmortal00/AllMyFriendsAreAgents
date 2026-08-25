@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { acknowledgeContinuationInbox, continuationAction, loadContinuationInbox, loadContinuations, setContinuationPolicy } from "./api";
 import type { ContinuationDashboard, ContinuationInboxEntry } from "./types";
 
-export function ContinuationsMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) { return <button type="button" aria-pressed={active} onClick={onOpen}>Continuations</button>; }
+export function ContinuationsMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) { return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Continuations</button>; }
 export function Continuations({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<ContinuationDashboard | null>(null); const [inbox, setInbox] = useState<Record<string, ContinuationInboxEntry[]>>({}); const [error, setError] = useState("");
   const generation = useRef(0); const activeRequest = useRef<AbortController | null>(null);
