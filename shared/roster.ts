@@ -1,5 +1,5 @@
 import { AGENT_IDS, historicalAgentProfile, isActiveAgentId, isAgentId, registerParticipantProfile, type ActiveAgentId } from "./participants.js";
-import { validDiscoveryId, type ModelReference } from "./model-discovery.js";
+import { validDiscoveryId, validModelDiscoveryId, type ModelReference } from "./model-discovery.js";
 
 export const MAX_ROOM_AGENTS = 32;
 
@@ -58,7 +58,7 @@ function normalizedEntry(input: unknown, migrateLegacySelection = false): Normal
   const value = input as Partial<RoomAgentRosterEntry> & { agentId?: unknown; enabled?: unknown };
   if (typeof value.agentId !== "string" || typeof value.enabled !== "boolean") return undefined;
   const legacy = legacyRosterEntry(value.agentId, value.enabled);
-  const modelId = validDiscoveryId(value.modelId) ? value.modelId : legacy?.modelId;
+  const modelId = validModelDiscoveryId(value.modelId) ? value.modelId : legacy?.modelId;
   const conversationalName = typeof value.conversationalName === "string" ? value.conversationalName.trim() : legacy?.conversationalName;
   if ((!isActiveAgentId(value.agentId) && !isAgentId(value.agentId)) || !modelId || !conversationalName || conversationalName.length > 48) return undefined;
   if (value.providerId !== undefined && !validDiscoveryId(value.providerId)) return undefined;
