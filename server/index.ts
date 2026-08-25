@@ -475,9 +475,9 @@ app.get("/api/heartbeat", (_request, response) => {
 });
 
 app.post("/api/heartbeat/authorize", (request, response) => {
-  if (!coordinatorConfigured) return response.status(503).json({ error: "The bounded heartbeat executor is not configured." });
   const actor = sessionHuman(request, humans, humanSessions);
   if (!actor) return response.status(401).json({ error: "Join the room before authorizing the heartbeat." });
+  if (!coordinatorConfigured) return response.status(503).json({ error: "The bounded heartbeat executor is not configured." });
   const { expectedRevision, reason } = request.body ?? {};
   if (!Number.isSafeInteger(expectedRevision) || typeof reason !== "string") {
     return response.status(400).json({ error: "Expected revision and authorization reason are required." });
@@ -531,6 +531,8 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
+  const actor = sessionHuman(request, humans, humanSessions);
+  if (!actor) return response.status(401).json({ error: "Join the room before changing room settings." });
   const update = request.body as Partial<RoomSettings>;
   const previousWritableAgent = store.snapshot().settings.writableAgent;
   let permissionActor: ProjectPermissionActor | undefined;
@@ -551,8 +553,7 @@ app.patch("/api/settings", async (request, response) => {
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
     const writableAgent = normalizeWritableAgent(update.writableAgent);
     if (writableAgent !== previousWritableAgent) {
-      permissionActor = sessionHuman(request, humans, humanSessions);
-      if (!permissionActor) return response.status(401).json({ error: "Join the room before changing project permissions." });
+      permissionActor = actor;
     }
     allowed.writableAgent = writableAgent;
   }
@@ -578,10 +579,10 @@ app.patch("/api/style", async (request, response) => {
 });
 
 app.post("/api/messages", async (request, response) => {
-  const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
-  if (!text) return response.status(400).json({ error: "Message text is required." });
   const human = sessionHuman(request, humans, humanSessions);
   if (!human) return response.status(401).json({ error: "Join the room before sending a message." });
+  const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
+  if (!text) return response.status(400).json({ error: "Message text is required." });
   const clientMessageId = typeof request.body?.clientMessageId === "string" ? request.body.clientMessageId.trim() : "";
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
@@ -706,6 +707,7 @@ app.post("/api/developer/improvements/:id/transitions", async (request, response
 });
 
 app.post("/api/actions", async (request, response) => {
+  if (!sessionHuman(request, humans, humanSessions)) return response.status(401).json({ error: "Join the room before directing agents." });
   const action = request.body?.action as "ask" | "review" | "roundtable" | "continue";
   const target = request.body?.target as AgentId | "all" | "both";
   if (jobs.busy) return response.status(409).json({ error: "The room is already working." });
