@@ -9,6 +9,7 @@ import { HumanPresenceRegistry } from "./human-presence.js";
 import { HUMAN_SESSION_COOKIE, HumanSessions, joinHumanWithSession } from "./human-session.js";
 import { RoomStore } from "./room-store.js";
 import { registerTaskRoutes } from "./task-api.js";
+import { defaultRoomAgentRoster } from "../shared/roster.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -92,7 +93,10 @@ describe("identity-safe task API", () => {
         const response = await api.call(`/api/tasks/${created.taskId}/participants`, { method: "POST", body: JSON.stringify({ expectedRevision: revision, participantId, role: "reviewer" }) });
         expect(response.status).toBe(200); revision = (await response.json() as { revision: number }).revision;
       }
-      for (const participantId of ["codex-luna", "codex-terra", "claude-opus"] as const) {
+      await api.store.updateRoster(1, defaultRoomAgentRoster().entries.filter(({ agentId }) => agentId !== "cursor-gemini-flash"));
+      const removedDisabled = await api.call(`/api/tasks/${created.taskId}/participants`, { method: "POST", body: JSON.stringify({ expectedRevision: revision, participantId: "cursor-gemini-flash", role: "reviewer", operation: "remove" }) });
+      expect(removedDisabled.status).toBe(200); revision = (await removedDisabled.json() as { revision: number }).revision;
+      for (const participantId of ["codex-luna", "codex-terra", "claude-opus", "cursor-gemini"] as const) {
         const response = await api.call(`/api/tasks/${created.taskId}/participants`, { method: "POST", body: JSON.stringify({ expectedRevision: revision, participantId, role: "reviewer" }) });
         expect(response.status).toBe(400);
       }

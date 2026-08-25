@@ -53,7 +53,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("RoomEventStream protocol", () => {
   it("supersedes room protocol version 3", () => {
-    expect(ROOM_PROTOCOL_VERSION).toBe(4);
+    expect(ROOM_PROTOCOL_VERSION).toBe(5);
   });
 
   it("sends one initial snapshot and then strictly ordered typed deltas", () => {

@@ -47,6 +47,8 @@ import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTas
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
+import type { RosterChangeResult } from "./storage/room-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -113,6 +115,7 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
+    roster: defaultRoomAgentRoster(),
     status: "idle",
   };
 }
@@ -218,20 +221,26 @@ export class RoomStore implements RoomRepository {
         return sameStyle(message.style, style) ? migratedMessage : { ...migratedMessage, style };
       });
       if (topicWasMissing) messages.push(topicMessage(storedTopic));
+      const roster = normalizeRoomAgentRoster(stored.roster);
+      const enabledAgents = new Set(enabledRoomAgentIds(roster));
+      const sessions = migrateSessions(stored.sessions);
+      for (const agent of Object.keys(sessions) as AgentId[]) if (!enabledAgents.has(agent as never)) delete sessions[agent];
+      const writableAgent = normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent);
       const state: RoomState = {
         ...stored,
         messages,
-        sessions: topicWasMissing ? {} : migrateSessions(stored.sessions),
+        sessions: topicWasMissing ? {} : sessions,
         settings: {
           ...defaultSettings,
           ...currentStoredSettings,
           roomName: storedRoomName,
           topic: storedTopic,
           conversationEnergy,
-          writableAgent: normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent),
+          writableAgent: writableAgent !== "nobody" && enabledAgents.has(writableAgent) ? writableAgent : "nobody",
           projectPath: configuredProjectPath || (storedProjectPathExists ? stored.settings.projectPath : projectRoot),
           participantStyles,
         },
+        roster,
         status: "idle",
         activeAgent: undefined,
         error: undefined,
@@ -246,6 +255,7 @@ export class RoomStore implements RoomRepository {
         || storedSettings.conversationEnergy !== conversationEnergy
         || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
         || state.settings.writableAgent !== stored.settings.writableAgent
+        || JSON.stringify(roster) !== JSON.stringify(stored.roster)
         || messages.some((message, index) => message !== stored.messages[index])) {
         await store.save();
       }
@@ -294,6 +304,20 @@ export class RoomStore implements RoomRepository {
   async updateSettings(update: Partial<RoomSettings>) {
     this.state.settings = { ...this.state.settings, ...update };
     await this.save();
+  }
+
+  async updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult> {
+    const validated = validateRosterEntries(entries);
+    if (!validated) throw new Error("Invalid room roster entries.");
+    const current = normalizeRoomAgentRoster(this.state.roster);
+    if (current.revision !== expectedRevision) return { kind: "conflict", expectedRevision, actualRevision: current.revision };
+    const next = { revision: current.revision + 1, entries: structuredClone(validated) };
+    const enabled = new Set(enabledRoomAgentIds(next));
+    for (const agent of Object.keys(this.state.sessions) as AgentId[]) if (!enabled.has(agent as never)) delete this.state.sessions[agent];
+    if (this.state.settings.writableAgent !== "nobody" && !enabled.has(this.state.settings.writableAgent)) this.state.settings.writableAgent = "nobody";
+    this.state.roster = next;
+    await this.save();
+    return { kind: "accepted", roster: structuredClone(next) };
   }
 
   async changeTopic(topic: string) {

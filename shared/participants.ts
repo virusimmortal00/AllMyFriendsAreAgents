@@ -37,8 +37,8 @@ export const AGENT_PROFILES = {
     conversationalName: "Claude",
     supportsProjectWrites: true,
   },
-  // Retained for historical transcript rendering. Opus is disabled because its
-  // cost and provider-wide quota impact are disproportionate for room turns.
+  // Available as an opt-in catalog entry rather than a default room participant
+  // because its cost and provider-wide quota impact are higher for room turns.
   "claude-opus": {
     id: "claude-opus",
     provider: "claude",
@@ -57,6 +57,8 @@ export const AGENT_PROFILES = {
     conversationalName: "Grok",
     supportsProjectWrites: true,
   },
+  // Retained as an opt-in catalog entry and for historical transcript rendering;
+  // Gemini Pro is intentionally absent from the default room roster.
   "cursor-gemini": {
     id: "cursor-gemini",
     provider: "cursor",
@@ -104,12 +106,23 @@ export const AGENT_IDS = [
   "codex-sol",
   "claude-sonnet",
   "cursor-grok",
+  "cursor-composer",
+  "cursor-gemini-flash",
+  "cursor-glm",
+] as const satisfies readonly AgentId[];
+
+export const SUPPORTED_AGENT_IDS = [
+  "codex-sol",
+  "claude-sonnet",
+  "claude-opus",
+  "cursor-grok",
   "cursor-gemini",
   "cursor-composer",
   "cursor-gemini-flash",
   "cursor-glm",
 ] as const satisfies readonly AgentId[];
-export type ActiveAgentId = (typeof AGENT_IDS)[number];
+
+export type ActiveAgentId = (typeof SUPPORTED_AGENT_IDS)[number];
 export type WritableAgent = ActiveAgentId | "nobody";
 export const PARTICIPANT_IDS: ParticipantId[] = ["you", ...AGENT_IDS];
 
@@ -118,7 +131,7 @@ export function isAgentId(value: unknown): value is AgentId {
 }
 
 export function isActiveAgentId(value: unknown): value is ActiveAgentId {
-  return isAgentId(value) && (AGENT_IDS as readonly AgentId[]).includes(value);
+  return isAgentId(value) && (SUPPORTED_AGENT_IDS as readonly AgentId[]).includes(value);
 }
 
 export function isParticipantId(value: unknown): value is ParticipantId {

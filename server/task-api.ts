@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type express from "express";
 import { isActiveAgentId } from "../shared/participants.js";
+import { normalizeRoomAgentRoster, roomAgentEnabled } from "../shared/roster.js";
 import { createTask, TASK_LIFECYCLE_STATES, TASK_PARTICIPANT_ROLES, type TaskActor, type TaskChange, type TaskReference } from "../shared/task-domain.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
@@ -24,8 +25,12 @@ function expectedRevision(value: unknown) {
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null;
 }
 
-function validParticipant(value: unknown, humans: HumanPresenceRegistry) {
-  return typeof value === "string" && (Boolean(humans.get(value)) || value === "you" || isActiveAgentId(value));
+function validParticipant(value: unknown, humans: HumanPresenceRegistry, store: RoomRepository) {
+  return typeof value === "string" && (
+    Boolean(humans.get(value))
+    || value === "you"
+    || (isActiveAgentId(value) && roomAgentEnabled(normalizeRoomAgentRoster(store.snapshot().roster), value))
+  );
 }
 
 export function registerTaskRoutes(input: {
@@ -100,8 +105,12 @@ export function registerTaskRoutes(input: {
   app.post("/api/tasks/:taskId/propose", transition("proposed"));
   app.post("/api/tasks/:taskId/reopen", (request, response) => mutate(request, response, { kind: "reopen", to: request.body?.to === "proposed" ? "proposed" : "draft" }));
   app.post("/api/tasks/:taskId/participants", (request, response) => {
-    if (!validParticipant(request.body?.participantId, humans) || !TASK_PARTICIPANT_ROLES.includes(request.body?.role)) return response.status(400).json({ error: "A current room participant and valid task role are required." });
-    return mutate(request, response, { kind: request.body?.operation === "remove" ? "remove_participant" : "add_participant", participantId: request.body.participantId, role: request.body.role });
+    const participantId = request.body?.participantId;
+    const removing = request.body?.operation === "remove";
+    if (typeof participantId !== "string" || !TASK_PARTICIPANT_ROLES.includes(request.body?.role) || (!removing && !validParticipant(participantId, humans, store))) {
+      return response.status(400).json({ error: "A current room participant and valid task role are required." });
+    }
+    return mutate(request, response, { kind: removing ? "remove_participant" : "add_participant", participantId, role: request.body.role });
   });
   app.post("/api/tasks/:taskId/dependencies", (request, response) => {
     if (typeof request.body?.taskId !== "string") return response.status(400).json({ error: "A taskId is required." });

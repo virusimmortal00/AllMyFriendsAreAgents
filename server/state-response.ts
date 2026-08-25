@@ -10,7 +10,7 @@ export function publicRoomState(state: RoomState): PublicRoomState {
 
 export async function roomStateWithAvailability(
   snapshot: () => RoomState,
-  getAvailability: () => Promise<Record<ActiveAgentId, boolean>>,
+  getAvailability: () => Promise<Partial<Record<ActiveAgentId, boolean>>>,
 ) {
   const availability = await getAvailability();
   return { ...publicRoomState(snapshot()), availability };
