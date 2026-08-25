@@ -57,6 +57,7 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
       if (!rootRef.current?.contains(event.target as Node)) deactivate();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (event.key === "F1" && onHelp) {
         event.preventDefault();
         deactivate();
@@ -135,7 +136,10 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
     if (item.type !== "separator") {
       const returnFocusTo = titleRefs.current[menuIndex];
       deactivate();
-      if (returnFocusTo) item.onSelect(returnFocusTo);
+      if (returnFocusTo) {
+        returnFocusTo.focus();
+        item.onSelect(returnFocusTo);
+      }
     }
   }
 
@@ -169,7 +173,10 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
               onClick={() => {
                 const returnFocusTo = titleRefs.current[index];
                 deactivate();
-                if (returnFocusTo) item.onSelect(returnFocusTo);
+                if (returnFocusTo) {
+                  returnFocusTo.focus();
+                  item.onSelect(returnFocusTo);
+                }
               }}
             ><span className="menu-check" aria-hidden="true">{item.checked ? "✓" : ""}</span><span>{mnemonicLabel(item.label, item.accessKey)}</span>{item.shortcut ? <span className="menu-shortcut">{item.shortcut}</span> : null}</button></Fragment>)}</div> : null}
       </div>)}

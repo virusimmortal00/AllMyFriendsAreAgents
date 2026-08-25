@@ -51,4 +51,32 @@ describe("Windows-style application menu", () => {
     expect(screen.queryByRole("menu", { name: "Room" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Room" }));
   });
+
+  it("restores the menu title after an ordinary command", async () => {
+    const user = userEvent.setup();
+    render(<ClassicMenuBar menus={menus()} />);
+
+    const viewTitle = screen.getByRole("menuitem", { name: "View" });
+    await user.click(viewTitle);
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Timestamps" }));
+
+    expect(document.activeElement).toBe(viewTitle);
+  });
+
+  it("leaves application shortcuts to the active modal", async () => {
+    const user = userEvent.setup();
+    const onHelp = vi.fn();
+    render(<>
+      <ClassicMenuBar menus={menus()} onHelp={onHelp} />
+      <section role="dialog" aria-modal="true" aria-label="Open dialog"><button type="button">Inside dialog</button></section>
+    </>);
+    const insideDialog = screen.getByRole("button", { name: "Inside dialog" });
+    insideDialog.focus();
+
+    await user.keyboard("{F10}{F1}{Alt>}v{/Alt}");
+
+    expect(document.activeElement).toBe(insideDialog);
+    expect(onHelp).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu", { name: "View" })).toBeNull();
+  });
 });

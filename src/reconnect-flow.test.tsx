@@ -391,6 +391,22 @@ describe("rendered reconnect recovery", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it("keeps unsaved Room Properties edits intact when F1 is pressed", async () => {
+    const user = userEvent.setup();
+    await renderConnected();
+    await chooseMenuItem(user, "Room", "Room properties...");
+    const dialog = screen.getByRole("dialog", { name: "Room Properties" });
+    const topic = within(dialog).getByRole("textbox", { name: "Topic" });
+    await user.clear(topic);
+    await user.type(topic, "Unsaved topic draft");
+
+    await user.keyboard("{F1}");
+
+    expect(screen.getByRole("dialog", { name: "Room Properties" })).toBe(dialog);
+    expect((topic as HTMLInputElement).value).toBe("Unsaved topic draft");
+    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+  });
+
   it("opens People as a modal and closes it with Escape", async () => {
     const user = userEvent.setup();
     await renderConnected();
