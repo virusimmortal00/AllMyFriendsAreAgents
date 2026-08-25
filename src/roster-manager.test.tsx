@@ -67,4 +67,19 @@ describe("roster manager", () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).toMatchObject({ agentId, sessionInvalidationReason: "" });
     expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).not.toHaveProperty("selectionConfirmationRequired");
   });
+
+  it("retains the last valid roster revision when a refresh projection omits it", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { entries: [] }, catalog }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 10, entries: [] }, catalog }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<RosterManagerDialog initialRoster={{ schemaVersion: 3, revision: 9, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "Save roster" });
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 9, entries: [] });
+  });
 });

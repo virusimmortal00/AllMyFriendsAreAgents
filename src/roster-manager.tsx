@@ -16,7 +16,7 @@ export function RosterManagerDialog({
   onClose: () => void;
 }) {
   const titleId = useId();
-  const [base, setBase] = useState(initialRoster);
+  const [baseRevision, setBaseRevision] = useState(() => positiveRosterRevision(initialRoster.revision, 1));
   const [entries, setEntries] = useState<RoomAgentRosterEntry[]>(() => [...initialRoster.entries]);
   const [catalog, setCatalog] = useState<readonly RosterCatalogEntry[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<ModelDiscoveryResult>();
@@ -44,7 +44,7 @@ export function RosterManagerDialog({
     void loadRoster().then(async (response) => {
       if (response.modelDiscovery) await loadControlMe();
       if (closed.current) return;
-      setBase(response.roster);
+      setBaseRevision((current) => positiveRosterRevision(response.roster.revision, current));
       setEntries([...response.roster.entries]);
       setCatalog(response.catalog);
       setModelDiscovery(response.modelDiscovery);
@@ -86,7 +86,7 @@ export function RosterManagerDialog({
 
   function useLatest() {
     if (!conflict) return;
-    setBase(conflict.roster);
+    setBaseRevision((current) => positiveRosterRevision(conflict.roster.revision, current));
     setEntries([...conflict.roster.entries]);
     setCatalog(conflict.catalog);
     setModelDiscovery(conflict.modelDiscovery);
@@ -101,8 +101,8 @@ export function RosterManagerDialog({
     setError("");
     setConflict(null);
     try {
-      const response = await updateRoster(base.revision, entries);
-      setBase(response.roster);
+      const response = await updateRoster(baseRevision, entries);
+      setBaseRevision((current) => positiveRosterRevision(response.roster.revision, current));
       onSaved(response.roster);
       onClose();
     } catch (reason) {
@@ -125,7 +125,7 @@ export function RosterManagerDialog({
     try {
       if (controlStatus?.claimed) await controlLogin(controlUsername, controlPassword);
       else await bootstrapControlPlane(bootstrapSecret, controlUsername, controlPassword);
-      const response = await loadRoster(); setBase(response.roster); setEntries([...response.roster.entries]); setCatalog(response.catalog); setModelDiscovery(response.modelDiscovery); setControlStatus(null); setControlPassword(""); setBootstrapSecret("");
+      const response = await loadRoster(); setBaseRevision((current) => positiveRosterRevision(response.roster.revision, current)); setEntries([...response.roster.entries]); setCatalog(response.catalog); setModelDiscovery(response.modelDiscovery); setControlStatus(null); setControlPassword(""); setBootstrapSecret("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Control-plane authentication failed."); }
     finally { setSaving(false); }
   }
@@ -195,4 +195,8 @@ export function RosterManagerDialog({
       </section>
     </div>
   );
+}
+
+function positiveRosterRevision(value: unknown, fallback: number) {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
 }
