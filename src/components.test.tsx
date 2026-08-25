@@ -19,8 +19,9 @@ describe("RoomRoster", () => {
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("6 agents");
-    expect(html).toContain("2 humans");
+    expect(html).not.toContain("8 entities");
+    expect(html).not.toContain("6 agents");
+    expect(html).not.toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).not.toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
@@ -217,6 +218,20 @@ describe("ChatComposer", () => {
 });
 
 describe("Transcript message styling", () => {
+  it("applies the timestamp visibility preference without changing message content", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "hidden-time", speaker: "you", text: "Still readable", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        showTimestamps={false}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain("transcript--timestamps-hidden");
+    expect(html).toContain("Still readable");
+  });
+
   it("renders mixed participant snapshots while keeping names and timestamps application-controlled", () => {
     const html = renderToStaticMarkup(
       <Transcript
