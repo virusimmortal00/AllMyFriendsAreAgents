@@ -32,7 +32,8 @@ import { roomMentionCandidates, validateMessageMentions } from "../shared/mentio
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
-import { HumanTaskSessions, joinHumanWithTaskSession, registerTaskRoutes } from "./task-api.js";
+import { registerTaskRoutes } from "./task-api.js";
+import { HumanSessions, joinHumanWithSession, sessionHuman } from "./human-session.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
 import { registerContinuationRoutes } from "./continuation-api.js";
 import { AssignmentGitBroker, claimsFor, resolveGitCommonDirectory } from "./git-security-boundary.js";
@@ -71,7 +72,7 @@ const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
-const humanTaskSessions = new HumanTaskSessions();
+const humanSessions = new HumanSessions();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
@@ -490,33 +491,38 @@ app.get("/api/heartbeat", (_request, response) => {
 });
 
 app.post("/api/heartbeat/authorize", (request, response) => {
+  const actor = sessionHuman(request, humans, humanSessions);
+  if (!actor) return response.status(401).json({ error: "Join the room before authorizing the heartbeat." });
   if (!coordinatorConfigured) return response.status(503).json({ error: "The bounded heartbeat executor is not configured." });
-  const { expectedRevision, actorId, reason } = request.body ?? {};
-  if (!Number.isSafeInteger(expectedRevision) || typeof actorId !== "string" || typeof reason !== "string") {
-    return response.status(400).json({ error: "Expected revision, actor identity, and authorization reason are required." });
+  const { expectedRevision, reason } = request.body ?? {};
+  if (!Number.isSafeInteger(expectedRevision) || typeof reason !== "string") {
+    return response.status(400).json({ error: "Expected revision and authorization reason are required." });
   }
-  const runtime = coordinatorHeartbeat.authorize(expectedRevision, actorId, reason);
+  const runtime = coordinatorHeartbeat.authorize(expectedRevision, actor.id, reason);
   if (!runtime) return response.status(409).json({ error: "Heartbeat state changed or authorization evidence was invalid.", runtime: coordinatorHeartbeat.status().runtime });
   response.json({ configured: true, ...coordinatorHeartbeat.status() });
 });
 
 app.post("/api/heartbeat/emergency-stop", async (request, response) => {
-  const { expectedRevision, actorId, reason } = request.body ?? {};
-  if (!Number.isSafeInteger(expectedRevision) || typeof actorId !== "string" || typeof reason !== "string") {
-    return response.status(400).json({ error: "Expected revision, actor identity, and stop reason are required." });
+  const actor = sessionHuman(request, humans, humanSessions);
+  if (!actor) return response.status(401).json({ error: "Join the room before stopping the heartbeat." });
+  const { expectedRevision, reason } = request.body ?? {};
+  if (!Number.isSafeInteger(expectedRevision) || typeof reason !== "string") {
+    return response.status(400).json({ error: "Expected revision and stop reason are required." });
   }
-  const runtime = coordinatorHeartbeat.emergencyStop(expectedRevision, actorId, reason);
+  const runtime = coordinatorHeartbeat.emergencyStop(expectedRevision, actor.id, reason);
   if (!runtime) return response.status(409).json({ error: "Heartbeat state changed or stop evidence was invalid.", runtime: coordinatorHeartbeat.status().runtime });
   await continuationService.cancelAll("Emergency stop is active.");
   response.json({ configured: coordinatorConfigured, ...coordinatorHeartbeat.status() });
 });
 
 app.get("/api/events", (request, response) => {
-  const humanId = request.query.humanId;
-  const connection = humans.connect(humanId);
-  if (!connection) return response.status(400).json({ error: "Join the room before connecting." });
+  const human = sessionHuman(request, humans, humanSessions);
+  if (!human) return response.status(401).json({ error: "Join the room before connecting." });
+  const connection = humans.connect(human.id);
+  if (!connection) return response.status(401).json({ error: "Join the room before connecting." });
   roomEvents.connect(request, response, publicRoomSnapshot(), () => {
-    const departure = humans.disconnect(humanId);
+    const departure = humans.disconnect(human.id);
     if (departure?.becameAbsent) {
       void announceHumanPresence(departure.human, "left").catch((error) => console.error("Failed to announce room departure", error));
     } else {
@@ -531,16 +537,18 @@ app.get("/api/events", (request, response) => {
 
 app.post("/api/humans", (request, response) => {
   try {
-    response.status(201).json(joinHumanWithTaskSession(request, response, humans, humanTaskSessions));
+    response.status(201).json(joinHumanWithSession(request, response, humans, humanSessions));
   } catch (error) {
     response.status(400).json({ error: error instanceof Error ? error.message : "A valid name is required." });
   }
 });
 
-registerTaskRoutes({ app, store, humans, sessions: humanTaskSessions, developerTeam, broadcast });
-registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanTaskSessions, developers: developerTeam, broadcast });
+registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam, broadcast });
+registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
+  const actor = sessionHuman(request, humans, humanSessions);
+  if (!actor) return response.status(401).json({ error: "Join the room before changing room settings." });
   const update = request.body as Partial<RoomSettings>;
   const previousWritableAgent = store.snapshot().settings.writableAgent;
   let permissionActor: ProjectPermissionActor | undefined;
@@ -561,8 +569,7 @@ app.patch("/api/settings", async (request, response) => {
   if (update.writableAgent === "nobody" || isAgentId(update.writableAgent)) {
     const writableAgent = normalizeWritableAgent(update.writableAgent);
     if (writableAgent !== previousWritableAgent) {
-      permissionActor = humans.get(request.body?.actorId);
-      if (!permissionActor) return response.status(400).json({ error: "Join the room before changing project permissions." });
+      permissionActor = actor;
     }
     allowed.writableAgent = writableAgent;
   }
@@ -580,17 +587,18 @@ app.patch("/api/settings", async (request, response) => {
 });
 
 app.patch("/api/style", async (request, response) => {
-  const human = humans.updateStyle(request.body?.humanId, request.body?.style);
-  if (!human) return response.status(400).json({ error: "Join the room before changing your style." });
+  const actor = sessionHuman(request, humans, humanSessions);
+  const human = actor ? humans.updateStyle(actor.id, request.body?.style) : undefined;
+  if (!human) return response.status(401).json({ error: "Join the room before changing your style." });
   broadcast();
   response.json(human);
 });
 
 app.post("/api/messages", async (request, response) => {
+  const human = sessionHuman(request, humans, humanSessions);
+  if (!human) return response.status(401).json({ error: "Join the room before sending a message." });
   const text = typeof request.body?.text === "string" ? request.body.text.trim() : "";
   if (!text) return response.status(400).json({ error: "Message text is required." });
-  const human = humans.get(request.body?.humanId);
-  if (!human) return response.status(400).json({ error: "Join the room before sending a message." });
   const clientMessageId = typeof request.body?.clientMessageId === "string" ? request.body.clientMessageId.trim() : "";
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
@@ -715,6 +723,7 @@ app.post("/api/developer/improvements/:id/transitions", async (request, response
 });
 
 app.post("/api/actions", async (request, response) => {
+  if (!sessionHuman(request, humans, humanSessions)) return response.status(401).json({ error: "Join the room before directing agents." });
   const action = request.body?.action as "ask" | "review" | "roundtable" | "continue";
   const target = request.body?.target as AgentId | "all" | "both";
   if (jobs.busy) return response.status(409).json({ error: "The room is already working." });
