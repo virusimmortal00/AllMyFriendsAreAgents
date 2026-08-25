@@ -70,6 +70,8 @@ export function normalizeInvestigationState(value: unknown): InvestigationState 
   for (const [id, entry] of Object.entries(state.inbox)) if (id !== entry.inboxEntryId || !validInbox(entry) || !state.jobs[entry.investigationId]) throw new Error(`Invalid investigation inbox ${id}.`);
   const activeOwners = new Set<AgentId>();
   for (const job of Object.values(state.jobs)) if (investigationIsNonterminal(job)) { if (activeOwners.has(job.owner)) throw new Error("Multiple nonterminal investigations for one agent."); activeOwners.add(job.owner); }
+  const providerSessions = new Set<string>();
+  for (const job of Object.values(state.jobs)) if (job.providerSessionId) { if (providerSessions.has(job.providerSessionId)) throw new Error("Multiple investigations share one provider session."); providerSessions.add(job.providerSessionId); }
   const previous = new Map<string, InvestigationEvent>();
   for (const event of state.events) {
     const { eventHash: _eventHash, ...unsigned } = event;
