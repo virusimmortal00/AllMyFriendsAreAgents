@@ -282,6 +282,7 @@ interface RunProcessOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
+  trustedEnvironment?: boolean;
   supervisor?: AgentProcessSupervisor;
   scope?: string;
   stderrFailure?: (stderr: string) => Error | undefined;
@@ -320,7 +321,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     supervisor.assertOpen();
     const child = spawn(command, args, {
       cwd,
-      env: agentProcessEnvironment(options.environment),
+      env: options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment),
       shell: false,
       detached: process.platform !== "win32",
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -586,7 +587,8 @@ export async function runAgent(
       try {
         const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId));
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-          environment: invocation.env, input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+          environment: invocation.env, trustedEnvironment: secureWriterRequested,
+          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
           stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
         });
       } catch (error) {
@@ -601,7 +603,8 @@ export async function runAgent(
         resumedSessionId = undefined;
         const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId));
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-          environment: invocation.env, input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+          environment: invocation.env, trustedEnvironment: secureWriterRequested,
+          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
         });
       }
       const parsed = parseCodexOutput(result.stdout);
@@ -626,6 +629,7 @@ export async function runAgent(
       const invocation = await execution(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id));
       const result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
         environment: invocation.env,
+        trustedEnvironment: secureWriterRequested,
         input: prompt,
         signal,
         supervisor,
@@ -656,6 +660,7 @@ export async function runAgent(
       const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)));
       result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
         environment: invocation.env,
+        trustedEnvironment: secureWriterRequested,
         input: prompt,
         signal,
         supervisor,
@@ -681,6 +686,7 @@ export async function runAgent(
       const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId));
       result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
         environment: invocation.env,
+        trustedEnvironment: secureWriterRequested,
         input: prompt,
         signal,
         supervisor,

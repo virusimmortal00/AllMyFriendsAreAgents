@@ -262,6 +262,24 @@ describe("Codex runtime recovery", () => {
       All_My_Friends_Are_Agents_Data_Dir: "/mixed-case-live",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
   });
+
+  it("preserves only an explicitly trusted confined-writer environment", async () => {
+    const environment = {
+      PATH: process.env.PATH,
+      HOME: "/var/empty",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET: "/tmp/broker.sock",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: "broker-token",
+    };
+    const command = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
+    const filtered = await __testing.runProcess(process.execPath, command, process.cwd(), { environment });
+    const trusted = await __testing.runProcess(process.execPath, command, process.cwd(), { environment, trustedEnvironment: true });
+
+    expect(JSON.parse(filtered.stdout)).not.toHaveProperty("ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN");
+    expect(JSON.parse(trusted.stdout)).toMatchObject({
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET: "/tmp/broker.sock",
+      ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: "broker-token",
+    });
+  });
 });
 
 describe("agent process cancellation", () => {
