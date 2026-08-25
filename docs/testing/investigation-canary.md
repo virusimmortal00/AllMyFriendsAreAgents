@@ -6,7 +6,7 @@ The investigation canary runs a real room server and a deterministic loopback ex
 pnpm run canary:investigations
 ```
 
-The command validates the default-off and authentication gates, evidence confinement, public projections, read-only capability payload, inbox-only completion and closure, per-agent and global concurrency, room-activity independence, checkpoint/restart recovery, uncheckpointed shutdown, provider-session collision, budget exhaustion, failed or malformed providers, policy revocation, emergency stop, and production reopening of the durable audit chain. A JSON report and the isolated durable state remain in the printed run directory.
+The command validates the default-off and authentication gates, evidence confinement, public projections, read-only capability payload, inbox-only completion and closure, per-agent and global concurrency, room-activity independence, checkpoint/restart recovery, uncheckpointed shutdown, project-identity revocation, provider-session collision, budget exhaustion, failed or malformed providers, policy revocation, emergency stop, forged-checkpoint rejection, and production reopening of the durable audit chain. A JSON report and the isolated durable state remain in the printed run directory.
 
 ## Limited real-provider canary
 
