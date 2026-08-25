@@ -13,6 +13,7 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "canary:investigations": "tsx scripts/investigation-canary.ts",
+    "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",

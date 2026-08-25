@@ -8,9 +8,19 @@ pnpm run canary:investigations
 
 The command validates the default-off and authentication gates, evidence confinement, public projections, read-only capability payload, inbox-only completion and closure, per-agent and global concurrency, room-activity independence, checkpoint/restart recovery, uncheckpointed shutdown, project-identity revocation, provider-session collision, budget exhaustion, failed or malformed providers, policy revocation, emergency stop, forged-checkpoint rejection, and production reopening of the durable audit chain. A JSON report and the isolated durable state remain in the printed run directory.
 
-## Limited real-provider canary
+## Automated limited real-provider canary
 
-Run this only after the deterministic canary passes:
+Run this only after the deterministic canary passes and only when two provider calls are acceptable:
+
+```bash
+AMFAA_CANARY_ALLOW_REAL_PROVIDER=true pnpm run canary:investigations:real
+```
+
+The command creates a disposable Git project and isolated room state under `.runtime/investigation-real-canary/`. It makes one bounded, read-only Codex investigation call and one later foreground Codex turn. It verifies the exact local evidence marker, read-only capability and exclusion payloads, inbox-only delivery, byte-for-byte project immutability, bounded summary reinjection in the generation journal, raw-session non-disclosure, distinct foreground and investigation sessions, inbox closure, and a persisted disabled policy. The live call uses the explicit 64,000-token hard ceiling because Codex CLI accounting includes its provider/runtime context; the normal default remains 6,000 tokens. `AMFAA_CANARY_REAL_MODEL` can override the investigation model; the foreground turn uses the room's configured Codex Sol profile.
+
+The real executor mode refuses to start unless `AMFAA_CANARY_ALLOW_REAL_PROVIDER=true`. Its prompt prohibits network, MCP, credential, and mutation access; the CLI also runs with an ephemeral session and a read-only sandbox. The resulting JSON report retains process diagnostics but does not include the provider's raw response.
+
+For a manual autonomous-initiation observation after this required canary passes:
 
 1. Use a fresh data directory and disposable local project. Configure the real investigation executor, set global investigation concurrency to `1`, and leave the persisted policy disabled.
 2. Join as the canary operator, enable the policy, and give one agent a credible but harmless local anomaly with a narrow objective and minimum budget.
