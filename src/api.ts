@@ -28,9 +28,11 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
   if (externalSignal?.aborted) abortFromCaller();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers = new Headers(options.headers);
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     const response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
       ...options,
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {
