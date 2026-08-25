@@ -3,7 +3,57 @@ import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from ".
 import type { HumanPresence } from "./types.js";
 
 const HUMAN_NAME_LIMIT = 32;
+export const HUMAN_DEPARTURE_GRACE_MS = 7_000;
 export type HumanPresenceEvent = "joined" | "left";
+
+type PresenceHuman = Pick<HumanPresence, "id" | "name">;
+
+export class HumanPresenceAnnouncements {
+  private readonly pendingDepartures = new Map<string, NodeJS.Timeout>();
+  private closed = false;
+
+  constructor(
+    private readonly announce: (human: PresenceHuman, event: HumanPresenceEvent) => Promise<void>,
+    private readonly graceMs = HUMAN_DEPARTURE_GRACE_MS,
+    private readonly onError: (error: unknown, event: HumanPresenceEvent) => void = (error, event) => {
+      console.error(`Failed to announce room ${event === "joined" ? "arrival" : "departure"}`, error);
+    },
+  ) {}
+
+  arrival(human: PresenceHuman, becamePresent: boolean) {
+    if (!becamePresent || this.closed) return false;
+    const departure = this.pendingDepartures.get(human.id);
+    if (departure) {
+      clearTimeout(departure);
+      this.pendingDepartures.delete(human.id);
+      return true;
+    }
+    this.deliver(human, "joined");
+    return false;
+  }
+
+  departure(human: PresenceHuman, becameAbsent: boolean) {
+    if (!becameAbsent || this.closed || this.pendingDepartures.has(human.id)) return;
+    const timer = setTimeout(() => {
+      this.pendingDepartures.delete(human.id);
+      if (!this.closed) this.deliver(human, "left");
+    }, this.graceMs);
+    timer.unref();
+    this.pendingDepartures.set(human.id, timer);
+  }
+
+  shutdown() {
+    this.closed = true;
+    for (const timer of this.pendingDepartures.values()) clearTimeout(timer);
+    const cancelled = this.pendingDepartures.size;
+    this.pendingDepartures.clear();
+    return cancelled;
+  }
+
+  private deliver(human: PresenceHuman, event: HumanPresenceEvent) {
+    void this.announce(human, event).catch((error) => this.onError(error, event));
+  }
+}
 
 export function humanPresenceAnnouncement(name: string, event: HumanPresenceEvent) {
   return `${name} has ${event} the chat`;

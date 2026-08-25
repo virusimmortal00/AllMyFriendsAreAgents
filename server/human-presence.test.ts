@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction } from "./human-presence.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { HUMAN_DEPARTURE_GRACE_MS, HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction } from "./human-presence.js";
+
+afterEach(() => vi.useRealTimers());
 
 describe("HumanPresenceRegistry", () => {
   it("tracks distinct named humans and only lists connected participants", () => {
@@ -48,5 +50,102 @@ describe("HumanPresenceRegistry", () => {
     expect(humanPresenceInstruction("Alice", "joined")).toContain("optional chance to greet");
     expect(humanPresenceInstruction("Alice", "joined")).toContain("NO_RESPONSE_NEEDED");
     expect(humanPresenceInstruction("Alice", "left")).toContain("Do not address them as if they are still present");
+  });
+
+  it("keeps live presence immediate while suppressing a refresh departure and matching arrival", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const humans = new HumanPresenceRegistry();
+    const announcements = new HumanPresenceAnnouncements(async (human, event) => { events.push(`${human.id}:${event}`); });
+    const alice = humans.join({ name: "Alice" });
+    const firstConnection = humans.connect(alice.id)!;
+    announcements.arrival(firstConnection.human, firstConnection.becamePresent);
+
+    const disconnected = humans.disconnect(alice.id)!;
+    announcements.departure(disconnected.human, disconnected.becameAbsent);
+    expect(humans.list()).toEqual([]);
+    expect(events).toEqual([`${alice.id}:joined`]);
+
+    const resumed = humans.join({ name: "Alice" }, alice.id);
+    const reconnected = humans.connect(resumed.id)!;
+    expect(announcements.arrival(reconnected.human, reconnected.becamePresent)).toBe(true);
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS);
+
+    expect(humans.list().map(({ id }) => id)).toEqual([alice.id]);
+    expect(events).toEqual([`${alice.id}:joined`]);
+  });
+
+  it("durably announces a genuine departure only after the grace period", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const humans = new HumanPresenceRegistry();
+    const announcements = new HumanPresenceAnnouncements(async (_human, event) => { events.push(event); });
+    const alice = humans.join({ name: "Alice" });
+    const connected = humans.connect(alice.id)!;
+    announcements.arrival(connected.human, connected.becamePresent);
+    const disconnected = humans.disconnect(alice.id)!;
+    announcements.departure(disconnected.human, disconnected.becameAbsent);
+
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS - 1);
+    expect(events).toEqual(["joined"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events).toEqual(["joined", "left"]);
+  });
+
+  it("waits for the final tab and cancels that departure when another tab reconnects", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const humans = new HumanPresenceRegistry();
+    const announcements = new HumanPresenceAnnouncements(async (_human, event) => { events.push(event); });
+    const alice = humans.join({ name: "Alice" });
+    const first = humans.connect(alice.id)!;
+    announcements.arrival(first.human, first.becamePresent);
+    humans.connect(alice.id);
+
+    const oneTabClosed = humans.disconnect(alice.id)!;
+    announcements.departure(oneTabClosed.human, oneTabClosed.becameAbsent);
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS);
+    expect(events).toEqual(["joined"]);
+
+    const lastTabClosed = humans.disconnect(alice.id)!;
+    announcements.departure(lastTabClosed.human, lastTabClosed.becameAbsent);
+    const replacementTab = humans.connect(alice.id)!;
+    announcements.arrival(replacementTab.human, replacementTab.becamePresent);
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS);
+    expect(events).toEqual(["joined"]);
+  });
+
+  it("does not let a different identity cancel a pending departure, even with the same name", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const humans = new HumanPresenceRegistry();
+    const announcements = new HumanPresenceAnnouncements(async (human, event) => { events.push(`${human.id}:${event}`); });
+    const alice = humans.join({ name: "Alex" });
+    const connected = humans.connect(alice.id)!;
+    announcements.arrival(connected.human, connected.becamePresent);
+    const disconnected = humans.disconnect(alice.id)!;
+    announcements.departure(disconnected.human, disconnected.becameAbsent);
+
+    const other = humans.join({ name: "Alex" });
+    const otherConnection = humans.connect(other.id)!;
+    expect(announcements.arrival(otherConnection.human, otherConnection.becamePresent)).toBe(false);
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS);
+
+    expect(events).toEqual([`${alice.id}:joined`, `${other.id}:joined`, `${alice.id}:left`]);
+  });
+
+  it("drops pending departures during planned shutdown", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const humans = new HumanPresenceRegistry();
+    const announcements = new HumanPresenceAnnouncements(async (_human, event) => { events.push(event); });
+    const alice = humans.join({ name: "Alice" });
+    humans.connect(alice.id);
+    const disconnected = humans.disconnect(alice.id)!;
+    announcements.departure(disconnected.human, disconnected.becameAbsent);
+
+    expect(announcements.shutdown()).toBe(1);
+    await vi.advanceTimersByTimeAsync(HUMAN_DEPARTURE_GRACE_MS);
+    expect(events).toEqual([]);
   });
 });
