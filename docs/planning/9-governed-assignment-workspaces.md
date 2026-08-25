@@ -1,3 +1,14 @@
+---
+id: governed-assignment-workspaces
+status: active
+issue: 9
+owner: developer-team
+reviewers: []
+depends_on: []
+reported_by: issue-9
+updated: 2026-08-24
+---
+
 # #9: Governed assignment-scoped developer workspaces
 
 **Status**: Implemented through Phase 2 — concurrency and landing gates still open

@@ -1,6 +1,7 @@
 ---
 id: scoped-github-contribution-broker
 status: done
+issue: 18
 owner: developer-team
 reviewers: [independent-review]
 depends_on: [governed-assignment-workspaces, first-class-tasks]

@@ -6,12 +6,12 @@ owner: crimsonsunset
 reviewers: []
 depends_on: []
 reported_by: crimsonsunset
-updated: 2026-08-22
+updated: 2026-08-24
 ---
 
 # Unify planning docs and GitHub Issues into one source of truth
 
-**Status**: Done — Phases 1–3 implemented on this branch
+**Status**: Done — Phases 1–3 implemented; rebased onto current `main` and reconciled with later planning-doc drift
 **Ticket**: [#24](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/24)
 **Branch**: `feat/unify-planning-docs-and-issues`
 **Base**: `main`
@@ -64,7 +64,8 @@ Phase 3: flip the guardrail to a required, blocking check
 - an `issue:` frontmatter field added to the planning-doc contract;
 - `scripts/check-planning-doc-sync.ts` plus a CI workflow that runs it on every PR;
 - migration of the 6 existing files (3 already issue-linked, 3 not);
-- an updated `docs/planning/README.md` describing the new lifecycle.
+- an updated `docs/planning/README.md` describing the new lifecycle;
+- `issue:` backfill on later main-only docs so enforce-mode CI stays green after rebase.
 
 **Out:**
 
@@ -100,37 +101,41 @@ No new runtime component. This is a CI script plus two documentation/template ch
 | `.github/workflows/planning-doc-guardrail.yml` | New CI workflow invoking the script on `pull_request`. |
 | `package.json` | Add a `check:planning-docs` script entry calling `tsx scripts/check-planning-doc-sync.ts`. |
 | `docs/planning/TEMPLATE.md` | Add an `issue:` frontmatter field; document when it's required (once `status` leaves `proposed`). |
-| `docs/planning/README.md` | Rewrite "Working rules" to describe Issues-as-source-of-truth, the guardrail, and the `superseded`-not-deleted migration path. |
+| `docs/planning/README.md` | Rewrite "Working rules" to describe Issues-as-source-of-truth, the guardrail, and the `superseded`-not-deleted migration path. Restored the full Current work index (main's 9 entries plus `#9`) after rebase. |
 | `docs/planning/participant-mentions.md` | Flip `status: superseded`, link merged PRs [#5](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/5)/[#7](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/7). |
 | `docs/planning/project-permissions-toggle.md` | Flip `status: superseded`, link merged [#4](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/4). |
 | `docs/planning/compose-lag-cross-platform.md` | Flip `status: superseded`, link closed issue [#13](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/13) and merged [#21](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/21). |
 | `docs/planning/typing-indicator-truthfulness.md` | Open a new issue from its content, then flip `status: superseded`, link the issue. |
 | `docs/planning/large-message-autoscroll.md` | Same — open issue, supersede. |
-| `docs/planning/aim-window-controls.md` | Same — open issue, supersede. |
+| `docs/planning/aim-window-controls.md` | `status: superseded`, `issue: 27`. Kept main's decorative-chrome body after rebase rather than the older "promoted to #27" stub. |
+| `docs/planning/9-governed-assignment-workspaces.md` | Added YAML frontmatter (`status: active`, `issue: 9`) so the guardrail can see the ticket-first epic. Body unchanged. |
+| `docs/planning/18-scoped-github-contribution-broker.md` | Added `issue: 18`. Status stays `done`. |
+| `docs/planning/20-exact-commit-contribution-gates.md` | Added `issue: 20` and flipped `status` to `done` — issue #20 is closed via [#45](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/45)/[#47](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/47). Leaving it `active` would fail enforce-mode CI. |
+| `docs/planning/48-persistent-live-roster.md` | Added `issue: 48`. Status stays `done`. |
 
 ## Phasing
 
-### Phase 1: Foundation — ~0.5 day
+### Phase 1: Foundation — Done
 
 - Write `.github/ISSUE_TEMPLATE/work-item.md` from `TEMPLATE.md`'s fields.
-- Write `scripts/check-planning-doc-sync.ts` and wire it into a CI workflow as **report-only** first (comments on the PR, never fails it).
+- Write `scripts/check-planning-doc-sync.ts` and wire it into a CI workflow. Shipped in **enforce** mode rather than report-only first; report mode remains available via `--mode=report` / `PLANNING_DOC_GUARDRAIL_MODE=report`.
 - Add the `issue:` frontmatter field to `TEMPLATE.md` and document it in `docs/planning/README.md`.
 
-**Outcome:** Opening a PR that touches a `docs/planning/*.md` file produces a CI check comment reporting sync status, but nothing fails yet. No existing file has been touched.
+**Outcome:** Every PR runs a blocking planning-doc check. `proposed` files may omit `issue:`; `active`/`blocked` require it.
 
-### Phase 2: Migrate the 6 existing files — ~0.5 day
+### Phase 2: Migrate the 6 existing files — Done
 
 - For the 3 files with a linked/closed issue already (`participant-mentions.md`, `project-permissions-toggle.md`, `compose-lag-cross-platform.md`): add the `issue:` frontmatter field, flip `status: superseded`.
-- For the 3 files with no issue (`typing-indicator-truthfulness.md`, `large-message-autoscroll.md`, `aim-window-controls.md`): open a GitHub issue per file using the new template, carrying over Outcome/Acceptance checks/Evidence, then flip `status: superseded` in the file with a link to the new issue.
+- For the 3 files with no issue (`typing-indicator-truthfulness.md`, `large-message-autoscroll.md`, `aim-window-controls.md`): opened [#25](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/25), [#26](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/26), [#27](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/27), then flipped `status: superseded`. After rebase, `aim-window-controls.md` kept main's decorative-chrome write-up instead of the promotion stub.
 
-**Outcome:** All 6 files read `status: superseded` and resolve to a live or closed GitHub issue. `gh issue list` shows 3 new issues that didn't exist before. Nothing in `docs/planning/` claims to be `active` except genuinely open work.
+**Outcome:** The original 6 files read `status: superseded` and resolve to a GitHub issue. Later main-only docs (`18`, `20`, `48`, `#9`) were backfilled so they also satisfy the guardrail.
 
-### Phase 3: Enforce — ~0.5 day
+### Phase 3: Enforce — Done
 
-- Flip the CI workflow from report-only to a required, blocking status check on `main`.
-- Confirm the check fails on a deliberately reintroduced drift case (a test PR that closes an issue without touching its file) and passes once fixed.
+- CI workflow ships in enforce mode (`PLANNING_DOC_GUARDRAIL_MODE: enforce`). Self-check fixtures run first.
+- Rebased onto current `main` (merge-base was `829bd95`). Conflicts: `docs/planning/README.md` (restored full index) and `docs/planning/aim-window-controls.md` (main body + superseded/`issue: 27` frontmatter). `package.json` auto-merged; main's `tsc -b --force` kept.
 
-**Outcome:** A PR that closes a tracked issue without updating the matching planning file's status cannot merge. The exact failure mode from this repo's first day of activity is now mechanically prevented, not just discouraged by a written rule.
+**Outcome:** A PR that closes a tracked issue without updating the matching planning file's status cannot merge. Docs that landed on main after this branch forked now have `issue:` fields: `#9` stays `active` (issue still open); `#20` flipped to `done` because the issue is already closed.
 
 ## Key files referenced
 
@@ -150,3 +155,4 @@ No new runtime component. This is a CI script plus two documentation/template ch
 
 _Created: 2026-08-22_
 _Planning session: `propose-opts-brainstorm` on forcing `docs/planning/` + GitHub Issues sync; options 1 and 3 combined per user direction._
+_Last reconciled: 2026-08-24 — rebased onto current `main`; restored README index; backfilled `issue:` on #9/#18/#20/#48._
