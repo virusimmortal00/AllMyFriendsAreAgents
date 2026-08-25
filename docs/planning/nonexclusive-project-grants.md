@@ -1,6 +1,7 @@
 ---
 id: nonexclusive-project-grants
 status: proposed
+issue: 12
 owner: developer-team
 reviewers: []
 depends_on: [git-security-boundary]
