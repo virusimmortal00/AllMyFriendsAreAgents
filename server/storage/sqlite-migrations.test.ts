@@ -39,7 +39,7 @@ describe("SQLite migrations", () => {
         "continuation_inbox",
         "continuation_job_events",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 12 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 13 });
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
@@ -100,6 +100,33 @@ describe("SQLite migrations", () => {
       expect(database.prepare("SELECT COUNT(*) AS count FROM room_agents WHERE agent_id = 'cursor-gemini'").get()).toEqual({ count: 0 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM agent_sessions WHERE agent_id = 'cursor-gemini'").get()).toEqual({ count: 0 });
       expect(database.prepare("SELECT writable_agent, status, active_agent FROM rooms WHERE id = 'room-1'").get()).toEqual({ writable_agent: "nobody", status: "idle", active_agent: null });
+      expect(database.prepare("SELECT agent_id, enabled, position FROM room_agents WHERE room_id = 'room-1' ORDER BY position").all()).toEqual([
+        { agent_id: "codex-sol", enabled: 1, position: 0 },
+        { agent_id: "claude-sonnet", enabled: 1, position: 1 },
+        { agent_id: "cursor-grok", enabled: 1, position: 2 },
+        { agent_id: "cursor-composer", enabled: 1, position: 3 },
+        { agent_id: "cursor-gemini-flash", enabled: 1, position: 4 },
+        { agent_id: "cursor-glm", enabled: 1, position: 5 },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not rewrite a roster that has already been edited", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: true });
+    try {
+      await runSqliteMigrations(database);
+      database.prepare(`INSERT INTO rooms(id, slug, name, topic, writable_agent, conversation_energy, project_path, participant_styles_json, status, roster_revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run("room-edited", "edited", "Edited", "Topic", "nobody", "balanced", "/tmp/project", "{}", "idle", 2, "now", "now");
+      database.prepare("INSERT INTO room_agents(room_id, agent_id, enabled, position, created_at, updated_at) VALUES (?, ?, 0, 7, ?, ?)")
+        .run("room-edited", "codex-sol", "now", "now");
+      database.prepare("DELETE FROM schema_migrations WHERE version = 13").run();
+
+      await runSqliteMigrations(database);
+      expect(database.prepare("SELECT agent_id, enabled, position FROM room_agents WHERE room_id = 'room-edited'").all()).toEqual([
+        { agent_id: "codex-sol", enabled: 0, position: 7 },
+      ]);
     } finally {
       database.close();
     }
