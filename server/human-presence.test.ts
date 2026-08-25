@@ -29,9 +29,9 @@ describe("HumanPresenceRegistry", () => {
 
   it("reuses a browser identity after reconnect and keeps styles separate", () => {
     const humans = new HumanPresenceRegistry();
-    const alice = humans.join({ id: "alice-browser", name: "Alice" });
+    const alice = humans.join({ name: "Alice" });
     const updated = humans.updateStyle(alice.id, { textColor: "#ed36ff" });
-    const rejoined = humans.join({ id: alice.id, name: "Alice", style: updated?.style });
+    const rejoined = humans.join({ name: "Alice", style: updated?.style }, alice.id);
 
     expect(rejoined.id).toBe(alice.id);
     expect(rejoined.style.textColor).toBe("#ed36ff");

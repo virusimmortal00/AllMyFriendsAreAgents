@@ -4,38 +4,10 @@ import { isActiveAgentId } from "../shared/participants.js";
 import { createTask, TASK_LIFECYCLE_STATES, TASK_PARTICIPANT_ROLES, type TaskActor, type TaskChange, type TaskReference } from "../shared/task-domain.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
+import { sessionHuman, type HumanSessions } from "./human-session.js";
 import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
 
-const HUMAN_TASK_COOKIE = "amfaa_task_session";
 const forbiddenKeys = new Set(["roomId", "actorId", "addedBy", "developerRole", "memberId", "memberRevision"]);
-
-export class HumanTaskSessions {
-  private readonly sessions = new Map<string, string>();
-
-  issue(humanId: string) {
-    for (const [token, existing] of this.sessions) if (existing === humanId) return token;
-    const token = randomUUID();
-    this.sessions.set(token, humanId);
-    return token;
-  }
-
-  humanId(cookieHeader?: string) {
-    const token = cookieHeader?.split(";").map((part) => part.trim().split("=")).find(([name]) => name === HUMAN_TASK_COOKIE)?.[1];
-    return token ? this.sessions.get(decodeURIComponent(token)) : undefined;
-  }
-}
-
-export function setHumanTaskSession(response: express.Response, sessions: HumanTaskSessions, humanId: string) {
-  response.setHeader("Set-Cookie", `${HUMAN_TASK_COOKIE}=${encodeURIComponent(sessions.issue(humanId))}; Path=/api; HttpOnly; SameSite=Strict`);
-}
-
-/** A client may resume only the identity already bound to its opaque server session. */
-export function joinHumanWithTaskSession(request: express.Request, response: express.Response, humans: HumanPresenceRegistry, sessions: HumanTaskSessions) {
-  const sessionHumanId = sessions.humanId(request.header("cookie"));
-  const human = humans.join({ ...(request.body || {}), id: sessionHumanId });
-  setHumanTaskSession(response, sessions, human.id);
-  return human;
-}
 
 function containsForbiddenIdentity(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -60,15 +32,15 @@ export function registerTaskRoutes(input: {
   app: express.Express;
   store: RoomRepository;
   humans: HumanPresenceRegistry;
-  sessions: HumanTaskSessions;
+  sessions: HumanSessions;
   developerTeam: DeveloperTeamRegistry;
   broadcast: () => void;
 }) {
   const { app, store, humans, sessions, developerTeam, broadcast } = input;
   const identity = (taskId: string) => ({ roomId: CANONICAL_ROOM_ID, taskId });
   const humanActor = (request: express.Request): TaskActor | null => {
-    const id = sessions.humanId(request.header("cookie"));
-    return id && humans.get(id) ? { id, roomRole: "owner" } : null;
+    const human = sessionHuman(request, humans, sessions);
+    return human ? { id: human.id, roomRole: "owner" } : null;
   };
   const requireHuman = (request: express.Request, response: express.Response) => {
     const actor = response.locals.taskActor as TaskActor | undefined || humanActor(request);

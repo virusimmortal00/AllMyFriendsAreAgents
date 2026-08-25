@@ -106,6 +106,7 @@ async function renderConnected(messages: RoomState["messages"] = [], beforeRende
   beforeRender?.();
   render(<App />);
   await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(1));
+  expect(ControlledEventSource.instances[0].url).toBe("/api/events");
   act(() => ControlledEventSource.instances[0].emit(room("server-before", messages)));
   return screen.findByRole("textbox", { name: "Message" });
 }
@@ -125,7 +126,7 @@ beforeEach(() => {
   api.loadRoom.mockResolvedValue(room("load-only"));
   api.loadWorkshop.mockRejectedValue(new Error("not used"));
   api.runAction.mockResolvedValue({ accepted: true });
-  api.sendMessage.mockImplementation(async (_humanId: string, _text: string, clientMessageId: string) => ({
+  api.sendMessage.mockImplementation(async (_text: string, clientMessageId: string) => ({
     accepted: true, duplicate: false, clientMessageId, messageId: `server-${clientMessageId}`,
   }));
   api.updateMyStyle.mockResolvedValue(human);
@@ -175,7 +176,7 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
     expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
-    const clientMessageId = api.sendMessage.mock.calls[0][2];
+    const clientMessageId = api.sendMessage.mock.calls[0][1];
     act(() => ControlledEventSource.instances[0].emitEvent({
       kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
       messages: [{ id: "authoritative", clientMessageId, humanId: human.id, speaker: "you", text: "Optimistic once", timestamp: "2026-08-24T12:00:00.000Z" }],
@@ -191,7 +192,7 @@ describe("rendered reconnect recovery", () => {
     await user.type(composer, "Delta won the race");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
-    const clientMessageId = api.sendMessage.mock.calls[0][2];
+    const clientMessageId = api.sendMessage.mock.calls[0][1];
     act(() => ControlledEventSource.instances[0].emitEvent({
       kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
       messages: [{ id: "delivered-first", clientMessageId, humanId: human.id, speaker: "you", text: "Delta won the race", timestamp: "2026-08-24T12:00:00.000Z" }],
@@ -369,7 +370,7 @@ describe("rendered reconnect recovery", () => {
     const pending = await screen.findByText(/Not sent — send now\?/);
     expect(pending.closest(".pending-send")?.textContent).toContain("Did this land?");
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
-    const originalClientId = api.sendMessage.mock.calls[0][2];
+    const originalClientId = api.sendMessage.mock.calls[0][1];
     expect(originalClientId).toMatch(/^message_/);
 
     act(() => ControlledEventSource.instances[0].fail());
@@ -383,7 +384,7 @@ describe("rendered reconnect recovery", () => {
 
     await user.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2));
-    expect(api.sendMessage.mock.calls[1]).toEqual([human.id, "Did this land?", originalClientId, []]);
+    expect(api.sendMessage.mock.calls[1]).toEqual(["Did this land?", originalClientId, []]);
     expect((screen.getByRole("button", { name: "Sending…" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Keep as draft" }) as HTMLButtonElement).disabled).toBe(true);
     act(() => resolveResend(room("server-after")));

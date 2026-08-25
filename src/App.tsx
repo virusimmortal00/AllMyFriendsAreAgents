@@ -243,7 +243,7 @@ export default function App() {
     const connectEvents = () => {
       if (cancelled) return;
       events?.close();
-      const source = new EventSource(`/api/events?humanId=${encodeURIComponent(currentHuman.id)}`);
+      const source = new EventSource("/api/events");
       events = source;
       lastEventAt = Date.now();
       source.addEventListener("heartbeat", () => {
@@ -442,7 +442,7 @@ export default function App() {
 
   async function changeWritable(agent: WritableAgent) {
     if (!human) throw new Error("Join the room before changing project permissions.");
-    await updateSettings({ writableAgent: agent, actorId: human.id });
+    await updateSettings({ writableAgent: agent });
     setRoom((current) => ({ ...current, settings: { ...current.settings, writableAgent: agent } }));
   }
 
@@ -461,7 +461,7 @@ export default function App() {
     setSavedHuman(nextHuman);
     saveHumanProfile(nextHuman);
     setClientError("");
-    void updateMyStyle(human.id, nextHuman.style).catch((error) => {
+    void updateMyStyle(nextHuman.style).catch((error) => {
       if (styleSaveRevision.current !== revision) return;
       setHuman(previousHuman);
       setSavedHuman(previousHuman);
@@ -490,7 +490,7 @@ export default function App() {
     setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
     try {
       setClientError("");
-      await sendMessage(human.id, message, clientMessageId, mentions);
+      await sendMessage(message, clientMessageId, mentions);
       return { restoreOnFailure: false };
     } catch (error) {
       const delivered = roomRef.current.messages.some(({ clientMessageId: deliveredId, id }) =>
@@ -512,7 +512,7 @@ export default function App() {
     void (async () => {
       try {
         setClientError("");
-        await sendMessage(human.id, pending.text, pending.clientMessageId, pending.mentions || []);
+        await sendMessage(pending.text, pending.clientMessageId, pending.mentions || []);
         setPendingSend(null);
       } catch (error) {
         setClientError(error instanceof Error ? error.message : String(error));
