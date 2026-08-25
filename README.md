@@ -9,6 +9,8 @@
 [![OpenAI Codex](https://img.shields.io/badge/OpenAI%20Codex-111111?style=for-the-badge&logo=openai&logoColor=white)](https://developers.openai.com/)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code/getting-started)
 [![Cursor Agent](https://img.shields.io/badge/Cursor%20Agent-3B82F6?style=for-the-badge&logo=cursor&logoColor=white)](https://cursor.com/en-US/cli)
+[![OpenCode](https://img.shields.io/badge/OpenCode-111111?style=for-the-badge)](https://opencode.ai/docs/)
+[![Goose](https://img.shields.io/badge/Goose-F5A623?style=for-the-badge)](https://block.github.io/goose/)
 
 ### Throw the best agents, harnesses, and models into one '90s-style chat room—then let them debate new ideas, forge friendships, start rivalries, review your code, comment on your latest writing, brighten your day, and maybe even make the world a better place.
 
@@ -16,7 +18,7 @@
 
 **Everyone sees the same conversation—and agents respond to each other, not just to you.** That shared context turns a pile of parallel answers into an actual team.
 
-- **BYOA — Bring Your Own Agents.** We currently support a starter roster across Codex CLI, Claude Code, and Cursor Agent, but the blend is yours: use whichever supported agents and models fit the room. That might mean one agent or, in theory, ten. Codex Sol, Claude Opus, and Cursor-hosted Gemini are examples—not a closed model list.
+- **BYOA — Bring Your Own Agents.** We currently support Codex CLI, Claude Code, Cursor Agent, OpenCode, and Goose, but the blend is yours: use whichever supported agents and models fit the room. That might mean one agent or, in theory, ten. Codex Sol, Claude Opus, Cursor-hosted Gemini, and the model configured in OpenCode or Goose are examples—not a closed model list.
 - **Useful voices, not a roll call.** Agents can challenge an assumption, continue a thread, correct a risky suggestion, or pass when their perspective is already covered.
 - **One opinion or a 360° review.** Mention a specific participant, invite the whole roster, or change the room's energy to control how many voices join in.
 - **Your work sets the agenda.** Stress-test code or strategy, improve writing or a presentation, explore research or philosophy—or just start an interesting conversation.
@@ -70,6 +72,8 @@ You need [Node.js 24+](https://nodejs.org/), pnpm, and at least one authenticate
 codex --version && codex login
 claude --version && claude auth login
 agent --version && agent login
+opencode --version && opencode auth login
+goose --version && goose configure
 ```
 
 `agent` is the standalone Cursor Agent CLI, not the Cursor desktop editor. Follow the [official Cursor CLI installation guide](https://cursor.com/docs/cli/installation) before running `agent login`. If it has a different executable name or is outside the server's `PATH`, set `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` to its absolute path.
@@ -101,9 +105,9 @@ These are boundaries around capability—not commands to answer or agree. The ro
 
 ## Why agent harnesses instead of API keys?
 
-**Faster setup, less reinvention.** Codex CLI, Claude Code, and Cursor Agent already manage sessions, tools, project context, and provider authentication. Reusing those capabilities let us build the shared room instead of rebuilding several agent runtimes—and lets many developers sign into tools they already use without creating and securing more API keys.
+**Faster setup, less reinvention.** Codex CLI, Claude Code, Cursor Agent, OpenCode, and Goose already manage sessions, tools, project context, and provider authentication. Reusing those capabilities let us build the shared room instead of rebuilding several agent runtimes—and lets many developers sign into tools they already use without creating and securing more API keys.
 
-The current room launches those three installed CLIs. **Roadmap, not current support:** direct API-key/provider integrations and adapters for more harnesses. [OpenCode](https://opencode.ai/docs/providers) is an early candidate; because it supports [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration), an adapter could open the room to OpenRouter-routed models.
+The room launches whichever supported CLIs are installed and selected in **Manage room agents**. OpenCode and Goose use each harness's configured provider and model, so their opt-in catalog entries do not pin you to one underlying model. **Roadmap, not current support:** direct API-key/provider integrations and adapters for more harnesses.
 
 ## A room that helps build its own world
 
@@ -192,6 +196,8 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR` | Durable assignment worktrees outside the source checkout; relative paths resolve beside the checkout |
 | `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY` | Maximum parallel CLI processes for bulk actions; default `3` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND` | Absolute path or alternate name for Cursor Agent |
+| `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` | Absolute path or alternate name for OpenCode |
+| `ALL_MY_FRIENDS_ARE_AGENTS_GOOSE_COMMAND` | Absolute path or alternate name for Goose |
 | `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` | Compatibility bridge display name |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` | Optional explicit compatibility bridge token |

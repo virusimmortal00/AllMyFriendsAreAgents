@@ -158,6 +158,24 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
+  "opencode-configured": {
+    fontFamily: "Verdana",
+    fontSize: 17,
+    textColor: "#2b7274",
+    backgroundColor: "#ffffff",
+    bold: true,
+    italic: false,
+    underline: false,
+  },
+  "goose-configured": {
+    fontFamily: "Tahoma",
+    fontSize: 17,
+    textColor: "#74740d",
+    backgroundColor: "#ffffff",
+    bold: false,
+    italic: false,
+    underline: false,
+  },
 };
 
 function sanitizePaletteColor(value: unknown, fallback: string, safeDefault: string) {

@@ -19,6 +19,8 @@ const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
 const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
+const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
+const GOOSE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GOOSE_COMMAND?.trim() || "goose";
 
 interface RunResult {
   text: string;
@@ -398,8 +400,18 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
 function friendlyProcessError(command: string, code: number | null, output: string) {
   if (/OAuth session expired|Failed to authenticate|Not logged in|Not authenticated/i.test(output)) {
     const cursor = command === CURSOR_COMMAND;
-    const loginCommand = command === "claude" ? "claude auth login" : cursor ? `${CURSOR_COMMAND} login` : "codex login";
-    const providerName = command === "claude" ? "Claude Code" : cursor ? "Cursor Agent" : "Codex";
+    const opencode = command === OPENCODE_COMMAND;
+    const goose = command === GOOSE_COMMAND;
+    const loginCommand = command === "claude" ? "claude auth login"
+      : cursor ? `${CURSOR_COMMAND} login`
+        : opencode ? `${OPENCODE_COMMAND} auth login`
+          : goose ? `${GOOSE_COMMAND} configure`
+            : "codex login";
+    const providerName = command === "claude" ? "Claude Code"
+      : cursor ? "Cursor Agent"
+        : opencode ? "OpenCode"
+          : goose ? "Goose"
+            : "Codex";
     return `${providerName} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
   }
   const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
@@ -441,6 +453,10 @@ function resolveExecutionProjectPath(permission: "read-only" | "writable", proje
 
 function isMissingClaudeSessionError(error: unknown) {
   return error instanceof Error && /No conversation found with session ID/i.test(error.message);
+}
+
+function isMissingHarnessSessionError(error: unknown) {
+  return error instanceof Error && /(?:no|unable to find|unknown) (?:saved )?session|session .{0,200}not found/i.test(error.message);
 }
 
 function isCorruptCodexSessionError(error: unknown) {
@@ -542,6 +558,63 @@ function parseCursorModels(stdout: string) {
   // account-specific catalog with our exact model IDs.
   const plainText = stdout.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "");
   return new Set([...plainText.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
+}
+
+function opencodeArgs(permission: "read-only" | "writable", projectPath: string, sessionId?: string) {
+  return [
+    "run",
+    "--format",
+    "json",
+    "--dir",
+    projectPath,
+    "--agent",
+    permission === "writable" ? "build" : "plan",
+    ...(permission === "writable" ? ["--auto"] : []),
+    ...(sessionId ? ["--session", sessionId] : []),
+  ];
+}
+
+function parseOpenCodeOutput(stdout: string) {
+  let sessionId = "";
+  const text: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as { type?: string; sessionID?: string; part?: { type?: string; text?: string } };
+      if (event.sessionID) sessionId = event.sessionID;
+      if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
+    } catch {
+      // OpenCode progress outside its JSON event protocol is intentionally ignored.
+    }
+  }
+  return { sessionId, text: text.join("") };
+}
+
+function gooseArgs(sessionId: string, resume = false) {
+  return [
+    "run",
+    "--instructions",
+    "-",
+    "--quiet",
+    "--name",
+    sessionId,
+    ...(resume ? ["--resume"] : []),
+  ];
+}
+
+function harnessEnvironment(environment: NodeJS.ProcessEnv, provider: "opencode" | "goose", permission: "read-only" | "writable") {
+  if (provider === "opencode") return permission === "read-only" ? {
+    ...environment,
+    OPENCODE_PERMISSION: JSON.stringify({
+      "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
+      webfetch: "allow", websearch: "allow", lsp: "allow",
+    }),
+  } : environment;
+  return {
+    ...environment,
+    GOOSE_MODE: permission === "writable" ? "auto" : "chat",
+    GOOSE_DISABLE_SESSION_NAMING: "true",
+  };
 }
 
 export async function runAgent(
@@ -672,6 +745,77 @@ export async function runAgent(
       return { sessionId, text: parsed.text, generationId, durationMs, permission };
     }
 
+    if (profile.provider === "opencode") {
+      let resumedSessionId = existing?.id;
+      const invoke = async (sessionId?: string) => {
+        const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId));
+        return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
+          environment: harnessEnvironment(invocation.env, "opencode", permission),
+          trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
+          timeoutMs: runTimeout(permission, includeDiff),
+        });
+      };
+      let result: ProcessResult;
+      try {
+        result = await invoke(resumedSessionId);
+      } catch (error) {
+        if (!existing || !isMissingHarnessSessionError(error)) throw error;
+        await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
+        await journal?.append({
+          type: "generation.retry", generationId, agent,
+          reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
+          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
+        });
+        resumedSessionId = undefined;
+        result = await invoke();
+      }
+      const parsed = parseOpenCodeOutput(result.stdout);
+      const sessionId = parsed.sessionId || resumedSessionId;
+      if (!sessionId || !parsed.text) throw new Error("OpenCode returned no resumable session or room message.");
+      const durationMs = Date.now() - startedAt;
+      await journal?.append({
+        type: "generation.completed", generationId, agent, durationMs, sessionId,
+        rawResponse: parsed.text, responseCharacters: parsed.text.length,
+        cliStdout: result.stdout, cliStderr: result.stderr,
+      });
+      return { sessionId, text: parsed.text, generationId, durationMs, permission };
+    }
+
+    if (profile.provider === "goose") {
+      let sessionId = existing?.id || randomUUID();
+      const invoke = async (resume: boolean) => {
+        const invocation = await execution(GOOSE_COMMAND, gooseArgs(sessionId, resume));
+        return runProcess(invocation.command, invocation.args, invocation.cwd, {
+          environment: harnessEnvironment(invocation.env, "goose", permission),
+          trustedEnvironment: secureWriterRequested, input: prompt, signal, supervisor, scope: processScopes,
+          timeoutMs: runTimeout(permission, includeDiff),
+        });
+      };
+      let result: ProcessResult;
+      try {
+        result = await invoke(Boolean(existing));
+      } catch (error) {
+        if (!existing || !isMissingHarnessSessionError(error)) throw error;
+        await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
+        await journal?.append({
+          type: "generation.retry", generationId, agent,
+          reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
+          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
+        });
+        sessionId = randomUUID();
+        result = await invoke(false);
+      }
+      const text = result.stdout.trim();
+      if (!text) throw new Error("Goose returned no room message.");
+      const durationMs = Date.now() - startedAt;
+      await journal?.append({
+        type: "generation.completed", generationId, agent, durationMs, sessionId,
+        rawResponse: text, responseCharacters: text.length,
+        cliStdout: result.stdout, cliStderr: result.stderr,
+      });
+      return { sessionId, text, generationId, durationMs, permission };
+    }
+
     let sessionId = existing?.id || randomUUID();
     let result: ProcessResult;
     try {
@@ -777,16 +921,22 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
       return new Set<string>();
     }
   };
-  const [codex, claude, availableCursorModels] = await Promise.all([check("codex"), check("claude"), cursorModels()]);
+  const [codex, claude, opencode, goose, availableCursorModels] = await Promise.all([
+    check("codex"), check("claude"), check(OPENCODE_COMMAND), check(GOOSE_COMMAND), cursorModels(),
+  ]);
   return Object.fromEntries(agents.map((agent) => {
     const profile = AGENT_PROFILES[agent];
     const available = profile.provider === "codex"
       ? codex
       : profile.provider === "claude"
         ? claude
-        : availableCursorModels.has(profile.modelId);
+        : profile.provider === "cursor"
+          ? availableCursorModels.has(profile.modelId)
+          : profile.provider === "opencode"
+            ? opencode
+            : goose;
     return [agent, available];
   })) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isMissingHarnessSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, harnessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, opencodeArgs, gooseArgs, runProcess };

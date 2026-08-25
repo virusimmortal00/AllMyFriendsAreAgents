@@ -60,6 +60,46 @@ describe("Codex JSONL parsing", () => {
       "Tip: use --model <id>",
     ].join("\n"))).toEqual(new Set(["cursor-grok-4.6-high", "gemini-3.1-pro"]));
   });
+
+  it("builds resumable OpenCode and Goose invocations", () => {
+    expect(__testing.opencodeArgs("read-only", "/tmp/project")).toEqual([
+      "run", "--format", "json", "--dir", "/tmp/project", "--agent", "plan",
+    ]);
+    expect(__testing.opencodeArgs("writable", "/tmp/worktree", "ses_123")).toEqual([
+      "run", "--format", "json", "--dir", "/tmp/worktree", "--agent", "build", "--auto", "--session", "ses_123",
+    ]);
+    expect(__testing.gooseArgs("room-goose")).toEqual([
+      "run", "--instructions", "-", "--quiet", "--name", "room-goose",
+    ]);
+    expect(__testing.gooseArgs("room-goose", true)).toContain("--resume");
+  });
+
+  it("parses OpenCode JSON events and preserves multi-part text", () => {
+    expect(__testing.parseOpenCodeOutput([
+      JSON.stringify({ type: "step_start", sessionID: "ses_open", part: { type: "step-start" } }),
+      JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "One " } }),
+      "non-protocol progress",
+      JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "answer." } }),
+    ].join("\n"))).toEqual({ sessionId: "ses_open", text: "One answer." });
+  });
+
+  it("maps harness permissions without replacing provider configuration", () => {
+    expect(__testing.harnessEnvironment({ PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" }, "opencode", "read-only")).toMatchObject({
+      OPENCODE_CONFIG: "/tmp/config",
+      OPENCODE_PERMISSION: JSON.stringify({
+        "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
+        webfetch: "allow", websearch: "allow", lsp: "allow",
+      }),
+    });
+    expect(__testing.harnessEnvironment({ PATH: "/bin" }, "goose", "read-only")).toMatchObject({ GOOSE_MODE: "chat" });
+    expect(__testing.harnessEnvironment({ PATH: "/bin" }, "goose", "writable")).toMatchObject({ GOOSE_MODE: "auto" });
+  });
+
+  it("recognizes stale harness sessions without treating provider failures as recoverable", () => {
+    expect(__testing.isMissingHarnessSessionError(new Error("session ses_old not found"))).toBe(true);
+    expect(__testing.isMissingHarnessSessionError(new Error("No saved session named room-goose"))).toBe(true);
+    expect(__testing.isMissingHarnessSessionError(new Error("provider request timed out"))).toBe(false);
+  });
 });
 
 describe("agent permissions", () => {
@@ -168,6 +208,8 @@ describe("room prompt context", () => {
     ["cursor-composer", "[COMPOSER]"],
     ["cursor-gemini-flash", "[FLASH]"],
     ["cursor-glm", "[GLM]"],
+    ["opencode-configured", "[OPENCODE]"],
+    ["goose-configured", "[GOOSE]"],
   ] as const)("anchors %s self-history to its unique transcript label", async (agent, label) => {
     const prompt = await __testing.buildPrompt(agent, state, "Join if useful.", false, "read-only");
 
