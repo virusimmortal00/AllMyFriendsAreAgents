@@ -350,6 +350,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message > div { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.message-link { color: #0000b0; text-decoration: underline; }
+.message-link:visited { color: #800080; }
+.message-link:focus-visible { outline: 1px dotted currentColor; outline-offset: 1px; }
 .improvement-reference { padding: 0; border: 0; color: #0000b0; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
 .improvement-reference:focus-visible { outline: 2px solid #ffb000; outline-offset: 2px; }
 .workshop-window { width: min(620px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100vh - 28px); overflow: auto; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 3px outset white; box-shadow: 6px 7px 0 rgba(0,0,0,.35); }
