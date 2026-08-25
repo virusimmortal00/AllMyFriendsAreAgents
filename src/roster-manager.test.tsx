@@ -12,21 +12,20 @@ const catalog = [
 ] as const;
 
 describe("roster manager", () => {
-  it("adds a catalog agent and saves an ordered revisioned roster", async () => {
+  it("saves a model-centric revisioned roster without a harness selector", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: false }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 5, entries: [{ agentId: "codex-sol", enabled: false, providerId: "openai", modelId: "gpt-5.6-sol" }] }, catalog }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     const onSaved = vi.fn();
     render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByText("Sol");
     await user.click(screen.getByRole("checkbox"));
-    await user.selectOptions(screen.getByLabelText("Add a supported agent"), "claude-opus");
-    await user.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.queryByLabelText("Harness")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save roster" }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith({ revision: 5, entries: [{ agentId: "codex-sol", enabled: false }, { agentId: "claude-opus", enabled: true }] }));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 4, entries: [{ agentId: "codex-sol", enabled: false }, { agentId: "claude-opus", enabled: true }] });
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ schemaVersion: 3, revision: 5 })));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 4, entries: [{ agentId: "codex-sol", enabled: false }] });
   });
 
   it("preserves a local draft on conflict and requires loading the latest roster", async () => {
@@ -37,7 +36,6 @@ describe("roster manager", () => {
     const user = userEvent.setup();
     render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     await screen.findByText("Sol");
-    await user.selectOptions(screen.getByLabelText("Add a supported agent"), "claude-opus");
     await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     expect((await screen.findByRole("alert")).textContent).toContain("draft is preserved");
@@ -46,6 +44,27 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Load latest roster" }));
     expect(screen.getByText("Opus")).toBeTruthy();
     expect(screen.queryByText("Sol")).toBeNull();
-    expect((screen.getByLabelText("Add a supported agent") as HTMLSelectElement).value).toBe("");
+    expect(screen.queryByLabelText("Harness")).toBeNull();
+  });
+
+  it("treats a matching configured default as available for explicit migration confirmation", async () => {
+    const agentId = "agent-88888888-8888-4888-8888-888888888888";
+    const entry = { agentId, conversationalName: "Alpha", providerId: "openai", modelId: "configured", enabled: true, supportsProjectWrites: true, configurationRevision: 1, selectionConfirmationRequired: true, sessionInvalidationReason: "Confirm this selection." };
+    const discovery = { status: "discovery_unsupported", discoveredAt: new Date(0).toISOString(), models: [], configuredDefault: { providerId: "openai", modelId: "configured" } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 1, entries: [entry] }, catalog: [], modelDiscovery: discovery }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ ...entry, selectionConfirmationRequired: undefined, sessionInvalidationReason: "" }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByText("Alpha");
+    await user.click(screen.getByText("Edit configuration"));
+    expect(screen.queryByRole("option", { name: /currently unavailable/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Confirm selected OpenCode model" }));
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).toMatchObject({ agentId, sessionInvalidationReason: "" });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).not.toHaveProperty("selectionConfirmationRequired");
   });
 });

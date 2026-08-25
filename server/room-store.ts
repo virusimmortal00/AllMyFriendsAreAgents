@@ -10,7 +10,7 @@ import {
   type Improvement,
   type ImprovementChange,
 } from "../shared/improvement-domain.js";
-import { isActiveAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
+import { AGENT_PROFILES, isActiveAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import {
   emergencyStopProjection,
   emptyJsonImprovementState,
@@ -47,7 +47,7 @@ import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTas
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -61,13 +61,21 @@ function migrateSpeaker(speaker: unknown): SpeakerId {
   return migrateLegacyAgentId(speaker) || "system";
 }
 
-function migrateSessions(input: unknown) {
+function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), storedRoster?: unknown) {
   const value = input && typeof input === "object" ? input as Record<string, AgentSession> : {};
+  const rawEntries = storedRoster && typeof storedRoster === "object" && Array.isArray((storedRoster as { entries?: unknown }).entries)
+    ? (storedRoster as { entries: Array<{ agentId?: unknown; harness?: unknown }> }).entries
+    : [];
   const sessions: Partial<Record<AgentId, AgentSession>> = {};
   for (const [rawAgent, session] of Object.entries(value)) {
     const agent = migrateLegacyAgentId(rawAgent);
-    if (agent && isActiveAgentId(agent) && session?.id && (session.permission === "read-only" || session.permission === "writable")) {
-      sessions[agent] = session;
+    const entry = agent ? roomAgentEntry(roster, agent) : undefined;
+    const fingerprint = entry ? participantConfigurationFingerprint(entry) : undefined;
+    const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
+    const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
+      || !session?.configurationFingerprint && rawHarness === "opencode";
+    if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
+      sessions[agent] = { ...session, configurationFingerprint: fingerprint, configurationRevision: entry.configurationRevision || 1 };
     }
   }
   return sessions;
@@ -212,18 +220,19 @@ export class RoomStore implements RoomRepository {
         ? stored.settings.topic.trim()
         : DEFAULT_ROOM_TOPIC;
       const topicWasMissing = typeof stored.settings.topic !== "string" || !stored.settings.topic.trim();
+      const roster = normalizeRoomAgentRoster(stored.roster);
       const messages = stored.messages.map((message) => {
         const speaker = migrateSpeaker(message.speaker);
         const migratedMessage = speaker === message.speaker ? message : { ...message, speaker };
         const participant = styledParticipant(speaker);
         if (!participant) return migratedMessage;
-        const style = sanitizeChatStyle(message.style, participantStyles[participant]);
-        return sameStyle(message.style, style) ? migratedMessage : { ...migratedMessage, style };
+        const style = sanitizeChatStyle(message.style, participantStyles[participant] || DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
+        const speakerName = speaker !== "you" ? message.speakerName || AGENT_PROFILES[speaker]?.conversationalName || speaker : message.speakerName;
+        return sameStyle(message.style, style) && speakerName === message.speakerName ? migratedMessage : { ...migratedMessage, style, ...(speakerName ? { speakerName } : {}) };
       });
       if (topicWasMissing) messages.push(topicMessage(storedTopic));
-      const roster = normalizeRoomAgentRoster(stored.roster);
       const enabledAgents = new Set(enabledRoomAgentIds(roster));
-      const sessions = migrateSessions(stored.sessions);
+      const sessions = migrateSessions(stored.sessions, roster, stored.roster);
       for (const agent of Object.keys(sessions) as AgentId[]) if (!enabledAgents.has(agent as never)) delete sessions[agent];
       const writableAgent = normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent);
       const state: RoomState = {
@@ -282,7 +291,7 @@ export class RoomStore implements RoomRepository {
   ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
-      ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant])
+      ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant] || DEFAULT_PARTICIPANT_STYLES["codex-sol"])
       : undefined;
     const message: RoomMessage = {
       id: randomUUID(),
@@ -293,6 +302,7 @@ export class RoomStore implements RoomRepository {
       ...(messageStyle ? { style: messageStyle } : {}),
       ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}),
       ...(human ? { humanId: human.id, speakerName: human.name } : {}),
+      ...(!human && speaker !== "you" && speaker !== "system" ? { speakerName: AGENT_PROFILES[speaker]?.conversationalName || speaker } : {}),
       ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
       ...(human?.mentions?.length ? { mentions: structuredClone(human.mentions) } : {}),
     };
@@ -311,9 +321,22 @@ export class RoomStore implements RoomRepository {
     if (!validated) throw new Error("Invalid room roster entries.");
     const current = normalizeRoomAgentRoster(this.state.roster);
     if (current.revision !== expectedRevision) return { kind: "conflict", expectedRevision, actualRevision: current.revision };
-    const next = { revision: current.revision + 1, entries: structuredClone(validated) };
+    const nextEntries = validated.map((entry) => {
+      const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId);
+      if (!previous) return entry;
+      const changed = participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry);
+      if (!changed) return { ...entry, configurationRevision: previous.configurationRevision || 1 };
+      const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry;
+      return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated." };
+    });
+    const next = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(nextEntries) };
+    for (const entry of next.entries) this.state.settings.participantStyles[entry.agentId] ||= structuredClone(DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
     const enabled = new Set(enabledRoomAgentIds(next));
-    for (const agent of Object.keys(this.state.sessions) as AgentId[]) if (!enabled.has(agent as never)) delete this.state.sessions[agent];
+    for (const agent of Object.keys(this.state.sessions) as AgentId[]) {
+      const previous = current.entries.find((entry) => entry.agentId === agent);
+      const updated = next.entries.find((entry) => entry.agentId === agent);
+      if (!enabled.has(agent as never) || !previous || !updated || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(updated)) delete this.state.sessions[agent];
+    }
     if (this.state.settings.writableAgent !== "nobody" && !enabled.has(this.state.settings.writableAgent)) this.state.settings.writableAgent = "nobody";
     this.state.roster = next;
     await this.save();
@@ -334,7 +357,8 @@ export class RoomStore implements RoomRepository {
   }
 
   async setSession(agent: AgentId, id: string, permission: "read-only" | "writable") {
-    this.state.sessions[agent] = { id, permission };
+    const entry = roomAgentEntry(this.state.roster, agent);
+    this.state.sessions[agent] = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}) };
     await this.save();
   }
 

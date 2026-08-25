@@ -16,6 +16,7 @@
     "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
+    "control:owner": "tsx scripts/control-plane.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"
