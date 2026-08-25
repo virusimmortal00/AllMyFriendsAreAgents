@@ -15,11 +15,13 @@ const canaryProject = path.join(runRoot, "project");
 const worktrees = path.join(runRoot, "assignment-worktrees");
 const reportPath = path.join(runRoot, "report.json");
 const marker = `AMFAA-REAL-CANARY-${randomUUID()}`;
+const requireAutonomousInitiation = process.env.AMFAA_CANARY_AUTONOMOUS_INITIATION === "true";
 const steps: StepResult[] = [];
 const processes: ManagedProcess[] = [];
 let room: ManagedProcess | undefined;
 let executor: ManagedProcess | undefined;
 let cookie = "";
+let humanId = "";
 let roomBase = "";
 let executorBase = "";
 let providerSessionId = "";
@@ -40,31 +42,43 @@ async function dashboard() { return (await http<any>(roomBase, "/api/investigati
 async function main() {
   assert(process.env.AMFAA_CANARY_ALLOW_REAL_PROVIDER === "true", "Set AMFAA_CANARY_ALLOW_REAL_PROVIDER=true to authorize the two bounded provider calls.");
   await mkdir(dataDirectory, { recursive: true }); await mkdir(canaryProject, { recursive: true }); await mkdir(worktrees, { recursive: true });
-  await writeFile(path.join(canaryProject, "identity-anomaly.txt"), `Harmless local canary evidence.\nCorrelation marker: ${marker}\nExpected disposition: corroborated-local-test-data\n`);
+  await writeFile(path.join(canaryProject, "identity-anomaly.txt"), `Local identity-integrity observation\nExpected identity: codex-sol\nObserved identity: unknown-agent\nStatus: unresolved mismatch\nCorrelation marker: ${marker}\nExpected disposition: corroborated-local-test-data\n`);
   await writeFile(path.join(canaryProject, "README.md"), "Disposable, read-only real-provider investigation canary.\n");
   await run("git", ["init", "--quiet"], canaryProject);
   const pristine = await snapshot(canaryProject);
   const roomPort = await freePort(); const executorPort = await freePort(); roomBase = `http://127.0.0.1:${roomPort}`; executorBase = `http://127.0.0.1:${executorPort}`;
   executor = start("executor", path.join(projectRoot, "scripts", "investigation-canary-executor.ts"), controlledEnvironment({ AMFAA_CANARY_EXECUTOR_PORT: String(executorPort), AMFAA_CANARY_ALLOW_REAL_PROVIDER: "true", ...(process.env.AMFAA_CANARY_REAL_MODEL ? { AMFAA_CANARY_REAL_MODEL: process.env.AMFAA_CANARY_REAL_MODEL } : {}) }));
   await eventually(async () => { try { return (await http<any>(executorBase, "/health")).body.ready ? true : undefined; } catch { if (executor?.child.exitCode !== null) throw new Error(`Executor exited early:\n${executor?.output.join("")}`); } }, 15_000);
-  room = start("room", path.join(projectRoot, "server", "index.ts"), controlledEnvironment({ ALL_MY_FRIENDS_ARE_AGENTS_HOST: "127.0.0.1", ALL_MY_FRIENDS_ARE_AGENTS_PORT: String(roomPort), ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "json", ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: dataDirectory, ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: canaryProject, ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR: worktrees, ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATIONS_ENABLED: "false", ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY: "1", ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_EXECUTOR_URL: `${executorBase}/v1/investigations`, ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_PROGRESS_BASE_URL: roomBase }));
+  room = start("room", path.join(projectRoot, "server", "index.ts"), controlledEnvironment({ ALL_MY_FRIENDS_ARE_AGENTS_HOST: "127.0.0.1", ALL_MY_FRIENDS_ARE_AGENTS_PORT: String(roomPort), ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "json", ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: dataDirectory, ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: canaryProject, ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR: worktrees, ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATIONS_ENABLED: "false", ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY: "1", ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT: requireAutonomousInitiation ? "96000" : "6000", ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_EXECUTOR_URL: `${executorBase}/v1/investigations`, ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_PROGRESS_BASE_URL: roomBase }));
   await eventually(async () => { try { return (await http<any>(roomBase, "/api/ready")).body.ready ? true : undefined; } catch { if (room?.child.exitCode !== null) throw new Error(`Room exited early:\n${room?.output.join("")}`); } }, 15_000);
   const joined = await fetch(`${roomBase}/api/humans`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Real Provider Canary" }) });
-  assert(joined.status === 201, `Join returned ${joined.status}: ${await joined.text()}`); cookie = joined.headers.get("set-cookie")?.split(";")[0] || ""; assert(cookie, "Join did not issue a human session.");
+  const joinedText = await joined.text(); assert(joined.status === 201, `Join returned ${joined.status}: ${joinedText}`); cookie = joined.headers.get("set-cookie")?.split(";")[0] || ""; const joinedBody = JSON.parse(joinedText) as { id?: string }; humanId = joinedBody.id || ""; assert(cookie && humanId, "Join did not issue a human session.");
 
-  await step("explicit policy enable and real isolated investigation", async () => {
+  await step(requireAutonomousInitiation ? "autonomous agent decision and real isolated investigation" : "explicit policy enable and real isolated investigation", async () => {
     const current = await dashboard(); await http(roomBase, "/api/investigations/policy", { method: "PATCH", cookie, body: { expectedRevision: current.policy.revision, enabled: true } });
     await http(executorBase, "/control/mode", { method: "POST", body: { mode: "real" } });
-    const created = (await http<any>(roomBase, "/api/investigations", { method: "POST", cookie, body: { owner: "codex-sol", objective: `Inspect identity-anomaly.txt and report its exact correlation marker ${marker} plus the expected disposition.`, trigger: "Authenticated live canary of isolated read-only provider execution.", evidenceRefs: [{ kind: "project_artifact", ref: "identity-anomaly.txt", label: "Harmless canary artifact" }], budget: { timeMs: 180_000, tokenLimit: 64_000, toolCallLimit: 10, retryLimit: 0 } } })).body;
+    let created: any;
+    let transcriptCountAfterInitiation = 0;
+    if (requireAutonomousInitiation) {
+      await http(roomBase, "/api/settings", { method: "PATCH", body: { topic: "Identity-integrity smoke test: inspect identity-anomaly.txt. If its unresolved mismatch is credible, request a bounded private investigation.", actorId: humanId } });
+      const knownGenerations = new Set((await journal()).map((event: any) => event.generationId));
+      await http(roomBase, "/api/actions", { method: "POST", body: { action: "ask", target: "codex-sol" }, expected: 202 });
+      created = await eventually(async () => (await dashboard()).jobs.find((job: any) => job.signal === "AGENT_DECISION"), 240_000);
+      await eventually(async () => (await journal()).find((event: any) => event.type === "generation.delivery" && event.agent === "codex-sol" && !knownGenerations.has(event.generationId)), 240_000);
+      transcriptCountAfterInitiation = (await http<any>(roomBase, "/api/state")).body.messages.length;
+      assert(created.signal === "AGENT_DECISION", "The live room turn did not autonomously initiate the investigation.");
+    } else {
+      created = (await http<any>(roomBase, "/api/investigations", { method: "POST", cookie, body: { owner: "codex-sol", objective: `Inspect identity-anomaly.txt and report its exact correlation marker ${marker} plus the expected disposition.`, trigger: "Authenticated live canary of isolated read-only provider execution.", evidenceRefs: [{ kind: "project_artifact", ref: "identity-anomaly.txt", label: "Harmless canary artifact" }], budget: { timeMs: 180_000, tokenLimit: 96_000, toolCallLimit: 10, retryLimit: 0 } } })).body;
+    }
     const completed = await eventually(async () => { const found = (await dashboard()).jobs.find((job: any) => job.investigationId === created.investigationId); if (found && ["FAILED", "BLOCKED", "CANCELLED"].includes(found.status)) throw new Error(`Investigation ended ${found.status}: ${found.blocker}`); return found?.status === "COMPLETED" ? found : undefined; }, 210_000);
     assert(completed.providerSessionEstablished, "Investigation did not establish an isolated provider session.");
     const inbox = (await http<any[]>(roomBase, "/api/investigations/inbox/codex-sol", { cookie })).body; const entry = inbox.find((item) => item.investigationId === created.investigationId); assert(entry?.summary.includes(marker), "Real provider summary did not corroborate the exact local marker.");
     const state = (await http<any>(executorBase, "/control/state")).body; const dispatch = state.dispatches.find((item: any) => item.investigationId === created.investigationId); providerSessionId = dispatch?.providerSessionId || ""; assert(providerSessionId, "Executor did not record the real provider session.");
     assert(JSON.stringify(dispatch.capabilities) === JSON.stringify(["READ_PROJECT", "READ_OBSERVABILITY", "RUN_READ_ONLY_TESTS"]), "Executor capabilities were not read-only bounded.");
     assert(["TASK_AUTHORITY", "EDIT", "EXTERNAL_REQUEST", "COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH"].every((capability) => dispatch.excludedCapabilities.includes(capability)), "Executor exclusion list was incomplete.");
-    const publicState = (await http<any>(roomBase, "/api/state")).body; assert(!publicState.messages.some((message: any) => String(message.text).includes(marker)), "Investigation summary leaked into the room transcript.");
+    const publicState = (await http<any>(roomBase, "/api/state")).body; if (requireAutonomousInitiation) assert(publicState.messages.length === transcriptCountAfterInitiation, "Investigation completion added a room message outside the initiating foreground turn."); else assert(!publicState.messages.some((message: any) => String(message.text).includes(marker)), "Investigation summary leaked into the room transcript.");
     assert(JSON.stringify(await snapshot(canaryProject)) === JSON.stringify(pristine), "Investigation modified the disposable project.");
-    return `session=${providerSessionId.slice(0, 8)}… tokens=${dispatch.tokens} tools=${dispatch.toolCalls}`;
+    return `${requireAutonomousInitiation ? "signal=AGENT_DECISION; " : ""}session=${providerSessionId.slice(0, 8)}… tokens=${dispatch.tokens} tools=${dispatch.toolCalls}`;
   });
 
   await step("bounded later-turn reinjection and foreground session separation", async () => {
@@ -92,7 +106,7 @@ let failure: unknown;
 try { await main(); } catch (error) { failure = error; } finally {
   if (cookie && roomBase) { try { const current = await dashboard(); if (current.policy?.enabled) await http(roomBase, "/api/investigations/policy", { method: "PATCH", cookie, body: { expectedRevision: current.policy.revision, enabled: false } }); } catch { /* Preserve the primary failure. */ } }
   await stop(room); await stop(executor);
-  const report = { schemaVersion: 1, runId, runRoot, status: failure ? "failed" : "passed", marker, providerSessionEstablished: Boolean(providerSessionId), completedAt: new Date().toISOString(), steps, processes: processes.map((record) => ({ name: record.name, exitCode: record.child.exitCode, output: record.output.join("").slice(-30_000) })) };
+  const report = { schemaVersion: 1, runId, runRoot, status: failure ? "failed" : "passed", marker, requireAutonomousInitiation, providerSessionEstablished: Boolean(providerSessionId), completedAt: new Date().toISOString(), steps, processes: processes.map((record) => ({ name: record.name, exitCode: record.child.exitCode, output: record.output.join("").slice(-30_000) })) };
   await mkdir(runRoot, { recursive: true }); await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`); process.stdout.write(`REAL_CANARY_REPORT ${reportPath}\n`);
 }
 if (failure) { console.error(failure instanceof Error ? failure.stack || failure.message : failure); process.exitCode = 1; }
