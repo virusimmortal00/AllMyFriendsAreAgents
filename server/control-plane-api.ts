@@ -1,14 +1,8 @@
 import type express from "express";
-import { HARNESS_IDS, isHarnessId, type HarnessId } from "../shared/model-discovery.js";
 import { clearControlSession, controlRoute, setControlSession, type ControlPlaneStore } from "./control-plane.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 
-const LOCAL_HANDOFF: Record<HarnessId, readonly string[]> = {
-  codex: ["codex", "login"],
-  claude: ["claude", "auth", "login"],
-  cursor: ["agent", "login"],
-  opencode: ["opencode", "auth", "login"],
-};
+const LOCAL_HANDOFF = ["opencode", "auth", "login"] as const;
 
 export function registerControlPlaneRoutes(input: { app: express.Express; control: ControlPlaneStore; discovery: ModelDiscoveryService }) {
   const { app, control, discovery } = input;
@@ -39,26 +33,22 @@ export function registerControlPlaneRoutes(input: { app: express.Express; contro
 
   app.get("/api/provider-setup", controlRoute(async (request, response) => {
     control.require(request, "PROVIDER_VIEW");
-    const discoveries = await discovery.discoverAll();
+    const modelDiscovery = await discovery.discover();
     response.set("Cache-Control", "no-store").json({
-      harnesses: Object.fromEntries(HARNESS_IDS.map((harness) => [harness, { discovery: discoveries[harness], setup: { mode: "server-local-handoff", command: LOCAL_HANDOFF[harness], browserHostIsServerHost: false } }])),
+      provider: { discovery: modelDiscovery, setup: { mode: "server-local-handoff", command: LOCAL_HANDOFF, browserHostIsServerHost: false } },
     });
   }));
-  app.post("/api/provider-setup/:harness/initiate", controlRoute(async (request, response) => {
+  app.post("/api/provider-setup/initiate", controlRoute(async (request, response) => {
     const actor = control.require(request, "PROVIDER_CONFIGURE", true).principal;
-    const harness = String(request.params.harness);
-    if (!isHarnessId(harness)) return response.status(400).json({ error: `Harness must be one of: ${HARNESS_IDS.join(", ")}.` });
-    await control.recordAudit(actor.id, "PROVIDER_SETUP_INITIATED", harness, { harness, mode: "server-local-handoff" });
-    response.status(202).json({ harness, mode: "server-local-handoff", command: LOCAL_HANDOFF[harness], instruction: "Run this exact command in a terminal on the server host. Credentials remain in the harness or operating-system keychain. Return here and refresh readiness." });
+    await control.recordAudit(actor.id, "PROVIDER_SETUP_INITIATED", "opencode", { mode: "server-local-handoff" });
+    response.status(202).json({ mode: "server-local-handoff", command: LOCAL_HANDOFF, instruction: "Run this exact command in a terminal on the server host. Credentials remain in OpenCode or the operating-system keychain. Return here and refresh readiness." });
   }));
-  app.post("/api/provider-setup/:harness/refresh", controlRoute(async (request, response) => {
+  app.post("/api/provider-setup/refresh", controlRoute(async (request, response) => {
     const actor = control.require(request, "PROVIDER_CONFIGURE", true).principal;
-    const harness = String(request.params.harness);
-    if (!isHarnessId(harness)) return response.status(400).json({ error: `Harness must be one of: ${HARNESS_IDS.join(", ")}.` });
-    const result = await discovery.discover(harness, true);
+    const result = await discovery.discover(true);
     const action = result.status === "available" || result.status === "discovery_unsupported" ? "PROVIDER_SETUP_COMPLETED" : "PROVIDER_SETUP_FAILED";
-    if (result.status === "authentication_required") await control.recordAudit(actor.id, "CREDENTIAL_REVOCATION_SIGNAL", harness, { harness, status: result.status });
-    await control.recordAudit(actor.id, action, harness, { harness, status: result.status });
+    if (result.status === "authentication_required") await control.recordAudit(actor.id, "CREDENTIAL_REVOCATION_SIGNAL", "opencode", { status: result.status });
+    await control.recordAudit(actor.id, action, "opencode", { status: result.status });
     response.set("Cache-Control", "no-store").json(result);
   }));
 }

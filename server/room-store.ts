@@ -47,7 +47,7 @@ import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTas
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
@@ -61,14 +61,21 @@ function migrateSpeaker(speaker: unknown): SpeakerId {
   return migrateLegacyAgentId(speaker) || "system";
 }
 
-function migrateSessions(input: unknown, roster = defaultRoomAgentRoster()) {
+function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), storedRoster?: unknown) {
   const value = input && typeof input === "object" ? input as Record<string, AgentSession> : {};
+  const rawEntries = storedRoster && typeof storedRoster === "object" && Array.isArray((storedRoster as { entries?: unknown }).entries)
+    ? (storedRoster as { entries: Array<{ agentId?: unknown; harness?: unknown }> }).entries
+    : [];
   const sessions: Partial<Record<AgentId, AgentSession>> = {};
   for (const [rawAgent, session] of Object.entries(value)) {
     const agent = migrateLegacyAgentId(rawAgent);
     const entry = agent ? roomAgentEntry(roster, agent) : undefined;
-    if (agent && entry && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
-      sessions[agent] = { ...session, configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 };
+    const fingerprint = entry ? participantConfigurationFingerprint(entry) : undefined;
+    const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
+    const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
+      || !session?.configurationFingerprint && rawHarness === "opencode";
+    if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
+      sessions[agent] = { ...session, configurationFingerprint: fingerprint, configurationRevision: entry.configurationRevision || 1 };
     }
   }
   return sessions;
@@ -225,7 +232,7 @@ export class RoomStore implements RoomRepository {
       });
       if (topicWasMissing) messages.push(topicMessage(storedTopic));
       const enabledAgents = new Set(enabledRoomAgentIds(roster));
-      const sessions = migrateSessions(stored.sessions, roster);
+      const sessions = migrateSessions(stored.sessions, roster, stored.roster);
       for (const agent of Object.keys(sessions) as AgentId[]) if (!enabledAgents.has(agent as never)) delete sessions[agent];
       const writableAgent = normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent);
       const state: RoomState = {
@@ -318,9 +325,11 @@ export class RoomStore implements RoomRepository {
       const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId);
       if (!previous) return entry;
       const changed = participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry);
-      return changed ? { ...entry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Execution configuration changed; the previous harness session was invalidated." } : { ...entry, configurationRevision: previous.configurationRevision || 1, sessionInvalidationReason: previous.sessionInvalidationReason };
+      if (!changed) return { ...entry, configurationRevision: previous.configurationRevision || 1 };
+      const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry;
+      return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated." };
     });
-    const next = { revision: current.revision + 1, entries: structuredClone(nextEntries) };
+    const next = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(nextEntries) };
     for (const entry of next.entries) this.state.settings.participantStyles[entry.agentId] ||= structuredClone(DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
     const enabled = new Set(enabledRoomAgentIds(next));
     for (const agent of Object.keys(this.state.sessions) as AgentId[]) {

@@ -28,12 +28,12 @@ describe("control-plane API authorization", () => {
     const ownerCookie = bootstrap.headers.get("set-cookie")!.split(";")[0];
     expect(ownerCookie).toContain(CONTROL_SESSION_COOKIE);
     const ownerBody = await bootstrap.json() as { csrfToken: string };
-    expect((await call("/api/provider-setup/codex/initiate", { method: "POST", body: "{}" }, ownerCookie)).status).toBe(403);
-    const initiated = await call("/api/provider-setup/codex/initiate", { method: "POST", body: "{}" }, ownerCookie, ownerBody.csrfToken);
-    expect(await initiated.json()).toMatchObject({ harness: "codex", mode: "server-local-handoff", command: ["codex", "login"] });
-    const setup = await (await call("/api/provider-setup", {}, ownerCookie)).json() as { harnesses: { opencode: { setup: Record<string, unknown> } } };
-    expect(setup.harnesses.opencode.setup).toMatchObject({ mode: "server-local-handoff", command: ["opencode", "auth", "login"], browserHostIsServerHost: false });
-    expect(setup.harnesses.opencode.setup).not.toHaveProperty("terminal");
+    expect((await call("/api/provider-setup/initiate", { method: "POST", body: "{}" }, ownerCookie)).status).toBe(403);
+    const initiated = await call("/api/provider-setup/initiate", { method: "POST", body: "{}" }, ownerCookie, ownerBody.csrfToken);
+    expect(await initiated.json()).toMatchObject({ mode: "server-local-handoff", command: ["opencode", "auth", "login"] });
+    const setup = await (await call("/api/provider-setup", {}, ownerCookie)).json() as { provider: { setup: Record<string, unknown> } };
+    expect(setup.provider.setup).toMatchObject({ mode: "server-local-handoff", command: ["opencode", "auth", "login"], browserHostIsServerHost: false });
+    expect(setup.provider.setup).not.toHaveProperty("terminal");
 
     const createdResponse = await call("/api/control/principals", { method: "POST", body: JSON.stringify({ username: "operator", password: "operator password long", role: "MEMBER", capabilities: ["PROVIDER_VIEW"] }) }, ownerCookie, ownerBody.csrfToken);
     const created = await createdResponse.json() as { id: string; revision: number };
@@ -41,7 +41,7 @@ describe("control-plane API authorization", () => {
     const operatorCookie = login.headers.get("set-cookie")!.split(";")[0];
     const operatorCsrf = (await login.json() as { csrfToken: string }).csrfToken;
     expect((await call("/api/provider-setup", {}, operatorCookie)).status).toBe(200);
-    expect((await call("/api/provider-setup/codex/initiate", { method: "POST", body: "{}" }, operatorCookie, operatorCsrf)).status).toBe(403);
+    expect((await call("/api/provider-setup/initiate", { method: "POST", body: "{}" }, operatorCookie, operatorCsrf)).status).toBe(403);
     expect((await call("/api/control/principals", { method: "POST", body: JSON.stringify({ username: "escalated", password: "escalated password long", role: "ADMIN", capabilities: [] }) }, operatorCookie, operatorCsrf)).status).toBe(403);
     await call(`/api/control/principals/${created.id}/grants`, { method: "PUT", body: JSON.stringify({ role: "MEMBER", capabilities: [], expectedRevision: created.revision }) }, ownerCookie, ownerBody.csrfToken);
     expect((await call("/api/provider-setup", {}, operatorCookie)).status).toBe(401);

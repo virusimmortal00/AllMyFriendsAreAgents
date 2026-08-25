@@ -1,6 +1,7 @@
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style.js";
 import { SqliteRoomRepository } from "./sqlite-room-repository.js";
@@ -28,7 +29,7 @@ describe("SQLite room repository", () => {
     store.close();
 
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(reopened.snapshot().roster).toEqual({ revision: 3, entries: [] });
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 3, entries: [] });
     reopened.close();
   });
 
@@ -42,8 +43,58 @@ describe("SQLite room repository", () => {
     expect(await stale.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
     first.close(); stale.close();
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, harness: "claude", modelId: "claude-opus-5" })] });
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, providerId: "anthropic", modelId: "claude-opus-5" })] });
     reopened.close();
+  });
+
+  it("persists administrator confirmation for migrated built-in selections across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-confirmation-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const confirmed = store.snapshot().roster!.entries.map(({ selectionConfirmationRequired: _confirmation, sessionInvalidationReason: _reason, ...entry }) => entry);
+    expect(await store.updateRoster(1, confirmed)).toMatchObject({ kind: "accepted" });
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster?.entries.every((entry) => !entry.selectionConfirmationRequired)).toBe(true);
+    reopened.close();
+  });
+
+  it("keeps matching legacy OpenCode fingerprints but permanently deletes rejected stale sessions", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-session-migration-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const agentId = "agent-66666666-6666-4666-8666-666666666666";
+    const firstSelection = { agentId, conversationalName: "Alpha", providerId: "openai", modelId: "first", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const secondSelection = { ...firstSelection, modelId: "second" };
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await store.updateRoster(1, [firstSelection])).toMatchObject({ kind: "accepted" });
+    await store.setSession(agentId, "portable-session", "read-only");
+    store.close();
+
+    const database = new DatabaseSync(databasePath);
+    database.prepare("UPDATE agent_sessions SET configuration_fingerprint = ? WHERE agent_id = ?")
+      .run(JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "first" }), agentId);
+    database.close();
+    const portable = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(portable.snapshot().sessions[agentId]?.id).toBe("portable-session");
+    expect(await portable.updateRoster(2, [secondSelection])).toMatchObject({ kind: "accepted" });
+    await portable.setSession(agentId, "stale-session", "read-only");
+    portable.close();
+
+    const tampered = new DatabaseSync(databasePath);
+    tampered.prepare("UPDATE agent_sessions SET configuration_fingerprint = ? WHERE agent_id = ?")
+      .run(JSON.stringify({ providerId: "openai", modelId: "first" }), agentId);
+    tampered.close();
+    const rejected = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(rejected.snapshot().sessions[agentId]).toBeUndefined();
+    expect(await rejected.updateRoster(3, [firstSelection])).toMatchObject({ kind: "accepted" });
+    rejected.close();
+
+    const reverted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reverted.snapshot().sessions[agentId]).toBeUndefined();
+    reverted.close();
   });
 
 
@@ -86,13 +137,13 @@ describe("SQLite room repository", () => {
     reopened.close();
   });
 
-  it("keeps same-harness participant identities, models, styles, sessions, and attribution distinct across restart", async () => {
+  it("keeps OpenCode participant identities, models, styles, sessions, and attribution distinct across restart", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-dynamic-roster-"));
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
-    const alpha = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
-    const beta = { agentId: "agent-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const alpha = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const beta = { agentId: "agent-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", conversationalName: "Beta", providerId: "openai", modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
     expect(await store.updateRoster(1, [alpha, beta])).toMatchObject({ kind: "accepted" });
     const alphaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#173874" };
     const betaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#6c1739" };

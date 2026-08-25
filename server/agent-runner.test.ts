@@ -3,66 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { AgentProcessSupervisor, __testing } from "./agent-runner.js";
+import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
+import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
 
-describe("Codex JSONL parsing", () => {
-  it("extracts the session id and final agent message", () => {
-    const output = [
-      JSON.stringify({ type: "thread.started", thread_id: "room-session" }),
-      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "First" } }),
-      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Final" } }),
-    ].join("\n");
-
-    expect(__testing.parseCodexOutput(output)).toEqual({
-      sessionId: "room-session",
-      text: "Final",
-    });
-  });
-
-  it("pins each Codex session to its configured model on start and resume", () => {
-    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-luna")).toContain("gpt-5.6-luna");
-    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-terra", "terra-session")).toEqual([
-      "exec", "resume", "--model", "gpt-5.6-terra", "terra-session", "-", "--json",
-    ]);
-    expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
-    expect(__testing.codexArgs("read-only", "/tmp/project", "gpt-5.6-sol", "sol-session", "high")).toContain("model_reasoning_effort=\"high\"");
-    expect(__testing.claudeArgs("read-only", "claude-session", "claude-sonnet-5", true, "high")).toEqual(expect.arrayContaining(["--model", "claude-sonnet-5", "--effort", "high", "--resume", "claude-session"]));
-    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toEqual([
-      "exec", "--skip-git-repo-check", "--json", "--model", "gpt-5.6-sol", "--sandbox", "danger-full-access", "-C", "/tmp/project", "-",
-    ]);
-    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol", "sol-session")).toEqual([
-      "exec", "resume", "--skip-git-repo-check", "--model", "gpt-5.6-sol", "sol-session", "-", "--json",
-    ]);
-  });
-
-  it("pins Cursor sessions to a model and maps room permissions to CLI modes", () => {
-    expect(__testing.cursorArgs("read-only", "/tmp/project", "cursor-grok-4.6-high")).toEqual([
-      "-p", "--output-format", "json", "--mode", "ask", "--sandbox", "enabled", "--trust",
-      "--workspace", "/tmp/project", "--model", "cursor-grok-4.6-high",
-    ]);
-    expect(__testing.cursorArgs("writable", "/tmp/project", "gemini-3.1-pro", "cursor-session")).toEqual([
-      "-p", "--output-format", "json", "--force", "--sandbox", "enabled", "--trust",
-      "--workspace", "/tmp/project", "--model", "gemini-3.1-pro", "--resume", "cursor-session",
-    ]);
-  });
-
-  it("parses Cursor's structured result contract", () => {
-    expect(__testing.parseCursorOutput(JSON.stringify({
-      type: "result", is_error: false, result: "A different opinion.", session_id: "cursor-session",
-    }))).toEqual({ isError: false, text: "A different opinion.", sessionId: "cursor-session" });
-  });
-
-  it("extracts exact model identifiers from Cursor's account-specific catalog", () => {
-    expect(__testing.parseCursorModels([
-      "\u001b[2mAvailable models\u001b[22m",
-      "\u001b[36mcursor-grok-4.6-high\u001b[39m \u001b[2m- Cursor Grok 4.6\u001b[22m",
-      "\u001b[36mgemini-3.1-pro\u001b[39m \u001b[2m- Gemini 3.1 Pro\u001b[22m",
-      "",
-      "Tip: use --model <id>",
-    ].join("\n"))).toEqual(new Set(["cursor-grok-4.6-high", "gemini-3.1-pro"]));
-  });
-
+describe("OpenCode runtime contract", () => {
   it("builds resumable OpenCode invocations", () => {
     expect(__testing.opencodeArgs("read-only", "/tmp/project")).toEqual([
       "run", "--format", "json", "--dir", "/tmp/project", "--agent", "plan",
@@ -84,19 +29,42 @@ describe("Codex JSONL parsing", () => {
     ].join("\n"))).toEqual({ sessionId: "ses_open", text: "One answer." });
   });
 
-  it("maps harness permissions without replacing provider configuration", () => {
-    expect(__testing.harnessEnvironment({ PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" }, "read-only")).toMatchObject({
+  it("maps room permissions without replacing OpenCode provider configuration", () => {
+    const environment = { PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" };
+    expect(__testing.opencodeEnvironment(environment, "read-only")).toMatchObject({
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
         webfetch: "allow", websearch: "allow", lsp: "allow",
       }),
     });
+    expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
   });
 
-  it("recognizes stale harness sessions without treating provider failures as recoverable", () => {
-    expect(__testing.isMissingHarnessSessionError(new Error("session ses_old not found"))).toBe(true);
-    expect(__testing.isMissingHarnessSessionError(new Error("provider request timed out"))).toBe(false);
+  it("resumes only matching or historically OpenCode sessions", () => {
+    const codex = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+    const openCode = { agentId: "opencode-configured", conversationalName: "OpenCode", modelId: "configured", enabled: true, configurationRevision: 1 };
+    const unversioned = { id: "legacy", permission: "read-only" as const };
+    expect(__testing.resumableOpenCodeSession("codex-sol", codex, unversioned, "read-only")).toBeUndefined();
+    expect(__testing.resumableOpenCodeSession("opencode-configured", openCode, unversioned, "read-only")).toBe(unversioned);
+    const fingerprinted = { ...unversioned, configurationFingerprint: JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol" }) };
+    expect(__testing.resumableOpenCodeSession("codex-sol", codex, fingerprinted, "read-only")).toBe(fingerprinted);
+  });
+
+  it("rejects migrated confirmations and unavailable models before invoking OpenCode", async () => {
+    const participant = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    };
+    await expect(runAgent(participant.agentId, { ...state, roster: { ...state.roster, entries: [{ ...participant, selectionConfirmationRequired: true, sessionInvalidationReason: "Confirm selection." }] } }, "Join if useful.")).rejects.toThrow("Confirm selection.");
+    const unavailable = { discover: async () => ({ status: "available" as const, models: [], discoveredAt: new Date(0).toISOString() }) } as unknown as ModelDiscoveryService;
+    await expect(runAgent(participant.agentId, state, "Join if useful.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, unavailable)).rejects.toThrow("selected OpenCode model is no longer available");
+  });
+
+  it("recognizes stale OpenCode sessions without treating provider failures as recoverable", () => {
+    expect(__testing.isMissingOpenCodeSessionError(new Error("session ses_old not found"))).toBe(true);
+    expect(__testing.isMissingOpenCodeSessionError(new Error("provider request timed out"))).toBe(false);
   });
 });
 
@@ -181,10 +149,10 @@ describe("room prompt context", () => {
     expect(prompt).toContain(`Alice: ${JSON.stringify(state.humans[0].style)}`);
     expect(prompt).toContain(`Bob: ${JSON.stringify(state.humans[1].style)}`);
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
-    expect(prompt).toContain(`Codex [gpt-5.6 Sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
+    expect(prompt).toContain(`OpenCode [openai/gpt-5.6-sol]: ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).toContain(`Claude [Claude Sonnet 5]: ${JSON.stringify(state.settings.participantStyles["claude-sonnet"])}`);
     expect(prompt).not.toContain(`Claude [Claude Opus 5]:`);
-    expect(prompt).toContain("You are Codex [gpt-5.6 Sol] (Sol)");
+    expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
     expect(prompt).toContain("compare everyone’s styles and the conversational context");
     expect(prompt).toContain("Do not change your own style unless the comment is clearly self-directed");
     expect(prompt).toContain("backgroundColor highlights your message text only");
@@ -223,72 +191,7 @@ describe("room prompt context", () => {
   });
 });
 
-describe("Claude session recovery", () => {
-  it("recognizes only the missing-conversation failure as recoverable", () => {
-    expect(__testing.isMissingClaudeSessionError(new Error("claude exited with 1: No conversation found with session ID: stale"))).toBe(true);
-    expect(__testing.isMissingClaudeSessionError(new Error("claude exited with 1: API unavailable"))).toBe(false);
-  });
-
-  it("restarts a missing read-only session with the original safety policy", () => {
-    expect(__testing.claudeArgs("read-only", "fresh-session", "claude-sonnet-5")).toEqual([
-      "-p",
-      "--output-format",
-      "json",
-      "--model",
-      "claude-sonnet-5",
-      "--permission-mode",
-      "plan",
-      "--tools",
-      "Read",
-      "Glob",
-      "Grep",
-      "WebSearch",
-      "WebFetch",
-      "--session-id",
-      "fresh-session",
-    ]);
-  });
-
-  it("uses resume only when an existing session is available", () => {
-    expect(__testing.claudeArgs("read-only", "existing-session", "claude-sonnet-5", true)).toEqual([
-      "-p",
-      "--output-format",
-      "json",
-      "--model",
-      "claude-sonnet-5",
-      "--permission-mode",
-      "plan",
-      "--tools",
-      "Read",
-      "Glob",
-      "Grep",
-      "WebSearch",
-      "WebFetch",
-      "--resume",
-      "existing-session",
-    ]);
-  });
-
-  it("gives resumed Opus sessions the same read-only web tools", () => {
-    const args = __testing.claudeArgs("read-only", "opus-session", "claude-opus-5", true);
-
-    expect(args).toContain("claude-opus-5");
-    expect(args).toContain("WebSearch");
-    expect(args).toContain("WebFetch");
-    expect(args).toContain("plan");
-    expect(args).toEqual(expect.arrayContaining(["--resume", "opus-session"]));
-    expect(args).not.toContain("acceptEdits");
-  });
-});
-
-describe("Codex runtime recovery", () => {
-  it("recognizes incomplete resumed history but not ordinary command failures", () => {
-    expect(__testing.isCorruptCodexSessionError(new Error("thread history projection expected ordinal 901, got 900"))).toBe(true);
-    expect(__testing.isCorruptCodexSessionError(new Error("Custom tool call output is missing for call_123"))).toBe(true);
-    expect(__testing.isCorruptCodexSessionError(new Error("codex exited with 1: API unavailable"))).toBe(false);
-    expect(__testing.isCorruptCodexSessionError(__testing.codexSessionFailure("Custom tool call output is missing for call_123"))).toBe(true);
-  });
-
+describe("OpenCode runtime safety", () => {
   it("keeps ordinary chat short while allowing bounded writable development", () => {
     expect(__testing.runTimeout("read-only", false)).toBe(90_000);
     expect(__testing.runTimeout("read-only", true)).toBe(5 * 60_000);
