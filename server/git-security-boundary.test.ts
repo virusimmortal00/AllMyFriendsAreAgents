@@ -154,6 +154,8 @@ describe("assignment-scoped Git broker", () => {
     const env = { ...process.env, ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET: server.socketPath, ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: server.token };
     const before = await protectedState(root, assignment.branch);
     expect((await exec(shim, ["status", "--short"], { cwd: assignment.workspacePath, env, encoding: "utf8" })).stdout).toContain(assignment.branch);
+    const doubled = `${JSON.stringify({ token: server.token, args: ["status", "--short"] })}\n${JSON.stringify({ token: server.token, args: ["status", "--short"] })}\n`;
+    expect((await rawBrokerRequest(server.socketPath, doubled)).trim().split("\n")).toHaveLength(1);
     for (const args of [
       ["update-ref", "refs/heads/main", assignment.pinnedBaseSha],
       ["config", "core.hooksPath", "/tmp/hooks"],
@@ -166,9 +168,20 @@ describe("assignment-scoped Git broker", () => {
     await rawBrokerRequest(server.socketPath, "x".repeat(70_000));
     expect(await protectedState(root, assignment.branch)).toEqual(before);
     const audit = (await readFile(auditPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    expect(audit).toHaveLength(9);
+    expect(audit).toHaveLength(10);
     expect(audit.slice(-3).map(({ outcome }) => outcome)).toEqual(["rejected", "rejected", "rejected"]);
     expect(audit.every((entry, index) => index === 0 || entry.previousHash === audit[index - 1].entryHash)).toBe(true);
+  });
+
+  it("closes promptly when a client connects without dispatching a request", async () => {
+    const { state, assignment, broker } = await fixture();
+    const server = await new AssignmentGitBrokerServer(broker, assignment, path.join(state, "idle.sock"), path.join(state, "idle-bin")).start();
+    const socket = createConnection(server.socketPath);
+    await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+    await expect(Promise.race([
+      server.close().then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
+    ])).resolves.toBe("closed");
   });
 });
 
@@ -216,13 +229,13 @@ describe("confined writer startup", () => {
   it("makes raw Git unavailable and produces a profile that protects the repository and common Git directory", async () => {
     const { root, state, grant } = await grantFixture();
     await expect(confinedWriterInvocation("/usr/bin/git", ["update-ref", "refs/heads/main", "deadbeef"], grant)).rejects.toThrow("Direct Git invocation");
-    let executablePath = process.env.PATH;
+    const fakeBin = path.join(state, "fake-sandbox-bin"); await mkdir(fakeBin);
+    const alternateGit = path.join(fakeBin, "git"); await writeFile(alternateGit, "#!/bin/sh\nexit 0\n", { mode: 0o700 }); await chmod(alternateGit, 0o700);
     if (process.platform !== "darwin") {
-      const fakeBin = path.join(state, "fake-sandbox-bin"); await mkdir(fakeBin);
       const fakeSandbox = path.join(fakeBin, "sandbox-exec");
       await writeFile(fakeSandbox, "#!/bin/sh\nexit 0\n", { mode: 0o700 }); await chmod(fakeSandbox, 0o700);
-      executablePath = `${fakeBin}${path.delimiter}${executablePath}`;
     }
+    const executablePath = `${fakeBin}${path.delimiter}${process.env.PATH}`;
     const invocation = await confinedWriterInvocation("/usr/bin/true", [], grant, {
       PATH: executablePath, HOME: process.env.HOME,
       ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY: "assignment-git-broker/v1",
@@ -230,6 +243,8 @@ describe("confined writer startup", () => {
     expect(invocation.command).toBe("sandbox-exec");
     expect(invocation.args.join(" ")).toContain(`deny file-write* (subpath ${JSON.stringify(await realpath(root))})`);
     expect(invocation.args.join(" ")).toContain(JSON.stringify(grant.gitCommonDirectory));
+    expect(invocation.args.join(" ")).toContain(JSON.stringify(await realpath(alternateGit)));
+    expect(invocation.args.join(" ")).toContain(JSON.stringify(await realpath(grant.gitExecutablePath)));
     expect(invocation.args.join(" ")).toContain(`deny file-read* file-write* (literal ${JSON.stringify(path.join(grant.claims.workspacePath, ".git"))})`);
     expect(invocation.cwd).toBe(grant.claims.workspacePath);
     expect(invocation.env).not.toHaveProperty("GIT_DIR");

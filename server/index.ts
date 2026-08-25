@@ -173,14 +173,14 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       gitBrokerRoot = boundaryRoot;
       const socketPath = path.join(boundaryRoot, "broker.sock");
       const broker = new AssignmentGitBroker(
-        assignment.assignmentId, store, store, developerTeam, before.settings.projectPath, assignmentWorktreesDirectory,
+        assignment.assignmentId, store, store, developerTeam, projectRepositoryPath, assignmentWorktreesDirectory,
         path.join(storageConfiguration.dataDirectory, "git-broker-audit", assignment.assignmentId, `${sessionId}.jsonl`),
       );
       gitBrokerServer = await new AssignmentGitBrokerServer(broker, assignment, socketPath, path.join(boundaryRoot, "bin")).start();
       writerGrant = {
         revision: WRITER_BOUNDARY_REVISION,
         claims: claimsFor(assignment),
-        repositoryPath: before.settings.projectPath,
+        repositoryPath: projectRepositoryPath,
         gitCommonDirectory: await resolveGitCommonDirectory(assignment.workspacePath),
         brokerSocketPath: socketPath,
         brokerToken: gitBrokerServer.token,

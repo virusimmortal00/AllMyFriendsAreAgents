@@ -43,6 +43,8 @@ export async function verifyWriterConfinement(
     realpath(grant.claims.workspacePath), realpath(grant.repositoryPath), realpath(grant.gitCommonDirectory),
     realpath(grant.gitExecutablePath),
   ]);
+  const gitExecutables = await resolveGitExecutablePaths(environment);
+  if (!gitExecutables.includes(gitExecutable)) throw new Error("Git executable identity changed outside the verified PATH");
   if (workspace !== grant.claims.workspacePath || workspace === repository) throw new Error("Assignment ownership cannot be established");
   const [brokerRoot, socketCanonical, shimCanonical] = await Promise.all([
     realpath(grant.brokerRootPath), realpath(grant.brokerSocketPath), realpath(grant.gitShimDirectory),
@@ -74,7 +76,7 @@ export async function verifyWriterConfinement(
       `(deny file-read* file-write* (subpath ${quoteSandbox(common)}))`,
       `(allow file-read* file-write* (subpath ${quoteSandbox(workspace)}))`,
       `(deny file-read* file-write* (literal ${quoteSandbox(path.join(workspace, ".git"))}))`,
-      `(deny file-read* process-exec (literal ${quoteSandbox(gitExecutable)}))`,
+      ...gitExecutables.map((candidate) => `(deny file-read* process-exec (literal ${quoteSandbox(candidate)}))`),
       `(allow file-read* (literal ${quoteSandbox(socketPath)}))`,
     ].join(" ");
     return { backend: "sandbox-exec", command: "sandbox-exec", prefix: ["-p", profile] };
@@ -83,7 +85,7 @@ export async function verifyWriterConfinement(
     await execFileAsync("bwrap", ["--version"], { timeout: 5_000, env: environment });
     return {
       backend: "bwrap", command: "bwrap",
-      prefix: ["--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--bind", workspace, workspace, "--ro-bind", "/dev/null", path.join(workspace, ".git"), "--ro-bind", "/dev/null", gitExecutable, "--ro-bind", grant.brokerRootPath, grant.brokerRootPath, "--chdir", workspace, "--"],
+      prefix: ["--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--bind", workspace, workspace, "--ro-bind", "/dev/null", path.join(workspace, ".git"), ...gitExecutables.flatMap((candidate) => ["--ro-bind", "/dev/null", candidate]), "--ro-bind", grant.brokerRootPath, grant.brokerRootPath, "--chdir", workspace, "--"],
     };
   }
   throw new Error(`No supported writer confinement backend for ${platform}`);
@@ -113,11 +115,20 @@ export async function confinedWriterInvocation(
 }
 
 export async function resolveGitExecutablePath(environment: NodeJS.ProcessEnv = process.env) {
+  const candidates = await resolveGitExecutablePaths(environment);
+  if (candidates[0]) return candidates[0];
+  throw new Error("Git executable identity cannot be established");
+}
+
+export async function resolveGitExecutablePaths(environment: NodeJS.ProcessEnv = process.env) {
+  const candidates: string[] = [];
   for (const directory of (environment.PATH || "/usr/bin:/bin").split(path.delimiter)) {
     const candidate = path.join(directory, process.platform === "win32" ? "git.exe" : "git");
-    if (await access(candidate, constants.X_OK).then(() => true).catch(() => false)) return realpath(candidate);
+    if (!await access(candidate, constants.X_OK).then(() => true).catch(() => false)) continue;
+    const canonical = await realpath(candidate);
+    if (!candidates.includes(canonical)) candidates.push(canonical);
   }
-  throw new Error("Git executable identity cannot be established");
+  return candidates;
 }
 
 function quoteSandbox(value: string) { return JSON.stringify(value); }

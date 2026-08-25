@@ -9,6 +9,7 @@ interface ShimRequest { readonly token?: string; readonly args?: readonly string
 
 export class AssignmentGitBrokerServer {
   private server?: Server;
+  private readonly sockets = new Set<Socket>();
   private claims: AssignmentGitClaims;
   readonly token = randomBytes(32).toString("hex");
   shimDigest = "";
@@ -38,24 +39,33 @@ export class AssignmentGitBrokerServer {
 
   async close() {
     const server = this.server; this.server = undefined;
+    for (const socket of this.sockets) socket.destroy();
+    this.sockets.clear();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(this.socketPath, { force: true });
   }
 
   private handle(socket: Socket) {
     let input = "";
-    let rejected = false;
+    let dispatched = false;
+    this.sockets.add(socket);
     socket.setEncoding("utf8");
+    socket.setTimeout(5_000, () => socket.destroy());
+    socket.on("close", () => this.sockets.delete(socket));
     socket.on("data", (chunk) => {
-      if (rejected) return;
+      if (dispatched) return;
       input += chunk;
-      if (input.length > 64 * 1024 && !rejected) {
-        rejected = true;
+      if (input.length > 64 * 1024) {
+        dispatched = true;
         void this.rejectIngress(socket, "oversized", "Broker request exceeded limit");
         return;
       }
       const newline = input.indexOf("\n");
-      if (newline >= 0) void this.respond(socket, input.slice(0, newline));
+      if (newline < 0) return;
+      dispatched = true;
+      const line = input.slice(0, newline);
+      input = "";
+      void this.respond(socket, line);
     });
     socket.on("error", () => undefined);
   }
