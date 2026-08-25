@@ -17,6 +17,8 @@ export interface GitHubContributionClient {
   createDraftPullRequest(repository: string, branch: string, base: string, title: string, body: string): Promise<GitHubExternalResult>;
   updatePullRequest(repository: string, number: number, input: { title?: string; body?: string }): Promise<GitHubExternalResult>;
   requestReview(repository: string, number: number, reviewers: readonly string[]): Promise<GitHubExternalResult>;
+  markPullRequestReady(repository: string, number: number): Promise<GitHubExternalResult>;
+  mergePullRequest(repository: string, number: number, headSha: string): Promise<{ id: string; commitSha: string }>;
 }
 
 export class GitHubRestClient implements GitHubContributionClient {
@@ -84,6 +86,25 @@ export class GitHubRestClient implements GitHubContributionClient {
 
   async requestReview(repository: string, number: number, reviewers: readonly string[]) {
     return project(await this.request(repository, `/pulls/${number}/requested_reviewers`, { method: "POST", body: JSON.stringify({ reviewers }) }));
+  }
+
+  async markPullRequestReady(repository: string, number: number) {
+    const pull = object(await this.request(repository, `/pulls/${number}`, { method: "GET" }));
+    if (pull.draft !== true) return project(pull);
+    const nodeId = String(pull.node_id || ""); if (!nodeId) throw new GitHubClientError("Pull request node identity is unavailable", false);
+    const response = await this.fetcher("https://api.github.com/graphql", { method: "POST", headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id number url state isDraft}}}", variables: { id: nodeId } }), signal: AbortSignal.timeout(30_000) })
+      .catch(() => { throw new GitHubClientError("GitHub request transport failed", true); });
+    const text = await response.text(); if (!response.ok) throw new GitHubClientError(`GitHub request failed with ${response.status}`, response.status === 429 || response.status >= 500);
+    const data = text ? object(JSON.parse(text)) : {}; const errors = Array.isArray(data.errors) ? data.errors : [];
+    if (errors.length) throw new GitHubClientError("GitHub rejected ready-for-review transition", false);
+    return project(object(object(object(data.data).markPullRequestReadyForReview).pullRequest));
+  }
+
+  async mergePullRequest(repository: string, number: number, headSha: string) {
+    const result = object(await this.request(repository, `/pulls/${number}/merge`, { method: "PUT", body: JSON.stringify({ sha: headSha, merge_method: "merge" }) }));
+    if (result.merged !== true || typeof result.sha !== "string") throw new GitHubClientError("GitHub did not merge the exact approved pull request", false);
+    return { id: String(result.sha), commitSha: result.sha };
   }
 
   private async getResult(repository: string, endpoint: string) { return project(await this.request(repository, endpoint, { method: "GET" })); }

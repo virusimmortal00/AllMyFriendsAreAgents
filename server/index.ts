@@ -43,6 +43,10 @@ import { GitHubRestClient } from "./github-client.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
 import { GitHubContributionBroker } from "./github-contribution-broker.js";
 import { registerGitHubContributionRoutes } from "./github-contribution-api.js";
+import { ContributionStore } from "./contribution-store.js";
+import { ContributionService } from "./contribution-service.js";
+import { GovernedContributionExecutor, UnavailableContributionExecutor } from "./contribution-executor.js";
+import { registerContributionRoutes } from "./contribution-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -80,11 +84,21 @@ const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY
 const githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
+const githubClient = githubToken ? new GitHubRestClient(githubToken) : undefined;
 const githubContributionBroker = githubContributionStore && githubToken && githubRepository
   ? new GitHubContributionBroker(
-    store, store, developerTeam, githubContributionStore, new GitHubRestClient(githubToken), projectRepositoryPath,
+    store, store, developerTeam, githubContributionStore, githubClient!, projectRepositoryPath,
     githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main",
   )
+  : undefined;
+const contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
+const contributionExecutor = githubContributionBroker && githubClient && githubRepository
+  ? new GovernedContributionExecutor(githubContributionBroker, githubClient, developerTeam, githubRepository,
+    process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL?.trim(),
+    process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN}` : undefined)
+  : new UnavailableContributionExecutor();
+const contributionService = contributionRecords && githubRepository
+  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository)
   : undefined;
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
@@ -136,6 +150,7 @@ await continuationService.initialize();
 
 app.use(express.json({ limit: "64kb" }));
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
+registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanTaskSessions });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };

@@ -34,6 +34,8 @@ class FakeGitHub implements GitHubContributionClient {
   async createDraftPullRequest() { const result = await this.result("create-pull", 44); this.pull = result; return result; }
   updatePullRequest(_repository: string, number: number) { return this.result("update-pull", number); }
   requestReview(_repository: string, number: number) { return this.result("request-review", number); }
+  markPullRequestReady(_repository: string, number: number) { return this.result("ready-pull", number); }
+  async mergePullRequest(_repository: string, _number: number, headSha: string) { this.calls.push("merge-pull"); return { id: headSha, commitSha: headSha }; }
 }
 
 async function fixture(capabilities: readonly DeveloperCapability[] = ["GITHUB_READ", "GITHUB_COMMENT", "GITHUB_PUBLISH_DRAFT", "GITHUB_PR_METADATA", "GITHUB_REQUEST_REVIEW"]) {
