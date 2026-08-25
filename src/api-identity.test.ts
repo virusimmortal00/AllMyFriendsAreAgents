@@ -2,11 +2,24 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { authorizeHeartbeat, emergencyStopHeartbeat, joinRoom, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { authorizeHeartbeat, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyStyle, updateSettings } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("browser identity requests", () => {
+  it("reuses a continuation client message ID after an unknown outcome", async () => {
+    const bodies: Array<Record<string, unknown>> = []; let attempt = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>; bodies.push(body); attempt += 1;
+      if (attempt === 1) throw new TypeError("connection lost after send");
+      return new Response(JSON.stringify({ accepted: true, duplicate: true, clientMessageId: body.clientMessageId, messageId: "room-message", continuation: { outcome: "queued", jobId: "job-1", status: "QUEUED" } }));
+    }));
+    const task = { taskId: "task-1", revision: 4, title: "Durable work" };
+    await expect(sendContinuationWorkRequest(task, "assignment-ref", "Run checks")).rejects.toMatchObject({ outcomeUnknown: true });
+    await expect(sendContinuationWorkRequest(task, "assignment-ref", "Run checks")).resolves.toMatchObject({ duplicate: true });
+    expect(bodies).toHaveLength(2); expect(bodies[0]?.clientMessageId).toBe(bodies[1]?.clientMessageId);
+  });
+
   it("never serializes a public participant ID as actor authority", async () => {
     const style = DEFAULT_PARTICIPANT_STYLES.you;
     const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {

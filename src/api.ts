@@ -1,7 +1,7 @@
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { MessageMutationAcknowledgement, ServerIdentity } from "../shared/protocol";
+import type { MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
@@ -139,10 +139,10 @@ export async function updateMyStyle(style: ChatStyle) {
   });
 }
 
-export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<MessageMutationAcknowledgement> {
+export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
-    body: JSON.stringify({ text, clientMessageId, mentions }),
+    body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }).then((response) => response.json()).then((acknowledgement: unknown) => {
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
@@ -150,6 +150,23 @@ export async function sendMessage(text: string, clientMessageId: string, mention
     return acknowledgement;
   });
 }
+
+export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
+  const continuation = { taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective };
+  const key = JSON.stringify(continuation);
+  const clientMessageId = pendingContinuationMessageIds.get(key) || `message_${crypto.randomUUID()}`;
+  pendingContinuationMessageIds.set(key, clientMessageId);
+  try {
+    const acknowledgement = await sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], continuation);
+    if (pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    return acknowledgement;
+  } catch (error) {
+    if (!(error instanceof ApiRequestError && error.outcomeUnknown) && pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    throw error;
+  }
+}
+
+const pendingContinuationMessageIds = new Map<string, string>();
 
 function isMessageAcknowledgement(value: unknown): value is MessageMutationAcknowledgement {
   if (!value || typeof value !== "object") return false;

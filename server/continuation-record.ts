@@ -18,6 +18,9 @@ export interface ContinuationAuthorityEpoch {
   readonly assignmentId: string; readonly developerMemberId: string; readonly developerMemberConfigRevision: number;
   readonly agent: AgentId; readonly fencingToken: number; readonly manifestRevision: number; readonly pinnedBaseSha: string;
 }
+export interface ContinuationRoomOrigin {
+  readonly kind: "ROOM_WORK_REQUEST"; readonly requestId: string; readonly messageId: string; readonly requestedBy: string;
+}
 export interface ContinuationPolicy {
   readonly schemaVersion: 1; readonly policyVersion: typeof CONTINUATION_POLICY_VERSION; readonly revision: number;
   readonly roomId: string; readonly projectPathHash: string; readonly enabled: boolean; readonly maxConcurrentPerAgent: 1;
@@ -28,6 +31,7 @@ export interface ContinuationRecord {
   readonly schemaVersion: 1; readonly jobId: string; readonly jobRevision: number; readonly roomId: string;
   readonly projectPathHash: string; readonly owner: AgentId; readonly task: TaskIdentity; readonly taskRevision: number;
   readonly assignmentReferenceId: string; readonly authority: ContinuationAuthorityEpoch; readonly objective: string;
+  readonly roomOrigin?: ContinuationRoomOrigin;
   readonly trigger: string; readonly policyRevision: number; readonly policyVersion: typeof CONTINUATION_POLICY_VERSION;
   readonly capabilities: readonly ContinuationCapability[]; readonly status: ContinuationStatus; readonly budget: ContinuationBudget;
   readonly usage: ContinuationUsage; readonly cancellationRequested: boolean;
@@ -92,7 +96,7 @@ export function normalizeContinuationRecord(value: unknown): ContinuationRecord 
     || !isAgentId(r.owner) || !r.task || r.task.roomId !== r.roomId || !validId(r.task.taskId) || !positive(r.taskRevision)
     || !validId(r.assignmentReferenceId) || !a || !validId(a.assignmentId) || !validId(a.developerMemberId)
     || !positive(a.developerMemberConfigRevision) || a.agent !== r.owner || !nonnegative(a.fencingToken) || !nonnegative(a.manifestRevision)
-    || !sha(a.pinnedBaseSha) || !boundedText(r.objective, 4_000) || !boundedText(r.trigger, 500)
+    || !sha(a.pinnedBaseSha) || !boundedText(r.objective, 4_000) || !boundedText(r.trigger, 500) || !validRoomOrigin(r.roomOrigin)
     || !positive(r.policyRevision) || r.policyVersion !== CONTINUATION_POLICY_VERSION || !Array.isArray(r.capabilities)
     || r.capabilities.some((c) => !CONTINUATION_CAPABILITIES.includes(c)) || !CONTINUATION_STATUSES.includes(r.status as ContinuationStatus)
     || !validBudget(r.budget) || !validUsage(r.usage) || typeof r.cancellationRequested !== "boolean" || !nullableHash(r.auditHeadHash) || !nonnegative(r.auditEventCount)
@@ -180,8 +184,9 @@ export function continuationAuditMatches(before: ContinuationRecord | null, afte
     && continuationAuditHashMatches(after, candidate, before?.auditHeadHash ?? null);
 }
 export function continuationAuditStepMatches(from: ContinuationStatus | null, event: ContinuationAuditEvent) {
-  const fixed: Partial<Record<ContinuationAuditAction, string>> = { CREATED: "Queued by authorized developer.", DISPATCHED: "Executor dispatch started.", TOOL_RESUMED: "Tool work resumed.", RESUMED: "Retry/resume authorized.", ACKNOWLEDGED: "Inbox entry closed.", INBOX_ARCHIVED: "Inbox result archived by bounded retention policy." };
+  const fixed: Partial<Record<ContinuationAuditAction, string>> = { DISPATCHED: "Executor dispatch started.", TOOL_RESUMED: "Tool work resumed.", RESUMED: "Retry/resume authorized.", ACKNOWLEDGED: "Inbox entry closed.", INBOX_ARCHIVED: "Inbox result archived by bounded retention policy." };
   if (fixed[event.action] && event.result !== fixed[event.action]) return false;
+  if (event.action === "CREATED" && !["Queued by authorized developer.", "Queued by authorized room work request."].includes(event.result || "")) return false;
   const zero = event.attemptUsage.elapsedMs === 0 && event.attemptUsage.tokens === 0 && event.attemptUsage.toolCalls === 0;
   if (event.action === "CREATED") return from === null && event.toStatus === "QUEUED" && event.nextEligibilityAt === null && zero;
   if (event.action === "DISPATCHED") return from === "QUEUED" && event.toStatus === "RUNNING" && event.nextEligibilityAt === null && zero;
@@ -196,7 +201,7 @@ export function continuationAuditStepMatches(from: ContinuationStatus | null, ev
   if (event.action === "ACKNOWLEDGED") return from !== null && ["COMPLETED", "FAILED", "CANCELLED"].includes(from) && event.toStatus === "ACKNOWLEDGED" && event.nextEligibilityAt === null && zero;
   return event.action === "INBOX_ARCHIVED" && from === "COMPLETED" && event.toStatus === "COMPLETED" && event.nextEligibilityAt === null && zero;
 }
-function immutableProvenance(record: ContinuationRecord) { return { schemaVersion: record.schemaVersion, jobId: record.jobId, roomId: record.roomId, projectPathHash: record.projectPathHash, owner: record.owner, task: record.task, taskRevision: record.taskRevision, assignmentReferenceId: record.assignmentReferenceId, authority: record.authority, objective: record.objective, trigger: record.trigger, policyRevision: record.policyRevision, policyVersion: record.policyVersion, capabilities: record.capabilities, budget: record.budget, createdAt: record.createdAt }; }
+function immutableProvenance(record: ContinuationRecord) { return { schemaVersion: record.schemaVersion, jobId: record.jobId, roomId: record.roomId, projectPathHash: record.projectPathHash, owner: record.owner, task: record.task, taskRevision: record.taskRevision, assignmentReferenceId: record.assignmentReferenceId, authority: record.authority, objective: record.objective, ...(record.roomOrigin ? { roomOrigin: record.roomOrigin } : {}), trigger: record.trigger, policyRevision: record.policyRevision, policyVersion: record.policyVersion, capabilities: record.capabilities, budget: record.budget, createdAt: record.createdAt }; }
 export function continuationProjectionMatches(before: ContinuationRecord | null, after: ContinuationRecord) {
   if (!continuationProjectionIsValid(after)) return false;
   if (!before) return after.status === "QUEUED" && after.jobRevision === 1;
@@ -243,7 +248,7 @@ function auditActions(from: ContinuationStatus | null, after: ContinuationRecord
   return [];
 }
 function auditResult(action: ContinuationAuditAction, record: ContinuationRecord): string | null {
-  if (action === "CREATED") return "Queued by authorized developer.";
+  if (action === "CREATED") return record.roomOrigin ? "Queued by authorized room work request." : "Queued by authorized developer.";
   if (action === "DISPATCHED") return "Executor dispatch started.";
   if (action === "TOOL_RESUMED") return "Tool work resumed.";
   if (action === "RESUMED") return "Retry/resume authorized.";
@@ -255,6 +260,11 @@ function auditResult(action: ContinuationAuditAction, record: ContinuationRecord
 function validBudget(value: unknown): value is ContinuationBudget { const b = value as Partial<ContinuationBudget> | undefined; return !!b && positive(b.timeMs) && positive(b.tokenLimit) && positive(b.toolCallLimit) && nonnegative(b.retryLimit); }
 function validUsage(value: unknown): value is ContinuationUsage { const u = value as Partial<ContinuationUsage> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls) && nonnegative(u.attempts); }
 function validAttemptUsage(value: unknown): value is ContinuationAuditEvent["attemptUsage"] { const u = value as Partial<ContinuationAuditEvent["attemptUsage"]> | undefined; return !!u && nonnegative(u.elapsedMs) && nonnegative(u.tokens) && nonnegative(u.toolCalls); }
+function validRoomOrigin(value: unknown): value is ContinuationRoomOrigin | undefined {
+  if (value === undefined) return true;
+  const origin = value as Partial<ContinuationRoomOrigin> | null;
+  return !!origin && origin.kind === "ROOM_WORK_REQUEST" && validId(origin.requestId) && validId(origin.messageId) && validId(origin.requestedBy);
+}
 function validId(v: unknown): v is string { return typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(v); }
 function boundedText(v: unknown, n: number): v is string { return typeof v === "string" && v.trim().length > 0 && v.length <= n; }
 function nullableText(v: unknown, n: number) { return v === null || typeof v === "string" && v.length <= n; }
