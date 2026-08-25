@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { describe, expect, it, vi } from "vitest";
-import { continuationCreateValidationError, projectContinuationAudit, projectContinuationJob, registerContinuationRoutes } from "./continuation-api.js";
+import { continuationCreateValidationError, projectContinuationAudit, projectContinuationJob, registerContinuationRoutes, roomContinuationRequestValidationError } from "./continuation-api.js";
 import { CONTINUATION_POLICY_VERSION, projectPathHash, type ContinuationAuditEvent, type ContinuationRecord } from "./continuation-record.js";
 import type { ContinuationService } from "./continuation-service.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
@@ -18,6 +18,13 @@ describe("continuation public projection", () => {
     const valid = { owner: "codex-sol", taskId: "task", taskRevision: 1, assignmentReferenceId: "ref", objective: "bounded", trigger: "explicit", budget: { timeMs: 1000, tokenLimit: 10, toolCallLimit: 1, retryLimit: 0 } };
     expect(continuationCreateValidationError(valid)).toBeNull();
     for (const body of [{ ...valid, objective: 42 }, { ...valid, trigger: "" }, { ...valid, taskRevision: "1" }, { ...valid, budget: [] }, { ...valid, budget: { timeMs: "lots" } }, { ...valid, budget: { unknown: 1 } }]) expect(continuationCreateValidationError(body)).toMatch(/Bounded owner/);
+  });
+  it("requires exact bounded room-request provenance without accepting client authority fields", () => {
+    const valid = { taskId: "task", taskRevision: 3, assignmentReferenceId: "assignment-ref", objective: "Continue bounded work" };
+    expect(roomContinuationRequestValidationError(valid)).toBeNull();
+    expect(roomContinuationRequestValidationError({ ...valid, taskRevision: 2.5 })).toMatch(/exact task revision/);
+    expect(roomContinuationRequestValidationError({ ...valid, owner: "codex-sol" })).toMatch(/exact task revision/);
+    expect(roomContinuationRequestValidationError({ ...valid, budget: { tokenLimit: -1 } })).toMatch(/exact task revision/);
   });
   it("returns 400 for malformed developer create bodies without dispatching the service", async () => {
     const create = vi.fn(); const app = express(); app.use(express.json());

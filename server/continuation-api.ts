@@ -5,6 +5,7 @@ import type { HumanPresenceRegistry } from "./human-presence.js";
 import { sessionHuman, type HumanSessions } from "./human-session.js";
 import type { ContinuationProgressChannel, ContinuationService } from "./continuation-service.js";
 import { redactContinuationText } from "./continuation-record.js";
+import type { RoomContinuationWorkRequest } from "../shared/protocol.js";
 
 export function projectContinuationJob(job: Awaited<ReturnType<ContinuationService["list"]>>[number]) {
   return { jobId: job.jobId, jobRevision: job.jobRevision, owner: job.owner, task: job.task, taskRevision: job.taskRevision,
@@ -15,6 +16,14 @@ export function projectContinuationJob(job: Awaited<ReturnType<ContinuationServi
 }
 export function projectContinuationAudit(event: Awaited<ReturnType<ContinuationService["audit"]>>[number]) { return { eventId: event.eventId, jobId: event.jobId, jobRevision: event.jobRevision, attempt: event.attempt, trigger: redactContinuationText(event.trigger), policyRevision: event.policyRevision, at: event.at, action: event.action, fromStatus: event.fromStatus, toStatus: event.toStatus, usage: event.usage, attemptUsage: event.attemptUsage, result: event.result ? redactContinuationText(event.result) : null, nextEligibilityAt: event.nextEligibilityAt }; }
 export function continuationCreateValidationError(body: unknown) { const value = body as Record<string, unknown> | null; if (!value || typeof value !== "object" || !isAgentId(value.owner) || typeof value.taskId !== "string" || !value.taskId.trim() || typeof value.assignmentReferenceId !== "string" || !value.assignmentReferenceId.trim() || !Number.isSafeInteger(value.taskRevision) || Number(value.taskRevision) < 1 || typeof value.objective !== "string" || !value.objective.trim() || value.objective.length > 4_000 || typeof value.trigger !== "string" || !value.trigger.trim() || value.trigger.length > 500 || !validBudgetShape(value.budget)) return "Bounded owner, task, assignment reference, objective, trigger, revision, and budget fields are required."; return null; }
+export function roomContinuationRequestValidationError(body: unknown) {
+  const value = body as Partial<RoomContinuationWorkRequest> | null;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["taskId", "taskRevision", "assignmentReferenceId", "objective", "budget"].includes(key))
+    || typeof value.taskId !== "string" || !value.taskId.trim() || !Number.isSafeInteger(value.taskRevision) || Number(value.taskRevision) < 1
+    || typeof value.assignmentReferenceId !== "string" || !value.assignmentReferenceId.trim() || typeof value.objective !== "string" || !value.objective.trim()
+    || value.objective.length > 4_000 || !validBudgetShape(value.budget)) return "A bounded objective with exact task revision and assignment reference is required.";
+  return null;
+}
 function send(response: express.Response, result: { kind: string; [key: string]: unknown }) {
   if (result.kind === "ok") return response.json(result.value);
   if (result.kind === "not_found") return response.status(404).json({ error: "Continuation not found." });

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Task } from "../shared/task-domain.js";
 import type { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import type { AssignmentRecord } from "./assignment-record.js";
@@ -95,18 +95,46 @@ export class ContinuationService {
     const authority = await this.authority(task, input.taskRevision, input.assignmentReferenceId, input.owner);
     if ("reason" in authority) return { kind: "rejected", reason: authority.reason! };
     if (authority.assignment.developerMemberId !== input.developerMemberId || authority.assignment.developerMemberConfigRevision !== input.developerMemberConfigRevision) return { kind: "rejected", reason: "Requesting developer identity does not own the assignment authority epoch." };
+    return this.createRecord(input, policy, authority.assignment);
+  }
+
+  async createFromRoom(input: { requestId: string; messageId: string; requestedBy: string; taskId: string; taskRevision: number; assignmentReferenceId: string; objective: string; budget?: Partial<ContinuationBudget> }): Promise<ContinuationResult<ContinuationRecord>> {
+    const jobId = roomContinuationJobId(input.requestId);
+    const replay = await this.records.getContinuation(jobId);
+    if (replay) return replay.roomOrigin?.requestId === input.requestId ? { kind: "ok", value: replay } : { kind: "conflict", reason: "Room request identity conflicts with an existing continuation." };
+    if (this.closed) return { kind: "rejected", reason: "Server is shutting down." };
+    const policy = await this.currentPolicy(); if ("reason" in policy) return { kind: "rejected", reason: policy.reason };
+    if (await this.emergencyStopActive()) return { kind: "rejected", reason: "Emergency stop is active." };
+    const task = await this.rooms.getTask({ roomId: CANONICAL_ROOM_ID, taskId: input.taskId });
+    if (!task || task.roomId !== CANONICAL_ROOM_ID) return { kind: "rejected", reason: "Task does not exist in this room." };
+    if (task.revision !== input.taskRevision) return { kind: "rejected", reason: "Task revision is stale or superseded." };
+    if (!["approved", "active", "blocked"].includes(task.state)) return { kind: "rejected", reason: "Task is not active continuation authority." };
+    const reference = task.references.find((candidate) => candidate.id === input.assignmentReferenceId);
+    if (!reference || reference.kind !== "assignment") return { kind: "rejected", reason: "Immutable assignment task reference is required." };
+    const authority = await this.assignments.authorityForRoomContinuation(reference.targetId);
+    if (authority.kind !== "ok") return { kind: "rejected", reason: authority.reason };
+    return this.createRecord({ ...input, owner: authority.assignment.agent, trigger: `Room work request ${input.messageId}` }, policy, authority.assignment,
+      { kind: "ROOM_WORK_REQUEST", requestId: input.requestId, messageId: input.messageId, requestedBy: input.requestedBy }, jobId);
+  }
+
+  private async createRecord(input: { owner: AgentId; taskId: string; taskRevision: number; assignmentReferenceId: string; objective: string; trigger: string; budget?: Partial<ContinuationBudget> }, policy: ContinuationPolicy, assignment: AssignmentRecord,
+    roomOrigin?: ContinuationRecord["roomOrigin"], jobId: string = randomUUID()): Promise<ContinuationResult<ContinuationRecord>> {
     const objective = redactContinuationText(input.objective?.trim() || "").trim(); const trigger = redactContinuationText(input.trigger?.trim() || "").trim();
     if (!objective || objective.length > 4_000 || !trigger || trigger.length > 500) return { kind: "rejected", reason: "A bounded objective and trigger are required." };
     const budget = boundedBudget(input.budget, policy.defaultBudget); if (!budget) return { kind: "rejected", reason: "Continuation budget exceeds policy limits." };
-    const now = this.now(); const assignment = authority.assignment;
-    const record: ContinuationRecord = { schemaVersion: 1, jobId: randomUUID(), jobRevision: 1, roomId: CANONICAL_ROOM_ID,
+    const now = this.now();
+    const record: ContinuationRecord = { schemaVersion: 1, jobId, jobRevision: 1, roomId: CANONICAL_ROOM_ID,
       projectPathHash: policy.projectPathHash, owner: input.owner, task: { roomId: CANONICAL_ROOM_ID, taskId: input.taskId }, taskRevision: input.taskRevision,
-      assignmentReferenceId: input.assignmentReferenceId, authority: epoch(assignment), objective, trigger, policyRevision: policy.revision,
+      assignmentReferenceId: input.assignmentReferenceId, authority: epoch(assignment), objective, ...(roomOrigin ? { roomOrigin } : {}), trigger, policyRevision: policy.revision,
       policyVersion: policy.policyVersion, capabilities: SAFE_CAPABILITIES, status: "QUEUED", budget,
       usage: { elapsedMs: 0, tokens: 0, toolCalls: 0, attempts: 0 }, cancellationRequested: false, auditHeadHash: null, auditEventCount: 0, resultDisposition: "PENDING",
       resultSummary: null, blocker: null, nextEligibilityAt: null, createdAt: now, startedAt: null, updatedAt: now, completedAt: null };
-    const created = await this.records.createContinuation(record, audit(record, null, "CREATED", now, "Queued by authorized developer."));
-    if (created.kind !== "accepted") return { kind: "conflict", reason: "This agent already has a nonterminal continuation." };
+    const created = await this.records.createContinuation(record, audit(record, null, "CREATED", now, roomOrigin ? "Queued by authorized room work request." : "Queued by authorized developer."));
+    if (created.kind !== "accepted") {
+      const replay = roomOrigin ? await this.records.getContinuation(jobId) : undefined;
+      if (replay && replay.roomOrigin?.requestId === roomOrigin?.requestId) return { kind: "ok", value: replay };
+      return { kind: "conflict", reason: "This agent already has a nonterminal continuation." };
+    }
     this.changed(); this.scheduleRun(record.jobId); return { kind: "ok", value: created.value };
   }
 
@@ -279,6 +307,11 @@ export class ContinuationService {
     const result = await this.records.compareAndSetContinuation(current.jobRevision, next, audit(next, current.status, state === "WAITING_TOOL" ? "WAITING_TOOL" : "TOOL_RESUMED", now, next.blocker || "Tool work resumed."));
     if (result.kind === "accepted") this.changed(); return result.kind === "accepted";
   }
+}
+
+function roomContinuationJobId(requestId: string) {
+  const hash = createHash("sha256").update(`room-continuation-v1\0${requestId}`).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 function epoch(a: AssignmentRecord) { return { assignmentId: a.assignmentId, developerMemberId: a.developerMemberId, developerMemberConfigRevision: a.developerMemberConfigRevision, agent: a.agent, fencingToken: a.fencingToken, manifestRevision: a.manifestRevision, pinnedBaseSha: a.pinnedBaseSha }; }

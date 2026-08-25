@@ -36,7 +36,8 @@ import { ActiveGenerationTracker } from "./active-generations.js";
 import { registerTaskRoutes } from "./task-api.js";
 import { HumanSessions, joinHumanWithSession, sessionHuman } from "./human-session.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
-import { registerContinuationRoutes } from "./continuation-api.js";
+import { registerContinuationRoutes, roomContinuationRequestValidationError } from "./continuation-api.js";
+import type { ContinuationInitiationOutcome, RoomContinuationWorkRequest } from "../shared/protocol.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { HttpInvestigationExecutor, InvestigationService } from "./investigation-service.js";
 import { registerInvestigationRoutes } from "./investigation-api.js";
@@ -674,11 +675,21 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
+  const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
+  const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
+  if (workRequestError) return response.status(400).json({ error: workRequestError });
+  const initiate = async (messageId: string): Promise<ContinuationInitiationOutcome | undefined> => {
+    if (!workRequest) return undefined;
+    const result = await continuationService.createFromRoom({ ...workRequest, requestId: messageId, messageId, requestedBy: human.id });
+    return result.kind === "ok"
+      ? { outcome: "queued", jobId: result.value.jobId, status: result.value.status }
+      : { outcome: "rejected", reason: result.kind === "not_found" ? "Continuation authority was not found." : result.reason };
+  };
   const duplicate = store.snapshot().messages.find((message) =>
     message.humanId === human.id && message.clientMessageId === clientMessageId
   );
   if (duplicate) {
-    return response.status(200).json(messageMutationAcknowledgement({ inserted: false, message: duplicate }));
+    return response.status(200).json(messageMutationAcknowledgement({ inserted: false, message: duplicate }, await initiate(duplicate.id)));
   }
   let mentions;
   try {
@@ -687,8 +698,15 @@ app.post("/api/messages", async (request, response) => {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Message mentions are invalid." });
   }
   const accepted = await addHumanMessageOnce(store, human, text, clientMessageId, mentions);
-  if (!accepted.inserted) return response.status(200).json(messageMutationAcknowledgement(accepted));
+  const continuation = await initiate(accepted.message.id);
+  if (!accepted.inserted) return response.status(200).json(messageMutationAcknowledgement(accepted, continuation));
   roomActivity.interrupt();
+  if (continuation) {
+    const status = continuation.outcome === "queued"
+      ? `Continuation queued: ${continuation.jobId} (task ${workRequest!.taskId}).`
+      : `Continuation request rejected: ${continuation.reason}`;
+    await store.addMessage("system", status, "status");
+  }
   broadcast();
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
@@ -699,7 +717,7 @@ app.post("/api/messages", async (request, response) => {
       latestHumanInvitesWholeRoom(conversationState),
     );
   }));
-  return response.status(202).json(messageMutationAcknowledgement(accepted));
+  return response.status(202).json(messageMutationAcknowledgement(accepted, continuation));
 });
 
 app.get("/api/developer/room", (request, response) => {

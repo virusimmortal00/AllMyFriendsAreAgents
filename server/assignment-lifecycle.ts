@@ -175,6 +175,13 @@ export class AssignmentLifecycleService {
     return { kind: "ok", assignment, workspace };
   }
 
+  /** Resolves room initiation to the assignment's server-owned agent identity. */
+  async authorityForRoomContinuation(assignmentId: string) {
+    const assignment = (await this.records.getAssignment(assignmentId));
+    if (!assignment) return { kind: "revoked" as const, reason: "Assignment is missing." };
+    return this.authorityForContinuation(assignmentId, assignment.agent);
+  }
+
   /** Cleanup is intentionally conservative: it only marks merged clean work complete. */
   async cleanup(): Promise<readonly AssignmentRecord[]> {
     const assignments = await this.reconcile();
