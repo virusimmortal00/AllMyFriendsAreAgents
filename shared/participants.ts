@@ -104,15 +104,6 @@ export const AGENT_PROFILES = {
     conversationalName: "OpenCode",
     supportsProjectWrites: true,
   },
-  "goose-configured": {
-    id: "goose-configured",
-    provider: "goose",
-    displayName: "Goose",
-    modelId: "configured",
-    modelLabel: "Configured model",
-    conversationalName: "Goose",
-    supportsProjectWrites: true,
-  },
 } as const;
 
 export type AgentId = keyof typeof AGENT_PROFILES;
@@ -139,7 +130,6 @@ export const SUPPORTED_AGENT_IDS = [
   "cursor-gemini-flash",
   "cursor-glm",
   "opencode-configured",
-  "goose-configured",
 ] as const satisfies readonly AgentId[];
 
 export type ActiveAgentId = (typeof SUPPORTED_AGENT_IDS)[number];

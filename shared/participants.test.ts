@@ -13,7 +13,7 @@ describe("agent participant registry", () => {
       "glm-5.2-high",
     ]);
     expect(new Set(AGENT_IDS.map((agent) => AGENT_PROFILES[agent].conversationalName)).size).toBe(6);
-    expect(SUPPORTED_AGENT_IDS).toEqual(expect.arrayContaining(["claude-opus", "cursor-gemini", "opencode-configured", "goose-configured"]));
+    expect(SUPPORTED_AGENT_IDS).toEqual(expect.arrayContaining(["claude-opus", "cursor-gemini", "opencode-configured"]));
   });
 
   it("uses model-backed screen-name tags and maps legacy participants safely", () => {
@@ -24,7 +24,6 @@ describe("agent participant registry", () => {
     expect(agentScreenName("cursor-gemini-flash")).toBe("Cursor [Gemini 3.7 Flash]");
     expect(agentScreenName("cursor-glm")).toBe("Cursor [GLM 5.2]");
     expect(agentScreenName("opencode-configured")).toBe("OpenCode [Configured model]");
-    expect(agentScreenName("goose-configured")).toBe("Goose [Configured model]");
     expect(isActiveAgentId("codex-terra")).toBe(false);
     expect(isActiveAgentId("claude-opus")).toBe(true);
     expect(isActiveAgentId("codex-luna")).toBe(false);

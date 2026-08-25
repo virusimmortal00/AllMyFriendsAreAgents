@@ -20,7 +20,6 @@ const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
 const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
-const GOOSE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GOOSE_COMMAND?.trim() || "goose";
 
 interface RunResult {
   text: string;
@@ -401,17 +400,14 @@ function friendlyProcessError(command: string, code: number | null, output: stri
   if (/OAuth session expired|Failed to authenticate|Not logged in|Not authenticated/i.test(output)) {
     const cursor = command === CURSOR_COMMAND;
     const opencode = command === OPENCODE_COMMAND;
-    const goose = command === GOOSE_COMMAND;
     const loginCommand = command === "claude" ? "claude auth login"
       : cursor ? `${CURSOR_COMMAND} login`
         : opencode ? `${OPENCODE_COMMAND} auth login`
-          : goose ? `${GOOSE_COMMAND} configure`
-            : "codex login";
+          : "codex login";
     const providerName = command === "claude" ? "Claude Code"
       : cursor ? "Cursor Agent"
         : opencode ? "OpenCode"
-          : goose ? "Goose"
-            : "Codex";
+          : "Codex";
     return `${providerName} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
   }
   const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
@@ -590,31 +586,14 @@ function parseOpenCodeOutput(stdout: string) {
   return { sessionId, text: text.join("") };
 }
 
-function gooseArgs(sessionId: string, resume = false) {
-  return [
-    "run",
-    "--instructions",
-    "-",
-    "--quiet",
-    "--name",
-    sessionId,
-    ...(resume ? ["--resume"] : []),
-  ];
-}
-
-function harnessEnvironment(environment: NodeJS.ProcessEnv, provider: "opencode" | "goose", permission: "read-only" | "writable") {
-  if (provider === "opencode") return permission === "read-only" ? {
+function harnessEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable") {
+  return permission === "read-only" ? {
     ...environment,
     OPENCODE_PERMISSION: JSON.stringify({
       "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
       webfetch: "allow", websearch: "allow", lsp: "allow",
     }),
   } : environment;
-  return {
-    ...environment,
-    GOOSE_MODE: permission === "writable" ? "auto" : "chat",
-    GOOSE_DISABLE_SESSION_NAMING: "true",
-  };
 }
 
 export async function runAgent(
@@ -750,7 +729,7 @@ export async function runAgent(
       const invoke = async (sessionId?: string) => {
         const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId));
         return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-          environment: harnessEnvironment(invocation.env, "opencode", permission),
+          environment: harnessEnvironment(invocation.env, permission),
           trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
           timeoutMs: runTimeout(permission, includeDiff),
         });
@@ -779,41 +758,6 @@ export async function runAgent(
         cliStdout: result.stdout, cliStderr: result.stderr,
       });
       return { sessionId, text: parsed.text, generationId, durationMs, permission };
-    }
-
-    if (profile.provider === "goose") {
-      let sessionId = existing?.id || randomUUID();
-      const invoke = async (resume: boolean) => {
-        const invocation = await execution(GOOSE_COMMAND, gooseArgs(sessionId, resume));
-        return runProcess(invocation.command, invocation.args, invocation.cwd, {
-          environment: harnessEnvironment(invocation.env, "goose", permission),
-          trustedEnvironment: secureWriterRequested, input: prompt, signal, supervisor, scope: processScopes,
-          timeoutMs: runTimeout(permission, includeDiff),
-        });
-      };
-      let result: ProcessResult;
-      try {
-        result = await invoke(Boolean(existing));
-      } catch (error) {
-        if (!existing || !isMissingHarnessSessionError(error)) throw error;
-        await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
-        await journal?.append({
-          type: "generation.retry", generationId, agent,
-          reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
-          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
-        });
-        sessionId = randomUUID();
-        result = await invoke(false);
-      }
-      const text = result.stdout.trim();
-      if (!text) throw new Error("Goose returned no room message.");
-      const durationMs = Date.now() - startedAt;
-      await journal?.append({
-        type: "generation.completed", generationId, agent, durationMs, sessionId,
-        rawResponse: text, responseCharacters: text.length,
-        cliStdout: result.stdout, cliStderr: result.stderr,
-      });
-      return { sessionId, text, generationId, durationMs, permission };
     }
 
     let sessionId = existing?.id || randomUUID();
@@ -921,8 +865,8 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
       return new Set<string>();
     }
   };
-  const [codex, claude, opencode, goose, availableCursorModels] = await Promise.all([
-    check("codex"), check("claude"), check(OPENCODE_COMMAND), check(GOOSE_COMMAND), cursorModels(),
+  const [codex, claude, opencode, availableCursorModels] = await Promise.all([
+    check("codex"), check("claude"), check(OPENCODE_COMMAND), cursorModels(),
   ]);
   return Object.fromEntries(agents.map((agent) => {
     const profile = AGENT_PROFILES[agent];
@@ -932,11 +876,9 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
         ? claude
         : profile.provider === "cursor"
           ? availableCursorModels.has(profile.modelId)
-          : profile.provider === "opencode"
-            ? opencode
-            : goose;
+          : opencode;
     return [agent, available];
   })) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isMissingHarnessSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, harnessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, opencodeArgs, gooseArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isMissingHarnessSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, harnessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, opencodeArgs, runProcess };
