@@ -152,11 +152,21 @@ export async function sendMessage(text: string, clientMessageId: string, mention
 }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
-  const clientMessageId = `message_${crypto.randomUUID()}`;
-  return sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], {
-    taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective,
-  });
+  const continuation = { taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective };
+  const key = JSON.stringify(continuation);
+  const clientMessageId = pendingContinuationMessageIds.get(key) || `message_${crypto.randomUUID()}`;
+  pendingContinuationMessageIds.set(key, clientMessageId);
+  try {
+    const acknowledgement = await sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], continuation);
+    if (pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    return acknowledgement;
+  } catch (error) {
+    if (!(error instanceof ApiRequestError && error.outcomeUnknown) && pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    throw error;
+  }
 }
+
+const pendingContinuationMessageIds = new Map<string, string>();
 
 function isMessageAcknowledgement(value: unknown): value is MessageMutationAcknowledgement {
   if (!value || typeof value !== "object") return false;

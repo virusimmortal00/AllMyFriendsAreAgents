@@ -36,7 +36,7 @@ import { ActiveGenerationTracker } from "./active-generations.js";
 import { registerTaskRoutes } from "./task-api.js";
 import { HumanSessions, joinHumanWithSession, sessionHuman } from "./human-session.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
-import { registerContinuationRoutes, roomContinuationRequestValidationError } from "./continuation-api.js";
+import { registerContinuationRoutes, roomContinuationRequestValidationError, roomContinuationRequestsMatch } from "./continuation-api.js";
 import type { ContinuationInitiationOutcome, RoomContinuationWorkRequest } from "../shared/protocol.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { HttpInvestigationExecutor, InvestigationService } from "./investigation-service.js";
@@ -678,18 +678,19 @@ app.post("/api/messages", async (request, response) => {
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
-  const initiate = async (messageId: string): Promise<ContinuationInitiationOutcome | undefined> => {
-    if (!workRequest) return undefined;
-    const result = await continuationService.createFromRoom({ ...workRequest, requestId: messageId, messageId, requestedBy: human.id });
+  const initiate = async (messageId: string, persistedRequest: RoomContinuationWorkRequest | undefined): Promise<ContinuationInitiationOutcome | undefined> => {
+    if (!persistedRequest) return undefined;
+    const result = await continuationService.createFromRoom({ ...persistedRequest, requestId: messageId, messageId, requestedBy: human.id });
     return result.kind === "ok"
-      ? { outcome: "queued", jobId: result.value.jobId, status: result.value.status }
+      ? { outcome: result.value.status === "QUEUED" ? "queued" : "observed", jobId: result.value.jobId, status: result.value.status }
       : { outcome: "rejected", reason: result.kind === "not_found" ? "Continuation authority was not found." : result.reason };
   };
   const duplicate = store.snapshot().messages.find((message) =>
     message.humanId === human.id && message.clientMessageId === clientMessageId
   );
   if (duplicate) {
-    return response.status(200).json(messageMutationAcknowledgement({ inserted: false, message: duplicate }, await initiate(duplicate.id)));
+    if (!roomContinuationRequestsMatch(duplicate.continuationRequest, workRequest)) return response.status(409).json({ error: "This client message ID is already bound to a different room operation." });
+    return response.status(200).json(messageMutationAcknowledgement({ inserted: false, message: duplicate }, await initiate(duplicate.id, duplicate.continuationRequest)));
   }
   let mentions;
   try {
@@ -697,14 +698,15 @@ app.post("/api/messages", async (request, response) => {
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : "Message mentions are invalid." });
   }
-  const accepted = await addHumanMessageOnce(store, human, text, clientMessageId, mentions);
-  const continuation = await initiate(accepted.message.id);
+  const accepted = await addHumanMessageOnce(store, human, text, clientMessageId, mentions, workRequest);
+  if (!roomContinuationRequestsMatch(accepted.message.continuationRequest, workRequest)) return response.status(409).json({ error: "This client message ID is already bound to a different room operation." });
+  const continuation = await initiate(accepted.message.id, accepted.message.continuationRequest);
   if (!accepted.inserted) return response.status(200).json(messageMutationAcknowledgement(accepted, continuation));
   roomActivity.interrupt();
   if (continuation) {
-    const status = continuation.outcome === "queued"
-      ? `Continuation queued: ${continuation.jobId} (task ${workRequest!.taskId}).`
-      : `Continuation request rejected: ${continuation.reason}`;
+    const status = continuation.outcome === "rejected"
+      ? `Continuation request rejected: ${continuation.reason}`
+      : `Continuation ${continuation.status.toLowerCase()}: ${continuation.jobId} (task ${accepted.message.continuationRequest!.taskId}).`;
     await store.addMessage("system", status, "status");
   }
   broadcast();

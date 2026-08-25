@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { describe, expect, it, vi } from "vitest";
-import { continuationCreateValidationError, projectContinuationAudit, projectContinuationJob, registerContinuationRoutes, roomContinuationRequestValidationError } from "./continuation-api.js";
+import { continuationCreateValidationError, projectContinuationAudit, projectContinuationJob, registerContinuationRoutes, roomContinuationRequestValidationError, roomContinuationRequestsMatch } from "./continuation-api.js";
 import { CONTINUATION_POLICY_VERSION, projectPathHash, type ContinuationAuditEvent, type ContinuationRecord } from "./continuation-record.js";
 import type { ContinuationService } from "./continuation-service.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
@@ -25,6 +25,9 @@ describe("continuation public projection", () => {
     expect(roomContinuationRequestValidationError({ ...valid, taskRevision: 2.5 })).toMatch(/exact task revision/);
     expect(roomContinuationRequestValidationError({ ...valid, owner: "codex-sol" })).toMatch(/exact task revision/);
     expect(roomContinuationRequestValidationError({ ...valid, budget: { tokenLimit: -1 } })).toMatch(/exact task revision/);
+    expect(roomContinuationRequestsMatch(valid, structuredClone(valid))).toBe(true);
+    expect(roomContinuationRequestsMatch(valid, { ...valid, objective: "substituted" })).toBe(false);
+    expect(roomContinuationRequestsMatch(undefined, valid)).toBe(false);
   });
   it("returns 400 for malformed developer create bodies without dispatching the service", async () => {
     const create = vi.fn(); const app = express(); app.use(express.json());

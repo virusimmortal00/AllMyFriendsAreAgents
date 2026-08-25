@@ -71,8 +71,9 @@ export function Tasks({ refreshKey = 0 }: { refreshKey?: number }) {
     if (!detail) return; setBusy(true); setError(""); setNotice("");
     try {
       const acknowledgement = await sendContinuationWorkRequest(detail.task, assignmentReferenceId, objective);
-      if (acknowledgement.continuation?.outcome === "queued") setNotice(`Continuation queued: ${acknowledgement.continuation.jobId}`);
-      else setError(acknowledgement.continuation?.reason || "The room did not return a continuation initiation outcome.");
+      if (!acknowledgement.continuation) setError("The room did not return a continuation initiation outcome.");
+      else if (acknowledgement.continuation.outcome === "rejected") setError(acknowledgement.continuation.reason);
+      else setNotice(`Continuation ${acknowledgement.continuation.status.toLowerCase()}: ${acknowledgement.continuation.jobId}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }

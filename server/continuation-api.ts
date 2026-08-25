@@ -24,6 +24,12 @@ export function roomContinuationRequestValidationError(body: unknown) {
     || value.objective.length > 4_000 || !validBudgetShape(value.budget)) return "A bounded objective with exact task revision and assignment reference is required.";
   return null;
 }
+export function roomContinuationRequestsMatch(left: RoomContinuationWorkRequest | undefined, right: RoomContinuationWorkRequest | undefined) {
+  if (!left || !right) return left === right;
+  const budgetKeys = ["timeMs", "tokenLimit", "toolCallLimit", "retryLimit"] as const;
+  return left.taskId === right.taskId && left.taskRevision === right.taskRevision && left.assignmentReferenceId === right.assignmentReferenceId
+    && left.objective === right.objective && budgetKeys.every((key) => left.budget?.[key] === right.budget?.[key]);
+}
 function send(response: express.Response, result: { kind: string; [key: string]: unknown }) {
   if (result.kind === "ok") return response.json(result.value);
   if (result.kind === "not_found") return response.status(404).json({ error: "Continuation not found." });

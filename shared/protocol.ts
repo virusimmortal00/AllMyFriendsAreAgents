@@ -53,4 +53,5 @@ export interface RoomContinuationWorkRequest {
 
 export type ContinuationInitiationOutcome =
   | { outcome: "queued"; jobId: string; status: string }
+  | { outcome: "observed"; jobId: string; status: string }
   | { outcome: "rejected"; reason: string };

@@ -1,7 +1,7 @@
 import type { HumanPresence } from "./types.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import type { MessageMention } from "../shared/mentions.js";
-import type { ContinuationInitiationOutcome, MessageMutationAcknowledgement } from "../shared/protocol.js";
+import type { ContinuationInitiationOutcome, MessageMutationAcknowledgement, RoomContinuationWorkRequest } from "../shared/protocol.js";
 
 export async function addHumanMessageOnce(
   store: RoomRepository,
@@ -9,6 +9,7 @@ export async function addHumanMessageOnce(
   text: string,
   clientMessageId: string,
   mentions: MessageMention[] = [],
+  continuationRequest?: RoomContinuationWorkRequest,
 ) {
   const duplicate = store.snapshot().messages.find((message) =>
     message.humanId === human.id && message.clientMessageId === clientMessageId
@@ -19,6 +20,7 @@ export async function addHumanMessageOnce(
     ...human,
     clientMessageId,
     mentions,
+    continuationRequest,
   });
   return { inserted: true as const, message };
 }

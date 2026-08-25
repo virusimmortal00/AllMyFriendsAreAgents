@@ -39,12 +39,13 @@ describe("SQLite migrations", () => {
         "continuation_inbox",
         "continuation_job_events",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 13 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 14 });
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(messageColumns).toContain("client_message_id");
       expect(messageColumns).toContain("mentions_json");
+      expect(messageColumns).toContain("continuation_request_json");
       expect((database.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("roster_revision");
     } finally {
       database.close();
