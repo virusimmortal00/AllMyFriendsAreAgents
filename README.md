@@ -229,6 +229,8 @@ The Tasks workspace keeps revisioned room-scoped coordination records. A task as
 
 Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
 
+Background investigations are a separate experimental lane and are disabled by default. An agent may request one after a credible room signal, but the server binds the request to current evidence, permits only local read-only inspection, requires a fresh provider session, and enforces one nonterminal lane per agent plus a global executor cap. Room activity can still cancel stale foreground chat without cancelling the investigation. Tool-boundary checkpoints, lifecycle events, usage, and summaries are persisted in `investigations.json`; restart recovery can resume only from a validated checkpoint. Results wait in the Investigations inbox and are injected into a later foreground turn as bounded untrusted context—never posted automatically and never merged with the raw investigation session. The shared emergency stop, project identity, policy revisions, and shutdown all fail closed.
+
 ## Build with us
 
 Run the same checks before opening a pull request:
