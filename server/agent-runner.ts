@@ -499,6 +499,14 @@ function codexArgs(permission: "read-only" | "writable", projectPath: string, mo
   ];
 }
 
+function confinedCodexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
+  const args = codexArgs(permission, projectPath, model, sessionId);
+  const sandboxIndex = args.indexOf("--sandbox");
+  if (sandboxIndex >= 0) args[sandboxIndex + 1] = "danger-full-access";
+  const optionIndex = sessionId ? 2 : 1;
+  return [...args.slice(0, optionIndex), "--skip-git-repo-check", ...args.slice(optionIndex)];
+}
+
 function cursorArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
   return [
     "-p",
@@ -585,7 +593,10 @@ export async function runAgent(
       let resumedSessionId = existing?.id;
       let result: ProcessResult;
       try {
-        const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId, resumedSessionId));
+        const args = secureWriterRequested
+          ? confinedCodexArgs(permission, projectPath, profile.modelId, resumedSessionId)
+          : codexArgs(permission, projectPath, profile.modelId, resumedSessionId);
+        const invocation = await execution("codex", args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
           input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
@@ -601,7 +612,10 @@ export async function runAgent(
           ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
         });
         resumedSessionId = undefined;
-        const invocation = await execution("codex", codexArgs(permission, projectPath, profile.modelId));
+        const args = secureWriterRequested
+          ? confinedCodexArgs(permission, projectPath, profile.modelId)
+          : codexArgs(permission, projectPath, profile.modelId);
+        const invocation = await execution("codex", args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
           input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
@@ -771,4 +785,4 @@ export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>>
   })) as Record<ActiveAgentId, boolean>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, cursorArgs, runProcess };
+export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, runProcess };

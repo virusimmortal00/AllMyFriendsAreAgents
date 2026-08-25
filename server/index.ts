@@ -1,5 +1,7 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
@@ -159,6 +161,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const generationCancellation = roomActivity.abortSignal(activityRevision);
   let result;
   let gitBrokerServer: AssignmentGitBrokerServer | undefined;
+  let gitBrokerRoot: string | undefined;
   try {
     const assignment = includeDiff ? undefined : await assignmentLifecycle.assignmentForAgent(agent);
     const continuationInbox = assignment ? await continuationService.contextForAgent(agent, { assignmentId: assignment.assignmentId, characterBudget: 3_000, limit: 3 }) : [];
@@ -166,11 +169,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     let writerGrant: ConfinedWriterGrant | undefined;
     if (assignment && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION) {
       const sessionId = randomUUID();
-      const boundaryRoot = path.join(storageConfiguration.dataDirectory, "git-brokers", assignment.assignmentId, sessionId);
+      const boundaryRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-git-"));
+      gitBrokerRoot = boundaryRoot;
       const socketPath = path.join(boundaryRoot, "broker.sock");
       const broker = new AssignmentGitBroker(
         assignment.assignmentId, store, store, developerTeam, before.settings.projectPath, assignmentWorktreesDirectory,
-        path.join(boundaryRoot, "audit.jsonl"),
+        path.join(storageConfiguration.dataDirectory, "git-broker-audit", assignment.assignmentId, `${sessionId}.jsonl`),
       );
       gitBrokerServer = await new AssignmentGitBrokerServer(broker, assignment, socketPath, path.join(boundaryRoot, "bin")).start();
       writerGrant = {
@@ -203,6 +207,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     return { failed: true };
   } finally {
     await gitBrokerServer?.close();
+    if (gitBrokerRoot) await rm(gitBrokerRoot, { recursive: true, force: true });
     generationCancellation.dispose();
   }
   if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();

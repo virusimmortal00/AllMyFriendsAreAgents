@@ -26,6 +26,12 @@ describe("Codex JSONL parsing", () => {
       "exec", "resume", "--model", "gpt-5.6-terra", "terra-session", "-", "--json",
     ]);
     expect(__testing.codexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toContain("workspace-write");
+    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol")).toEqual([
+      "exec", "--skip-git-repo-check", "--json", "--model", "gpt-5.6-sol", "--sandbox", "danger-full-access", "-C", "/tmp/project", "-",
+    ]);
+    expect(__testing.confinedCodexArgs("writable", "/tmp/project", "gpt-5.6-sol", "sol-session")).toEqual([
+      "exec", "resume", "--skip-git-repo-check", "--model", "gpt-5.6-sol", "sol-session", "-", "--json",
+    ]);
   });
 
   it("pins Cursor sessions to a model and maps room permissions to CLI modes", () => {
