@@ -20,7 +20,10 @@ export interface TurnResult {
   conversationState?: ConversationState;
   cancelled?: boolean;
   failed?: boolean;
+  investigationRequest?: InvestigationRequest;
 }
+
+export interface InvestigationRequest { objective: string; trigger: string; evidenceRefs: Array<{ kind: "project_artifact" | "observability"; ref: string; label?: string }> }
 
 export type ConversationState = "settled" | "open" | "blocked";
 
@@ -32,6 +35,7 @@ export interface ConversationRunResult {
 const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
 const CONVERSATION_STATE = /^\s*CONVERSATION_STATE:\s*(SETTLED|OPEN|BLOCKED)\s*$/im;
+const INVESTIGATION_REQUEST = /^\s*INVESTIGATION_REQUEST:\s*(\{[^\n]*\})\s*$/im;
 const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
 const WHOLE_ROOM_EXCLUSION = /\b(?:not everyone|not everybody|no need for (?:everyone|everybody|all of you)|(?:everyone|everybody) (?:doesn['’]?t|does not|needn['’]?t|need not) need to)\b/i;
 
@@ -119,7 +123,8 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3) {
   const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
-  if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false };
+  const investigationRequest = parseInvestigationRequest(text);
+  if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, ...(investigationRequest ? { investigationRequest } : {}) };
   const visibleMessages = visibleAgentChatText(text)
     .split(NEXT_MESSAGE)
     .map(stripUnsupportedEmoji)
@@ -141,7 +146,18 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     continuationWorthy: visibleMessages.length > 0 && (mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText)),
     ...(declaredState ? { conversationState: declaredState } : {}),
     ...(styleUpdate ? { styleUpdate } : {}),
+    ...(investigationRequest ? { investigationRequest } : {}),
   };
+}
+
+function parseInvestigationRequest(text: string): InvestigationRequest | undefined {
+  const raw = INVESTIGATION_REQUEST.exec(text)?.[1]; if (!raw) return undefined;
+  try {
+    const value = JSON.parse(raw) as Partial<InvestigationRequest>;
+    if (typeof value.objective !== "string" || !value.objective.trim() || value.objective.length > 4_000 || typeof value.trigger !== "string" || !value.trigger.trim() || value.trigger.length > 1_000) return undefined;
+    const evidenceRefs = Array.isArray(value.evidenceRefs) ? value.evidenceRefs.filter((item): item is InvestigationRequest["evidenceRefs"][number] => Boolean(item && (item.kind === "project_artifact" || item.kind === "observability") && typeof item.ref === "string" && item.ref.length <= 1_000 && (item.label === undefined || typeof item.label === "string" && item.label.length <= 500))).slice(0, 16) : [];
+    return { objective: value.objective.trim(), trigger: value.trigger.trim(), evidenceRefs };
+  } catch { return undefined; }
 }
 
 function followUpInstruction(sourceAgent: AgentId, directlyMentioned: boolean) {

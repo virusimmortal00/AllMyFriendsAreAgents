@@ -45,6 +45,13 @@ describe("agent turn parsing", () => {
     });
   });
 
+  it("keeps a bounded investigation request private and rejects malformed requests", () => {
+    expect(parseAgentTurn("codex-sol", "I saw an identity mismatch.\n\nINVESTIGATION_REQUEST: {\"objective\":\"Corroborate the identity mapping\",\"trigger\":\"Two labels mapped to one participant\",\"evidenceRefs\":[{\"kind\":\"project_artifact\",\"ref\":\"server/types.ts\"}]}" )).toMatchObject({
+      visibleMessages: ["I saw an identity mismatch."], investigationRequest: { objective: "Corroborate the identity mapping", trigger: "Two labels mapped to one participant", evidenceRefs: [{ kind: "project_artifact", ref: "server/types.ts" }] },
+    });
+    expect(parseAgentTurn("codex-sol", "Normal reply.\nINVESTIGATION_REQUEST: {not-json}")).not.toHaveProperty("investigationRequest");
+  });
+
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude-sonnet", "NO_RESPONSE_NEEDED")).toEqual({
       visibleMessages: [],
