@@ -150,7 +150,7 @@ await continuationService.initialize();
 
 app.use(express.json({ limit: "64kb" }));
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
-registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanTaskSessions });
+registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
