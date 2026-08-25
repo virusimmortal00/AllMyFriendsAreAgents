@@ -10,9 +10,9 @@ import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { DeveloperTeamRegistry, hashToken, type DeveloperTeamMemberRevision } from "./developer-team.js";
 import { AssignmentGitBroker, claimsFor, type AssignmentGitClaims, type AssignmentGitRequest } from "./git-security-boundary.js";
-import { AssignmentGitBrokerServer } from "./git-broker-server.js";
+import { AssignmentGitBrokerServer, parseGitArguments } from "./git-broker-server.js";
 import { RoomStore } from "./room-store.js";
-import { confinedWriterInvocation, resolveGitExecutablePath, verifyWriterConfinement, WRITER_BOUNDARY_REVISION, type ConfinedWriterGrant } from "./writer-confinement.js";
+import { confinedWriterInvocation, resolveGitExecutablePath, resolveGitExecutablePaths, verifyWriterConfinement, WRITER_BOUNDARY_REVISION, type ConfinedWriterGrant } from "./writer-confinement.js";
 
 const exec = promisify(execFile);
 const directories: string[] = [];
@@ -183,6 +183,23 @@ describe("assignment-scoped Git broker", () => {
       new Promise((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
     ])).resolves.toBe("closed");
   });
+
+  it("serializes connection claims and rejects malformed add paths before broker execution", async () => {
+    const { state, assignment, broker } = await fixture();
+    const server = await new AssignmentGitBrokerServer(broker, assignment, path.join(state, "serialized.sock"), path.join(state, "serialized-bin")).start();
+    brokerServers.push(server);
+    await writeFile(path.join(assignment.workspacePath, "serialized.txt"), "serialized\n");
+    const encode = (args: string[]) => `${JSON.stringify({ token: server.token, args })}\n`;
+    expect(JSON.parse(await rawBrokerRequest(server.socketPath, encode(["add", "--", "serialized.txt"])))).toMatchObject({ kind: "ok" });
+    const commit = rawBrokerRequest(server.socketPath, encode(["commit", "-m", "serialized server commit"]));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const status = rawBrokerRequest(server.socketPath, encode(["status", "--short"]));
+    await expect(Promise.all([commit, status]).then((outputs) => outputs.map((output) => JSON.parse(output).kind))).resolves.toEqual(["ok", "ok"]);
+    const claims = claimsFor(assignment);
+    for (const args of [["add"], ["add", "--", "../escape"], ["add", "/tmp/escape"], ["add", "--all"]]) {
+      expect(() => parseGitArguments(claims, args)).toThrow("outside the assignment broker allowlist");
+    }
+  });
 });
 
 function rawBrokerRequest(socketPath: string, payload: string) {
@@ -245,6 +262,7 @@ describe("confined writer startup", () => {
     expect(invocation.args.join(" ")).toContain(JSON.stringify(grant.gitCommonDirectory));
     expect(invocation.args.join(" ")).toContain(JSON.stringify(await realpath(alternateGit)));
     expect(invocation.args.join(" ")).toContain(JSON.stringify(await realpath(grant.gitExecutablePath)));
+    expect(JSON.parse(await readFile(path.join(grant.gitShimDirectory, "package.json"), "utf8"))).toEqual({ type: "commonjs" });
     expect(invocation.args.join(" ")).toContain(`deny file-read* file-write* (literal ${JSON.stringify(path.join(grant.claims.workspacePath, ".git"))})`);
     expect(invocation.cwd).toBe(grant.claims.workspacePath);
     expect(invocation.env).not.toHaveProperty("GIT_DIR");
@@ -287,6 +305,14 @@ describe("confined writer startup", () => {
     expect(confinement.backend).toBe("bwrap");
     expect(confinement.prefix).toEqual(expect.arrayContaining(["--ro-bind", "/dev/null", path.join(grant.claims.workspacePath, ".git")]));
     expect(confinement.prefix).toEqual(expect.arrayContaining(["--ro-bind", "/dev/null", await realpath(grant.gitExecutablePath)]));
+  });
+
+  it("uses the injected platform when resolving Git executable names", async () => {
+    const { state } = await grantFixture();
+    const windowsBin = path.join(state, "windows-bin"); await mkdir(windowsBin);
+    const windowsGit = path.join(windowsBin, "git.exe"); await writeFile(windowsGit, "stub", { mode: 0o700 }); await chmod(windowsGit, 0o700);
+    expect(await resolveGitExecutablePaths({ PATH: windowsBin }, "win32")).toEqual([await realpath(windowsGit)]);
+    expect(await resolveGitExecutablePaths({ PATH: windowsBin }, "linux")).toEqual([]);
   });
 
   it.skipIf(process.platform !== "linux")("enforces the Linux boundary against Git-pointer replacement and live-checkout writes", async () => {

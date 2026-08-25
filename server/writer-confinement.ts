@@ -35,6 +35,9 @@ export async function verifyWriterConfinement(
   if (environment.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY !== WRITER_BOUNDARY_ACTIVATION) {
     throw new Error("Verified Git security boundary is not explicitly active");
   }
+  if (platform !== "darwin" && platform !== "linux") {
+    throw new Error(`No supported writer confinement backend for ${platform}`);
+  }
   if (grant.revision !== WRITER_BOUNDARY_REVISION || !path.isAbsolute(grant.brokerSocketPath)
     || !path.isAbsolute(grant.brokerRootPath) || !path.isAbsolute(grant.gitShimDirectory)
     || !path.isAbsolute(grant.gitExecutablePath) || grant.brokerToken.length < 32
@@ -43,7 +46,7 @@ export async function verifyWriterConfinement(
     realpath(grant.claims.workspacePath), realpath(grant.repositoryPath), realpath(grant.gitCommonDirectory),
     realpath(grant.gitExecutablePath),
   ]);
-  const gitExecutables = await resolveGitExecutablePaths(environment);
+  const gitExecutables = await resolveGitExecutablePaths(environment, platform);
   if (!gitExecutables.includes(gitExecutable)) throw new Error("Git executable identity changed outside the verified PATH");
   if (workspace !== grant.claims.workspacePath || workspace === repository) throw new Error("Assignment ownership cannot be established");
   const [brokerRoot, socketCanonical, shimCanonical] = await Promise.all([
@@ -55,7 +58,7 @@ export async function verifyWriterConfinement(
     || within(workspace, brokerRoot) || brokerRoot === workspace) throw new Error("Git broker paths are not canonically contained");
   const socketPath = grant.brokerSocketPath;
   const shimDirectory = grant.gitShimDirectory;
-  const shimPath = path.join(shimDirectory, process.platform === "win32" ? "git.cmd" : "git");
+  const shimPath = path.join(shimDirectory, "git");
   const [rootInfo, socketInfo, shimInfo, shimSource] = await Promise.all([
     lstat(grant.brokerRootPath), lstat(socketPath), lstat(shimPath), readFile(shimPath),
   ]).catch(() => { throw new Error("Git broker or shim is unavailable"); });
@@ -114,16 +117,16 @@ export async function confinedWriterInvocation(
   };
 }
 
-export async function resolveGitExecutablePath(environment: NodeJS.ProcessEnv = process.env) {
-  const candidates = await resolveGitExecutablePaths(environment);
+export async function resolveGitExecutablePath(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform) {
+  const candidates = await resolveGitExecutablePaths(environment, platform);
   if (candidates[0]) return candidates[0];
   throw new Error("Git executable identity cannot be established");
 }
 
-export async function resolveGitExecutablePaths(environment: NodeJS.ProcessEnv = process.env) {
+export async function resolveGitExecutablePaths(environment: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform) {
   const candidates: string[] = [];
   for (const directory of (environment.PATH || "/usr/bin:/bin").split(path.delimiter)) {
-    const candidate = path.join(directory, process.platform === "win32" ? "git.exe" : "git");
+    const candidate = path.join(directory, platform === "win32" ? "git.exe" : "git");
     if (!await access(candidate, constants.X_OK).then(() => true).catch(() => false)) continue;
     const canonical = await realpath(candidate);
     if (!candidates.includes(canonical)) candidates.push(canonical);

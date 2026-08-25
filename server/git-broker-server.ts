@@ -10,6 +10,7 @@ interface ShimRequest { readonly token?: string; readonly args?: readonly string
 export class AssignmentGitBrokerServer {
   private server?: Server;
   private readonly sockets = new Set<Socket>();
+  private requestQueue: Promise<void> = Promise.resolve();
   private claims: AssignmentGitClaims;
   readonly token = randomBytes(32).toString("hex");
   shimDigest = "";
@@ -42,6 +43,7 @@ export class AssignmentGitBrokerServer {
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await this.requestQueue;
     await rm(this.socketPath, { force: true });
   }
 
@@ -57,12 +59,14 @@ export class AssignmentGitBrokerServer {
       input += chunk;
       if (input.length > 64 * 1024) {
         dispatched = true;
+        socket.setTimeout(0);
         void this.rejectIngress(socket, "oversized", "Broker request exceeded limit");
         return;
       }
       const newline = input.indexOf("\n");
       if (newline < 0) return;
       dispatched = true;
+      socket.setTimeout(0);
       const line = input.slice(0, newline);
       input = "";
       void this.respond(socket, line);
@@ -70,7 +74,13 @@ export class AssignmentGitBrokerServer {
     socket.on("error", () => undefined);
   }
 
-  private async respond(socket: Socket, line: string) {
+  private respond(socket: Socket, line: string) {
+    const operation = this.requestQueue.then(() => this.respondLocked(socket, line));
+    this.requestQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async respondLocked(socket: Socket, line: string) {
     try {
       const parsed = JSON.parse(line) as ShimRequest;
       if (parsed.token !== this.token) {
@@ -110,7 +120,7 @@ export class AssignmentGitBrokerServer {
   }
 
   private async writeShim() {
-    const shimPath = path.join(this.shimDirectory, process.platform === "win32" ? "git.cmd" : "git");
+    const shimPath = path.join(this.shimDirectory, "git");
     const source = `#!/usr/bin/env node
 const net = require("node:net");
 const socketPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_SOCKET;
@@ -126,6 +136,7 @@ socket.on("error", error => { console.error("Assignment Git broker unavailable: 
 `;
     await writeFile(shimPath, source, { mode: 0o700 });
     await chmod(shimPath, 0o700);
+    await writeFile(path.join(this.shimDirectory, "package.json"), `${JSON.stringify({ type: "commonjs" })}\n`, { mode: 0o600 });
     this.shimDigest = createHash("sha256").update(source).digest("hex");
   }
 }
@@ -142,10 +153,16 @@ export function parseGitArguments(claims: AssignmentGitClaims, args: readonly st
   }
   if (args[0] === "add") {
     const paths = args[1] === "--" ? args.slice(2) : args.slice(1);
+    if (!paths.length || paths.some(invalidStageArgument)) throw new Error("Git add paths are outside the assignment broker allowlist");
     return { requestId, claims, operation: "stage", paths };
   }
   if (args[0] === "commit" && args.length === 3 && args[1] === "-m") {
     return { requestId, claims, operation: "commit", message: args[2] };
   }
   throw new Error("Git command or option is outside the assignment broker allowlist");
+}
+
+function invalidStageArgument(candidate: string) {
+  return !candidate || candidate.startsWith("-") || path.posix.isAbsolute(candidate) || path.win32.isAbsolute(candidate)
+    || candidate.split(/[\\/]/).some((segment) => segment === "..");
 }
