@@ -1,6 +1,3 @@
-export const HARNESS_IDS = ["codex", "claude", "cursor", "opencode"] as const;
-
-export type HarnessId = (typeof HARNESS_IDS)[number];
 export type DiscoveryStatus =
   | "available"
   | "cli_missing"
@@ -8,10 +5,9 @@ export type DiscoveryStatus =
   | "configuration_required"
   | "discovery_unsupported"
   | "error";
-export type ModelProvenance = "harness-catalog" | "documented-alias" | "configured-default";
+export type ModelProvenance = "opencode-catalog" | "configured-default";
 
 export interface ModelReference {
-  readonly harness: HarnessId;
   readonly providerId?: string;
   readonly modelId: string;
   readonly variant?: string;
@@ -24,7 +20,6 @@ export interface ModelVariant {
 }
 
 export interface DiscoveredModel {
-  readonly harness: HarnessId;
   readonly providerId?: string;
   readonly modelId: string;
   readonly displayName: string;
@@ -36,7 +31,7 @@ export interface DiscoveredModel {
   };
 }
 
-export interface HarnessDiscoveryResult {
+export interface ModelDiscoveryResult {
   readonly status: DiscoveryStatus;
   readonly models: readonly DiscoveredModel[];
   readonly configuredDefault?: ModelReference;
@@ -46,12 +41,8 @@ export interface HarnessDiscoveryResult {
 
 export interface ModelAvailability {
   readonly available: boolean;
-  readonly reason?: "harness_unavailable" | "model_removed" | "provider_removed" | "variant_removed" | "reasoning_effort_removed" | "selection_unpinnable";
+  readonly reason?: "runtime_unavailable" | "model_removed" | "provider_removed" | "variant_removed" | "reasoning_effort_removed" | "selection_unpinnable";
   readonly diagnostic?: string;
-}
-
-export function isHarnessId(value: unknown): value is HarnessId {
-  return typeof value === "string" && (HARNESS_IDS as readonly string[]).includes(value);
 }
 
 export function validDiscoveryId(value: unknown): value is string {
@@ -65,9 +56,9 @@ export function modelKey(model: Pick<DiscoveredModel, "providerId" | "modelId">)
   return `${model.providerId || ""}\u0000${model.modelId}`;
 }
 
-export function selectedModelAvailability(reference: ModelReference, result: HarnessDiscoveryResult): ModelAvailability {
+export function selectedModelAvailability(reference: ModelReference, result: ModelDiscoveryResult): ModelAvailability {
   if (["cli_missing", "authentication_required", "configuration_required", "error"].includes(result.status)) {
-    return { available: false, reason: "harness_unavailable", diagnostic: result.diagnostic };
+    return { available: false, reason: "runtime_unavailable", diagnostic: result.diagnostic };
   }
   const model = result.models.find((candidate) => candidate.modelId === reference.modelId
     && (candidate.providerId || "") === (reference.providerId || ""));

@@ -1,6 +1,6 @@
 import type express from "express";
 import { AGENT_PROFILES, SUPPORTED_AGENT_IDS, type ActiveAgentId } from "../shared/participants.js";
-import { HARNESS_IDS, isHarnessId, selectedModelAvailability } from "../shared/model-discovery.js";
+import { selectedModelAvailability } from "../shared/model-discovery.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentModelReference, validateRosterEntries } from "../shared/roster.js";
 import type { ActiveGenerationTracker } from "./active-generations.js";
 import type { AgentProcessSupervisor } from "./agent-runner.js";
@@ -40,12 +40,14 @@ export function registerRosterRoutes(input: {
   };
   const projection = async (refresh = false) => {
     const roster = normalizeRoomAgentRoster(store.snapshot().roster);
-    const discoveries = await discovery.discoverAll(refresh);
+    const modelDiscovery = await discovery.discover(refresh);
     return {
       roster,
       catalog: SUPPORTED_AGENT_IDS.map((agentId) => ({ ...AGENT_PROFILES[agentId], agentId })),
-      discoveries,
-      participantAvailability: Object.fromEntries(roster.entries.map((entry) => [entry.agentId, selectedModelAvailability(roomAgentModelReference(entry), discoveries[entry.harness!])])),
+      modelDiscovery,
+      participantAvailability: Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.selectionConfirmationRequired
+        ? { available: false as const, reason: "selection_unpinnable" as const, diagnostic: entry.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run." }
+        : selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery)])),
     };
   };
 
@@ -54,11 +56,9 @@ export function registerRosterRoutes(input: {
     response.set("Cache-Control", "no-store").json(await projection());
   });
 
-  app.post("/api/model-discovery/:harness/refresh", async (request, response) => {
+  app.post("/api/model-discovery/refresh", async (request, response) => {
     if (!authorize(request, response, "PROVIDER_VIEW", true)) return;
-    const harness = String(request.params.harness);
-    if (!isHarnessId(harness)) return response.status(400).json({ error: `Harness must be one of: ${HARNESS_IDS.join(", ")}.` });
-    response.set("Cache-Control", "no-store").json(await discovery.discover(harness, true));
+    response.set("Cache-Control", "no-store").json(await discovery.discover(true));
   });
 
   app.put("/api/roster", async (request, response) => {
@@ -79,14 +79,14 @@ export function registerRosterRoutes(input: {
     const authenticated = control ? authorize(request, response, structuralChanged ? "ROSTER_MANAGE" : "MODEL_SELECT", true) : authorize(request, response, "ROSTER_MANAGE", true);
     if (!authenticated) return;
     if (control && structuralChanged && selectionChanged && !authorize(request, response, "MODEL_SELECT", true)) return;
-    const discoveries = await discovery.discoverAll();
+    const modelDiscovery = await discovery.discover();
     const invalidSelection = entries.find((entry) => {
       const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
       if (previous && participantConfigurationFingerprint(previous) === participantConfigurationFingerprint(entry)) return false;
       if (!entry.agentId.startsWith("agent-")) return false;
-      return !selectedModelAvailability(roomAgentModelReference(entry), discoveries[entry.harness!]).available;
+      return !selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery).available;
     });
-    if (invalidSelection) return response.status(400).json({ error: `The selected ${invalidSelection.harness} provider/model/variant is not currently available.` });
+    if (invalidSelection) return response.status(400).json({ error: "The selected OpenCode provider/model/variant is not currently available." });
     const result = await store.updateRoster(expectedRevision, entries);
     if (result.kind === "conflict") return response.status(409).json({ ...result, ...await projection() });
     const enabled = new Set(enabledRoomAgentIds(result.roster));
@@ -101,7 +101,7 @@ export function registerRosterRoutes(input: {
     if (control && "principal" in authenticated) {
       for (const entry of result.roster.entries) {
         const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
-        if (!previous || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry)) await control.recordAudit(authenticated.principal.id, "MODEL_SELECTION_CHANGED", entry.agentId, { harness: entry.harness || null, previousRevision: previous?.configurationRevision || 0, nextRevision: entry.configurationRevision || 1 });
+        if (!previous || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry)) await control.recordAudit(authenticated.principal.id, "MODEL_SELECTION_CHANGED", entry.agentId, { previousRevision: previous?.configurationRevision || 0, nextRevision: entry.configurationRevision || 1 });
       }
     }
     broadcast();

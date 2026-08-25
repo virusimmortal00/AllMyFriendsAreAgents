@@ -53,7 +53,7 @@ function publicPrincipal(principal: PrincipalRecord) { return { id: principal.id
 function effectiveCapabilities(principal: PrincipalRecord): readonly ControlCapability[] { return principal.role === "OWNER" ? ALL_CAPABILITIES : principal.role === "ADMIN" ? [...new Set([...ADMIN_DEFAULTS, ...principal.capabilities])] : principal.capabilities; }
 function parseCookie(header: string | undefined, name: string) { const encoded = header?.split(";").map((part) => part.trim().split("=")).find(([candidate]) => candidate === name)?.[1]; if (!encoded) return undefined; try { return decodeURIComponent(encoded); } catch { return undefined; } }
 function redactedMetadata(input: Record<string, unknown> = {}) {
-  const allowed = new Set(["harness", "status", "role", "capabilityCount", "reason", "previousRevision", "nextRevision", "mode"]);
+  const allowed = new Set(["runtime", "status", "role", "capabilityCount", "reason", "previousRevision", "nextRevision", "mode"]);
   return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => allowed.has(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) ? [[key, typeof value === "string" ? value.slice(0, 200) : value]] : []));
 }
 

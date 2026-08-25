@@ -28,7 +28,7 @@ describe("SQLite room repository", () => {
     store.close();
 
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(reopened.snapshot().roster).toEqual({ revision: 3, entries: [] });
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 3, entries: [] });
     reopened.close();
   });
 
@@ -42,7 +42,7 @@ describe("SQLite room repository", () => {
     expect(await stale.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
     first.close(); stale.close();
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, harness: "claude", modelId: "claude-opus-5" })] });
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 2, entries: [expect.objectContaining({ agentId: "claude-opus", enabled: true, providerId: "anthropic", modelId: "claude-opus-5" })] });
     reopened.close();
   });
 
@@ -86,13 +86,13 @@ describe("SQLite room repository", () => {
     reopened.close();
   });
 
-  it("keeps same-harness participant identities, models, styles, sessions, and attribution distinct across restart", async () => {
+  it("keeps OpenCode participant identities, models, styles, sessions, and attribution distinct across restart", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-dynamic-roster-"));
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
-    const alpha = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
-    const beta = { agentId: "agent-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const alpha = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const beta = { agentId: "agent-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", conversationalName: "Beta", providerId: "openai", modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
     expect(await store.updateRoster(1, [alpha, beta])).toMatchObject({ kind: "accepted" });
     const alphaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#173874" };
     const betaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#6c1739" };

@@ -1,12 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
-  HARNESS_IDS,
   modelKey,
   validDiscoveryId,
   type DiscoveredModel,
-  type HarnessDiscoveryResult,
-  type HarnessId,
+  type ModelDiscoveryResult,
   type ModelReference,
 } from "../shared/model-discovery.js";
 
@@ -15,26 +13,7 @@ export const DISCOVERY_TIMEOUT_MS = 10_000;
 export const DISCOVERY_OUTPUT_LIMIT = 256_000;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
 
-const COMMANDS: Record<HarnessId, string> = {
-  codex: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CODEX_COMMAND?.trim() || "codex",
-  claude: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CLAUDE_COMMAND?.trim() || "claude",
-  cursor: process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent",
-  opencode: process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode",
-};
-
-const CODEX_ALIASES: readonly DiscoveredModel[] = [
-  { harness: "codex", modelId: "gpt-5.6-sol", displayName: "gpt-5.6 Sol", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high", "xhigh"] } },
-  { harness: "codex", modelId: "gpt-5.6-terra", displayName: "gpt-5.6 Terra", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high", "xhigh"] } },
-  { harness: "codex", modelId: "gpt-5.6-luna", displayName: "gpt-5.6 Luna", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high"] } },
-];
-
-const CLAUDE_ALIASES: readonly DiscoveredModel[] = [
-  { harness: "claude", modelId: "claude-sonnet-5", displayName: "Claude Sonnet 5", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high"] } },
-  { harness: "claude", modelId: "claude-opus-5", displayName: "Claude Opus 5", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high"] } },
-  { harness: "claude", modelId: "sonnet", displayName: "Sonnet (documented alias)", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high"] } },
-  { harness: "claude", modelId: "opus", displayName: "Opus (documented alias)", provenance: "documented-alias", capabilities: { reasoningEffort: ["low", "medium", "high"] } },
-  { harness: "claude", modelId: "haiku", displayName: "Haiku (documented alias)", provenance: "documented-alias" },
-];
+const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 
 export interface DiscoveryCommandResult { stdout: string; stderr: string; }
 export type DiscoveryExecutor = (command: string, args: readonly string[], signal?: AbortSignal) => Promise<DiscoveryCommandResult>;
@@ -67,17 +46,17 @@ function diagnostic(value: unknown) {
     .slice(0, 500);
 }
 
-function classifyError(error: unknown): Pick<HarnessDiscoveryResult, "status" | "diagnostic"> {
+function classifyError(error: unknown): Pick<ModelDiscoveryResult, "status" | "diagnostic"> {
   const message = diagnostic(error);
   const code = (error as NodeJS.ErrnoException)?.code;
-  if (code === "ENOENT") return { status: "cli_missing", diagnostic: "The harness CLI is not installed or is not on PATH." };
+  if (code === "ENOENT") return { status: "cli_missing", diagnostic: "OpenCode is not installed or is not on PATH." };
   if (/not logged in|not authenticated|authentication|oauth|login required|unauthorized/i.test(message)) {
-    return { status: "authentication_required", diagnostic: "The harness requires authentication." };
+    return { status: "authentication_required", diagnostic: "OpenCode requires authentication." };
   }
   if (/not configured|configuration|provider.*required|no provider|missing.*model/i.test(message)) {
-    return { status: "configuration_required", diagnostic: "The harness requires provider or model configuration." };
+    return { status: "configuration_required", diagnostic: "OpenCode requires provider or model configuration." };
   }
-  return { status: "error", diagnostic: "Model discovery failed without exposing raw harness output." };
+  return { status: "error", diagnostic: "Model discovery failed without exposing raw OpenCode output." };
 }
 
 function uniqueModels(models: readonly DiscoveredModel[]) {
@@ -89,18 +68,6 @@ function uniqueModels(models: readonly DiscoveredModel[]) {
     seen.add(key);
     return true;
   }).slice(0, 500);
-}
-
-export function parseCursorModelCatalog(stdout: string): readonly DiscoveredModel[] {
-  if (Buffer.byteLength(stdout) > DISCOVERY_OUTPUT_LIMIT) throw new Error("Cursor model catalog exceeded the discovery output limit.");
-  const plain = stripAnsi(stdout);
-  const models: DiscoveredModel[] = [];
-  for (const line of plain.split("\n")) {
-    const match = line.trim().match(/^([^\s]+)\s+-\s+(.+)$/);
-    if (!match || !validDiscoveryId(match[1])) continue;
-    models.push({ harness: "cursor", modelId: match[1], displayName: match[2].trim().slice(0, 200), provenance: "harness-catalog" });
-  }
-  return uniqueModels(models);
 }
 
 export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredModel[] {
@@ -140,17 +107,16 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
       }
     }
     const variants = variantIds.map((id) => ({ id, displayName: id }));
-    models.push({ harness: "opencode", providerId, modelId, displayName: token, ...(variants?.length ? { variants } : {}), provenance: "harness-catalog" });
+    models.push({ providerId, modelId, displayName: token, ...(variants?.length ? { variants } : {}), provenance: "opencode-catalog" });
   }
   return uniqueModels(models);
 }
 
-function configuredReference(harness: HarnessId): ModelReference | undefined {
-  const upper = harness.toUpperCase();
-  const modelId = process.env[`ALL_MY_FRIENDS_ARE_AGENTS_${upper}_MODEL`]?.trim();
-  const providerId = process.env[`ALL_MY_FRIENDS_ARE_AGENTS_${upper}_PROVIDER`]?.trim();
+function configuredReference(): ModelReference | undefined {
+  const modelId = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_MODEL?.trim();
+  const providerId = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_PROVIDER?.trim();
   if (!modelId || !validDiscoveryId(modelId) || providerId && !validDiscoveryId(providerId)) return undefined;
-  return { harness, ...(providerId ? { providerId } : {}), modelId };
+  return { ...(providerId ? { providerId } : {}), modelId };
 }
 
 function configuredModel(reference: ModelReference): DiscoveredModel {
@@ -158,7 +124,7 @@ function configuredModel(reference: ModelReference): DiscoveredModel {
 }
 
 export class ModelDiscoveryService {
-  private readonly cache = new Map<HarnessId, { expiresAt: number; promise: Promise<HarnessDiscoveryResult> }>();
+  private cache?: { expiresAt: number; promise: Promise<ModelDiscoveryResult> };
 
   constructor(
     private readonly execute: DiscoveryExecutor = executeDiscoveryCommand,
@@ -166,57 +132,22 @@ export class ModelDiscoveryService {
     private readonly ttlMs = DISCOVERY_CACHE_TTL_MS,
   ) {}
 
-  async discover(harness: HarnessId, refresh = false, signal?: AbortSignal) {
-    const cached = this.cache.get(harness);
+  async discover(refresh = false, signal?: AbortSignal) {
+    const cached = this.cache;
     if (!refresh && cached && cached.expiresAt > this.now()) return cached.promise;
-    const promise = this.discoverUncached(harness, signal).catch((error): HarnessDiscoveryResult => ({
+    const promise = this.discoverUncached(signal).catch((error): ModelDiscoveryResult => ({
       ...classifyError(error), models: [], discoveredAt: new Date(this.now()).toISOString(),
     }));
-    this.cache.set(harness, { expiresAt: this.now() + this.ttlMs, promise });
+    this.cache = { expiresAt: this.now() + this.ttlMs, promise };
     return promise;
   }
 
-  async discoverAll(refresh = false, signal?: AbortSignal) {
-    return Object.fromEntries(await Promise.all(HARNESS_IDS.map(async (harness) => [harness, await this.discover(harness, refresh, signal)]))) as Record<HarnessId, HarnessDiscoveryResult>;
-  }
-
-  private async discoverUncached(harness: HarnessId, signal?: AbortSignal): Promise<HarnessDiscoveryResult> {
+  private async discoverUncached(signal?: AbortSignal): Promise<ModelDiscoveryResult> {
     const discoveredAt = new Date(this.now()).toISOString();
-    const configuredDefault = configuredReference(harness);
-    if (harness === "codex" || harness === "claude") {
-      await this.execute(COMMANDS[harness], ["--version"], signal);
-      const authentication = await this.execute(COMMANDS[harness], harness === "codex" ? ["login", "status"] : ["auth", "status"], signal);
-      if (harness === "codex" && /not logged in|not authenticated|login required/i.test(`${authentication.stdout}\n${authentication.stderr}`)) {
-        throw new Error("Not authenticated.");
-      }
-      if (harness === "claude") {
-        try {
-          const status = JSON.parse(authentication.stdout) as { loggedIn?: unknown };
-          if (status.loggedIn !== true) throw new Error("Not authenticated.");
-        } catch (error) {
-          if (error instanceof Error && error.message === "Not authenticated.") throw error;
-          throw new Error("Claude authentication status was malformed.");
-        }
-      }
-      const aliases = harness === "codex" ? CODEX_ALIASES : CLAUDE_ALIASES;
-      const models = uniqueModels(configuredDefault ? [...aliases, configuredModel(configuredDefault)] : aliases);
-      return {
-        status: "discovery_unsupported", models, configuredDefault, discoveredAt,
-        diagnostic: `${harness === "codex" ? "Codex CLI" : "Claude Code"} has no supported complete machine-readable model catalog; documented aliases and any configured default are shown.`,
-      };
-    }
-    if (harness === "cursor") {
-      const output = await this.execute(COMMANDS.cursor, ["--list-models"], signal);
-      const models = parseCursorModelCatalog(output.stdout);
-      if (!models.length) throw new Error("Cursor returned a malformed or empty model catalog.");
-      return { status: "available", models, configuredDefault, discoveredAt };
-    }
-    if (harness === "opencode") {
-      const output = await this.execute(COMMANDS.opencode, ["models", "--verbose"], signal);
-      const models = parseOpenCodeModelCatalog(output.stdout);
-      if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
-      return { status: "available", models, configuredDefault, discoveredAt };
-    }
-    throw new Error(`Unsupported model-discovery harness: ${harness satisfies never}`);
+    const configuredDefault = configuredReference();
+    const output = await this.execute(OPENCODE_COMMAND, ["models", "--verbose"], signal);
+    const models = parseOpenCodeModelCatalog(output.stdout);
+    if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
+    return { status: "available", models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models), configuredDefault, discoveredAt };
   }
 }

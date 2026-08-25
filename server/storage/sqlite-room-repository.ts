@@ -392,7 +392,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const state = this.snapshot();
     const current = normalizeRoomAgentRoster(state.roster);
     if (current.revision !== expectedRevision) return { kind: "conflict" as const, expectedRevision, actualRevision: current.revision };
-    const roster = { revision: current.revision + 1, entries: structuredClone(validated.map((entry) => { const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId); const changed = previous && participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry); return changed ? { ...entry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Execution configuration changed; the previous harness session was invalidated." } : { ...entry, configurationRevision: previous?.configurationRevision || entry.configurationRevision || 1 }; })) };
+    const roster = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(validated.map((entry) => { const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId); const changed = previous && participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry); if (!changed) return { ...entry, configurationRevision: previous?.configurationRevision || entry.configurationRevision || 1 }; const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry; return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated." }; })) };
     for (const entry of roster.entries) state.settings.participantStyles[entry.agentId] ||= structuredClone(DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
     const enabled = new Set(enabledRoomAgentIds(roster));
     this.database.exec("BEGIN IMMEDIATE");
@@ -1213,8 +1213,9 @@ export class SqliteRoomRepository implements RoomRepository {
       projectPath: configuredProjectPath || row.project_path || this.projectRoot,
       participantStyles,
     };
-    const storedRosterEntries = (this.database.prepare("SELECT agent_id, enabled, configuration_json FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string }>)
-      .map((entry) => ({ ...parseJson(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled) }));
+    const storedRosterEntries: Array<Record<string, unknown> & { agentId: string; enabled: boolean }> = (
+      this.database.prepare("SELECT agent_id, enabled, configuration_json FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string }>
+    ).map((entry) => ({ ...parseJson<Record<string, unknown>>(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled) }));
     const roster = normalizeRoomAgentRoster({ revision: row.roster_revision, entries: storedRosterEntries });
     const enabledAgents = new Set(enabledRoomAgentIds(roster));
     if (settings.writableAgent !== "nobody" && !enabledAgents.has(settings.writableAgent)) settings.writableAgent = "nobody";
@@ -1225,7 +1226,10 @@ export class SqliteRoomRepository implements RoomRepository {
       if (isActiveAgentId(session.agent_id) && enabledAgents.has(session.agent_id) && (session.permission === "read-only" || session.permission === "writable")) {
         const entry = roomAgentEntry(roster, session.agent_id);
         if (entry?.modelId === "configured") continue;
-        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, configurationFingerprint: session.configuration_fingerprint || (entry ? participantConfigurationFingerprint(entry) : undefined), configurationRevision: session.configuration_revision || entry?.configurationRevision || 1 };
+        const fingerprint = entry ? participantConfigurationFingerprint(entry) : undefined;
+        const rawHarness = storedRosterEntries.find((candidate) => candidate.agentId === session.agent_id)?.harness;
+        if (session.configuration_fingerprint !== fingerprint && (session.configuration_fingerprint || rawHarness !== "opencode")) continue;
+        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, configurationFingerprint: fingerprint, configurationRevision: session.configuration_revision || entry?.configurationRevision || 1 };
       }
     }
     return {
@@ -1296,7 +1300,7 @@ export class SqliteRoomRepository implements RoomRepository {
   private upsertRosterAgent(entry: RoomAgentRosterEntry) {
     const now = new Date().toISOString();
     this.database.prepare(`INSERT INTO agents(id, display_name, provider, model_id, configuration_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, provider = excluded.provider, model_id = excluded.model_id, configuration_json = excluded.configuration_json, updated_at = excluded.updated_at`)
-      .run(entry.agentId, entry.conversationalName || entry.agentId, entry.harness || "codex", entry.modelId || "configured", JSON.stringify(entry), now, now);
+      .run(entry.agentId, entry.conversationalName || entry.agentId, "opencode", entry.modelId || "configured", JSON.stringify(entry), now, now);
   }
 
   private insertImprovementEvent(event: ImprovementEvent) {

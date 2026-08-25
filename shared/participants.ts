@@ -1,8 +1,6 @@
-import type { HarnessId } from "./model-discovery.js";
-
 export interface AgentProfile {
   readonly id: string;
-  readonly provider: HarnessId;
+  readonly provider: string;
   readonly displayName: string;
   readonly modelId: string;
   readonly modelLabel: string;
@@ -124,7 +122,7 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = { ...LEGACY_AGENT_PR
 
 export type LegacyAgentId = keyof typeof LEGACY_AGENT_PROFILES;
 export type AgentId = string;
-export type AgentProvider = HarnessId;
+export type AgentProvider = string;
 export type ParticipantId = "you" | AgentId;
 export type SpeakerId = ParticipantId | "system";
 

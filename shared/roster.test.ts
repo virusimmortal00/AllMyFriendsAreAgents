@@ -15,25 +15,64 @@ describe("room roster contract", () => {
       { agentId: "claude-opus", enabled: false },
       { agentId: "cursor-gemini", enabled: true },
     ])).toEqual([
-      expect.objectContaining({ agentId: "claude-opus", enabled: false, harness: "claude", modelId: "claude-opus-5" }),
-      expect.objectContaining({ agentId: "cursor-gemini", enabled: true, harness: "cursor", modelId: "gemini-3.1-pro" }),
+      expect.objectContaining({ agentId: "claude-opus", enabled: false, providerId: "anthropic", modelId: "claude-opus-5" }),
+      expect.objectContaining({ agentId: "cursor-gemini", enabled: true, providerId: "cursor", modelId: "gemini-3.1-pro" }),
     ]);
     expect(validateRosterEntries([{ agentId: "codex-sol", enabled: true }, { agentId: "codex-sol", enabled: false }])).toBeUndefined();
     expect(validateRosterEntries([{ agentId: "custom-shell", enabled: true, command: "sh" }])).toBeUndefined();
   });
 
-  it("accepts multiple stable instances from one harness and rejects duplicate conversational names", () => {
+  it("accepts multiple stable OpenCode model instances and rejects duplicate conversational names", () => {
     const entries = [
-      { agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", harness: "codex", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 },
-      { agentId: "agent-22222222-2222-4222-8222-222222222222", conversationalName: "Beta", harness: "codex", modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 },
+      { agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 },
+      { agentId: "agent-22222222-2222-4222-8222-222222222222", conversationalName: "Beta", providerId: "openai", modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 },
     ] as const;
     expect(validateRosterEntries(entries)).toHaveLength(2);
     expect(validateRosterEntries([{ ...entries[0] }, { ...entries[1], conversationalName: " alpha " }])).toBeUndefined();
   });
 
+  it("preserves legacy participant identity while migrating execution to an unavailable OpenCode selection", () => {
+    const roster = normalizeRoomAgentRoster({
+      revision: 7,
+      entries: [{
+        agentId: "codex-sol",
+        conversationalName: "Sol",
+        harness: "codex",
+        modelId: "gpt-5.6-sol",
+        enabled: true,
+        supportsProjectWrites: true,
+        configurationRevision: 3,
+      }],
+    });
+
+    expect(roster).toEqual({
+      schemaVersion: 3,
+      revision: 7,
+      entries: [expect.objectContaining({
+        agentId: "codex-sol",
+        conversationalName: "Sol",
+        providerId: "openai",
+        modelId: "gpt-5.6-sol",
+        configurationRevision: 3,
+        sessionInvalidationReason: expect.stringContaining("OpenCode provider/model"),
+        selectionConfirmationRequired: true,
+      })],
+    });
+    expect(roster.entries[0]).not.toHaveProperty("harness");
+  });
+
+  it("does not reapply legacy invalidation after an administrator confirms a schema-v3 selection", () => {
+    const roster = normalizeRoomAgentRoster({
+      schemaVersion: 3,
+      revision: 8,
+      entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 3 }],
+    });
+    expect(roster.entries[0]).not.toHaveProperty("sessionInvalidationReason");
+  });
+
   it("fails legacy or malformed projections back to the safe default", () => {
     expect(normalizeRoomAgentRoster({ revision: 4, entries: [{ agentId: "unknown", enabled: true }] })).toEqual(defaultRoomAgentRoster());
-    expect(normalizeRoomAgentRoster({ revision: 4, entries: [] })).toEqual({ revision: 4, entries: [] });
+    expect(normalizeRoomAgentRoster({ revision: 4, entries: [] })).toEqual({ schemaVersion: 3, revision: 4, entries: [] });
   });
 
   it("never revives an old turn after disable and re-enable", () => {

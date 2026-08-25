@@ -7,7 +7,7 @@ import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
-import type { HarnessDiscoveryResult, HarnessId, ModelAvailability } from "../shared/model-discovery";
+import type { ModelDiscoveryResult, ModelAvailability } from "../shared/model-discovery";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -110,12 +110,12 @@ export interface RosterCatalogEntry {
 export interface RosterResponse {
   readonly roster: RoomAgentRoster;
   readonly catalog: readonly RosterCatalogEntry[];
-  readonly discoveries?: Partial<Record<HarnessId, HarnessDiscoveryResult>>;
+  readonly modelDiscovery?: ModelDiscoveryResult;
   readonly participantAvailability?: Partial<Record<ActiveAgentId, ModelAvailability>>;
 }
 
-export async function refreshModelDiscovery(harness: HarnessId): Promise<HarnessDiscoveryResult> {
-  return request(`/api/model-discovery/${encodeURIComponent(harness)}/refresh`, { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
+export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
+  return request("/api/model-discovery/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
 }
 
 export async function loadRoster(): Promise<RosterResponse> {
@@ -132,8 +132,8 @@ export async function loadControlMe() { const result = await request("/api/contr
 export async function controlLogin(username: string, password: string) { const result = await request("/api/control/login", { method: "POST", body: JSON.stringify({ username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
 export async function bootstrapControlPlane(bootstrapSecret: string, username: string, password: string) { const result = await request("/api/control/bootstrap", { method: "POST", body: JSON.stringify({ bootstrapSecret, username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
 export async function loadProviderSetup() { return request("/api/provider-setup", { method: "GET", cache: "no-store" }).then((response) => response.json()); }
-export async function initiateProviderSetup(harness: HarnessId) { return request(`/api/provider-setup/${harness}/initiate`, { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json()); }
-export async function refreshProviderSetup(harness: HarnessId) { return request(`/api/provider-setup/${harness}/refresh`, { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json() as Promise<HarnessDiscoveryResult>); }
+export async function initiateProviderSetup() { return request("/api/provider-setup/initiate", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json()); }
+export async function refreshProviderSetup() { return request("/api/provider-setup/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json() as Promise<ModelDiscoveryResult>); }
 export async function loadControlPrincipals() { return request("/api/control/principals", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ principals: ControlPrincipal[] }>); }
 export async function createControlPrincipal(username: string, password: string, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request("/api/control/principals", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ username, password, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 export async function updateControlGrants(principal: ControlPrincipal, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request(`/api/control/principals/${principal.id}/grants`, { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision: principal.revision, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
