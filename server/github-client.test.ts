@@ -28,6 +28,20 @@ describe("server-held GitHub client", () => {
     expect((await fetcher.mock.calls[1]![1]).headers.Authorization).toBe(`Bearer ${"x".repeat(30)}`);
   });
 
+  it("paginates marker reconciliation, strips content from projections, and classifies ambiguous transport failures", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, id) => ({ id, body: "unrelated" }));
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => response(firstPage))
+      .mockImplementationOnce(() => response([{ id: 101, body: "private <!-- marker -->", html_url: "https://github.test/101" }]))
+      .mockImplementationOnce(() => response({ id: 3, body: "private response body", title: "private title", state: "open", html_url: "https://github.test/3" }))
+      .mockRejectedValueOnce(new Error("connection reset"));
+    const client = new GitHubRestClient("x".repeat(30), fetcher);
+    await expect(client.comment("owner/repo", { issueNumber: 3 }, "body", "<!-- marker -->")).resolves.toMatchObject({ id: "101" });
+    expect(fetcher.mock.calls[0]![0]).toContain("page=1"); expect(fetcher.mock.calls[1]![0]).toContain("page=2");
+    const issue = await client.readIssue("owner/repo", 3); expect(JSON.stringify(issue)).not.toMatch(/private response body|private title/);
+    await expect(client.readIssue("owner/repo", 3)).rejects.toMatchObject({ message: "GitHub request transport failed", retryable: true });
+  });
+
   it("accepts only an open draft with the exact head ref and rejects oversized responses", async () => {
     const fetcher = vi.fn()
       .mockImplementationOnce(() => response([{ id: 1, draft: false, head: { ref: "branch" } }, { id: 2, draft: true, head: { ref: "branch" }, html_url: "https://github.test/2" }]))

@@ -112,8 +112,8 @@ export class GitHubContributionBroker {
       throw new Error("Work claim or execution manifest is stale, expired, or revoked");
     }
     await this.validateRepository(assignment.workspacePath, assignment.branch, assignment.pinnedBaseSha, assignment.observedHeadSha);
-    if (["READ_ISSUE", "COMMENT"].includes(request.operation) && request.issueNumber && !linkedNumber(task.references, "issue", request.issueNumber)) throw new Error("Issue is not linked to the governed task");
-    if (["READ_PULL_REQUEST", "COMMENT"].includes(request.operation) && request.pullNumber && !linkedNumber(task.references, "pull", request.pullNumber) && !this.ownedPull(request.pullNumber, request.assignmentId)) throw new Error("Pull request is not linked to the governed task or broker-owned assignment");
+    if (["READ_ISSUE", "COMMENT"].includes(request.operation) && request.issueNumber && !linkedNumber(task.references, this.repository, "issue", request.issueNumber)) throw new Error("Issue is not linked to the governed task and repository");
+    if (["READ_PULL_REQUEST", "COMMENT"].includes(request.operation) && request.pullNumber && !linkedNumber(task.references, this.repository, "pull", request.pullNumber) && !this.ownedPull(request.pullNumber, request.assignmentId)) throw new Error("Pull request is not linked to the governed task and repository or broker-owned assignment");
     if (["UPDATE_PULL_REQUEST", "REQUEST_REVIEW"].includes(request.operation) && !this.ownedPull(request.pullNumber, request.assignmentId)) throw new Error("Pull request is not broker-owned by this assignment");
     return {
       repository: this.repository, roomId: CANONICAL_ROOM_ID, taskId: task.taskId, taskRevision: task.revision,
@@ -152,7 +152,10 @@ export class GitHubContributionBroker {
         const title = boundedText(request.title, 160, "Pull request title"); const body = boundedText(request.body, 32_000, "Pull request body");
         if (await this.client.readBranchHead(this.repository, this.baseBranch) !== claims.baseSha) throw new Error("GitHub base branch changed since assignment authorization");
         const existing = await this.client.findDraftPullRequest(this.repository, claims.branch);
-        if (existing) return existing;
+        if (existing) {
+          await this.verifyPullIdentity(positive(existing.number, "pull request"), claims);
+          return existing;
+        }
         await this.client.publishBranch(this.repository, (await this.records.getAssignment(claims.assignmentId))!.workspacePath, claims.branch, claims.headSha);
         return this.client.createDraftPullRequest(this.repository, claims.branch, this.baseBranch, title, `${body}\n\n${marker(request.idempotencyKey)}`);
       }
@@ -180,6 +183,10 @@ export class GitHubContributionBroker {
   }
 
   private async verifyOwnedPullIdentity(number: number, claims: GitHubBrokerClaims) {
+    await this.verifyPullIdentity(number, claims);
+  }
+
+  private async verifyPullIdentity(number: number, claims: GitHubBrokerClaims) {
     const identity = await this.client.pullRequestIdentity(this.repository, number);
     if (identity.state !== "open" || !identity.draft || identity.headRef !== claims.branch || identity.headSha !== claims.headSha || identity.baseSha !== claims.baseSha) {
       throw new Error("Broker-owned pull request source identity changed");
@@ -200,6 +207,12 @@ function targetFor(request: GitHubBrokerRequest) { return request.issueNumber ? 
 function positive(value: unknown, label: string) { if (!Number.isSafeInteger(value) || Number(value) < 1) throw new Error(`A valid ${label} number is required`); return Number(value); }
 function boundedText(value: unknown, maximum: number, label: string) { if (typeof value !== "string" || !value.trim() || value.length > maximum || /\0/.test(value)) throw new Error(`${label} must be non-empty and at most ${maximum} characters`); return value.trim(); }
 function safeError(error: unknown) { return (error instanceof Error ? error.message : "GitHub broker rejected the request").slice(0, 2_000); }
-function linkedNumber(references: readonly { targetId: string; uri?: string }[], kind: "issue" | "pull", number: number) { const pattern = new RegExp(`(?:${kind}|${kind === "pull" ? "pulls" : "issues"})[/:#-]${number}(?:$|\\b)`, "i"); return references.some((reference) => pattern.test(reference.targetId) || pattern.test(reference.uri || "")); }
+function linkedNumber(references: readonly { targetId: string; uri?: string }[], repository: string, kind: "issue" | "pull", number: number) {
+  const [owner, repo] = repository.split("/").map(escapeRegExp); const plural = kind === "pull" ? "pull" : "issues";
+  const uri = new RegExp(`^https://github\\.com/${owner}/${repo}/${plural}/${number}(?:[#?].*)?$`, "i");
+  const target = new RegExp(`^github:${owner}/${repo}:${kind}:${number}$`, "i");
+  return references.some((reference) => target.test(reference.targetId) || uri.test(reference.uri || ""));
+}
+function escapeRegExp(value = "") { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function canonicalRemote(remote: string) { const match = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote.trim()); return (match?.[1] || "").replace(/\.git$/, "").toLowerCase(); }
 async function git(cwd: string, args: readonly string[]) { const { stdout } = await execFileAsync("git", [...args], { cwd, timeout: 10_000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH || "/usr/bin:/bin", HOME: process.env.HOME || "/var/empty", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } }); return stdout.trim(); }

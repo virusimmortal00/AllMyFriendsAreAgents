@@ -90,6 +90,10 @@ describe("scoped GitHub contribution broker", () => {
     const value = await fixture();
     await expect(value.broker.execute(value.auth, { ...value.request, idempotencyKey: "github:stale:0001", expectedHeadSha: "f".repeat(40) })).resolves.toMatchObject({ kind: "rejected" });
     await expect(value.broker.execute(value.auth, { ...value.request, idempotencyKey: "github:cross:0001", issueNumber: 99 })).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("not linked") });
+    const originalReferences = value.task.references;
+    (value.task as unknown as { references: unknown[] }).references = [originalReferences[0], { id: "foreign", kind: "evidence", targetId: "foreign", uri: "https://github.com/other/repo/issues/13" }];
+    await expect(value.broker.execute(value.auth, { ...value.request, idempotencyKey: "github:foreign-repository:0001" })).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("repository") });
+    (value.task as unknown as { references: readonly unknown[] }).references = originalReferences;
     value.setEmergency(true);
     await expect(value.broker.execute(value.auth, { ...value.request, idempotencyKey: "github:stop:0001" })).resolves.toMatchObject({ kind: "rejected", reason: "Emergency stop is active" });
     value.setEmergency(false); await value.broker.execute(value.auth, value.request);
@@ -114,6 +118,13 @@ describe("scoped GitHub contribution broker", () => {
     value.client.pull = { id: "existing", url: "https://github.test/pull/44", number: 44 };
     await expect(value.broker.execute(value.auth, publish)).resolves.toMatchObject({ kind: "ok", value: { id: "existing" } });
     expect(value.client.calls.filter((call) => call === "create-pull")).toHaveLength(0);
+  });
+
+  it("rejects an existing draft whose externally observed head or base changed", async () => {
+    const value = await fixture(); value.client.pull = { id: "existing", url: "https://github.test/pull/44", number: 44 }; value.client.headSha = "f".repeat(40);
+    const publish = { ...value.request, operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:stale-draft:0001", issueNumber: undefined, title: "Contribution", body: "Evidence" };
+    await expect(value.broker.execute(value.auth, publish)).resolves.toMatchObject({ kind: "failed", retryable: false, reason: expect.stringContaining("source identity changed") });
+    expect(value.client.calls).not.toContain("publish-branch"); expect(value.client.calls).not.toContain("create-pull");
   });
 
   it("stores no reusable GitHub credential or caller-controlled content outside bounded hashes/results", async () => {

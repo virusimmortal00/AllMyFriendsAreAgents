@@ -45,9 +45,14 @@ export class GitHubRestClient implements GitHubContributionClient {
   async comment(repository: string, target: { issueNumber?: number; pullNumber?: number }, body: string, marker: string) {
     const number = target.issueNumber ?? target.pullNumber;
     if (!number) throw new Error("A linked issue or pull request is required");
-    const comments = await this.request(repository, `/issues/${number}/comments?per_page=100`, { method: "GET" }) as unknown[];
-    const existing = comments.find((value) => object(value).body?.toString().includes(marker));
-    return existing ? project(existing) : project(await this.request(repository, `/issues/${number}/comments`, {
+    for (let page = 1; page <= 20; page += 1) {
+      const comments = await this.request(repository, `/issues/${number}/comments?per_page=100&page=${page}`, { method: "GET" }) as unknown[];
+      const existing = comments.find((value) => object(value).body?.toString().includes(marker));
+      if (existing) return project(existing);
+      if (comments.length < 100) break;
+      if (page === 20) throw new GitHubClientError("Comment reconciliation exceeded the broker pagination quota", false);
+    }
+    return project(await this.request(repository, `/issues/${number}/comments`, {
       method: "POST", body: JSON.stringify({ body: `${body}\n\n${marker}` }),
     }));
   }
@@ -59,7 +64,7 @@ export class GitHubRestClient implements GitHubContributionClient {
         GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_COUNT: "2",
         GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "",
         GIT_CONFIG_KEY_1: "http.https://github.com/.extraheader", GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${authorization}`,
-      });
+      }).catch(() => { throw new GitHubClientError("GitHub branch publication transport failed", true); });
   }
 
   async findDraftPullRequest(repository: string, branch: string) {
@@ -88,7 +93,7 @@ export class GitHubRestClient implements GitHubContributionClient {
       ...init,
       headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${this.token}`, "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
       signal: AbortSignal.timeout(30_000),
-    });
+    }).catch(() => { throw new GitHubClientError("GitHub request transport failed", true); });
     const text = await response.text();
     if (!response.ok) {
       const retryAfter = response.headers.get("retry-after");
@@ -114,9 +119,12 @@ function project(value: unknown): GitHubExternalResult {
 }
 
 function boundedData(source: Record<string, unknown>) {
-  const allowed = ["number", "title", "state", "draft", "body", "html_url", "conclusion", "status", "total_count", "check_runs"];
+  const allowed = ["number", "state", "draft", "html_url", "conclusion", "status", "total_count"];
   const result: Record<string, unknown> = {};
   for (const key of allowed) if (key in source) result[key] = source[key];
+  if (Array.isArray(source.check_runs)) result.check_runs = source.check_runs.slice(0, 100).map((value) => {
+    const check = object(value); return { id: check.id, name: String(check.name || "").slice(0, 256), status: check.status, conclusion: check.conclusion, details_url: String(check.details_url || "").slice(0, 2_048) };
+  });
   const serialized = JSON.stringify(result);
   return JSON.parse(serialized.length > 128_000 ? JSON.stringify({ truncated: true }) : serialized) as unknown;
 }
