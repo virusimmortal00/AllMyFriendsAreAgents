@@ -282,7 +282,7 @@ export function AgentSettingsDialog({
 
 const TIME_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 const MESSAGE_URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
-const MESSAGE_MARKDOWN_LINK_PATTERN = /\[([^\]\r\n]+)\]\((https?:\/\/[^\s<>"']+)\)/gi;
+const MESSAGE_MARKDOWN_LINK_START_PATTERN = /\[([^\]\r\n]+)\]\(/;
 
 function formatTime(timestamp: string) {
   return TIME_FORMATTER.format(new Date(timestamp));
@@ -331,18 +331,46 @@ function plainLinkedMessageText(text: string, keyPrefix: string): ReactNode[] {
   return parts;
 }
 
+function markdownDestinationEnd(text: string, start: number) {
+  let nestedParentheses = 0;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (/\s|[<>"']/.test(character)) return -1;
+    if (character === "(") {
+      nestedParentheses += 1;
+    } else if (character === ")") {
+      if (nestedParentheses === 0) return index;
+      nestedParentheses -= 1;
+    }
+  }
+  return -1;
+}
+
 function linkedMessageText(text: string, keyPrefix: string): ReactNode[] {
   const parts: ReactNode[] = [];
   let offset = 0;
-  for (const match of text.matchAll(MESSAGE_MARKDOWN_LINK_PATTERN)) {
-    const start = match.index;
+  let searchOffset = 0;
+  while (searchOffset < text.length) {
+    const match = text.slice(searchOffset).match(MESSAGE_MARKDOWN_LINK_START_PATTERN);
+    if (!match || match.index === undefined) break;
+    const start = searchOffset + match.index;
     const label = match[1];
-    const href = match[2];
-    if (!safeMessageUrl(href)) continue;
+    const destinationStart = start + match[0].length;
+    const destinationEnd = markdownDestinationEnd(text, destinationStart);
+    if (destinationEnd < 0) {
+      searchOffset = destinationStart;
+      continue;
+    }
+    const href = text.slice(destinationStart, destinationEnd);
+    if (!safeMessageUrl(href)) {
+      searchOffset = destinationEnd + 1;
+      continue;
+    }
 
     if (start > offset) parts.push(...plainLinkedMessageText(text.slice(offset, start), `${keyPrefix}-plain-${offset}`));
     parts.push(<a className="message-link" href={href} target="_blank" rel="noopener noreferrer" key={`${keyPrefix}-markdown-${start}`}>{renderAimSmileys(label)}</a>);
-    offset = start + match[0].length;
+    offset = destinationEnd + 1;
+    searchOffset = offset;
   }
   if (offset < text.length) parts.push(...plainLinkedMessageText(text.slice(offset), `${keyPrefix}-plain-${offset}`));
   return parts;

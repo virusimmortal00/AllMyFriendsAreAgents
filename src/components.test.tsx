@@ -257,13 +257,16 @@ describe("Transcript message styling", () => {
   it("renders safe Markdown-style links with their human-readable label", () => {
     const html = renderToStaticMarkup(
       <Transcript
-        messages={[{ id: "markdown-link", speaker: "you", text: "Opened [PR #58](https://github.com/example/project/pull/58).", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        messages={[{ id: "markdown-link", speaker: "you", text: "Opened [PR #58](https://github.com/example/project/pull/58). Read ([docs](https://example.com)) and [API](https://example.com/a_(b)).", timestamp: "2026-08-19T12:00:00.000Z" }]}
         magnification={100}
         transcriptRef={createRef<HTMLDivElement>()}
       />,
     );
 
     expect(html).toContain('<a class="message-link" href="https://github.com/example/project/pull/58" target="_blank" rel="noopener noreferrer">PR #58</a>.');
+    expect(html).toContain('Read (<a class="message-link" href="https://example.com" target="_blank" rel="noopener noreferrer">docs</a>)');
+    expect(html).toContain('<a class="message-link" href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer">API</a>.');
+    expect(html).not.toContain('href="https://example.com)"');
     expect(html).not.toContain("[PR #58]");
   });
 
