@@ -791,7 +791,7 @@ export default function App() {
           </>}
         </div>
 
-        {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
+        {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
         {peopleOpen ? <PeopleDialog agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
 
         {configuredAgent ? (

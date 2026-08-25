@@ -376,6 +376,29 @@ describe("rendered reconnect recovery", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it("keeps Room Properties editable while agents are responding", async () => {
+    const user = userEvent.setup();
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("working-settings", [], {
+      status: "working",
+      activeGenerations: { response: "codex-sol" },
+    })));
+    await screen.findByRole("status", { name: "Codex [gpt-5.6 Sol] is generating a response" });
+
+    await chooseMenuItem(user, "Room", "Room properties...");
+    const dialog = screen.getByRole("dialog", { name: "Room Properties" });
+    const roomName = within(dialog).getByRole("textbox", { name: "Room name" }) as HTMLInputElement;
+    const topic = within(dialog).getByRole("textbox", { name: "Topic" }) as HTMLInputElement;
+    const energy = within(dialog).getByRole("combobox", { name: "Conversation energy" }) as HTMLSelectElement;
+
+    expect(roomName.disabled).toBe(false);
+    expect(topic.disabled).toBe(false);
+    expect(energy.disabled).toBe(false);
+    await user.clear(topic);
+    await user.type(topic, "Editable during a response");
+    expect(topic.value).toBe("Editable during a response");
+  });
+
   it("opens room name and topic settings from the participant-pane Properties button", async () => {
     const user = userEvent.setup();
     await renderConnected();

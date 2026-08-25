@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -281,22 +281,84 @@ export function AgentSettingsDialog({
 }
 
 const TIME_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
+const MESSAGE_URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+const MESSAGE_MARKDOWN_LINK_PATTERN = /\[([^\]\r\n]+)\]\((https?:\/\/[^\s<>"']+)\)/gi;
 
 function formatTime(timestamp: string) {
   return TIME_FORMATTER.format(new Date(timestamp));
 }
 
+function splitUrlPunctuation(candidate: string) {
+  let href = candidate;
+  let trailing = "";
+  const detachLast = () => {
+    trailing = `${href.at(-1) || ""}${trailing}`;
+    href = href.slice(0, -1);
+  };
+
+  while (/[.,!?;:]$/.test(href)) detachLast();
+  for (const [opening, closing] of [["(", ")"], ["[", "]"], ["{", "}"]] as const) {
+    while (href.endsWith(closing) && href.split(closing).length > href.split(opening).length) detachLast();
+  }
+  return { href, trailing };
+}
+
+function safeMessageUrl(href: string) {
+  try {
+    const parsed = new URL(href);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function plainLinkedMessageText(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let offset = 0;
+  for (const match of text.matchAll(MESSAGE_URL_PATTERN)) {
+    const start = match.index;
+    const candidate = match[0];
+    const { href: label, trailing } = splitUrlPunctuation(candidate);
+    const href = /^www\./i.test(label) ? `https://${label}` : label;
+    if (!safeMessageUrl(href)) continue;
+
+    if (start > offset) parts.push(<Fragment key={`${keyPrefix}-text-${offset}`}>{renderAimSmileys(text.slice(offset, start))}</Fragment>);
+    parts.push(<a className="message-link" href={href} target="_blank" rel="noopener noreferrer" key={`${keyPrefix}-url-${start}`}>{label}</a>);
+    if (trailing) parts.push(trailing);
+    offset = start + candidate.length;
+  }
+  if (offset < text.length) parts.push(<Fragment key={`${keyPrefix}-text-${offset}`}>{renderAimSmileys(text.slice(offset))}</Fragment>);
+  return parts;
+}
+
+function linkedMessageText(text: string, keyPrefix: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let offset = 0;
+  for (const match of text.matchAll(MESSAGE_MARKDOWN_LINK_PATTERN)) {
+    const start = match.index;
+    const label = match[1];
+    const href = match[2];
+    if (!safeMessageUrl(href)) continue;
+
+    if (start > offset) parts.push(...plainLinkedMessageText(text.slice(offset, start), `${keyPrefix}-plain-${offset}`));
+    parts.push(<a className="message-link" href={href} target="_blank" rel="noopener noreferrer" key={`${keyPrefix}-markdown-${start}`}>{renderAimSmileys(label)}</a>);
+    offset = start + match[0].length;
+  }
+  if (offset < text.length) parts.push(...plainLinkedMessageText(text.slice(offset), `${keyPrefix}-plain-${offset}`));
+  return parts;
+}
+
 function messageText(text: string, onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void) {
   const references = improvementReferences(text);
-  if (!references.length) return renderAimSmileys(text);
+  if (!references.length) return linkedMessageText(text, "message");
   const parts: React.ReactNode[] = [];
   let offset = 0;
   references.forEach((reference) => {
-    parts.push(...renderAimSmileys(text.slice(offset, reference.start)));
+    parts.push(...linkedMessageText(text.slice(offset, reference.start), `reference-${reference.start}`));
     parts.push(<button type="button" className="improvement-reference" key={`${reference.id}-${reference.start}`} aria-label={`Open ${reference.label}`} onClick={(event) => onOpenImprovement?.(reference.id, event.currentTarget)}>{reference.label}</button>);
     offset = reference.end;
   });
-  parts.push(...renderAimSmileys(text.slice(offset)));
+  parts.push(...linkedMessageText(text.slice(offset), `reference-tail-${offset}`));
   return parts;
 }
 
@@ -880,7 +942,7 @@ export function RoomControls({
         aria-invalid={!normalized.roomName}
         onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, roomName: event.target.value })); }}
       />
-      <p className="field-help">Shown in the room window and transcript header.</p>
+      <p className="field-help">Shown in the room window title bar.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
       <input
         id="room-topic"
