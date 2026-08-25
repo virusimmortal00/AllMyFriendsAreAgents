@@ -195,6 +195,9 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` | Compatibility bridge display name |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` | Optional explicit compatibility bridge token |
+| `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY` | Optional `owner/repository` scope for the default-off GitHub contribution broker |
+| `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN` | Server-held GitHub token; never forwarded to an agent process |
+| `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH` | Protected publication base; default `main` |
 
 Run an isolated development copy without touching an existing room:
 
@@ -228,6 +231,8 @@ See [`docs/planning`](docs/planning) for the design records behind governed assi
 The Tasks workspace keeps revisioned room-scoped coordination records. A task assignment reference grants no authority by itself.
 
 Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
+
+The optional GitHub contribution broker is also disabled unless both its repository and server-held token are configured. Developer identities receive independently grantable read, comment, draft-publication, metadata, and review-request capabilities. Every request is rebound to a current task, assignment, work claim, manifest, branch, base, and head; the agent never receives the GitHub credential. Merge and deployment remain unavailable.
 
 ## Build with us
 
