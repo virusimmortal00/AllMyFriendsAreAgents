@@ -1,4 +1,14 @@
-export const AGENT_PROFILES = {
+export interface AgentProfile {
+  readonly id: string;
+  readonly provider: string;
+  readonly displayName: string;
+  readonly modelId: string;
+  readonly modelLabel: string;
+  readonly conversationalName: string;
+  readonly supportsProjectWrites: boolean;
+}
+
+const LEGACY_AGENT_PROFILES = {
   // Retained for historical transcript rendering. Luna is no longer in AGENT_IDS.
   "codex-luna": {
     id: "codex-luna",
@@ -95,10 +105,24 @@ export const AGENT_PROFILES = {
     conversationalName: "GLM",
     supportsProjectWrites: true,
   },
-} as const;
+  "opencode-configured": {
+    id: "opencode-configured",
+    provider: "opencode",
+    displayName: "OpenCode",
+    modelId: "configured",
+    modelLabel: "Configured model",
+    conversationalName: "OpenCode",
+    supportsProjectWrites: true,
+  },
+} as const satisfies Record<string, AgentProfile>;
 
-export type AgentId = keyof typeof AGENT_PROFILES;
-export type AgentProvider = (typeof AGENT_PROFILES)[AgentId]["provider"];
+// Historical profiles remain available for transcript rendering and migration.
+// Room-scoped participant instances are registered from the normalized roster.
+export const AGENT_PROFILES: Record<string, AgentProfile> = { ...LEGACY_AGENT_PROFILES };
+
+export type LegacyAgentId = keyof typeof LEGACY_AGENT_PROFILES;
+export type AgentId = string;
+export type AgentProvider = string;
 export type ParticipantId = "you" | AgentId;
 export type SpeakerId = ParticipantId | "system";
 
@@ -109,7 +133,7 @@ export const AGENT_IDS = [
   "cursor-composer",
   "cursor-gemini-flash",
   "cursor-glm",
-] as const satisfies readonly AgentId[];
+] as const satisfies readonly LegacyAgentId[];
 
 export const SUPPORTED_AGENT_IDS = [
   "codex-sol",
@@ -120,18 +144,21 @@ export const SUPPORTED_AGENT_IDS = [
   "cursor-composer",
   "cursor-gemini-flash",
   "cursor-glm",
-] as const satisfies readonly AgentId[];
+  "opencode-configured",
+] as const satisfies readonly LegacyAgentId[];
 
-export type ActiveAgentId = (typeof SUPPORTED_AGENT_IDS)[number];
+const activeAgentIds = new Set<string>(SUPPORTED_AGENT_IDS);
+
+export type ActiveAgentId = AgentId;
 export type WritableAgent = ActiveAgentId | "nobody";
 export const PARTICIPANT_IDS: ParticipantId[] = ["you", ...AGENT_IDS];
 
 export function isAgentId(value: unknown): value is AgentId {
-  return typeof value === "string" && value in AGENT_PROFILES;
+  return typeof value === "string" && (value in AGENT_PROFILES || /^agent-[a-f0-9-]{16,64}$/i.test(value));
 }
 
 export function isActiveAgentId(value: unknown): value is ActiveAgentId {
-  return isAgentId(value) && (SUPPORTED_AGENT_IDS as readonly AgentId[]).includes(value);
+  return typeof value === "string" && activeAgentIds.has(value);
 }
 
 export function isParticipantId(value: unknown): value is ParticipantId {
@@ -139,7 +166,15 @@ export function isParticipantId(value: unknown): value is ParticipantId {
 }
 
 export function agentSupportsProjectWrites(agent: AgentId) {
-  return AGENT_PROFILES[agent].supportsProjectWrites;
+  return AGENT_PROFILES[agent]?.supportsProjectWrites ?? true;
+}
+
+export function historicalAgentProvider(agent: AgentId) {
+  return (LEGACY_AGENT_PROFILES as Record<string, AgentProfile>)[agent]?.provider;
+}
+
+export function historicalAgentProfile(agent: AgentId) {
+  return (LEGACY_AGENT_PROFILES as Record<string, AgentProfile>)[agent];
 }
 
 export function normalizeWritableAgent(value: unknown): WritableAgent {
@@ -149,7 +184,7 @@ export function normalizeWritableAgent(value: unknown): WritableAgent {
 
 export function agentScreenName(agent: AgentId) {
   const profile = AGENT_PROFILES[agent];
-  return `${profile.displayName} [${profile.modelLabel}]`;
+  return profile ? `${profile.displayName} [${profile.modelLabel}]` : agent;
 }
 
 export function participantScreenName(participant: SpeakerId) {
@@ -163,4 +198,10 @@ export function migrateLegacyAgentId(value: unknown): AgentId | undefined {
   if (value === "codex") return "codex-sol";
   if (value === "claude") return "claude-sonnet";
   return undefined;
+}
+
+export function registerParticipantProfile(profile: AgentProfile) {
+  if (!isAgentId(profile.id)) return;
+  AGENT_PROFILES[profile.id] = { ...profile };
+  activeAgentIds.add(profile.id);
 }

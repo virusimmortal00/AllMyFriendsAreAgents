@@ -329,6 +329,15 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .roster-add .classic-button, .roster-reload { min-height: 34px; padding: 4px 9px; font-size: 13px; }
 .roster-error { margin: 12px 0 0; color: #8b0000; font-weight: 700; }
 .roster-reload { margin-top: 8px; }
+.roster-config-editor { grid-column: 1 / -1; padding: 5px 8px; border-top: 1px solid #bbb; }
+.roster-config-editor summary { cursor: pointer; color: var(--blue); font-weight: 700; }
+.roster-config-editor label, .roster-discovery label, .roster-control-login label { display: grid; gap: 3px; margin: 7px 0; font-weight: 700; }
+.roster-config-editor input, .roster-config-editor select, .roster-discovery input, .roster-discovery select, .roster-control-login input { min-height: 30px; width: 100%; }
+.roster-discovery, .roster-control-login { margin-top: 14px; border: 2px groove white; }
+.roster-discovery legend, .roster-control-login legend { color: var(--blue); font-weight: 700; }
+.roster-discovery-status { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; padding: 7px; background: #fff; border: 1px inset white; }
+.roster-discovery-status span { flex: 1 1 260px; }
+.roster-diagnostic { margin: 7px 0; padding: 7px; background: #fff9d8; border: 1px solid #aaa; overflow-wrap: anywhere; }
 .roster-actions { gap: 8px; }
 
 .chat-panel { contain: inline-size; display: grid; grid-template-rows: minmax(0, 1fr); }

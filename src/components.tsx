@@ -418,7 +418,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
     <article className={`message message--${message.kind || "chat"}`}>
       <time>[{formatTime(message.timestamp)}]</time>
       <div>
-        <strong className={`speaker speaker--${message.speaker}`}>{message.speaker === "you" && message.speakerName ? message.speakerName : participantScreenName(message.speaker)}:</strong>{" "}
+        <strong className={`speaker speaker--${message.speaker}`}>{message.speakerName || participantScreenName(message.speaker)}:</strong>{" "}
         <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
           <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
         </span>

@@ -53,6 +53,9 @@ import { ContributionService } from "./contribution-service.js";
 import { GovernedContributionExecutor, UnavailableContributionExecutor } from "./contribution-executor.js";
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
+import { ModelDiscoveryService } from "./model-discovery.js";
+import { ControlError, ControlPlaneStore } from "./control-plane.js";
+import { registerControlPlaneRoutes } from "./control-plane-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -81,6 +84,8 @@ const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
+const modelDiscovery = new ModelDiscoveryService();
+const controlPlane = await ControlPlaneStore.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const humanSessions = new HumanSessions();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
@@ -263,6 +268,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       agentProcesses,
       assignment?.assignmentId,
       writerGrant,
+      modelDiscovery,
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -616,7 +622,8 @@ app.post("/api/humans", (request, response) => {
 registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam, broadcast });
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, broadcast });
+registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, control: controlPlane, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -641,6 +648,8 @@ app.patch("/api/settings", async (request, response) => {
   if (update.writableAgent === "nobody" || (isAgentId(update.writableAgent) && currentEnabledAgents().includes(update.writableAgent))) {
     const writableAgent = normalizeWritableAgent(update.writableAgent);
     if (writableAgent !== previousWritableAgent) {
+      try { controlPlane.require(request, "WRITE_GRANT", true); }
+      catch (error) { return response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Write-grant authorization failed." }); }
       permissionActor = actor;
     }
     allowed.writableAgent = writableAgent;
