@@ -447,9 +447,9 @@ export default function App() {
     roomRevealed.current = true;
   }, [ready, connectionEpoch]);
 
-  const activeGenerationAgents = Object.values(room.activeGenerations || {});
-  const activeTypingAgents = [...new Set(activeGenerationAgents)];
-  const working = activeGenerationAgents.length > 0;
+  const activeAgentSet = new Set(Object.values(room.activeGenerations || {}));
+  const activeTypingAgents = [...activeAgentSet];
+  const working = activeAgentSet.size > 0;
 
   async function changeWritable(agent: WritableAgent) {
     if (!human) throw new Error("Join the room before changing project permissions.");
@@ -722,7 +722,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className="workspace">
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} onMagnificationReset={resetTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />
@@ -767,7 +767,7 @@ export default function App() {
               <strong id="mobile-panel-title">{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
               <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
             </header>
-            {!compactLayout || mobilePanel === "people" ? <RoomRoster availability={room.availability} agentHealth={room.agentHealth} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /> : null}
+            {!compactLayout || mobilePanel === "people" ? <RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /> : null}
             {!compactLayout || mobilePanel === "room" ? <RoomControls
               roomName={room.settings.roomName}
               topic={room.settings.topic}

@@ -249,13 +249,22 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .presence-panel .panel-title { height: 31px; padding: 4px 8px; font-size: 16px; line-height: 21px; text-transform: none; }
 .presence-summary { margin: 0; padding: 7px 10px; color: #222; background: #ece9df; border-bottom: 1px solid #aaa; font: 13px/18px Tahoma, Arial, sans-serif; }
 .presence-list { padding: 5px 0 7px; background: #fff; }
-.presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr) 25px; align-items: center; gap: 7px; min-height: 29px; padding: 2px 7px 2px 15px; }
+.presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 29px; padding: 2px 7px 2px 15px; }
+.presence-row--active { background: #eef5ff; box-shadow: inset 3px 0 0 #2368c4; }
 .presence-row .speaker { overflow: hidden; font: 700 14px/20px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-identity { display: flex; min-width: 0; flex-direction: column; }
 .presence-health { overflow: hidden; color: #754b00; font: 11px/14px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.presence-activity-label { overflow: hidden; color: #174f9d; font: 700 11px/14px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-status { width: 9px; height: 9px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
 .presence-status--cooldown { border-color: #8a5700; background: #ffb000; }
 .presence-status--unavailable { border-color: #700; background: #c72a2a; }
+.presence-agent-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.agent-activity-indicator { display: inline-flex; align-items: flex-end; justify-content: center; gap: 2px; width: 18px; height: 15px; }
+.agent-activity-indicator i { width: 3px; height: 13px; border-radius: 2px; background: #2368c4; transform: scaleY(.3); transform-origin: bottom; animation: agent-activity-pulse .9s ease-in-out infinite alternate; }
+.agent-activity-indicator i:nth-child(2) { animation-delay: .15s; }
+.agent-activity-indicator i:nth-child(3) { animation-delay: .3s; }
+@keyframes agent-activity-pulse { from { opacity: .45; transform: scaleY(.3); } to { opacity: 1; transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .agent-activity-indicator i { animation: none; opacity: 1; transform: scaleY(.7); } }
 .agent-settings-button { width: 25px; height: 23px; padding: 0; border: 2px outset white; background: var(--chrome); color: #222; font: 15px/1 Arial, sans-serif; }
 .agent-settings-button:active { border-style: inset; }
 .presence-row-spacer { width: 25px; }
@@ -655,7 +664,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .right-rail .presence-panel, .right-rail .controls-panel { grid-row: 2; height: max-content; max-height: none; overflow: visible; }
   .presence-panel .panel-title, .controls-panel .panel-title { display: none; }
   .presence-summary { padding: 11px 12px; font-size: 14px; }
-  .presence-row { min-height: 45px; grid-template-columns: 12px minmax(0, 1fr) 38px; padding: 4px 9px 4px 14px; }
+  .presence-row { min-height: 45px; grid-template-columns: 12px minmax(0, 1fr) auto; padding: 4px 9px 4px 14px; }
   .presence-row .speaker { font-size: 15px; }
   .presence-health { font-size: 12px; line-height: 15px; }
   .agent-settings-button { width: 38px; height: 36px; }
