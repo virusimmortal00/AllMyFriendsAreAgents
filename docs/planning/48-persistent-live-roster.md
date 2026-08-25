@@ -1,11 +1,11 @@
 ---
 id: 48-persistent-live-roster
-status: active
+status: done
 owner: developer-team
-reviewers: []
+reviewers: [coderabbit]
 depends_on: []
 reported_by: Bobbo
-updated: 2026-08-24
+updated: 2026-08-25
 ---
 
 # Outcome
@@ -24,17 +24,22 @@ Joined humans can add, remove, enable, disable, and reorder previously integrate
 
 # Current state
 
-Implementation is isolated on `codex/issue-48-dynamic-roster`. It is not merged and is not running on the live dev server.
+Shipped to `origin/main` and the live dev server at merge commit `db6b7fbfdae8eac48bc7ba8a542002a9b8d8a40f`. The live SQLite room is on schema migration 13 with the six-agent default, Gemini Pro excluded by default, `codex-sol` write authority preserved, and the room idle after deployment.
 
 # Next action
 
-Complete focused regression coverage, run isolated browser verification, and submit the exact verified commit for independent review.
+Monitor issue #48 for follow-up defects. New executable harness definitions remain separate code-reviewed catalog work.
 
 # Evidence
 
 - Tracking issue: https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/48
-- `pnpm build`
-- `pnpm test -- --run`
+- Feature PR: https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/50
+- Legacy migration hotfix: https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/51
+- `pnpm test -- --run`: 488 passed, one platform-specific skip after the migration hotfix.
+- `pnpm build` and `git diff --check` passed.
+- Final CodeRabbit CLI reviews raised zero issues on both the feature and migration hotfix commits.
+- Isolated SQLite desktop/mobile browser canary passed add, disable, save, active-generation cancellation, responsive layout, and restart persistence.
+- A copy of the pre-promotion live SQLite database passed migration 13 with all messages and write authority preserved; live integrity check passed after deployment.
 
 # Open questions
 
