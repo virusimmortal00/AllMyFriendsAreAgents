@@ -25,6 +25,7 @@ import type {
   TaskIdentity,
   TaskLifecycleState,
 } from "../../shared/task-domain.js";
+import type { RoomAgentRoster, RoomAgentRosterEntry } from "../../shared/roster.js";
 
 export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -33,6 +34,10 @@ export interface RevisionConflict {
   readonly expectedRevision: number;
   readonly actualRevision: number;
 }
+
+export type RosterChangeResult =
+  | { readonly kind: "accepted"; readonly roster: RoomAgentRoster }
+  | RevisionConflict;
 
 export type CreateImprovementResult =
   | { readonly kind: "created"; readonly improvement: Improvement }
@@ -119,6 +124,7 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[] },
   ): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
+  updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult>;
   changeTopic(topic: string): Promise<void>;
   updateParticipantStyle(participant: StyledParticipant, style: ChatStyle): Promise<void>;
   setSession(agent: AgentId, id: string, permission: "read-only" | "writable"): Promise<void>;

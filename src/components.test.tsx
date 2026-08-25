@@ -11,7 +11,6 @@ describe("RoomRoster", () => {
       "codex-sol": true,
       "claude-sonnet": true,
       "cursor-grok": true,
-      "cursor-gemini": true,
       "cursor-composer": true,
       "cursor-gemini-flash": true,
       "cursor-glm": true,
@@ -20,14 +19,14 @@ describe("RoomRoster", () => {
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
     ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
 
-    expect(html).toContain("7 agents");
+    expect(html).toContain("6 agents");
     expect(html).toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).not.toContain("Codex [gpt-5.6 Terra]");
     expect(html).toContain("Codex [gpt-5.6 Sol]");
     expect(html).not.toContain("Claude [Claude Opus 5]");
     expect(html).toContain("Cursor [Grok 4.6]");
-    expect(html).toContain("Cursor [Gemini 3.1 Pro]");
+    expect(html).not.toContain("Cursor [Gemini 3.1 Pro]");
     expect(html).toContain("Cursor [Composer 2.5]");
     expect(html).toContain("Cursor [Gemini 3.7 Flash]");
     expect(html).toContain("Cursor [GLM 5.2]");
@@ -36,20 +35,20 @@ describe("RoomRoster", () => {
     expect(html).toContain("Claude [Claude Sonnet 5]");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(7);
+    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
     expect(html).not.toContain("Configure You");
   });
 
   it("identifies only agents with an active server generation", () => {
     const html = renderToStaticMarkup(<RoomRoster
-      activeAgents={new Set(["codex-sol", "cursor-gemini"])}
+      activeAgents={new Set(["codex-sol", "cursor-gemini-flash"])}
       humans={[]}
       currentHumanId="alice-id"
       onConfigureAgent={() => undefined}
     />);
 
     expect(html).toContain('aria-label="Codex [gpt-5.6 Sol] is generating a response"');
-    expect(html).toContain('aria-label="Cursor [Gemini 3.1 Pro] is generating a response"');
+    expect(html).toContain('aria-label="Cursor [Gemini 3.7 Flash] is generating a response"');
     expect(html).not.toContain('aria-label="Claude [Claude Sonnet 5] is generating a response"');
     expect(html.match(/presence-row--active/g)).toHaveLength(2);
   });

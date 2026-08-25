@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -110,7 +111,7 @@ async function waitForProcessTreeExit(child: ChildProcess, pids: ReadonlySet<num
 
 export class AgentProcessSupervisor {
   private readonly children = new Set<ChildProcess>();
-  private readonly scopes = new Map<ChildProcess, string>();
+  private readonly scopes = new Map<ChildProcess, ReadonlySet<string>>();
   private readonly terminations = new Map<ChildProcess, Promise<void>>();
   private closed = false;
 
@@ -118,10 +119,10 @@ export class AgentProcessSupervisor {
     if (this.closed) throw new Error("Agent process supervisor is shutting down.");
   }
 
-  track(child: ChildProcess, scope?: string) {
+  track(child: ChildProcess, scope?: string | readonly string[]) {
     this.assertOpen();
     this.children.add(child);
-    if (scope) this.scopes.set(child, scope);
+    if (scope) this.scopes.set(child, new Set(typeof scope === "string" ? [scope] : scope));
   }
 
   terminate(child: ChildProcess) {
@@ -156,7 +157,7 @@ export class AgentProcessSupervisor {
   }
 
   async terminateScope(scope: string) {
-    await Promise.all([...this.children].filter((child) => this.scopes.get(child) === scope).map((child) => this.terminate(child)));
+    await Promise.all([...this.children].filter((child) => this.scopes.get(child)?.has(scope)).map((child) => this.terminate(child)));
   }
 
   async shutdown() {
@@ -214,15 +215,16 @@ async function buildPrompt(
   permission: "read-only" | "writable",
 ) {
   const profile = AGENT_PROFILES[agent];
-  const otherParticipants = AGENT_IDS.filter((candidate) => candidate !== agent).map(agentScreenName);
+  const rosterAgents = enabledRoomAgentIds(normalizeRoomAgentRoster(state.roster));
+  const otherParticipants = rosterAgents.filter((candidate) => candidate !== agent).map(agentScreenName);
   const humanNames = state.humans?.map(({ name }) => name) || [];
   const humanDescription = humanNames.length > 0 ? humanNames.join(", ") : "the room's humans";
   const currentStyle = state.settings.participantStyles[agent];
   const participantStyleRoster = [
     ...(state.humans || []).map((human) => `${human.name}: ${JSON.stringify(human.style)}`),
-    ...AGENT_IDS.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
+    ...rosterAgents.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
   ].join("\n");
-  const conversationalNames = AGENT_IDS.map((participant) => AGENT_PROFILES[participant].conversationalName).join(", ");
+  const conversationalNames = rosterAgents.map((participant) => AGENT_PROFILES[participant].conversationalName).join(", ");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
 - The human explicitly requested a worktree review for this turn.
@@ -285,7 +287,7 @@ interface RunProcessOptions {
   environment?: NodeJS.ProcessEnv;
   trustedEnvironment?: boolean;
   supervisor?: AgentProcessSupervisor;
-  scope?: string;
+  scope?: string | readonly string[];
   stderrFailure?: (stderr: string) => Error | undefined;
 }
 
@@ -564,6 +566,7 @@ export async function runAgent(
   // can receive the assignment worktree as its cwd.
   const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
   const profile = AGENT_PROFILES[agent];
+  const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
   const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   const secureWriterRequested = permission === "writable"
@@ -600,7 +603,7 @@ export async function runAgent(
         const invocation = await execution("codex", args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
-          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+          input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
           stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
         });
       } catch (error) {
@@ -619,7 +622,7 @@ export async function runAgent(
         const invocation = await execution("codex", args);
         result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
           environment: invocation.env, trustedEnvironment: secureWriterRequested,
-          input: prompt, signal, supervisor, scope: assignmentId, timeoutMs: runTimeout(permission, includeDiff),
+          input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
         });
       }
       const parsed = parseCodexOutput(result.stdout);
@@ -648,7 +651,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
-        scope: assignmentId,
+        scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
       const parsed = parseCursorOutput(result.stdout);
@@ -679,7 +682,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
-        scope: assignmentId,
+        scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
     } catch (error) {
@@ -705,7 +708,7 @@ export async function runAgent(
         input: prompt,
         signal,
         supervisor,
-        scope: assignmentId,
+        scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
     }
@@ -757,7 +760,7 @@ export async function runAgent(
   }
 }
 
-export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>> {
+export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_IDS): Promise<Partial<Record<ActiveAgentId, boolean>>> {
   const check = async (command: string) => {
     try {
       await runProcess(command, ["--version"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
@@ -775,7 +778,7 @@ export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>>
     }
   };
   const [codex, claude, availableCursorModels] = await Promise.all([check("codex"), check("claude"), cursorModels()]);
-  return Object.fromEntries(AGENT_IDS.map((agent) => {
+  return Object.fromEntries(agents.map((agent) => {
     const profile = AGENT_PROFILES[agent];
     const available = profile.provider === "codex"
       ? codex
@@ -783,7 +786,7 @@ export async function cliAvailability(): Promise<Record<ActiveAgentId, boolean>>
         ? claude
         : availableCursorModels.has(profile.modelId);
     return [agent, available];
-  })) as Record<ActiveAgentId, boolean>;
+  })) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
 export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, runProcess };

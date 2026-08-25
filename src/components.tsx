@@ -134,18 +134,22 @@ export function RoomRoster({
   humans,
   currentHumanId,
   onConfigureAgent,
+  agents = AGENT_IDS,
+  onManageRoster,
 }: {
-  availability?: Record<ActiveAgentId, boolean>;
+  availability?: Partial<Record<ActiveAgentId, boolean>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   activeAgents?: ReadonlySet<AgentId>;
   humans: HumanPresence[];
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
+  agents?: readonly ActiveAgentId[];
+  onManageRoster?: (trigger: HTMLButtonElement) => void;
 }) {
   const healthText = (health: AgentHealth) => health.status === "cooldown"
     ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
     : "Unavailable";
-  const presentAgents = AGENT_IDS.filter((agent) => availability?.[agent] !== false);
+  const presentAgents = agents.filter((agent) => availability?.[agent] !== false);
   const agentCount = presentAgents.length;
   const agentLabel = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
   const humanLabel = `${humans.length} ${humans.length === 1 ? "human" : "humans"}`;
@@ -153,7 +157,7 @@ export function RoomRoster({
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
       <PanelTitle>Who&apos;s Here</PanelTitle>
-      <p className="presence-summary"><strong>{agentLabel}</strong> and <strong>{humanLabel}</strong> are here.</p>
+      <div className="presence-summary"><span><strong>{agentLabel}</strong> and <strong>{humanLabel}</strong> are here.</span>{onManageRoster ? <button type="button" onClick={(event) => onManageRoster(event.currentTarget)}>Manage</button> : null}</div>
       <div className="presence-list" role="list">
         {presentAgents.map((agent) => {
           const active = activeAgents?.has(agent) ?? false;

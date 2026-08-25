@@ -7,6 +7,7 @@ import type { GovernedImprovementDetail } from "../shared/governed-improvements"
 import type { GovernedImprovementSummary } from "../shared/governed-improvements";
 import type { ImprovementStatusContract } from "../shared/improvement-status";
 import type { MessageMention } from "../shared/mentions";
+import type { RoomAgentRoster } from "../shared/roster";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
 
@@ -48,11 +49,12 @@ export interface RoomState {
     conversationEnergy: ConversationEnergy;
     participantStyles: ParticipantStyles;
   };
+  roster?: RoomAgentRoster;
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
   activeGenerations?: Record<string, AgentId>;
   error?: string;
-  availability?: Record<ActiveAgentId, boolean>;
+  availability?: Partial<Record<ActiveAgentId, boolean>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
   humans?: HumanPresence[];

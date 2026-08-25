@@ -21,8 +21,8 @@ export interface MentionCandidate {
   readonly revision: number;
 }
 
-export function roomMentionCandidates(humans: readonly { id: string; name: string }[]): MentionCandidate[] {
-  const agents = AGENT_IDS.map((id: ActiveAgentId) => {
+export function roomMentionCandidates(humans: readonly { id: string; name: string }[], rosterAgents: readonly ActiveAgentId[] = AGENT_IDS): MentionCandidate[] {
+  const agents = rosterAgents.map((id: ActiveAgentId) => {
     const profile = AGENT_PROFILES[id];
     return {
       targetKind: "agent" as const,

@@ -9,7 +9,7 @@ import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend,
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
-import { AGENT_IDS, agentScreenName, type ActiveAgentId } from "../shared/participants";
+import { agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import { Improvements, ImprovementsMenuControl, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
@@ -21,6 +21,8 @@ import { Tasks, TasksMenuControl } from "./tasks";
 import { Continuations, ContinuationsMenuControl } from "./continuations";
 import { Investigations, InvestigationsMenuControl } from "./investigations";
 import { Contributions } from "./contributions";
+import { RosterManagerDialog } from "./roster-manager";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -32,6 +34,7 @@ const EMPTY_ROOM: RoomState = {
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",
+  roster: defaultRoomAgentRoster(),
 };
 const MINIMUM_LOADING_MS = 450;
 const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";
@@ -132,6 +135,8 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<"people" | "room" | null>(null);
   const [compactLayout, setCompactLayout] = useState(() => typeof window !== "undefined" && window.innerWidth <= 720);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [rosterTrigger, setRosterTrigger] = useState<HTMLButtonElement | null>(null);
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
   const [workshopLoading, setWorkshopLoading] = useState(false);
@@ -630,8 +635,11 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  const peopleHere = (room.humans?.length || 0) + AGENT_IDS.filter((agent) => room.availability?.[agent] !== false).length;
-  const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || []), [room.humans]);
+  const roster = normalizeRoomAgentRoster(room.roster);
+  const enabledAgents = enabledRoomAgentIds(roster);
+  const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
+  const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
+  const openRoster = useCallback((trigger: HTMLButtonElement) => { setRosterTrigger(trigger); setRosterOpen(true); }, []);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
     setWorkshopRequestRevision((current) => current + 1);
@@ -726,7 +734,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className="workspace">
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : investigationsView ? <><Investigations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : investigationsView ? <><Investigations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : contributionsView ? <><Contributions refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : continuationsView ? <><Continuations refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /></div></> : tasksView ? <><Tasks refreshKey={connectionEpoch} /><div className="right-rail tasks-room-rail"><RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /><RoomControls roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={working || !connected} onSave={saveRoomSettings} /></div></> : <>
           <section className="chat-panel beveled-inset">
             <TranscriptHeader roomName={room.settings.roomName} magnification={transcriptMagnification} onMagnificationChange={changeTranscriptMagnification} onMagnificationReset={resetTranscriptMagnification} />
             <Transcript messages={room.messages} magnification={transcriptMagnification} transcriptRef={transcript} onOpenImprovement={openImprovement} />
@@ -771,7 +779,7 @@ export default function App() {
               <strong id="mobile-panel-title">{mobilePanel === "people" ? "People in this room" : "Room settings"}</strong>
               <button type="button" aria-label="Close side panel" onClick={() => setMobilePanel(null)}>×</button>
             </header>
-            {!compactLayout || mobilePanel === "people" ? <RoomRoster availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} /> : null}
+            {!compactLayout || mobilePanel === "people" ? <RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} /> : null}
             {!compactLayout || mobilePanel === "room" ? <RoomControls
               roomName={room.settings.roomName}
               topic={room.settings.topic}
@@ -794,6 +802,18 @@ export default function App() {
             onClose={() => setConfiguredAgent(null)}
           />
         ) : null}
+        {rosterOpen ? <RosterManagerDialog
+          initialRoster={roster}
+          returnFocusTo={rosterTrigger}
+          onSaved={(nextRoster) => setRoom((current) => ({
+            ...current,
+            roster: nextRoster,
+            settings: enabledRoomAgentIds(nextRoster).includes(current.settings.writableAgent as ActiveAgentId)
+              ? current.settings
+              : { ...current.settings, writableAgent: "nobody" },
+          }))}
+          onClose={() => setRosterOpen(false)}
+        /> : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
         {changeNameOpen && human ? <ConfirmationDialog

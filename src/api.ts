@@ -5,12 +5,14 @@ import type { MessageMutationAcknowledgement, ServerIdentity } from "../shared/p
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
+import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
+import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly outcomeUnknown = false, readonly status?: number) {
+  constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -31,7 +33,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status);
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, body);
     }
     return response;
   } catch (error) {
@@ -91,6 +93,29 @@ export async function checkReady(): Promise<ServerIdentity> {
 
 export async function loadRoom(): Promise<RoomState> {
   return request("/api/state").then((response) => response.json());
+}
+
+export interface RosterCatalogEntry {
+  readonly agentId: ActiveAgentId;
+  readonly provider: AgentProvider;
+  readonly displayName: string;
+  readonly modelId: string;
+  readonly modelLabel: string;
+  readonly conversationalName: string;
+  readonly supportsProjectWrites: boolean;
+}
+
+export interface RosterResponse {
+  readonly roster: RoomAgentRoster;
+  readonly catalog: readonly RosterCatalogEntry[];
+}
+
+export async function loadRoster(): Promise<RosterResponse> {
+  return request("/api/roster", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterResponse> {
+  return request("/api/roster", { method: "PUT", body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
 }
 
 export async function updateSettings(settings: { roomName?: string; topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy }) {

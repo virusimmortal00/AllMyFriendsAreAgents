@@ -41,6 +41,12 @@ export class ActiveGenerationTracker {
     return true;
   }
 
+  clearAgent(agent: AgentId) {
+    const matching = [...this.generations].filter(([, candidate]) => candidate === agent).map(([generationId]) => generationId);
+    for (const generationId of matching) this.finish(generationId);
+    return matching.length > 0;
+  }
+
   snapshot(): ActiveGenerations {
     return Object.fromEntries(this.generations);
   }
