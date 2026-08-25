@@ -6,7 +6,7 @@ import { CONTINUATION_POLICY_VERSION, projectPathHash, type ContinuationAuditEve
 import type { ContinuationService } from "./continuation-service.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
-import type { HumanTaskSessions } from "./task-api.js";
+import type { HumanSessions } from "./human-session.js";
 
 describe("continuation public projection", () => {
   it("excludes authority epoch, project hash, and executor capabilities", () => {
@@ -21,7 +21,7 @@ describe("continuation public projection", () => {
   });
   it("returns 400 for malformed developer create bodies without dispatching the service", async () => {
     const create = vi.fn(); const app = express(); app.use(express.json());
-    registerContinuationRoutes({ app, service: { create } as unknown as ContinuationService, humans: {} as HumanPresenceRegistry, sessions: { humanId: () => undefined } as unknown as HumanTaskSessions,
+    registerContinuationRoutes({ app, service: { create } as unknown as ContinuationService, humans: {} as HumanPresenceRegistry, sessions: { humanId: () => undefined } as unknown as HumanSessions,
       developers: { authenticate: () => ({ member: { memberId: "developer", revision: 1 } }) } as unknown as DeveloperTeamRegistry, broadcast() {} });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     try { const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/developer/continuations`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test" }, body: JSON.stringify({ objective: 7, budget: [] }) }); expect(response.status).toBe(400); expect(create).not.toHaveBeenCalled(); }

@@ -5,7 +5,7 @@ import { investigationRequestValidationError, projectInvestigation, projectInves
 import { INVESTIGATION_POLICY_VERSION, investigationProjectHash, type InvestigationPolicy, type InvestigationRecord } from "./investigation-record.js";
 import type { InvestigationProgressChannel, InvestigationService } from "./investigation-service.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
-import type { HumanTaskSessions } from "./task-api.js";
+import type { HumanSessions } from "./human-session.js";
 
 describe("investigation API boundary", () => {
   it("does not expose raw context, project identity, capabilities, checkpoint state, or provider session", () => {
@@ -15,7 +15,7 @@ describe("investigation API boundary", () => {
   });
   it("rejects malformed request shapes", () => { const valid = { owner: "codex-sol", objective: "bounded", trigger: "credible", evidenceRefs: [{ kind: "project_artifact", ref: "server/types.ts" }] }; expect(investigationRequestValidationError(valid)).toBeNull(); for (const input of [{ ...valid, owner: "attacker" }, { ...valid, objective: 4 }, { ...valid, evidenceRefs: "all" }, { ...valid, budget: { unknown: 4 } }]) expect(investigationRequestValidationError(input)).toMatch(/bounded owner/i); });
   it("does not let unauthenticated floods launch provider work and rejects forged progress tokens", async () => {
-    const request = vi.fn(); const progress = vi.fn(async () => "unauthorized" as const); const app = express(); app.use(express.json()); registerInvestigationRoutes({ app, service: { request } as unknown as InvestigationService, progressChannel: { handleProgress: progress } as InvestigationProgressChannel, humans: { get: () => undefined } as unknown as HumanPresenceRegistry, sessions: { humanId: () => undefined } as unknown as HumanTaskSessions, broadcast() {} }); const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve)); const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const request = vi.fn(); const progress = vi.fn(async () => "unauthorized" as const); const app = express(); app.use(express.json()); registerInvestigationRoutes({ app, service: { request } as unknown as InvestigationService, progressChannel: { handleProgress: progress } as InvestigationProgressChannel, humans: { get: () => undefined } as unknown as HumanPresenceRegistry, sessions: { humanId: () => undefined } as unknown as HumanSessions, broadcast() {} }); const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve)); const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try { const responses = await Promise.all(Array.from({ length: 12 }, () => fetch(`${base}/api/investigations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ owner: "codex-sol", objective: "burn quota", trigger: "forged" }) }))); expect(responses.every((response) => response.status === 401)).toBe(true); expect(request).not.toHaveBeenCalled(); const forged = await fetch(`${base}/api/investigation-executor/progress/job/1`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer forged" }, body: JSON.stringify({ state: "WAITING_TOOL" }) }); expect(forged.status).toBe(401); }
     finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
   });

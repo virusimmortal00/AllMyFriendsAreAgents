@@ -249,13 +249,22 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .presence-panel .panel-title { height: 31px; padding: 4px 8px; font-size: 16px; line-height: 21px; text-transform: none; }
 .presence-summary { margin: 0; padding: 7px 10px; color: #222; background: #ece9df; border-bottom: 1px solid #aaa; font: 13px/18px Tahoma, Arial, sans-serif; }
 .presence-list { padding: 5px 0 7px; background: #fff; }
-.presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr) 25px; align-items: center; gap: 7px; min-height: 29px; padding: 2px 7px 2px 15px; }
+.presence-row { display: grid; grid-template-columns: 11px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 29px; padding: 2px 7px 2px 15px; }
+.presence-row--active { background: #eef5ff; box-shadow: inset 3px 0 0 #2368c4; }
 .presence-row .speaker { overflow: hidden; font: 700 14px/20px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-identity { display: flex; min-width: 0; flex-direction: column; }
 .presence-health { overflow: hidden; color: #754b00; font: 11px/14px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.presence-activity-label { overflow: hidden; color: #174f9d; font: 700 11px/14px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-status { width: 9px; height: 9px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
 .presence-status--cooldown { border-color: #8a5700; background: #ffb000; }
 .presence-status--unavailable { border-color: #700; background: #c72a2a; }
+.presence-agent-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.agent-activity-indicator { display: inline-flex; align-items: flex-end; justify-content: center; gap: 2px; width: 18px; height: 15px; }
+.agent-activity-indicator i { width: 3px; height: 13px; border-radius: 2px; background: #2368c4; transform: scaleY(.3); transform-origin: bottom; animation: agent-activity-pulse .9s ease-in-out infinite alternate; }
+.agent-activity-indicator i:nth-child(2) { animation-delay: .15s; }
+.agent-activity-indicator i:nth-child(3) { animation-delay: .3s; }
+@keyframes agent-activity-pulse { from { opacity: .45; transform: scaleY(.3); } to { opacity: 1; transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .agent-activity-indicator i { animation: none; opacity: 1; transform: scaleY(.7); } }
 .agent-settings-button { width: 25px; height: 23px; padding: 0; border: 2px outset white; background: var(--chrome); color: #222; font: 15px/1 Arial, sans-serif; }
 .agent-settings-button:active { border-style: inset; }
 .presence-row-spacer { width: 25px; }
@@ -366,6 +375,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .task-create, .task-detail > section, .task-columns > section, .task-empty { margin-bottom: 10px; padding: 12px; border: 2px inset #fff; background: #fff; }
 .task-create { display: grid; grid-template-columns: 1fr auto; gap: 8px; }.task-create h3 { grid-column: 1 / -1; margin: 0; color: var(--blue); }.task-create label { display: grid; gap: 4px; }.task-create label:first-of-type { grid-column: 1; }.task-create label:last-of-type { grid-column: 1 / -1; }.task-create textarea { min-height: 72px; resize: vertical; }.task-create button { grid-column: 2; grid-row: 2; }
 .task-list { display: grid; gap: 7px; padding: 0; list-style: none; }.task-list button { width: 100%; display: grid; grid-template-columns: minmax(160px, 1fr) auto; gap: 4px 10px; padding: 10px; text-align: left; border: 2px outset #fff; background: var(--chrome); }.task-list button:active { border-style: inset; }.task-list small { grid-column: 1 / -1; color: #555; }
+.contribution-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 0; list-style: none; }.contribution-steps li { padding: 7px; border: 2px inset #fff; background: #eee; text-align: center; overflow-wrap: anywhere; }.contribution-steps li.is-complete { background: #d9f4dd; color: #064f15; font-weight: 700; }
 .task-empty { display: grid; gap: 6px; justify-items: start; }.task-state-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }.task-state { padding: 3px 8px; color: #fff; background: var(--blue); text-transform: uppercase; }.task-state--blocked, .task-state--abandoned { background: #8b1a00; }.task-state--completed { background: #176000; }.task-state--archived { background: #555; }
 .task-edit { display: grid; grid-template-columns: 100px minmax(0, 1fr) auto; gap: 7px; align-items: start; }.task-edit > div { grid-column: 2 / -1; display: grid; grid-template-columns: 1fr auto; gap: 6px; }.task-edit textarea { min-height: 80px; resize: vertical; }.task-actions { display: flex; flex-wrap: wrap; gap: 6px; }.task-actions button { text-transform: capitalize; }.task-evidence { display: grid; gap: 4px; max-width: 500px; }
 .task-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.task-columns > section { min-width: 0; margin: 0; }.task-detail h3 { margin: 0 0 8px; color: var(--blue); }.task-detail ul { padding-left: 20px; }.task-muted { color: #666; }.task-columns form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; }.task-link-button { display: block; margin-top: 5px; padding: 0; border: 0; color: #0000b0; background: transparent; text-decoration: underline; }
@@ -654,7 +664,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .right-rail .presence-panel, .right-rail .controls-panel { grid-row: 2; height: max-content; max-height: none; overflow: visible; }
   .presence-panel .panel-title, .controls-panel .panel-title { display: none; }
   .presence-summary { padding: 11px 12px; font-size: 14px; }
-  .presence-row { min-height: 45px; grid-template-columns: 12px minmax(0, 1fr) 38px; padding: 4px 9px 4px 14px; }
+  .presence-row { min-height: 45px; grid-template-columns: 12px minmax(0, 1fr) auto; padding: 4px 9px 4px 14px; }
   .presence-row .speaker { font-size: 15px; }
   .presence-health { font-size: 12px; line-height: 15px; }
   .agent-settings-button { width: 38px; height: 36px; }
@@ -679,6 +689,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .improvements-status dd { margin-bottom: 8px; }
   .tasks-room-rail { display: none; }
   .tasks-panel { width: 100%; height: 100%; padding: 5px; }
+  .contribution-steps { grid-template-columns: 1fr; }
   .task-create, .task-columns, .task-edit { grid-template-columns: 1fr; }
   .task-create > *, .task-create button, .task-edit > *, .task-edit > div { grid-column: 1 !important; grid-row: auto !important; }
   .task-columns form { grid-template-columns: 1fr; }

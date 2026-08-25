@@ -6,8 +6,9 @@ import express from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeveloperTeamRegistry, hashToken } from "./developer-team.js";
 import { HumanPresenceRegistry } from "./human-presence.js";
+import { HUMAN_SESSION_COOKIE, HumanSessions, joinHumanWithSession } from "./human-session.js";
 import { RoomStore } from "./room-store.js";
-import { HumanTaskSessions, joinHumanWithTaskSession, registerTaskRoutes } from "./task-api.js";
+import { registerTaskRoutes } from "./task-api.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -16,13 +17,13 @@ async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-task-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
   const humans = new HumanPresenceRegistry();
-  const human = humans.join({ id: "human-a", name: "Ada" });
-  const sessions = new HumanTaskSessions();
-  const cookie = `amfaa_task_session=${sessions.issue(human.id)}`;
+  const human = humans.join({ name: "Ada" });
+  const sessions = new HumanSessions();
+  const cookie = `${HUMAN_SESSION_COOKIE}=${sessions.issue(human.id)}`;
   const developerToken = "d".repeat(40);
   const developerTeam = new DeveloperTeamRegistry([{ memberId: "agent-a", revision: 7, displayName: "Agent A", roles: ["AUTHOR"], capabilities: ["TASK_READ", "TASK_PROPOSE", "TASK_UPDATE"], tokenHash: hashToken(developerToken), createdAt: new Date().toISOString() }]);
   const app = express(); app.use(express.json());
-  app.post("/api/humans", (request, response) => response.status(201).json(joinHumanWithTaskSession(request, response, humans, sessions)));
+  app.post("/api/humans", (request, response) => response.status(201).json(joinHumanWithSession(request, response, humans, sessions)));
   registerTaskRoutes({ app, store, humans, sessions, developerTeam, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -66,7 +67,7 @@ describe("identity-safe task API", () => {
       expect(response.status).toBe(201);
       const joined = await response.json() as { id: string };
       expect(joined.id).not.toBe(api.humanId);
-      expect(response.headers.get("set-cookie")).toContain("amfaa_task_session=");
+      expect(response.headers.get("set-cookie")).toContain(`${HUMAN_SESSION_COOKIE}=`);
       const resumed = await api.call("/api/humans", { method: "POST", body: JSON.stringify({ id: joined.id, name: "Session owner" }) });
       expect((await resumed.json() as { id: string }).id).toBe(api.humanId);
     } finally { await api.close(); }

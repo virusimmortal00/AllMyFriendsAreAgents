@@ -39,6 +39,20 @@ describe("RoomRoster", () => {
     expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(7);
     expect(html).not.toContain("Configure You");
   });
+
+  it("identifies only agents with an active server generation", () => {
+    const html = renderToStaticMarkup(<RoomRoster
+      activeAgents={new Set(["codex-sol", "cursor-gemini"])}
+      humans={[]}
+      currentHumanId="alice-id"
+      onConfigureAgent={() => undefined}
+    />);
+
+    expect(html).toContain('aria-label="Codex [gpt-5.6 Sol] is generating a response"');
+    expect(html).toContain('aria-label="Cursor [Gemini 3.1 Pro] is generating a response"');
+    expect(html).not.toContain('aria-label="Claude [Claude Sonnet 5] is generating a response"');
+    expect(html.match(/presence-row--active/g)).toHaveLength(2);
+  });
 });
 
 describe("AgentSettingsDialog", () => {

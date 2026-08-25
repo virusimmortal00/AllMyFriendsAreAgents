@@ -73,6 +73,18 @@ export async function updateRoomTask(taskId: string, expectedRevision: number, f
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify({ expectedRevision, [field]: value }) }).then((response) => response.json() as Promise<Task>);
 }
 
+export async function loadContributions() {
+  return request("/api/contributions", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadContribution(id: string) {
+  return request(`/api/contributions/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function contributionGate(id: string, action: "approve" | "execute", kind: "publication" | "merge" | "deployment", body: Record<string, unknown>) {
+  return request(`/api/contributions/${encodeURIComponent(id)}/${action}/${kind}`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.json());
+}
+
 export async function checkReady(): Promise<ServerIdentity> {
   return request("/api/ready", { method: "GET", cache: "no-store" }, READY_TIMEOUT_MS).then((response) => response.json());
 }
@@ -81,7 +93,7 @@ export async function loadRoom(): Promise<RoomState> {
   return request("/api/state").then((response) => response.json());
 }
 
-export async function updateSettings(settings: { roomName?: string; topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy; actorId?: string }) {
+export async function updateSettings(settings: { roomName?: string; topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy }) {
   return request("/api/settings", {
     method: "PATCH",
     body: JSON.stringify(settings),
@@ -91,21 +103,21 @@ export async function updateSettings(settings: { roomName?: string; topic?: stri
 export async function joinRoom(profile: { id?: string; name: string; style?: ChatStyle }): Promise<HumanPresence> {
   return request("/api/humans", {
     method: "POST",
-    body: JSON.stringify(profile),
+    body: JSON.stringify({ name: profile.name, style: profile.style }),
   }).then((response) => response.json());
 }
 
-export async function updateMyStyle(humanId: string, style: ChatStyle) {
+export async function updateMyStyle(style: ChatStyle) {
   return request("/api/style", {
     method: "PATCH",
-    body: JSON.stringify({ humanId, style }),
+    body: JSON.stringify({ style }),
   });
 }
 
-export async function sendMessage(humanId: string, text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<MessageMutationAcknowledgement> {
+export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<MessageMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
-    body: JSON.stringify({ humanId, text, clientMessageId, mentions }),
+    body: JSON.stringify({ text, clientMessageId, mentions }),
   }).then((response) => response.json()).then((acknowledgement: unknown) => {
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
@@ -147,11 +159,11 @@ export async function loadHeartbeat(): Promise<HeartbeatStatus> {
 }
 
 export async function authorizeHeartbeat(expectedRevision: number) {
-  return request("/api/heartbeat/authorize", { method: "POST", body: JSON.stringify({ expectedRevision, actorId: "local-human-operator", reason: "Explicitly authorized from the visible heartbeat control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
+  return request("/api/heartbeat/authorize", { method: "POST", body: JSON.stringify({ expectedRevision, reason: "Explicitly authorized from the visible heartbeat control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
 }
 
 export async function emergencyStopHeartbeat(expectedRevision: number) {
-  return request("/api/heartbeat/emergency-stop", { method: "POST", body: JSON.stringify({ expectedRevision, actorId: "local-human-operator", reason: "Emergency stop requested from the visible control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
+  return request("/api/heartbeat/emergency-stop", { method: "POST", body: JSON.stringify({ expectedRevision, reason: "Emergency stop requested from the visible control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
 }
 
 export async function loadContinuations(signal?: AbortSignal): Promise<ContinuationDashboard> { return request("/api/continuations", { method: "GET", cache: "no-store", signal }).then((response) => response.json()); }

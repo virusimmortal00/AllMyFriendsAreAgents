@@ -10,6 +10,8 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 - [AIM window controls](aim-window-controls.md)
 - [Cross-provider project write toggle](project-permissions-toggle.md)
 - [Participant mentions and autocomplete](participant-mentions.md)
+- [Scoped GitHub contribution broker](18-scoped-github-contribution-broker.md)
+- [Exact-commit contribution gates](20-exact-commit-contribution-gates.md)
 
 ## Working rules
 

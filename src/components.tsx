@@ -130,12 +130,14 @@ export function TranscriptHeader({
 export function RoomRoster({
   availability,
   agentHealth,
+  activeAgents,
   humans,
   currentHumanId,
   onConfigureAgent,
 }: {
   availability?: Record<ActiveAgentId, boolean>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  activeAgents?: ReadonlySet<AgentId>;
   humans: HumanPresence[];
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
@@ -153,26 +155,38 @@ export function RoomRoster({
       <PanelTitle>Who&apos;s Here</PanelTitle>
       <p className="presence-summary"><strong>{agentLabel}</strong> and <strong>{humanLabel}</strong> are here.</p>
       <div className="presence-list" role="list">
-        {presentAgents.map((agent) => (
-          <div className="presence-row" role="listitem" key={agent}>
-            <span
-              className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
-              aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
-              title={agentHealth?.[agent]?.message || "Available"}
-            />
-            <span className="presence-identity">
-              <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
-              {agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
-            </span>
-            <button
-              type="button"
-              className="agent-settings-button"
-              aria-label={`Configure ${agentScreenName(agent)}`}
-              title={`Settings for ${agentScreenName(agent)}`}
-              onClick={() => onConfigureAgent(agent)}
-            >⚙</button>
-          </div>
-        ))}
+        {presentAgents.map((agent) => {
+          const active = activeAgents?.has(agent) ?? false;
+          return (
+            <div className={`presence-row${active ? " presence-row--active" : ""}`} role="listitem" key={agent}>
+              <span
+                className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
+                aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
+                title={agentHealth?.[agent]?.message || "Available"}
+              />
+              <span className="presence-identity">
+                <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+                {active
+                  ? <small className="presence-activity-label">Generating a response…</small>
+                  : agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
+              </span>
+              <span className="presence-agent-actions">
+                {active ? (
+                  <span className="agent-activity-indicator" role="status" aria-label={`${agentScreenName(agent)} is generating a response`} title="Generating a response">
+                    <i /><i /><i />
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="agent-settings-button"
+                  aria-label={`Configure ${agentScreenName(agent)}`}
+                  title={`Settings for ${agentScreenName(agent)}`}
+                  onClick={() => onConfigureAgent(agent)}
+                >⚙</button>
+              </span>
+            </div>
+          );
+        })}
         {humans.map((human) => (
           <div className="presence-row" role="listitem" key={human.id}>
             <span className="presence-status" aria-hidden="true" />

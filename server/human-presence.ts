@@ -23,10 +23,10 @@ export class HumanPresenceRegistry {
   private readonly humans = new Map<string, HumanPresence>();
   private readonly connectionCounts = new Map<string, number>();
 
-  join(input: { id?: unknown; name?: unknown; style?: unknown }) {
+  join(input: { name?: unknown; style?: unknown }, resumeId?: unknown) {
     const name = cleanName(input.name);
     if (!name) throw new Error("Your name is required.");
-    const requestedId = typeof input.id === "string" && /^[a-zA-Z0-9-]{8,80}$/.test(input.id) ? input.id : undefined;
+    const requestedId = typeof resumeId === "string" && /^[a-zA-Z0-9-]{8,80}$/.test(resumeId) ? resumeId : undefined;
     const id = requestedId || randomUUID();
     const existing = this.humans.get(id);
     const human: HumanPresence = {

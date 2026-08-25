@@ -25,6 +25,7 @@ let humanId = "";
 let roomBase = "";
 let executorBase = "";
 let providerSessionId = "";
+let publicSummary = "";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 async function freePort() { return new Promise<number>((resolve, reject) => { const server = net.createServer(); server.once("error", reject); server.listen(0, "127.0.0.1", () => { const address = server.address(); const port = typeof address === "object" && address ? address.port : 0; server.close((error) => error ? reject(error) : resolve(port)); }); }); }
@@ -60,9 +61,9 @@ async function main() {
     let created: any;
     let transcriptCountAfterInitiation = 0;
     if (requireAutonomousInitiation) {
-      await http(roomBase, "/api/settings", { method: "PATCH", body: { topic: "Identity-integrity smoke test: inspect identity-anomaly.txt. If its unresolved mismatch is credible, request a bounded private investigation.", actorId: humanId } });
+      await http(roomBase, "/api/settings", { method: "PATCH", cookie, body: { topic: "Identity-integrity smoke test: inspect identity-anomaly.txt. If its unresolved mismatch is credible, request a bounded private investigation." } });
       const knownGenerations = new Set((await journal()).map((event: any) => event.generationId));
-      await http(roomBase, "/api/actions", { method: "POST", body: { action: "ask", target: "codex-sol" }, expected: 202 });
+      await http(roomBase, "/api/actions", { method: "POST", cookie, body: { action: "ask", target: "codex-sol" }, expected: 202 });
       created = await eventually(async () => (await dashboard()).jobs.find((job: any) => job.signal === "AGENT_DECISION"), 240_000);
       await eventually(async () => (await journal()).find((event: any) => event.type === "generation.delivery" && event.agent === "codex-sol" && !knownGenerations.has(event.generationId)), 240_000);
       transcriptCountAfterInitiation = (await http<any>(roomBase, "/api/state")).body.messages.length;
@@ -72,7 +73,7 @@ async function main() {
     }
     const completed = await eventually(async () => { const found = (await dashboard()).jobs.find((job: any) => job.investigationId === created.investigationId); if (found && ["FAILED", "BLOCKED", "CANCELLED"].includes(found.status)) throw new Error(`Investigation ended ${found.status}: ${found.blocker}`); return found?.status === "COMPLETED" ? found : undefined; }, 210_000);
     assert(completed.providerSessionEstablished, "Investigation did not establish an isolated provider session.");
-    const inbox = (await http<any[]>(roomBase, "/api/investigations/inbox/codex-sol", { cookie })).body; const entry = inbox.find((item) => item.investigationId === created.investigationId); assert(entry?.summary.includes(marker), "Real provider summary did not corroborate the exact local marker.");
+    const inbox = (await http<any[]>(roomBase, "/api/investigations/inbox/codex-sol", { cookie })).body; const entry = inbox.find((item) => item.investigationId === created.investigationId); assert(entry && entry.summary.trim().length > 0 && entry.evidenceRefs.some((ref: any) => ref.kind === "project_artifact" && ref.ref === "identity-anomaly.txt"), "Real provider result did not return a public summary with the inspected artifact evidence reference."); publicSummary = entry.summary;
     const state = (await http<any>(executorBase, "/control/state")).body; const dispatch = state.dispatches.find((item: any) => item.investigationId === created.investigationId); providerSessionId = dispatch?.providerSessionId || ""; assert(providerSessionId, "Executor did not record the real provider session.");
     assert(JSON.stringify(dispatch.capabilities) === JSON.stringify(["READ_PROJECT", "READ_OBSERVABILITY", "RUN_READ_ONLY_TESTS"]), "Executor capabilities were not read-only bounded.");
     assert(["TASK_AUTHORITY", "EDIT", "EXTERNAL_REQUEST", "COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH"].every((capability) => dispatch.excludedCapabilities.includes(capability)), "Executor exclusion list was incomplete.");
@@ -83,10 +84,10 @@ async function main() {
 
   await step("bounded later-turn reinjection and foreground session separation", async () => {
     const beforeIds = new Set((await journal()).map((event: any) => event.generationId));
-    await http(roomBase, "/api/actions", { method: "POST", body: { action: "ask", target: "codex-sol" }, expected: 202 });
+    await http(roomBase, "/api/actions", { method: "POST", cookie, body: { action: "ask", target: "codex-sol" }, expected: 202 });
     const delivery = await eventually(async () => (await journal()).find((event: any) => event.type === "generation.delivery" && event.agent === "codex-sol" && !beforeIds.has(event.generationId)), 240_000);
     const events = await journal(); const started = events.find((event: any) => event.type === "generation.started" && event.generationId === delivery.generationId); assert(started, "Foreground generation start was not journaled.");
-    assert(String(started.prompt).includes("INVESTIGATION INBOX") && String(started.prompt).includes(marker), "Foreground prompt did not receive the bounded investigation summary.");
+    assert(String(started.prompt).includes("INVESTIGATION INBOX") && String(started.prompt).includes(publicSummary), "Foreground prompt did not receive the exact bounded public investigation summary.");
     assert(!String(started.prompt).includes(providerSessionId), "Foreground prompt leaked the raw investigation provider session.");
     const roomState = JSON.parse(await readFile(path.join(dataDirectory, "room.json"), "utf8")); const foregroundSessionId = roomState.sessions?.["codex-sol"]?.id; assert(foregroundSessionId && foregroundSessionId !== providerSessionId, "Foreground and investigation provider sessions were not isolated.");
     assert(JSON.stringify(await snapshot(canaryProject)) === JSON.stringify(pristine), "Foreground read-only turn modified the disposable project.");
@@ -94,7 +95,7 @@ async function main() {
   });
 
   await step("inbox closure and policy disable", async () => {
-    const inbox = (await http<any[]>(roomBase, "/api/investigations/inbox/codex-sol", { cookie })).body; const entry = inbox.find((item) => item.summary.includes(marker)); assert(entry, "Canary inbox entry was missing before closure.");
+    const inbox = (await http<any[]>(roomBase, "/api/investigations/inbox/codex-sol", { cookie })).body; const entry = inbox.find((item) => item.summary === publicSummary); assert(entry, "Canary inbox entry was missing before closure.");
     await http(roomBase, `/api/investigations/inbox/${encodeURIComponent(entry.inboxEntryId)}/acknowledge`, { method: "POST", cookie, body: { close: true } });
     const current = await dashboard(); await http(roomBase, "/api/investigations/policy", { method: "PATCH", cookie, body: { expectedRevision: current.policy.revision, enabled: false } });
     const final = await dashboard(); assert(final.policy.enabled === false, "Investigation policy remained enabled."); assert(final.jobs.find((job: any) => job.investigationId === entry.investigationId)?.status === "ACKNOWLEDGED", "Investigation was not closed after inbox acknowledgement.");
