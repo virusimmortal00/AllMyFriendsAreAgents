@@ -1,5 +1,5 @@
 import { AGENT_IDS, historicalAgentProfile, isActiveAgentId, isAgentId, registerParticipantProfile, type ActiveAgentId } from "./participants.js";
-import { validDiscoveryId, validModelDiscoveryId, type ModelReference } from "./model-discovery.js";
+import { resolveOpenCodeVariant, validDiscoveryId, validModelDiscoveryId, type ModelReference } from "./model-discovery.js";
 
 export const MAX_ROOM_AGENTS = 32;
 
@@ -19,7 +19,7 @@ export interface RoomAgentRosterEntry {
   readonly selectionConfirmationRequired?: boolean;
 }
 
-export type NormalizedRoomAgentRosterEntry = Omit<RoomAgentRosterEntry, "harness"> & Required<Pick<RoomAgentRosterEntry, "conversationalName" | "modelId" | "supportsProjectWrites" | "configurationRevision">>;
+export type NormalizedRoomAgentRosterEntry = Omit<RoomAgentRosterEntry, "harness" | "reasoningEffort"> & Required<Pick<RoomAgentRosterEntry, "conversationalName" | "modelId" | "supportsProjectWrites" | "configurationRevision">>;
 
 export interface RoomAgentRoster {
   readonly schemaVersion?: 3;
@@ -53,7 +53,7 @@ export function defaultRoomAgentRoster(): RoomAgentRoster {
   return { schemaVersion: 3, revision: 1, entries: AGENT_IDS.flatMap((agentId) => legacyRosterEntry(agentId, true) || []) };
 }
 
-function normalizedEntry(input: unknown, migrateLegacySelection = false): NormalizedRoomAgentRosterEntry | undefined {
+function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boolean; rejectVariantConflict?: boolean } = {}): NormalizedRoomAgentRosterEntry | undefined {
   if (!input || typeof input !== "object") return undefined;
   const value = input as Partial<RoomAgentRosterEntry> & { agentId?: unknown; enabled?: unknown };
   if (typeof value.agentId !== "string" || typeof value.enabled !== "boolean") return undefined;
@@ -64,11 +64,14 @@ function normalizedEntry(input: unknown, migrateLegacySelection = false): Normal
   if (value.providerId !== undefined && !validDiscoveryId(value.providerId)) return undefined;
   if (value.variant !== undefined && !validDiscoveryId(value.variant)) return undefined;
   if (value.reasoningEffort !== undefined && !validDiscoveryId(value.reasoningEffort)) return undefined;
+  const variantSelection = resolveOpenCodeVariant(value);
+  if (variantSelection.conflict && options.rejectVariantConflict) return undefined;
   const configurationRevision = Number.isSafeInteger(value.configurationRevision) && Number(value.configurationRevision) > 0 ? Number(value.configurationRevision) : 1;
   const migratedProviderId = value.providerId || (typeof value.harness === "string" ? legacyProviderId(value.harness) : undefined) || legacy?.providerId;
   const migratedFromLegacyHarness = typeof value.harness === "string" && value.harness !== "opencode";
-  const selectionConfirmationRequired = value.selectionConfirmationRequired === true || migratedFromLegacyHarness || migrateLegacySelection && Boolean(legacy?.sessionInvalidationReason);
-  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(value.variant ? { variant: value.variant } : {}), ...(value.reasoningEffort ? { reasoningEffort: value.reasoningEffort } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, ...(typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}) });
+  const selectionConfirmationRequired = value.selectionConfirmationRequired === true || migratedFromLegacyHarness || options.migrateLegacySelection && Boolean(legacy?.sessionInvalidationReason) || variantSelection.conflict;
+  const conflictReason = variantSelection.conflict ? "Conflicting legacy variant and reasoning-effort selections were found. Confirm one OpenCode variant before this participant can run." : undefined;
+  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(variantSelection.variant ? { variant: variantSelection.variant } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, ...(conflictReason ? { sessionInvalidationReason: conflictReason } : typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}) });
 }
 
 export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
@@ -76,7 +79,7 @@ export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
   const value = input as Partial<RoomAgentRoster>;
   const revision = Number.isSafeInteger(value.revision) && Number(value.revision) > 0 ? Number(value.revision) : 1;
   if (!Array.isArray(value.entries) || value.entries.length > MAX_ROOM_AGENTS) return defaultRoomAgentRoster();
-  const entries = value.entries.map((entry) => normalizedEntry(entry, value.schemaVersion !== 3));
+  const entries = value.entries.map((entry) => normalizedEntry(entry, { migrateLegacySelection: value.schemaVersion !== 3 }));
   if (entries.some((entry) => !entry)) return defaultRoomAgentRoster();
   const resolved = entries as NormalizedRoomAgentRosterEntry[];
   const ids = new Set(resolved.map(({ agentId }) => agentId));
@@ -86,7 +89,7 @@ export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
 
 export function validateRosterEntries(input: unknown): readonly RoomAgentRosterEntry[] | undefined {
   if (!Array.isArray(input) || input.length > MAX_ROOM_AGENTS) return undefined;
-  const entries = input.map((entry) => normalizedEntry(entry));
+  const entries = input.map((entry) => normalizedEntry(entry, { rejectVariantConflict: true }));
   if (entries.some((entry) => !entry)) return undefined;
   const resolved = entries as NormalizedRoomAgentRosterEntry[];
   const ids = new Set(resolved.map(({ agentId }) => agentId));
@@ -98,7 +101,7 @@ export function roomAgentIds(roster: RoomAgentRoster) { return roster.entries.ma
 export function enabledRoomAgentIds(roster: RoomAgentRoster) { return roster.entries.filter(({ enabled }) => enabled).map(({ agentId }) => agentId); }
 export function roomAgentEnabled(roster: RoomAgentRoster, agent: ActiveAgentId) { return roster.entries.some((entry) => entry.agentId === agent && entry.enabled); }
 export function roomAgentEntry(roster: RoomAgentRoster | undefined, agent: ActiveAgentId) { return normalizeRoomAgentRoster(roster).entries.find((entry) => entry.agentId === agent); }
-export function roomAgentModelReference(entry: RoomAgentRosterEntry): ModelReference { const normalized = normalizedEntry(entry); if (!normalized?.modelId) throw new Error("Invalid participant execution configuration."); return { ...(normalized.providerId ? { providerId: normalized.providerId } : {}), modelId: normalized.modelId, ...(normalized.variant ? { variant: normalized.variant } : {}), ...(normalized.reasoningEffort ? { reasoningEffort: normalized.reasoningEffort } : {}) }; }
+export function roomAgentModelReference(entry: RoomAgentRosterEntry): ModelReference { const normalized = normalizedEntry(entry); if (!normalized?.modelId) throw new Error("Invalid participant execution configuration."); return { ...(normalized.providerId ? { providerId: normalized.providerId } : {}), modelId: normalized.modelId, ...(normalized.variant ? { variant: normalized.variant } : {}) }; }
 export function participantConfigurationFingerprint(entry: RoomAgentRosterEntry) { return JSON.stringify(roomAgentModelReference(entry)); }
 export function participantConfigurationFingerprintMatches(stored: string | undefined, entry: RoomAgentRosterEntry) {
   const current = participantConfigurationFingerprint(entry);
@@ -106,8 +109,13 @@ export function participantConfigurationFingerprintMatches(stored: string | unde
   if (!stored) return false;
   try {
     const legacy = JSON.parse(stored) as Record<string, unknown>;
-    if (legacy.harness !== "opencode" || Object.keys(legacy).some((key) => !["harness", "providerId", "modelId", "variant", "reasoningEffort"].includes(key))) return false;
-    return JSON.stringify({ ...(typeof legacy.providerId === "string" ? { providerId: legacy.providerId } : {}), modelId: legacy.modelId, ...(typeof legacy.variant === "string" ? { variant: legacy.variant } : {}), ...(typeof legacy.reasoningEffort === "string" ? { reasoningEffort: legacy.reasoningEffort } : {}) }) === current;
+    if (
+      (legacy.harness !== undefined && legacy.harness !== "opencode")
+      || Object.keys(legacy).some((key) => !["harness", "providerId", "modelId", "variant", "reasoningEffort"].includes(key))
+    ) return false;
+    const selection = resolveOpenCodeVariant({ variant: typeof legacy.variant === "string" ? legacy.variant : undefined, reasoningEffort: typeof legacy.reasoningEffort === "string" ? legacy.reasoningEffort : undefined });
+    if (selection.conflict) return false;
+    return JSON.stringify({ ...(typeof legacy.providerId === "string" ? { providerId: legacy.providerId } : {}), modelId: legacy.modelId, ...(selection.variant ? { variant: selection.variant } : {}) }) === current;
   } catch {
     return false;
   }

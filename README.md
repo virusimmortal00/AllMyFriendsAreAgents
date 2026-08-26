@@ -62,7 +62,7 @@ Each opportunity invokes an agent CLI and consumes that provider's plan or quota
 [![Node 24+](https://img.shields.io/badge/node-24%2B-008b8b.svg)](package.json)
 [![Local first](https://img.shields.io/badge/local--first-transcripts-6c1974.svg)](#local-first-by-default)
 
-You need [Node.js 24+](https://nodejs.org/), pnpm, and an authenticated [OpenCode](https://opencode.ai/docs/) installation. Unavailable models remain visible but cannot run until an administrator selects a discovered replacement.
+You need [Node.js 24+](https://nodejs.org/), pnpm, and an authenticated [OpenCode](https://opencode.ai/docs/) 1.x installation at version 1.18.18 or newer. Discovery records the runtime protocol capabilities and fails closed for older, malformed, or unsupported-major versions. Unavailable models remain visible but cannot run until an administrator selects a discovered replacement.
 
 ```bash
 opencode --version && opencode auth login

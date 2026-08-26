@@ -14,6 +14,9 @@ const execFileAsync = promisify(execFile);
 export const DISCOVERY_TIMEOUT_MS = 10_000;
 export const DISCOVERY_OUTPUT_LIMIT = 1_048_576;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
+export const MINIMUM_OPENCODE_VERSION = "1.18.18";
+const OPENCODE_PROTOCOL = "opencode-cli-jsonl-v1" as const;
+const OPENCODE_CAPABILITIES = ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const;
 
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 
@@ -70,6 +73,22 @@ function uniqueModels(models: readonly DiscoveredModel[]) {
     seen.add(key);
     return true;
   }).slice(0, 500);
+}
+
+export function parseOpenCodeRuntimeVersion(stdout: string) {
+  const match = stripAnsi(stdout).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/);
+  if (!match) return undefined;
+  const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${match[4] ? `-${match[4]}` : ""}${match[5] ? `+${match[5]}` : ""}`;
+  const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const minimum = MINIMUM_OPENCODE_VERSION.split(".").map(Number);
+  const firstDifference = parts.findIndex((part, index) => part !== minimum[index]);
+  const atLeastMinimum = firstDifference === -1 ? !match[4] : parts[firstDifference] > minimum[firstDifference];
+  return {
+    version,
+    compatible: parts[0] === minimum[0] && atLeastMinimum,
+    protocol: OPENCODE_PROTOCOL,
+    capabilities: OPENCODE_CAPABILITIES,
+  };
 }
 
 export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredModel[] {
@@ -209,9 +228,26 @@ export class ModelDiscoveryService {
   private async discoverUncached(signal?: AbortSignal): Promise<ModelDiscoveryResult> {
     const discoveredAt = new Date(this.now()).toISOString();
     const configuredDefault = configuredReference();
-    const output = await this.execute(OPENCODE_COMMAND, ["models", "--verbose"], signal);
-    const models = parseOpenCodeModelCatalog(output.stdout);
-    if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
-    return { status: "available", models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models), configuredDefault, discoveredAt };
+    const versionOutput = await this.execute(OPENCODE_COMMAND, ["--version"], signal);
+    const runtime = parseOpenCodeRuntimeVersion(versionOutput.stdout);
+    if (!runtime?.compatible) {
+      return {
+        status: "runtime_incompatible",
+        models: [],
+        ...(runtime ? { runtime } : {}),
+        diagnostic: runtime
+          ? `OpenCode ${runtime.version} is incompatible; install ${MINIMUM_OPENCODE_VERSION} or a newer compatible 1.x release.`
+          : "OpenCode returned an unrecognized version; install a supported 1.x release.",
+        discoveredAt,
+      };
+    }
+    try {
+      const output = await this.execute(OPENCODE_COMMAND, ["models", "--verbose"], signal);
+      const models = parseOpenCodeModelCatalog(output.stdout);
+      if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
+      return { status: "available", models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models), runtime, configuredDefault, discoveredAt };
+    } catch (error) {
+      return { ...classifyError(error), models: [], runtime, discoveredAt };
+    }
   }
 }

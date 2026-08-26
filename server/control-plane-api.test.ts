@@ -15,7 +15,7 @@ describe("control-plane API authorization", () => {
   it("gates provider setup, enforces CSRF, delegates capabilities, and audits only redacted metadata", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-control-api-"));
     const control = await ControlPlaneStore.open(directory, "local-bootstrap-secret-with-32-characters");
-    const discovery = new ModelDiscoveryService(async (_command, args) => ({ stdout: args[0] === "models" ? "provider/model\n" : args[0] === "--list-models" ? "model - Model\n" : "1.0", stderr: "" }));
+    const discovery = new ModelDiscoveryService(async (_command, args) => ({ stdout: args[0] === "models" ? "provider/model\n" : args[0] === "--list-models" ? "model - Model\n" : "1.18.18", stderr: "" }));
     const app = express(); app.use(express.json()); registerControlPlaneRoutes({ app, control, discovery });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });

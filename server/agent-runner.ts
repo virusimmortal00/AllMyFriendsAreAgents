@@ -444,17 +444,94 @@ function opencodeArgs(permission: "read-only" | "writable", projectPath: string,
 function parseOpenCodeOutput(stdout: string) {
   let sessionId = "";
   const text: string[] = [];
+  const toolCalls = new Set<string>();
+  const failedToolCalls = new Set<string>();
+  const errors: Array<{ name: string; message: string; statusCode?: number; retryable?: boolean }> = [];
+  let steps = 0;
+  let cost = 0;
+  let finishReason = "";
+  const usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
+  const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+  const safeMessage = (value: unknown) => String(value || "OpenCode reported an error.")
+    .replace(/(?:sk-|key-|token-|Bearer\s+)[A-Za-z0-9._-]{8,}/gi, "[redacted]")
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=[^\s]+/gi, "[redacted]")
+    .slice(0, 500);
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const event = JSON.parse(line) as { type?: string; sessionID?: string; part?: { type?: string; text?: string } };
+      const event = JSON.parse(line) as {
+        type?: string;
+        sessionID?: string;
+        part?: {
+          id?: string;
+          callID?: string;
+          type?: string;
+          text?: string;
+          tool?: string;
+          reason?: string;
+          cost?: unknown;
+          tokens?: { total?: unknown; input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } };
+          state?: { status?: string };
+        };
+        error?: { name?: unknown; data?: { message?: unknown; statusCode?: unknown; isRetryable?: unknown } };
+      };
       if (event.sessionID) sessionId = event.sessionID;
       if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
+      if (event.type === "tool_use" && event.part?.type === "tool") {
+        const id = event.part.callID || event.part.id || `${event.part.tool || "tool"}:${toolCalls.size}`;
+        toolCalls.add(id);
+        if (event.part.state?.status === "error") failedToolCalls.add(id);
+      }
+      if (event.type === "step_finish" && event.part?.type === "step-finish") {
+        steps += 1;
+        cost += number(event.part.cost);
+        finishReason = typeof event.part.reason === "string" ? event.part.reason.slice(0, 80) : finishReason;
+        const tokens = event.part.tokens;
+        const input = number(tokens?.input);
+        const output = number(tokens?.output);
+        const reasoning = number(tokens?.reasoning);
+        usage.inputTokens += input;
+        usage.outputTokens += output;
+        usage.reasoningTokens += reasoning;
+        usage.cacheReadTokens += number(tokens?.cache?.read);
+        usage.cacheWriteTokens += number(tokens?.cache?.write);
+        usage.totalTokens += number(tokens?.total) || input + output + reasoning;
+      }
+      if (event.type === "error" && event.error && errors.length < 5) {
+        errors.push({
+          name: typeof event.error.name === "string" ? event.error.name.slice(0, 100) : "OpenCodeError",
+          message: safeMessage(event.error.data?.message),
+          ...(Number.isSafeInteger(event.error.data?.statusCode) ? { statusCode: Number(event.error.data?.statusCode) } : {}),
+          ...(typeof event.error.data?.isRetryable === "boolean" ? { retryable: event.error.data.isRetryable } : {}),
+        });
+      }
     } catch {
       // OpenCode progress outside its JSON event protocol is intentionally ignored.
     }
   }
-  return { sessionId, text: text.join("") };
+  return {
+    sessionId,
+    text: text.join(""),
+    usage,
+    cost,
+    toolCalls: toolCalls.size,
+    toolFailures: failedToolCalls.size,
+    steps,
+    finishReason,
+    errors,
+  };
+}
+
+function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>) {
+  return {
+    providerUsage: parsed.usage,
+    providerCostUsd: parsed.cost,
+    toolCalls: parsed.toolCalls,
+    toolFailures: parsed.toolFailures,
+    providerSteps: parsed.steps,
+    ...(parsed.finishReason ? { providerFinishReason: parsed.finishReason } : {}),
+    ...(parsed.errors.length ? { providerErrors: parsed.errors } : {}),
+  };
 }
 
 function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable") {
@@ -524,7 +601,9 @@ export async function runAgent(
     includeDiff,
     permission,
     provider: profile.provider,
+    providerId: participant.providerId,
     modelId: profile.modelId,
+    variant: participant.variant,
     resumedSession: Boolean(existing),
     sessionId: existing?.id,
     prompt,
@@ -564,29 +643,34 @@ export async function runAgent(
     await journal?.append({
       type: "generation.completed", generationId, agent, durationMs, sessionId,
       rawResponse: parsed.text, responseCharacters: parsed.text.length,
+      ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
     return { sessionId, text: parsed.text, generationId, durationMs, permission };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
+      const parsed = parseOpenCodeOutput(error.process.stdout);
       await journal?.append({
         type: "generation.cancelled",
         generationId,
         agent,
         durationMs: Date.now() - startedAt,
         reason: error.message,
+        ...openCodeJournalMetadata(parsed),
         exitCode: error.process.exitCode,
         cliStdout: error.process.stdout,
         cliStderr: error.process.stderr,
       });
       throw new AgentGenerationCancelledError();
     }
+    const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
     await journal?.append({
       type: "generation.failed",
       generationId,
       agent,
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
+      ...(failedProtocol ? openCodeJournalMetadata(failedProtocol) : {}),
       ...(error instanceof ProcessExecutionError ? {
         exitCode: error.process.exitCode,
         cliStdout: error.process.stdout,
