@@ -1,11 +1,12 @@
 ---
 id: participant-mentions
-status: active
+status: superseded
+issue: 5
 owner: developer-team-sol
 reviewers: [cursor-grok, claude-opus, claude-sonnet]
 depends_on: [project-permissions-toggle]
 reported_by: crimsonsunset
-updated: 2026-08-21
+updated: 2026-08-22
 ---
 
 # Outcome
@@ -24,11 +25,11 @@ Humans can select any current human or agent from an accessible `@` autocomplete
 
 # Current state
 
-Implementation is present on `feat/participant-mentions`. Full-suite verification has passed and the PR has been created.
+Shipped. This file is historical; GitHub is the tracker.
 
 # Next action
 
-Merge the PR and promote.
+None. Landed in [PR #5](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/5) and [PR #7](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/7).
 
 # Evidence
 

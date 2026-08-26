@@ -1,11 +1,12 @@
 ---
 id: project-permissions-toggle
-status: active
+status: superseded
+issue: 4
 owner: sol
 reviewers: []
 depends_on: []
 reported_by: crimsonsunset
-updated: 2026-08-21
+updated: 2026-08-26
 ---
 
 # Outcome
@@ -23,11 +24,11 @@ The project-permissions checkbox can grant the room's single writable-agent slot
 
 # Current state
 
-Cursor profiles were marked permanently non-writable, the settings checkbox was disabled, and the runner always launched Cursor in ask mode. The implementation maps the existing explicit single-writer setting to Cursor's non-interactive writable mode while retaining sandboxing and read-only review behavior.
+Shipped. This file is historical; GitHub is the tracker.
 
 # Next action
 
-Verify the complete change against current `origin/main`, then publish for review.
+None. Landed in [PR #4](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/4). The planned follow-on nonexclusive room-agent grants in [#12](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/12) were closed as superseded by the room-agent/implementation-worker separation in [#60](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/60) and [#70](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/70).
 
 # Evidence
 

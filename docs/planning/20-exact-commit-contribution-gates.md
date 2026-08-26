@@ -1,6 +1,7 @@
 ---
 id: exact-commit-contribution-gates
-status: active
+status: done
+issue: 20
 owner: developer-team
 reviewers: [independent-review]
 depends_on: [scoped-github-contribution-broker, governed-assignment-workspaces, first-class-tasks]
@@ -25,11 +26,11 @@ Completed agent work becomes an immutable, independently reviewed handoff. Draft
 
 # Current state
 
-Implementation is isolated on `codex/issue-20-exact-commit-gates`. It is not merged and not live.
+Shipped to `main` through [#45](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/45) and the follow-up hotfix [#47](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/47). Issue [#20](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/20) is closed.
 
 # Next action
 
-Complete executor/API/UI adversarial coverage, run independent review, merge when green, then update the dedicated live checkout and run isolated plus live smoke/canary verification.
+None. Production deployment stays unavailable until a deployment executor URL is explicitly configured.
 
 # Evidence
 

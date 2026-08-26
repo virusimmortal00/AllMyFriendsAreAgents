@@ -1,11 +1,12 @@
 ---
 id: aim-window-controls
-status: complete
-owner: sol
+status: superseded
+issue: 27
+owner: unclaimed
 reviewers: []
 depends_on: []
 reported_by: crimsonsunset
-updated: 2026-08-21
+updated: 2026-08-24
 ---
 
 # Outcome

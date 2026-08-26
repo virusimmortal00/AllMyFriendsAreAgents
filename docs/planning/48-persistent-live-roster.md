@@ -1,6 +1,7 @@
 ---
 id: 48-persistent-live-roster
 status: done
+issue: 48
 owner: developer-team
 reviewers: [coderabbit]
 depends_on: []

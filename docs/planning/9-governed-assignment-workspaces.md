@@ -1,6 +1,17 @@
+---
+id: governed-assignment-workspaces
+status: done
+issue: 9
+owner: developer-team
+reviewers: []
+depends_on: []
+reported_by: issue-9
+updated: 2026-08-26
+---
+
 # #9: Governed assignment-scoped developer workspaces
 
-**Status**: Implemented through Phase 2 — concurrency and landing gates still open
+**Status**: Done — reusable workspace and Git-boundary foundation delivered; room-participant concurrency superseded
 **Ticket**: [#9](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/9) — “Build governed assignment-scoped developer workspaces”
 **Branch**: `main` for Phase 1; each follow-on uses an isolated task worktree
 **Base**: `main`
@@ -9,6 +20,13 @@
 
 ## Overview
 
+> **Architectural realignment (2026-08-26):** This is a terminal historical
+> record. The assignment workspace and confinement primitives remain reusable for
+> separate implementation-worker jobs under [#60](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/60)
+> and [#70](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/70).
+> The former plan to make conversational room participants concurrent source
+> writers is superseded and must not be implemented from this document.
+
 The application can now persist and recover one trusted writable-agent assignment
 in its own Git worktree. Before PR #10, writable processes ran against the selected
 project path and assignment state had no durable workspace boundary.
@@ -16,8 +34,9 @@ project path and assignment state had no durable workspace boundary.
 Concretely, this ticket:
 
 - keeps the shipped trusted single-writer lifecycle recoverable across restarts;
-- adds a fail-closed, assignment-scoped Git broker before allowing concurrency;
-- adds durable exclusive workspace ownership for concurrent assignments; and
+- adds a fail-closed, assignment-scoped Git broker and confined writer startup;
+- preserves reusable assignment-workspace identity, recovery, fencing, and audit
+  foundations for separately authorized implementation workers; and
 - keeps merge and deployment behind distinct, immutable authorization gates.
 
 **What this is NOT:**
@@ -31,17 +50,17 @@ Concretely, this ticket:
 ```text
 Phase 1: trusted single writer — shipped
   ↓
-Phase 2: adversarial Git boundary — implemented, pending independent acceptance
+Phase 2: adversarial Git boundary — shipped in PR #41
   ↓
-Phase 3: broker-gated concurrent writers
+Phase 3: concurrent room-participant writers — superseded
   ↓
-Phase 4: independently authorized merge and deployment
+Phase 4: exact-state contribution gates — shipped in PRs #45 and #47
 ```
 
-The trusted single-writer lifecycle remains the default. The Phase 2 broker and
-confined launch path activate only through the explicit
-`assignment-git-broker/v1` capability. Concurrency remains disabled, and explicit
-reviews continue through the existing read-only adapter.
+The trusted single-writer lifecycle remains as a compatibility foundation. The
+Phase 2 broker and confined launch path activate only through the explicit
+`assignment-git-broker/v1` capability. Concurrent room-participant writers remain
+disabled, and explicit reviews continue through the existing read-only adapter.
 
 ## Decisions
 
@@ -62,7 +81,6 @@ reviews continue through the existing read-only adapter.
 - writable-process cwd selection and preserved read-only review behavior;
 - restart reconciliation and conservative cleanup;
 - an assignment-scoped Git broker and confined writer startup;
-- durable workspace leases for controlled concurrency; and
 - separate merge and deployment decisions tied to immutable commits.
 
 **Out:**
@@ -120,9 +138,9 @@ existing read-only source-control adapter.
 | [`server/writer-confinement.ts`](../../server/writer-confinement.ts) | Attested fail-closed macOS/Linux writer confinement. |
 | [`server/git-security-boundary.test.ts`](../../server/git-security-boundary.test.ts) | Real-Git adversarial broker, ingress, and confinement coverage. |
 
-Existing migration, import, developer-team, and runner test files are modified with
-the corresponding contract coverage. The Phase 3 and Phase 4 file inventory will
-be added when those designs lock; no placeholder files are created.
+Existing migration, import, developer-team, and runner test files were modified with
+the corresponding contract coverage. The retired Phase 3 room-participant
+concurrency plan has no implementation inventory.
 
 ## Phasing
 
@@ -138,7 +156,7 @@ be added when those designs lock; no placeholder files are created.
 287/287 tests, the production build passes, and an independent reviewer accepted
 all seven recorded criteria.
 
-### Phase 2: Assignment-scoped Git security boundary — Implemented, pending independent acceptance
+### Phase 2: Assignment-scoped Git security boundary — Done ✅
 
 - Bind broker requests to assignment identity, branch, base, head, path, claim,
   manifest, and developer-team revision.
@@ -157,18 +175,20 @@ worktree `.git` pointer and direct Git executable are hidden or denied inside th
 writer, closing replacement and copy-and-run bypasses. The trusted single-writer
 mode and read-only review path remain available.
 
-### Phase 3: Controlled concurrent writers
+**Delivery:** Merged through [PR #41](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/41).
+
+### Phase 3: Controlled concurrent room-participant writers — Superseded
 
 - Require the verified broker capability before starting concurrent writes.
 - Persist exclusive per-workspace leases and serialize assignment-local Git work.
 - Recover cancellation, crash, and partial broker failure without reassignment or
   deletion of incomplete work.
 
-**Outcome:** Independent assignments can edit and commit simultaneously without
-cross-workspace or shared-Git-state mutation, and disabling the broker prevents new
-concurrent writers.
+**Disposition:** Not implemented. The room-agent/implementation-worker realignment
+retired this capability. Any future concurrency belongs to isolated implementation
+jobs and requires a newly scoped design under #60.
 
-### Phase 4: Separate landing and deployment gates
+### Phase 4: Separate landing and deployment gates — Done ✅
 
 - Match persisted, reviewed, and broker-verified heads before merge eligibility.
 - Consume merge approval only for its exact assignment, source head, and target base.
@@ -177,6 +197,9 @@ concurrent writers.
 
 **Outcome:** Unauthorized, stale, replayed, substituted, or out-of-order merge/deploy
 attempts fail closed; successful merge and deployment remain separately auditable.
+The exact-state contribution gates landed through
+[PR #45](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/45) and the
+integration follow-up in [PR #47](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/47).
 
 ## Key files referenced
 
@@ -206,4 +229,4 @@ unchanged as stash `0266f87e3b76b762f79f7b176cf6abb387a77a47` and was not mixed 
 
 _Created: 2026-08-21_
 _Planning session: traced the existing developer-team, claim/manifest, runner, storage, and read-only source-control paths and incorporated the agent-room threat-model decisions._
-_Last reconciled: 2026-08-21 (Phase 2 rebased onto `origin/main` at `9210c0f`)_
+_Last reconciled: 2026-08-26 (terminalized after room-agent/implementation-worker realignment)_
