@@ -27,6 +27,7 @@ import type {
   TaskLifecycleState,
 } from "../../shared/task-domain.js";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../../shared/roster.js";
+import type { DeploymentProvenance } from "../deployment-provenance.js";
 
 export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -128,7 +129,8 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
   updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult>;
   changeTopic(topic: string): Promise<void>;
   updateParticipantStyle(participant: StyledParticipant, style: ChatStyle): Promise<void>;
-  setSession(agent: AgentId, id: string, permission: "read-only" | "writable"): Promise<void>;
+  setDeployment(provenance: DeploymentProvenance): Promise<void>;
+  setSession(agent: AgentId, id: string, permission: "read-only" | "writable", codeEpoch?: string): Promise<void>;
   clearSession(agent: AgentId): Promise<void>;
   setStatus(status: RoomState["status"], activeAgent?: AgentId, error?: string): Promise<void>;
   createImprovement(improvement: Improvement): Promise<CreateImprovementResult>;

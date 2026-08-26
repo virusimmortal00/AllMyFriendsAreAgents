@@ -1,11 +1,15 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("OpenCode runtime contract", () => {
   it("builds resumable OpenCode invocations", () => {
@@ -62,14 +66,27 @@ describe("OpenCode runtime contract", () => {
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
   });
 
-  it("resumes only matching or historically OpenCode sessions", () => {
+  it("does not resume model-compatible sessions without deployment provenance", () => {
     const codex = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
     const openCode = { agentId: "opencode-configured", conversationalName: "OpenCode", modelId: "configured", enabled: true, configurationRevision: 1 };
     const unversioned = { id: "legacy", permission: "read-only" as const };
     expect(__testing.resumableOpenCodeSession("codex-sol", codex, unversioned, "read-only")).toBeUndefined();
-    expect(__testing.resumableOpenCodeSession("opencode-configured", openCode, unversioned, "read-only")).toBe(unversioned);
+    expect(__testing.resumableOpenCodeSession("opencode-configured", openCode, unversioned, "read-only")).toBeUndefined();
     const fingerprinted = { ...unversioned, configurationFingerprint: JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol" }) };
-    expect(__testing.resumableOpenCodeSession("codex-sol", codex, fingerprinted, "read-only")).toBe(fingerprinted);
+    expect(__testing.resumableOpenCodeSession("codex-sol", codex, fingerprinted, "read-only")).toBeUndefined();
+  });
+
+  it("reuses only same-epoch sessions and invalidates changed or pre-migration epochs", () => {
+    const participant = { agentId: "agent-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", conversationalName: "Alpha", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+    const fingerprint = JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" });
+    const deployment = { schemaVersion: 1 as const, commitSha: "a".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"b".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    const matching = { id: "same-epoch", permission: "read-only" as const, configurationFingerprint: fingerprint, codeEpoch: deployment.epoch };
+    const changed = { ...matching, id: "old-epoch", codeEpoch: `deployment-v1:${"c".repeat(64)}` };
+    const legacy = { id: "legacy", permission: "read-only" as const, configurationFingerprint: fingerprint };
+
+    expect(__testing.openCodeSessionDecision(participant.agentId, participant, matching, "read-only", deployment)).toMatchObject({ kind: "reuse", session: matching, reason: expect.stringContaining("deployment code epoch match") });
+    expect(__testing.openCodeSessionDecision(participant.agentId, participant, changed, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "deployment code epoch changed" });
+    expect(__testing.openCodeSessionDecision(participant.agentId, participant, legacy, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "persisted session predates deployment epoch binding" });
   });
 
   it("rejects migrated confirmations and unavailable models before invoking OpenCode", async () => {
@@ -180,9 +197,21 @@ describe("room prompt context", () => {
     expect(prompt).toContain("Tahoma, Verdana");
     expect(prompt).not.toContain(AIM_5_COLOR_PALETTE.join(", "));
     expect(prompt).not.toContain("Please review the implementation.");
-    expect(prompt).not.toContain("CURRENT WORKTREE DIFF");
+    expect(prompt).not.toContain("CURRENT TRACKED WORKTREE DIFF AGAINST DEPLOYED COMMIT");
     expect(prompt).not.toContain("DISPOSITION:");
     expect(prompt).toContain("Read-only research, including web search");
+    expect(prompt).toContain("DEPLOYMENT SOURCE PROVENANCE");
+    expect(prompt).toContain("Commit: unavailable (do not guess a revision)");
+    expect(prompt).toContain("Reading a current file establishes only its current contents");
+    expect(prompt).toContain("Claim a commit-to-commit or worktree diff only when explicit diff evidence is present");
+  });
+
+  it("gives read-only agents the exact server-derived commit without granting shell permission", async () => {
+    const deploymentState = { ...state, deployment: { schemaVersion: 1 as const, commitSha: "d".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"e".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" } };
+    const prompt = await __testing.buildPrompt("codex-sol", deploymentState, "Which commit is deployed?", false, "read-only");
+    expect(prompt).toContain(`Commit: ${"d".repeat(40)}`);
+    expect(prompt).toContain("Checkout: branch main");
+    expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only").OPENCODE_PERMISSION!)).not.toHaveProperty("bash", "allow");
   });
 
   it.each([
@@ -207,8 +236,34 @@ describe("room prompt context", () => {
     const prompt = await __testing.buildPrompt("claude-sonnet", state, "Review the changes.", true, "read-only");
 
     expect(prompt).toContain("EXPLICIT REVIEW CONTEXT");
-    expect(prompt).toContain("CURRENT WORKTREE DIFF");
+    expect(prompt).toContain("CURRENT TRACKED WORKTREE DIFF AGAINST DEPLOYED COMMIT (unavailable)");
+    expect(prompt).toContain("no diff comparison was attempted");
     expect(prompt).toContain("Your current access is read-only");
+  });
+
+  it("anchors explicit review evidence to the captured deployed commit after HEAD moves", async () => {
+    const projectPath = await mkdtemp(path.join(tmpdir(), "amfaa-deployed-diff-"));
+    try {
+      await execFileAsync("git", ["init", "-b", "main", projectPath]);
+      await execFileAsync("git", ["-C", projectPath, "config", "user.email", "tests@example.invalid"]);
+      await execFileAsync("git", ["-C", projectPath, "config", "user.name", "Tests"]);
+      const sourcePath = path.join(projectPath, "source.txt");
+      await writeFile(sourcePath, "deployed\n", "utf8");
+      await execFileAsync("git", ["-C", projectPath, "add", "source.txt"]);
+      await execFileAsync("git", ["-C", projectPath, "commit", "-m", "deployed"]);
+      const deployedCommit = (await execFileAsync("git", ["-C", projectPath, "rev-parse", "HEAD"])).stdout.trim();
+      await writeFile(sourcePath, "new head\n", "utf8");
+      await execFileAsync("git", ["-C", projectPath, "add", "source.txt"]);
+      await execFileAsync("git", ["-C", projectPath, "commit", "-m", "advance head"]);
+      const moved = { ...state, settings: { ...state.settings, projectPath }, deployment: { schemaVersion: 1 as const, commitSha: deployedCommit, reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"f".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" } };
+
+      const prompt = await __testing.buildPrompt("codex-sol", moved, "Review the changes.", true, "read-only");
+      expect(prompt).toContain(`CURRENT TRACKED WORKTREE DIFF AGAINST DEPLOYED COMMIT ${deployedCommit}`);
+      expect(prompt).toContain("-deployed");
+      expect(prompt).toContain("+new head");
+    } finally {
+      await rm(projectPath, { recursive: true, force: true });
+    }
   });
 });
 

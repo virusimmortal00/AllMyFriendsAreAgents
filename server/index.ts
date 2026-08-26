@@ -354,7 +354,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     deliver: async (visibleMessage, sequence) => {
       if (!agentStillEnabled()) return false;
       if (!burstStarted) {
-        await store.setSession(agent, result.sessionId, permission);
+        await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
@@ -402,7 +402,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   }
   if (!burstStarted) {
     if (!agentStillEnabled()) return { cancelled: true };
-    await store.setSession(agent, result.sessionId, permission);
+    await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
     if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       await store.clearSession(agent);
       await generationJournal.append({

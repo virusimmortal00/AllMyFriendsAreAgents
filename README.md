@@ -146,6 +146,8 @@ This should feel like a room, not a dashboard that happens to contain text:
 
 **Your room state stays on your machine.** Transcripts, sessions, diagnostics, and generation journals live under the Git-ignored `.allmyfriendsareagents/` directory. JSON works out of the box.
 
+The public room state includes bounded, server-derived deployment provenance: the exact checkout commit, branch or detached-HEAD state, and clean/dirty/unavailable worktree state. Provider session IDs remain private. Persisted provider sessions are bound to a deployment epoch, so clean same-revision restarts can resume while changed, dirty, unavailable, or pre-migration epochs start fresh and record the decision in the generation journal.
+
 <details>
 <summary><strong>SQLite, imports, and generation logs</strong></summary>
 

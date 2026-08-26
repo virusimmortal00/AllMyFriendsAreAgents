@@ -3,7 +3,7 @@ import path from "node:path";
 import type { AgentId } from "./types.js";
 
 export interface GenerationJournalEvent {
-  type: "generation.started" | "generation.retry" | "generation.completed" | "generation.cancelled" | "generation.failed" | "generation.interpreted" | "generation.delivery";
+  type: "session.fresh" | "session.reused" | "session.invalidated" | "generation.started" | "generation.retry" | "generation.completed" | "generation.cancelled" | "generation.failed" | "generation.interpreted" | "generation.delivery";
   generationId: string;
   agent: AgentId;
   timestamp?: string;

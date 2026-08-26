@@ -50,6 +50,7 @@ import { canTransitionContinuation, canTransitionContinuationInbox, continuation
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
+import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -76,7 +77,14 @@ function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), stor
     const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
       || !session?.configurationFingerprint && rawHarness === "opencode";
     if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
-      sessions[agent] = { ...session, configurationFingerprint: fingerprint, configurationRevision: entry.configurationRevision || 1 };
+      const codeEpoch = normalizeDeploymentEpoch(session.codeEpoch);
+      sessions[agent] = {
+        id: session.id,
+        permission: session.permission,
+        configurationFingerprint: fingerprint,
+        configurationRevision: entry.configurationRevision || 1,
+        ...(codeEpoch ? { codeEpoch } : {}),
+      };
     }
   }
   return sessions;
@@ -236,6 +244,7 @@ export class RoomStore implements RoomRepository {
       const sessions = migrateSessions(stored.sessions, roster, stored.roster);
       for (const agent of Object.keys(sessions) as AgentId[]) if (!enabledAgents.has(agent as never)) delete sessions[agent];
       const writableAgent = normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent);
+      const deployment = normalizeDeploymentProvenance(stored.deployment);
       const state: RoomState = {
         ...stored,
         messages,
@@ -254,6 +263,7 @@ export class RoomStore implements RoomRepository {
         status: "idle",
         activeAgent: undefined,
         error: undefined,
+        ...(deployment ? { deployment } : {}),
       };
       const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
       if (topicWasMissing
@@ -358,9 +368,15 @@ export class RoomStore implements RoomRepository {
     await this.save();
   }
 
-  async setSession(agent: AgentId, id: string, permission: "read-only" | "writable") {
+  async setDeployment(provenance: DeploymentProvenance) {
+    this.state.deployment = structuredClone(provenance);
+    await this.save();
+  }
+
+  async setSession(agent: AgentId, id: string, permission: "read-only" | "writable", codeEpoch?: string) {
     const entry = roomAgentEntry(this.state.roster, agent);
-    this.state.sessions[agent] = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}) };
+    const normalizedEpoch = normalizeDeploymentEpoch(codeEpoch);
+    this.state.sessions[agent] = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}), ...(normalizedEpoch ? { codeEpoch: normalizedEpoch } : {}) };
     await this.save();
   }
 

@@ -65,4 +65,17 @@ describe("room state responses", () => {
     expect(resolved).not.toHaveProperty("error");
     expect(resolved.settings).not.toHaveProperty("projectPath");
   });
+
+  it("exposes bounded deployment evidence without exposing provider sessions or the project path", () => {
+    const snapshot: RoomState = {
+      messages: [], sessions: { "codex-sol": { id: "secret", permission: "read-only", codeEpoch: `deployment-v1:${"a".repeat(64)}` } },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: "/secret/project", participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+      status: "idle",
+      deployment: { schemaVersion: 1, commitSha: "b".repeat(40), reference: { kind: "detached" }, worktree: "clean", epoch: `deployment-v1:${"c".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" },
+    };
+    const publicState = publicRoomState(snapshot);
+    expect(publicState.deployment).toEqual(snapshot.deployment);
+    expect(publicState).not.toHaveProperty("sessions");
+    expect(publicState.settings).not.toHaveProperty("projectPath");
+  });
 });

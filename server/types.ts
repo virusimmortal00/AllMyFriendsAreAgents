@@ -6,6 +6,7 @@ import type { RoomContinuationWorkRequest, ServerIdentity } from "../shared/prot
 import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
+import type { DeploymentProvenance } from "./deployment-provenance.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -37,6 +38,7 @@ export interface AgentSession {
   permission: "read-only" | "writable";
   configurationFingerprint?: string;
   configurationRevision?: number;
+  codeEpoch?: string;
   invalidatedAt?: string;
   invalidationReason?: string;
 }
@@ -59,6 +61,7 @@ export interface RoomState {
   activeAgent?: AgentId;
   error?: string;
   humans?: HumanPresence[];
+  deployment?: DeploymentProvenance;
 }
 
 export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {

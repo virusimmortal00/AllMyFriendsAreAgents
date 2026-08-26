@@ -79,6 +79,7 @@ describe("SQLite room repository", () => {
     database.close();
     const portable = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(portable.snapshot().sessions[agentId]?.id).toBe("portable-session");
+    expect(portable.snapshot().sessions[agentId]?.codeEpoch).toBeUndefined();
     expect(await portable.updateRoster(2, [secondSelection])).toMatchObject({ kind: "accepted" });
     await portable.setSession(agentId, "stale-session", "read-only");
     portable.close();
@@ -112,7 +113,9 @@ describe("SQLite room repository", () => {
       name: "Robby",
       clientMessageId: "message-12345678",
     });
-    await store.setSession("codex-sol", "sqlite-session", "writable");
+    const deployment = { schemaVersion: 1 as const, commitSha: "a".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"b".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    await store.setDeployment(deployment);
+    await store.setSession("codex-sol", "sqlite-session", "writable", deployment.epoch);
     store.close();
 
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
@@ -120,7 +123,8 @@ describe("SQLite room repository", () => {
     expect(snapshot.settings.roomName).toBe("SQLite Room");
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
     expect(snapshot.settings.participantStyles.you).toEqual(humanStyle);
-    expect(snapshot.sessions["codex-sol"]).toEqual(expect.objectContaining({ id: "sqlite-session", permission: "writable", configurationRevision: 1 }));
+    expect(snapshot.deployment).toEqual(deployment);
+    expect(snapshot.sessions["codex-sol"]).toEqual(expect.objectContaining({ id: "sqlite-session", permission: "writable", configurationRevision: 1, codeEpoch: deployment.epoch }));
     expect(snapshot.messages.at(-1)).toMatchObject({
       speaker: "you",
       speakerName: "Robby",
@@ -150,8 +154,9 @@ describe("SQLite room repository", () => {
     await store.updateParticipantStyle(alpha.agentId, alphaStyle);
     await store.updateParticipantStyle(beta.agentId, betaStyle);
     await store.updateSettings({ writableAgent: alpha.agentId });
-    await store.setSession(alpha.agentId, "alpha-session", "read-only");
-    await store.setSession(beta.agentId, "beta-session", "read-only");
+    const epoch = `deployment-v1:${"d".repeat(64)}`;
+    await store.setSession(alpha.agentId, "alpha-session", "read-only", epoch);
+    await store.setSession(beta.agentId, "beta-session", "read-only", epoch);
     await store.addMessage(alpha.agentId, "Alpha history");
     await store.addMessage(beta.agentId, "Beta history");
     store.close();
@@ -162,8 +167,8 @@ describe("SQLite room repository", () => {
     expect(snapshot.settings.participantStyles[alpha.agentId]).toEqual(alphaStyle);
     expect(snapshot.settings.participantStyles[beta.agentId]).toEqual(betaStyle);
     expect(snapshot.settings.writableAgent).toBe(alpha.agentId);
-    expect(snapshot.sessions[alpha.agentId]?.id).toBe("alpha-session");
-    expect(snapshot.sessions[beta.agentId]?.id).toBe("beta-session");
+    expect(snapshot.sessions[alpha.agentId]).toMatchObject({ id: "alpha-session", codeEpoch: epoch });
+    expect(snapshot.sessions[beta.agentId]).toMatchObject({ id: "beta-session", codeEpoch: epoch });
     expect(snapshot.messages.slice(-2)).toEqual([
       expect.objectContaining({ speaker: alpha.agentId, speakerName: "Alpha", text: "Alpha history" }),
       expect.objectContaining({ speaker: beta.agentId, speakerName: "Beta", text: "Beta history" }),

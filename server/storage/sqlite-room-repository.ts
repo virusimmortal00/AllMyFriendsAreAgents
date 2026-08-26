@@ -48,6 +48,7 @@ import { paginateTasks } from "./task-storage.js";
 import { validateContinuationDurableState } from "./continuation-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
+import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "../deployment-provenance.js";
 
 export const DEFAULT_ROOM_ID = CANONICAL_ROOM_ID;
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -75,6 +76,7 @@ interface RoomRow {
   error: string | null;
   roster_revision: number;
   roster_schema_version: number;
+  deployment_provenance_json: string | null;
 }
 
 interface MessageRow {
@@ -99,6 +101,7 @@ interface SessionRow {
   permission: AgentSession["permission"];
   configuration_fingerprint: string | null;
   configuration_revision: number | null;
+  code_epoch: string | null;
 }
 
 interface ImprovementRow {
@@ -289,8 +292,8 @@ export class SqliteRoomRepository implements RoomRepository {
       this.database.prepare(`
         INSERT INTO rooms(
           id, slug, name, topic, writable_agent, conversation_energy, project_path,
-          participant_styles_json, status, active_agent, error, roster_revision, roster_schema_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          participant_styles_json, status, active_agent, error, roster_revision, roster_schema_version, deployment_provenance_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           slug = excluded.slug,
           name = excluded.name,
@@ -304,6 +307,7 @@ export class SqliteRoomRepository implements RoomRepository {
           error = excluded.error,
           roster_revision = excluded.roster_revision,
           roster_schema_version = excluded.roster_schema_version,
+          deployment_provenance_json = excluded.deployment_provenance_json,
           updated_at = excluded.updated_at
       `).run(
         DEFAULT_ROOM_ID,
@@ -319,6 +323,7 @@ export class SqliteRoomRepository implements RoomRepository {
         state.error || null,
         normalizeRoomAgentRoster(state.roster).revision,
         3,
+        state.deployment ? JSON.stringify(state.deployment) : null,
         now,
         now,
       );
@@ -328,7 +333,7 @@ export class SqliteRoomRepository implements RoomRepository {
       this.database.prepare("DELETE FROM room_agents WHERE room_id = ?").run(DEFAULT_ROOM_ID);
       for (const message of state.messages) this.insertMessage(message);
       for (const [agent, session] of Object.entries(state.sessions) as Array<[AgentId, AgentSession]>) {
-        this.upsertSession(agent, session.id, session.permission, session.configurationFingerprint, session.configurationRevision);
+        this.upsertSession(agent, session.id, session.permission, session.configurationFingerprint, session.configurationRevision, session.codeEpoch);
       }
       normalizeRoomAgentRoster(state.roster).entries.forEach((entry, position) => {
         this.upsertRosterAgent(entry);
@@ -464,11 +469,20 @@ export class SqliteRoomRepository implements RoomRepository {
     this.state = state;
   }
 
-  async setSession(agent: AgentId, id: string, permission: "read-only" | "writable") {
+  async setDeployment(provenance: DeploymentProvenance) {
+    this.database.prepare("UPDATE rooms SET deployment_provenance_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(provenance), new Date().toISOString(), DEFAULT_ROOM_ID);
+    const state = this.snapshot();
+    state.deployment = structuredClone(provenance);
+    this.state = state;
+  }
+
+  async setSession(agent: AgentId, id: string, permission: "read-only" | "writable", codeEpoch?: string) {
     const state = this.snapshot();
     const entry = roomAgentEntry(state.roster, agent);
-    const session = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}) };
-    this.upsertSession(agent, id, permission, session.configurationFingerprint, session.configurationRevision);
+    const normalizedEpoch = normalizeDeploymentEpoch(codeEpoch);
+    const session = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}), ...(normalizedEpoch ? { codeEpoch: normalizedEpoch } : {}) };
+    this.upsertSession(agent, id, permission, session.configurationFingerprint, session.configurationRevision, session.codeEpoch);
     state.sessions[agent] = session;
     this.state = state;
   }
@@ -1245,9 +1259,11 @@ export class SqliteRoomRepository implements RoomRepository {
           this.database.prepare("DELETE FROM agent_sessions WHERE room_id = ? AND agent_id = ?").run(DEFAULT_ROOM_ID, session.agent_id);
           continue;
         }
-        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, configurationFingerprint: fingerprint, configurationRevision: session.configuration_revision || entry?.configurationRevision || 1 };
+        const codeEpoch = normalizeDeploymentEpoch(session.code_epoch);
+        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, configurationFingerprint: fingerprint, configurationRevision: session.configuration_revision || entry?.configurationRevision || 1, ...(codeEpoch ? { codeEpoch } : {}) };
       }
     }
+    const deployment = normalizeDeploymentProvenance(parseJson(row.deployment_provenance_json, undefined));
     return {
       messages,
       sessions,
@@ -1256,6 +1272,7 @@ export class SqliteRoomRepository implements RoomRepository {
       status: row.status === "working" || row.status === "error" ? row.status : "idle",
       ...(isAgentId(row.active_agent) ? { activeAgent: row.active_agent } : {}),
       ...(row.error ? { error: row.error } : {}),
+      ...(deployment ? { deployment } : {}),
     };
   }
 
@@ -1301,17 +1318,18 @@ export class SqliteRoomRepository implements RoomRepository {
     );
   }
 
-  private upsertSession(agent: AgentId, id: string, permission: "read-only" | "writable", fingerprint?: string, configurationRevision?: number) {
+  private upsertSession(agent: AgentId, id: string, permission: "read-only" | "writable", fingerprint?: string, configurationRevision?: number, codeEpoch?: string) {
     this.database.prepare(`
-      INSERT INTO agent_sessions(room_id, agent_id, provider_session_id, permission, configuration_fingerprint, configuration_revision, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_sessions(room_id, agent_id, provider_session_id, permission, configuration_fingerprint, configuration_revision, code_epoch, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(room_id, agent_id) DO UPDATE SET
         provider_session_id = excluded.provider_session_id,
         permission = excluded.permission,
         configuration_fingerprint = excluded.configuration_fingerprint,
         configuration_revision = excluded.configuration_revision,
+        code_epoch = excluded.code_epoch,
         updated_at = excluded.updated_at
-    `).run(DEFAULT_ROOM_ID, agent, id, permission, fingerprint || null, configurationRevision || null, new Date().toISOString());
+    `).run(DEFAULT_ROOM_ID, agent, id, permission, fingerprint || null, configurationRevision || null, normalizeDeploymentEpoch(codeEpoch) || null, new Date().toISOString());
   }
 
   private upsertRosterAgent(entry: RoomAgentRosterEntry) {
@@ -1403,10 +1421,21 @@ function samePersistedRoomState(left: RoomState, right: RoomState) {
   return JSON.stringify(left.messages) === JSON.stringify(right.messages)
     && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
     && JSON.stringify(left.settings) === JSON.stringify(right.settings)
+    && sameDeploymentIdentity(left.deployment, right.deployment)
     && JSON.stringify(normalizeRoomAgentRoster(left.roster)) === JSON.stringify(normalizeRoomAgentRoster(right.roster))
     && left.status === right.status
     && left.activeAgent === right.activeAgent
     && left.error === right.error;
+}
+
+function sameDeploymentIdentity(left: RoomState["deployment"], right: RoomState["deployment"]) {
+  if (!left || !right) return left === right;
+  return left.schemaVersion === right.schemaVersion
+    && left.commitSha === right.commitSha
+    && JSON.stringify(left.reference) === JSON.stringify(right.reference)
+    && left.worktree === right.worktree
+    && left.epoch === right.epoch
+    && left.unavailableReason === right.unavailableReason;
 }
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {

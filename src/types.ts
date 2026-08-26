@@ -41,6 +41,16 @@ export interface HumanPresence {
   avatarUrl?: string;
 }
 
+export interface DeploymentProvenance {
+  schemaVersion: 1;
+  commitSha: string | null;
+  reference: { kind: "branch"; name: string } | { kind: "detached" } | { kind: "unavailable" };
+  worktree: "clean" | "dirty" | "unavailable";
+  epoch: string;
+  observedAt: string;
+  unavailableReason?: "git-unavailable" | "not-a-git-checkout" | "no-commit" | "inspection-failed";
+}
+
 export interface RoomState {
   messages: RoomMessage[];
   settings: {
@@ -59,6 +69,7 @@ export interface RoomState {
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
   humans?: HumanPresence[];
+  deployment?: DeploymentProvenance;
 }
 export interface WorkshopResponse extends GovernedImprovementDetail {
   kind: "found";
