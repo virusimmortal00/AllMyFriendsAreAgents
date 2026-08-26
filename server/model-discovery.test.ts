@@ -61,7 +61,9 @@ describe("OpenCode model discovery", () => {
 
   it("fails closed before catalog discovery for unsupported or malformed versions", async () => {
     expect(parseOpenCodeRuntimeVersion("1.18.17\n")).toMatchObject({ compatible: false });
+    expect(parseOpenCodeRuntimeVersion("1.18.18-rc.1\n")).toMatchObject({ version: "1.18.18-rc.1", compatible: false });
     expect(parseOpenCodeRuntimeVersion("1.18.18\n")).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion("1.18.18+build.1\n")).toMatchObject({ version: "1.18.18+build.1", compatible: true });
     expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: true });
     expect(parseOpenCodeRuntimeVersion("2.0.0\n")).toMatchObject({ compatible: false });
     expect(parseOpenCodeRuntimeVersion("unexpected")).toBeUndefined();

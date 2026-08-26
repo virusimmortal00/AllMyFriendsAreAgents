@@ -76,13 +76,13 @@ function uniqueModels(models: readonly DiscoveredModel[]) {
 }
 
 export function parseOpenCodeRuntimeVersion(stdout: string) {
-  const match = stripAnsi(stdout).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
+  const match = stripAnsi(stdout).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/);
   if (!match) return undefined;
-  const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
+  const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${match[4] ? `-${match[4]}` : ""}${match[5] ? `+${match[5]}` : ""}`;
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
   const minimum = MINIMUM_OPENCODE_VERSION.split(".").map(Number);
   const firstDifference = parts.findIndex((part, index) => part !== minimum[index]);
-  const atLeastMinimum = firstDifference === -1 || parts[firstDifference] > minimum[firstDifference];
+  const atLeastMinimum = firstDifference === -1 ? !match[4] : parts[firstDifference] > minimum[firstDifference];
   return {
     version,
     compatible: parts[0] === minimum[0] && atLeastMinimum,
