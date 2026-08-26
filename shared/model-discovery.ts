@@ -1,0 +1,152 @@
+export type DiscoveryStatus =
+  | "available"
+  | "cli_missing"
+  | "authentication_required"
+  | "configuration_required"
+  | "discovery_unsupported"
+  | "runtime_incompatible"
+  | "error";
+export type ModelProvenance = "opencode-catalog" | "configured-default";
+
+export interface ModelReference {
+  readonly providerId?: string;
+  readonly modelId: string;
+  readonly variant?: string;
+  /** Legacy selection field. OpenCode represents reasoning effort as a variant. */
+  readonly reasoningEffort?: string;
+}
+
+export interface ModelVariant {
+  readonly id: string;
+  readonly displayName: string;
+}
+
+export interface ModelPricing {
+  readonly inputPerMillion?: number;
+  readonly outputPerMillion?: number;
+  readonly cacheReadPerMillion?: number;
+  readonly cacheWritePerMillion?: number;
+}
+
+export interface ModelOffer {
+  readonly providerName: string;
+  readonly providerId?: string;
+  readonly inputPerMillion?: number;
+  readonly outputPerMillion?: number;
+  readonly discount?: number;
+  readonly uptime?: number;
+  readonly latencySeconds?: number;
+  readonly throughputTokensPerSecond?: number;
+}
+
+export interface ModelOfferDetails {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly offers: readonly ModelOffer[];
+  readonly fetchedAt: string;
+}
+
+export interface DiscoveredModel {
+  readonly providerId?: string;
+  readonly modelId: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly family?: string;
+  readonly authorId?: string;
+  readonly authorDisplayName?: string;
+  readonly accessProviderDisplayName?: string;
+  readonly status?: string;
+  readonly releaseDate?: string;
+  readonly pricing?: ModelPricing;
+  readonly limits?: {
+    readonly context?: number;
+    readonly input?: number;
+    readonly output?: number;
+  };
+  readonly popularity?: {
+    readonly rank: number;
+    readonly window: "weekly";
+    readonly source: "openrouter";
+  };
+  readonly benchmarks?: {
+    readonly intelligence?: number;
+    readonly coding?: number;
+    readonly agentic?: number;
+  };
+  readonly variants?: readonly ModelVariant[];
+  readonly provenance: ModelProvenance;
+  readonly capabilities?: {
+    readonly reasoningEffort?: readonly string[];
+    readonly contextOptions?: readonly string[];
+    readonly reasoning?: boolean;
+    readonly toolCall?: boolean;
+    readonly attachment?: boolean;
+    readonly inputModalities?: readonly string[];
+    readonly outputModalities?: readonly string[];
+  };
+}
+
+export interface ModelDiscoveryResult {
+  readonly status: DiscoveryStatus;
+  readonly models: readonly DiscoveredModel[];
+  readonly runtime?: {
+    readonly version: string;
+    readonly compatible: boolean;
+    readonly protocol: "opencode-cli-jsonl-v1";
+    readonly capabilities: readonly ("verbose-model-catalog" | "jsonl-events" | "variant-selection")[];
+  };
+  readonly configuredDefault?: ModelReference;
+  readonly diagnostic?: string;
+  readonly discoveredAt: string;
+}
+
+export interface ModelAvailability {
+  readonly available: boolean;
+  readonly reason?: "runtime_unavailable" | "model_removed" | "provider_removed" | "variant_removed" | "reasoning_effort_removed" | "variant_conflict" | "selection_unpinnable";
+  readonly diagnostic?: string;
+}
+
+export function resolveOpenCodeVariant(reference: Pick<ModelReference, "variant" | "reasoningEffort">) {
+  const conflict = Boolean(reference.variant && reference.reasoningEffort && reference.variant !== reference.reasoningEffort);
+  return { variant: reference.variant || reference.reasoningEffort, conflict };
+}
+
+export function validDiscoveryId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 200
+    && /^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$/.test(value);
+}
+
+export function validModelDiscoveryId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 200
+    && /^~?[A-Za-z0-9][A-Za-z0-9._:/+@-]*$/.test(value);
+}
+
+export function modelKey(model: Pick<DiscoveredModel, "providerId" | "modelId">) {
+  return `${model.providerId || ""}\u0000${model.modelId}`;
+}
+
+export function selectedModelAvailability(reference: ModelReference, result: ModelDiscoveryResult): ModelAvailability {
+  const selection = resolveOpenCodeVariant(reference);
+  if (selection.conflict) {
+    return { available: false, reason: "variant_conflict", diagnostic: "OpenCode accepts one variant selection; choose either the stored variant or reasoning effort." };
+  }
+  if (["cli_missing", "authentication_required", "configuration_required", "runtime_incompatible", "error"].includes(result.status)) {
+    return { available: false, reason: "runtime_unavailable", diagnostic: result.diagnostic };
+  }
+  const model = result.models.find((candidate) => candidate.modelId === reference.modelId
+    && (candidate.providerId || "") === (reference.providerId || ""));
+  if (!model) {
+    if (result.status === "discovery_unsupported" && result.configuredDefault
+      && result.configuredDefault.modelId === reference.modelId
+      && (result.configuredDefault.providerId || "") === (reference.providerId || "")) return { available: true };
+    return { available: false, reason: reference.providerId ? "provider_removed" : "model_removed" };
+  }
+  if (selection.variant && !model.variants?.some(({ id }) => id === selection.variant)) {
+    return { available: false, reason: reference.reasoningEffort && !reference.variant ? "reasoning_effort_removed" : "variant_removed" };
+  }
+  return { available: true };
+}

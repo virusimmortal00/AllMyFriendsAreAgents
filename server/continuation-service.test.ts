@@ -29,12 +29,34 @@ async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<
   for (const change of [{ kind: "append_reference", reference: { id: "assignment-ref", kind: "assignment", targetId: "assignment-1" } }, { kind: "transition", to: "proposed" }, { kind: "transition", to: "approved" }, { kind: "transition", to: "active" }] as const) { const result = await store.applyTaskChange({ roomId: task.roomId, taskId: task.taskId }, task.revision, change, actor, at); if (result.kind !== "accepted") throw new Error("task setup failed"); task = result.task; }
   const assignment: AssignmentRecord = { assignmentId: "assignment-1", improvementId: "improvement-1", developerMemberId: "dev-1", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 2, manifestRevision: 3, pinnedBaseSha: "a".repeat(40), branch: "work", observedHeadSha: "a".repeat(40), workspacePath: root, lifecycleStatus: "ACTIVE", recovery: { classification: "clean", reconciledAt: at, previousStatus: null, detail: "test" }, createdAt: at, updatedAt: at };
   let authority = async (id: string, owner: string) => id === assignment.assignmentId && owner === assignment.agent ? { kind: "ok" as const, assignment, workspace: root } : { kind: "revoked" as const, reason: "Assignment mismatch." };
-  const lifecycle = { authorityForContinuation: (id: string, owner: string) => authority(id, owner) } as unknown as AssignmentLifecycleService;
+  const lifecycle = { authorityForContinuation: (id: string, owner: string) => authority(id, owner), authorityForRoomContinuation: (id: string) => authority(id, assignment.agent) } as unknown as AssignmentLifecycleService;
   const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { now, ...options }); await service.initialize();
   return { store, service, task, assignment, setAuthority(next: typeof authority) { authority = next; }, async enable() { const policy = await service.policy(); expect(policy).toBeTruthy(); expect((await service.updatePolicy(policy!.revision, { enabled: true }, "human")).kind).toBe("accepted"); }, create: () => service.create({ owner: "codex-sol", developerMemberId: "dev-1", developerMemberConfigRevision: 1, taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId: "assignment-ref", objective: "Continue the approved task", trigger: "Explicit test trigger" }) };
 }
 
 describe("ContinuationService", () => {
+  it("starts an idempotent governed room request and derives its authority identity server-side", async () => {
+    const execution = deferred<ContinuationExecutorResult>(); const value = await fixture(() => execution.promise); await value.enable();
+    const input = { requestId: "message-room-request-1", messageId: "message-room-request-1", requestedBy: "human", taskId: value.task.taskId,
+      taskRevision: value.task.revision, assignmentReferenceId: "assignment-ref", objective: "Continue from this room turn" };
+    const first = await value.service.createFromRoom(input); const replay = await value.service.createFromRoom(input);
+    expect(first).toMatchObject({ kind: "ok", value: { owner: "codex-sol", roomOrigin: { kind: "ROOM_WORK_REQUEST", requestedBy: "human" } } });
+    expect(replay).toMatchObject({ kind: "ok", value: { jobId: first.kind === "ok" ? first.value.jobId : "" } });
+    expect(await value.service.list()).toHaveLength(1);
+    await value.store.addMessage("you", "Unrelated later room turn", "chat", undefined, undefined, { id: "human", name: "Human" });
+    execution.resolve({ summary: "Room continuation completed", usage: { tokens: 2, toolCalls: 0 } });
+    await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED");
+    expect((await value.service.inbox("codex-sol"))[0]?.summary).toBe("Room continuation completed");
+    expect(value.store.snapshot().messages.at(-1)?.text).toBe("Unrelated later room turn");
+  });
+
+  it("rejects stale room authority without creating a job", async () => {
+    const value = await fixture(async () => ({ summary: "unused", usage: { tokens: 0, toolCalls: 0 } })); await value.enable();
+    expect(await value.service.createFromRoom({ requestId: "message-stale-request", messageId: "message-stale-request", requestedBy: "human", taskId: value.task.taskId,
+      taskRevision: value.task.revision - 1, assignmentReferenceId: "assignment-ref", objective: "Stale request" })).toMatchObject({ kind: "rejected", reason: "Task revision is stale or superseded." });
+    expect(await value.service.list()).toEqual([]);
+  });
+
   it("is disabled by default and rejects stale task identity", async () => {
     const value = await fixture(async () => ({ summary: "done", usage: { tokens: 1, toolCalls: 0 } }));
     expect(await value.create()).toMatchObject({ kind: "rejected", reason: "Continuation policy is disabled." });

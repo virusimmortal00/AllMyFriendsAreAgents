@@ -40,4 +40,18 @@ export interface MessageMutationAcknowledgement {
   duplicate: boolean;
   clientMessageId: string;
   messageId: string;
+  continuation?: ContinuationInitiationOutcome;
 }
+
+export interface RoomContinuationWorkRequest {
+  taskId: string;
+  taskRevision: number;
+  assignmentReferenceId: string;
+  objective: string;
+  budget?: Partial<{ timeMs: number; tokenLimit: number; toolCallLimit: number; retryLimit: number }>;
+}
+
+export type ContinuationInitiationOutcome =
+  | { outcome: "queued"; jobId: string; status: string }
+  | { outcome: "observed"; jobId: string; status: string }
+  | { outcome: "rejected"; reason: string };

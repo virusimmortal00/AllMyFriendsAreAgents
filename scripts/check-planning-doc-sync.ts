@@ -21,9 +21,10 @@ export interface SyncViolation {
   reason: string;
 }
 
+const ALLOWED_STATUSES = new Set(["proposed", "active", "blocked", "done", "superseded"]);
 const LIVE_STATUSES = new Set(["proposed", "active", "blocked"]);
 const TRACKED_WITHOUT_ISSUE = new Set(["active", "blocked"]);
-const CLOSING_KEYWORD = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+#(\d+)\b/gi;
+const CLOSING_KEYWORD = /\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)(?:\s*:\s*|\s+)#(\d+)\b/gi;
 const SKIP_FILES = new Set(["README.md", "TEMPLATE.md"]);
 
 /**
@@ -61,6 +62,20 @@ export function extractClosingIssueNumbers(text: string): number[] {
   return [...new Set([...text.matchAll(CLOSING_KEYWORD)].map((match) => Number(match[1])))];
 }
 
+interface PullRequestClosingText {
+  title?: string;
+  body?: string;
+  commits?: Array<{ messageHeadline?: string; messageBody?: string }>;
+}
+
+/** GitHub closing keywords apply to PR descriptions and commit messages, not PR titles. */
+export function extractPullRequestClosingIssueNumbers(payload: PullRequestClosingText): number[] {
+  const commitText = (payload.commits ?? [])
+    .map((commit) => `${commit.messageHeadline ?? ""}\n${commit.messageBody ?? ""}`)
+    .join("\n");
+  return extractClosingIssueNumbers(`${payload.body ?? ""}\n${commitText}`);
+}
+
 /**
  * Evaluates planning-doc / issue drift against the locked sync rules.
  */
@@ -73,6 +88,10 @@ export function evaluatePlanningDocSync(input: {
   const documentsByIssue = new Map<number, PlanningDocRecord[]>();
 
   for (const document of input.documents) {
+    if (!document.status || !ALLOWED_STATUSES.has(document.status)) {
+      violations.push({ path: document.path, reason: `status must be one of ${[...ALLOWED_STATUSES].join(", ")}` });
+      continue;
+    }
     if (document.issue) {
       const existing = documentsByIssue.get(document.issue) ?? [];
       existing.push(document);
@@ -112,6 +131,17 @@ export function evaluatePlanningDocSync(input: {
  */
 export function runSelfCheck(): string[] {
   const failures: string[] = [];
+  const closingKeywordCases: Array<{ name: string; payload: PullRequestClosingText; expected: number[] }> = [
+    { name: "colon-separated closing keywords are recognized", payload: { body: "Closes: #24" }, expected: [24] },
+    { name: "PR titles do not imply issue closure", payload: { title: "Closes #24", body: "No closing keyword here." }, expected: [] },
+    { name: "commit messages can close issues", payload: { commits: [{ messageHeadline: "Fixes #25" }] }, expected: [25] },
+  ];
+  for (const testCase of closingKeywordCases) {
+    const actual = extractPullRequestClosingIssueNumbers(testCase.payload);
+    if (JSON.stringify(actual) !== JSON.stringify(testCase.expected)) {
+      failures.push(`${testCase.name}: expected ${testCase.expected.join(",") || "none"}, got ${actual.join(",") || "none"}`);
+    }
+  }
   const cases: Array<{ name: string; expected: number; input: Parameters<typeof evaluatePlanningDocSync>[0] }> = [
     {
       name: "proposed notes without an issue stay allowed",
@@ -122,6 +152,11 @@ export function runSelfCheck(): string[] {
       name: "active work without an issue fails",
       expected: 1,
       input: { documents: [{ path: "a.md", status: "active" }], issueStates: new Map(), closingIssueNumbers: [] },
+    },
+    {
+      name: "unknown statuses fail closed",
+      expected: 1,
+      input: { documents: [{ path: "a.md", status: "in-progress" }], issueStates: new Map(), closingIssueNumbers: [] },
     },
     {
       name: "active work with an open issue passes",
@@ -222,15 +257,14 @@ async function loadIssueStates(repo: string, issueNumbers: readonly number[]): P
 }
 
 /**
- * Collects closing keywords from a PR title, body, and commit messages when a PR number is known.
+ * Collects closing keywords from a PR body and commit messages when a PR number is known.
  */
 async function loadClosingIssueNumbers(repo: string, pullRequest: string | undefined): Promise<number[]> {
   if (!pullRequest) return [];
   const payload = JSON.parse(await runCommand("gh", [
-    "pr", "view", pullRequest, "--repo", repo, "--json", "title,body,commits",
-  ])) as { title?: string; body?: string; commits?: Array<{ messageHeadline?: string; messageBody?: string }> };
-  const commitText = (payload.commits ?? []).map((commit) => `${commit.messageHeadline ?? ""}\n${commit.messageBody ?? ""}`).join("\n");
-  return extractClosingIssueNumbers(`${payload.title ?? ""}\n${payload.body ?? ""}\n${commitText}`);
+    "pr", "view", pullRequest, "--repo", repo, "--json", "body,commits",
+  ])) as PullRequestClosingText;
+  return extractPullRequestClosingIssueNumbers(payload);
 }
 
 /**

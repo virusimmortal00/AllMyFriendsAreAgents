@@ -6,7 +6,7 @@ owner: sol
 reviewers: []
 depends_on: []
 reported_by: crimsonsunset
-updated: 2026-08-22
+updated: 2026-08-26
 ---
 
 # Outcome
@@ -28,7 +28,7 @@ Shipped. This file is historical; GitHub is the tracker.
 
 # Next action
 
-None. Landed in [PR #4](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/4). Follow-on nonexclusive grants live in [#12](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/12).
+None. Landed in [PR #4](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/4). The planned follow-on nonexclusive room-agent grants in [#12](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/12) were closed as superseded by the room-agent/implementation-worker separation in [#60](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/60) and [#70](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/70).
 
 # Evidence
 

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { RoomStore } from "./room-store.js";
+import { createDefaultRoomState, RoomStore } from "./room-store.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -30,13 +30,31 @@ describe("room style persistence", () => {
     expect(await store.updateRoster(1, [])).toEqual({ kind: "conflict", expectedRevision: 1, actualRevision: 2 });
 
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
-    expect(reopened.snapshot().roster).toEqual({ revision: 2, entries: [
-      { agentId: "claude-opus", enabled: true },
-      { agentId: "codex-sol", enabled: false },
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 2, entries: [
+      expect.objectContaining({ agentId: "claude-opus", enabled: true, providerId: "anthropic", modelId: "claude-opus-5" }),
+      expect.objectContaining({ agentId: "codex-sol", enabled: false, providerId: "openai", modelId: "gpt-5.6-sol" }),
     ] });
   });
 
-  it("migrates legacy Codex and Claude state into model-specific participants", async () => {
+  it("invalidates only the reconfigured participant session while preserving identity and history", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-model-change-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
+    const first = { agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const second = { agentId: "agent-22222222-2222-4222-8222-222222222222", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    await store.updateRoster(1, [first, second]);
+    await store.setSession(first.agentId, "alpha-session", "read-only");
+    await store.setSession(second.agentId, "beta-session", "read-only");
+    await store.addMessage(first.agentId, "historical alpha");
+    await store.updateRoster(2, [{ ...first, modelId: "gpt-5.6-luna" }, second]);
+    const state = store.snapshot();
+    expect(state.sessions[first.agentId]).toBeUndefined();
+    expect(state.sessions[second.agentId]?.id).toBe("beta-session");
+    expect(state.roster?.entries[0]).toMatchObject({ agentId: first.agentId, modelId: "gpt-5.6-luna", configurationRevision: 2, sessionInvalidationReason: expect.stringContaining("invalidated") });
+    expect(state.messages.at(-1)).toMatchObject({ speaker: first.agentId, speakerName: "Alpha", text: "historical alpha" });
+  });
+
+  it("migrates legacy Codex and Claude history while invalidating nonportable sessions", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);
     const stateDirectory = path.join(projectRoot, "state");
@@ -64,11 +82,15 @@ describe("room style persistence", () => {
     }), "utf8");
 
     const snapshot = (await RoomStore.open(projectRoot, stateDirectory)).snapshot();
-    expect(snapshot.messages.map(({ speaker }) => speaker)).toEqual(["codex-sol", "claude-sonnet"]);
-    expect(snapshot.sessions).toEqual({
-      "codex-sol": { id: "codex-session", permission: "writable" },
-      "claude-sonnet": { id: "claude-session", permission: "read-only" },
-    });
+    expect(snapshot.messages).toEqual([
+      expect.objectContaining({ speaker: "codex-sol", speakerName: "Sol", text: "legacy Codex", style: oldCodexStyle }),
+      expect.objectContaining({ speaker: "claude-sonnet", speakerName: "Claude", text: "legacy Claude", style: oldClaudeStyle }),
+    ]);
+    expect(snapshot.sessions).toEqual({});
+    expect(snapshot.roster?.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId: "codex-sol", providerId: "openai", modelId: "gpt-5.6-sol", sessionInvalidationReason: expect.stringContaining("legacy harness") }),
+      expect.objectContaining({ agentId: "claude-sonnet", providerId: "anthropic", modelId: "claude-sonnet-5", sessionInvalidationReason: expect.stringContaining("legacy harness") }),
+    ]));
     expect(snapshot.settings.writableAgent).toBe("codex-sol");
     expect(snapshot.settings.roomName).toBe("The Agent Room");
     expect(snapshot.settings.conversationEnergy).toBe("balanced");
@@ -81,6 +103,40 @@ describe("room style persistence", () => {
     expect(persisted.settings.conversationEnergy).toBe("balanced");
     expect(persisted.settings).not.toHaveProperty("maxRounds");
     expect(persisted.settings).not.toHaveProperty("reviewMode");
+
+    const confirmedEntries = snapshot.roster!.entries.map(({ selectionConfirmationRequired: _confirmation, sessionInvalidationReason: _reason, ...entry }) => entry);
+    await expect((await RoomStore.open(projectRoot, stateDirectory)).updateRoster(snapshot.roster!.revision, confirmedEntries)).resolves.toMatchObject({ kind: "accepted" });
+    const confirmed = (await RoomStore.open(projectRoot, stateDirectory)).snapshot();
+    expect(confirmed.roster?.entries.every((entry) => !entry.selectionConfirmationRequired)).toBe(true);
+  });
+
+  it("does not resume an OpenCode session whose stored model fingerprint differs", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    await mkdir(stateDirectory);
+    await writeFile(path.join(stateDirectory, "room.json"), JSON.stringify({
+      ...createDefaultRoomState(projectRoot),
+      roster: { schemaVersion: 3, revision: 2, entries: [{ agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 2 }] },
+      sessions: { "agent-11111111-1111-4111-8111-111111111111": { id: "wrong-model-session", permission: "read-only", configurationFingerprint: "{\"providerId\":\"other\",\"modelId\":\"other\"}" } },
+    }), "utf8");
+
+    expect((await RoomStore.open(projectRoot, stateDirectory)).snapshot().sessions).toEqual({});
+  });
+
+  it("preserves a matching session fingerprint from the previous OpenCode reference format", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    await mkdir(stateDirectory);
+    const agentId = "agent-77777777-7777-4777-8777-777777777777";
+    await writeFile(path.join(stateDirectory, "room.json"), JSON.stringify({
+      ...createDefaultRoomState(projectRoot),
+      roster: { schemaVersion: 2, revision: 2, entries: [{ agentId, conversationalName: "Alpha", harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 2 }] },
+      sessions: { [agentId]: { id: "portable-session", permission: "read-only", configurationFingerprint: JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6-sol" }) } },
+    }), "utf8");
+
+    expect((await RoomStore.open(projectRoot, stateDirectory)).snapshot().sessions[agentId]).toMatchObject({ id: "portable-session", configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }) });
   });
 
   it("persists participant preferences while retaining each message's original snapshot", async () => {

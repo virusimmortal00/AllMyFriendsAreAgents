@@ -1,15 +1,17 @@
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { MessageMutationAcknowledgement, ServerIdentity } from "../shared/protocol";
+import type { MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
-import type { ContinuationDashboard, ContinuationInboxEntry } from "./types";
+import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
+import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails } from "../shared/model-discovery";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
+let controlCsrfToken = "";
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
@@ -26,9 +28,11 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
   if (externalSignal?.aborted) abortFromCaller();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers = new Headers(options.headers);
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     const response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
       ...options,
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -108,6 +112,18 @@ export interface RosterCatalogEntry {
 export interface RosterResponse {
   readonly roster: RoomAgentRoster;
   readonly catalog: readonly RosterCatalogEntry[];
+  readonly modelDiscovery?: ModelDiscoveryResult;
+  readonly participantAvailability?: Partial<Record<ActiveAgentId, ModelAvailability>>;
+}
+
+export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
+  return request("/api/model-discovery/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
+}
+
+export async function loadModelOfferDetails(providerId: string, modelId: string, signal?: AbortSignal): Promise<ModelOfferDetails> {
+  const query = new URLSearchParams({ providerId, modelId });
+  return request(`/api/model-details?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
 }
 
 export async function loadRoster(): Promise<RosterResponse> {
@@ -115,20 +131,33 @@ export async function loadRoster(): Promise<RosterResponse> {
 }
 
 export async function updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterResponse> {
-  return request("/api/roster", { method: "PUT", body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
+  return request("/api/roster", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
 }
+
+export interface ControlPrincipal { id: string; username: string; role: "OWNER" | "ADMIN" | "MEMBER"; capabilities: string[]; revision: number; }
+export async function loadControlStatus() { return request("/api/control/status", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ claimed: boolean; bootstrapConfigured: boolean }>); }
+export async function loadControlMe() { const result = await request("/api/control/me", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
+export async function controlLogin(username: string, password: string) { const result = await request("/api/control/login", { method: "POST", body: JSON.stringify({ username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
+export async function bootstrapControlPlane(bootstrapSecret: string, username: string, password: string) { const result = await request("/api/control/bootstrap", { method: "POST", body: JSON.stringify({ bootstrapSecret, username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
+export async function loadProviderSetup() { return request("/api/provider-setup", { method: "GET", cache: "no-store" }).then((response) => response.json()); }
+export async function initiateProviderSetup() { return request("/api/provider-setup/initiate", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json()); }
+export async function refreshProviderSetup() { return request("/api/provider-setup/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json() as Promise<ModelDiscoveryResult>); }
+export async function loadControlPrincipals() { return request("/api/control/principals", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ principals: ControlPrincipal[] }>); }
+export async function createControlPrincipal(username: string, password: string, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request("/api/control/principals", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ username, password, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
+export async function updateControlGrants(principal: ControlPrincipal, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request(`/api/control/principals/${principal.id}/grants`, { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision: principal.revision, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 
 export async function updateSettings(settings: { roomName?: string; topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy }) {
   return request("/api/settings", {
     method: "PATCH",
+    headers: { "X-AMFAA-CSRF": controlCsrfToken },
     body: JSON.stringify(settings),
   });
 }
 
-export async function joinRoom(profile: { id?: string; name: string; style?: ChatStyle }): Promise<HumanPresence> {
+export async function joinRoom(profile: { id?: string; name: string; style?: ChatStyle; avatarUrl?: string }): Promise<HumanPresence> {
   return request("/api/humans", {
     method: "POST",
-    body: JSON.stringify({ name: profile.name, style: profile.style }),
+    body: JSON.stringify({ name: profile.name, style: profile.style, avatarUrl: profile.avatarUrl }),
   }).then((response) => response.json());
 }
 
@@ -139,10 +168,17 @@ export async function updateMyStyle(style: ChatStyle) {
   });
 }
 
-export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = []): Promise<MessageMutationAcknowledgement> {
+export async function updateMyAvatar(avatarUrl?: string): Promise<HumanPresence> {
+  return request("/api/avatar", {
+    method: "PATCH",
+    body: JSON.stringify({ avatarUrl: avatarUrl || null }),
+  }).then((response) => response.json());
+}
+
+export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
-    body: JSON.stringify({ text, clientMessageId, mentions }),
+    body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }).then((response) => response.json()).then((acknowledgement: unknown) => {
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
@@ -150,6 +186,23 @@ export async function sendMessage(text: string, clientMessageId: string, mention
     return acknowledgement;
   });
 }
+
+export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
+  const continuation = { taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective };
+  const key = JSON.stringify(continuation);
+  const clientMessageId = pendingContinuationMessageIds.get(key) || `message_${crypto.randomUUID()}`;
+  pendingContinuationMessageIds.set(key, clientMessageId);
+  try {
+    const acknowledgement = await sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], continuation);
+    if (pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    return acknowledgement;
+  } catch (error) {
+    if (!(error instanceof ApiRequestError && error.outcomeUnknown) && pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
+    throw error;
+  }
+}
+
+const pendingContinuationMessageIds = new Map<string, string>();
 
 function isMessageAcknowledgement(value: unknown): value is MessageMutationAcknowledgement {
   if (!value || typeof value !== "object") return false;
@@ -196,3 +249,8 @@ export async function setContinuationPolicy(expectedRevision: number, enabled: b
 export async function continuationAction(jobId: string, action: "cancel" | "resume") { return request(`/api/continuations/${encodeURIComponent(jobId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
 export async function loadContinuationInbox(owner: AgentId, signal?: AbortSignal): Promise<ContinuationInboxEntry[]> { return request(`/api/continuations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store", signal }).then((response) => response.json()); }
 export async function acknowledgeContinuationInbox(inboxEntryId: string, close: boolean) { return request(`/api/continuations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }
+export async function loadInvestigations(signal?: AbortSignal): Promise<InvestigationDashboard> { return request("/api/investigations", { method: "GET", cache: "no-store", signal }).then((response) => response.json()); }
+export async function setInvestigationPolicy(expectedRevision: number, enabled: boolean) { return request("/api/investigations/policy", { method: "PATCH", body: JSON.stringify({ expectedRevision, enabled }) }).then((response) => response.json()); }
+export async function investigationAction(investigationId: string, action: "cancel" | "resume") { return request(`/api/investigations/${encodeURIComponent(investigationId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
+export async function loadInvestigationInbox(owner: AgentId, signal?: AbortSignal): Promise<InvestigationInboxEntry[]> { return request(`/api/investigations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store", signal }).then((response) => response.json()); }
+export async function acknowledgeInvestigationInbox(inboxEntryId: string, close: boolean) { return request(`/api/investigations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }

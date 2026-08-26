@@ -12,9 +12,12 @@
     "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b --force && vite build",
+    "canary:investigations": "tsx scripts/investigation-canary.ts",
+    "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
+    "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",
+    "control:owner": "tsx scripts/control-plane.ts",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
-    "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"

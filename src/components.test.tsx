@@ -15,28 +15,38 @@ describe("RoomRoster", () => {
       "cursor-gemini-flash": true,
       "cursor-glm": true,
     }} agentHealth={{}} humans={[
-      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
+      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you, avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
-    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
+    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} onConfigureHumanAvatar={() => undefined} />);
 
-    expect(html).toContain("6 agents");
-    expect(html).toContain("2 humans");
+    expect(html).not.toContain("8 entities");
+    expect(html).not.toContain("6 agents");
+    expect(html).not.toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).not.toContain("Codex [gpt-5.6 Terra]");
-    expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain(">Sol</strong>");
     expect(html).not.toContain("Claude [Claude Opus 5]");
-    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain(">Grok</strong>");
     expect(html).not.toContain("Cursor [Gemini 3.1 Pro]");
-    expect(html).toContain("Cursor [Composer 2.5]");
-    expect(html).toContain("Cursor [Gemini 3.7 Flash]");
-    expect(html).toContain("Cursor [GLM 5.2]");
+    expect(html).toContain(">Composer</strong>");
+    expect(html).toContain(">Flash</strong>");
+    expect(html).toContain(">GLM</strong>");
     expect(html).toContain("Alice (You)");
     expect(html).toContain("Bob");
-    expect(html).toContain("Claude [Claude Sonnet 5]");
+    expect(html).toContain(">Claude</strong>");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
+    expect(html.match(/aria-label="Configure (?:Sol|Claude|Grok|Composer|Flash|GLM)"/g)).toHaveLength(6);
+    expect(html).toContain("https://models.dev/logos/openai.svg");
+    expect(html).toContain("https://models.dev/logos/anthropic.svg");
+    expect(html).toContain('aria-label="xAI model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Google model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Z.ai model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Cursor model"');
     expect(html).not.toContain("Configure You");
+    expect(html).toContain('aria-label="Alice&#x27;s profile photo"');
+    expect(html).toContain('aria-label="Bob&#x27;s initials"');
+    expect(html).toContain('aria-label="Change your profile photo"');
   });
 
   it("identifies only agents with an active server generation", () => {
@@ -47,10 +57,23 @@ describe("RoomRoster", () => {
       onConfigureAgent={() => undefined}
     />);
 
-    expect(html).toContain('aria-label="Codex [gpt-5.6 Sol] is generating a response"');
-    expect(html).toContain('aria-label="Cursor [Gemini 3.7 Flash] is generating a response"');
-    expect(html).not.toContain('aria-label="Claude [Claude Sonnet 5] is generating a response"');
+    expect(html).toContain('aria-label="Sol is generating a response"');
+    expect(html).toContain('aria-label="Flash is generating a response"');
+    expect(html).not.toContain('aria-label="Claude is generating a response"');
     expect(html.match(/presence-row--active/g)).toHaveLength(2);
+  });
+
+  it("groups the displayed agent list without changing roster behavior", () => {
+    const html = renderToStaticMarkup(<RoomRoster
+      agents={["codex-sol", "cursor-gemini-flash", "claude-sonnet"]}
+      agentListSort="maker"
+      humans={[]}
+      currentHumanId="alice-id"
+      onConfigureAgent={() => undefined}
+    />);
+
+    expect(html.indexOf('class="presence-group-label" role="presentation">Anthropic')).toBeLessThan(html.indexOf('class="presence-group-label" role="presentation">Google'));
+    expect(html.indexOf('class="presence-group-label" role="presentation">Google')).toBeLessThan(html.indexOf('class="presence-group-label" role="presentation">OpenAI'));
   });
 });
 
@@ -169,7 +192,7 @@ describe("RoomControls", () => {
 
     expect(html).toContain('value="Weekend cooking"');
     expect(html).toContain('value="Weekend Room"');
-    expect(html).toContain("Shown in the room window and transcript header.");
+    expect(html).toContain("Shown in the room window title bar.");
     expect(html).toContain("A starting point, not a boundary. Changing it starts fresh agent context.");
     expect(html).toContain("Conversation energy");
     expect(html).toContain("Usually one or two agents join in.");
@@ -217,6 +240,72 @@ describe("ChatComposer", () => {
 });
 
 describe("Transcript message styling", () => {
+  it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{
+          id: "linked-message",
+          speaker: "you",
+          text: "Docs: https://example.com/guide?q=chat. Mirror: www.example.org/docs! Unsafe javascript:alert(1) stays text :-) ",
+          timestamp: "2026-08-19T12:00:00.000Z",
+        }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<a class="message-link" href="https://example.com/guide?q=chat" target="_blank" rel="noopener noreferrer">https://example.com/guide?q=chat</a>.');
+    expect(html).toContain('<a class="message-link" href="https://www.example.org/docs" target="_blank" rel="noopener noreferrer">www.example.org/docs</a>!');
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain("Unsafe javascript:alert(1) stays text");
+    expect(html).toContain('/smileys/smile.png');
+  });
+
+  it("keeps URLs clickable alongside improvement references", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "mixed-links", speaker: "you", text: "See [[improvement:imp-7]] at (https://example.com/issues/7).", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+        onOpenImprovement={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Open Improvement imp-7"');
+    expect(html).toContain('<a class="message-link" href="https://example.com/issues/7"');
+    expect(html).toContain('</a>).');
+  });
+
+  it("renders safe Markdown-style links with their human-readable label", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "markdown-link", speaker: "you", text: "Opened [PR #58](https://github.com/example/project/pull/58). Read ([docs](https://example.com)) and [API](https://example.com/a_(b)).", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<a class="message-link" href="https://github.com/example/project/pull/58" target="_blank" rel="noopener noreferrer">PR #58</a>.');
+    expect(html).toContain('Read (<a class="message-link" href="https://example.com" target="_blank" rel="noopener noreferrer">docs</a>)');
+    expect(html).toContain('<a class="message-link" href="https://example.com/a_(b)" target="_blank" rel="noopener noreferrer">API</a>.');
+    expect(html).not.toContain('href="https://example.com)"');
+    expect(html).not.toContain("[PR #58]");
+  });
+
+  it("applies the timestamp visibility preference without changing message content", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "hidden-time", speaker: "you", text: "Still readable", timestamp: "2026-08-19T12:00:00.000Z" }]}
+        magnification={100}
+        showTimestamps={false}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain("transcript--timestamps-hidden");
+    expect(html).toContain("Still readable");
+  });
+
   it("renders mixed participant snapshots while keeping names and timestamps application-controlled", () => {
     const html = renderToStaticMarkup(
       <Transcript

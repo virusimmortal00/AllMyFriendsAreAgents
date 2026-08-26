@@ -28,7 +28,7 @@ describe("rendered workshop interaction behavior", () => {
     const reference = screen.getByRole("button", { name: "Open Improvement imp-7" });
     await user.click(reference);
     const dialog = screen.getByRole("dialog", { name: "Improvement workshop" });
-    await waitFor(() => expect(document.activeElement).toBe(dialog));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close improvement workshop" })));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(reference));

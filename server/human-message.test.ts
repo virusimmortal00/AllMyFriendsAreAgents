@@ -80,4 +80,20 @@ describe("human message idempotency", () => {
       }
     }
   });
+
+  it("durably binds a continuation request to its originating message", async () => {
+    const continuationRequest = { taskId: "task-1", taskRevision: 4, assignmentReferenceId: "assignment-ref", objective: "Run bounded checks" };
+    for (const store of await repositories()) {
+      const inserted = await addHumanMessageOnce(store, human, "Start governed work", "message_continuation_1234", [], continuationRequest);
+      expect(inserted.message.continuationRequest).toEqual(continuationRequest);
+      if (store instanceof SqliteRoomRepository) {
+        const databasePath = store.databasePath; store.close();
+        const reopened = await SqliteRoomRepository.open(path.dirname(path.dirname(databasePath)), databasePath);
+        expect(reopened.snapshot().messages.at(-1)?.continuationRequest).toEqual(continuationRequest); reopened.close();
+      } else {
+        const reopened = await RoomStore.open(path.dirname(store.stateDirectory), store.stateDirectory);
+        expect(reopened.snapshot().messages.at(-1)?.continuationRequest).toEqual(continuationRequest);
+      }
+    }
+  });
 });

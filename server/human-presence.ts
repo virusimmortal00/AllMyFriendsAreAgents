@@ -1,9 +1,60 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style.js";
 import type { HumanPresence } from "./types.js";
+import { validHumanAvatarDataUrl } from "../shared/human-avatar.js";
 
 const HUMAN_NAME_LIMIT = 32;
+export const HUMAN_DEPARTURE_GRACE_MS = 7_000;
 export type HumanPresenceEvent = "joined" | "left";
+
+type PresenceHuman = Pick<HumanPresence, "id" | "name">;
+
+export class HumanPresenceAnnouncements {
+  private readonly pendingDepartures = new Map<string, NodeJS.Timeout>();
+  private closed = false;
+
+  constructor(
+    private readonly announce: (human: PresenceHuman, event: HumanPresenceEvent) => Promise<void>,
+    private readonly graceMs = HUMAN_DEPARTURE_GRACE_MS,
+    private readonly onError: (error: unknown, event: HumanPresenceEvent) => void = (error, event) => {
+      console.error(`Failed to announce room ${event === "joined" ? "arrival" : "departure"}`, error);
+    },
+  ) {}
+
+  arrival(human: PresenceHuman, becamePresent: boolean) {
+    if (!becamePresent || this.closed) return false;
+    const departure = this.pendingDepartures.get(human.id);
+    if (departure) {
+      clearTimeout(departure);
+      this.pendingDepartures.delete(human.id);
+      return true;
+    }
+    this.deliver(human, "joined");
+    return false;
+  }
+
+  departure(human: PresenceHuman, becameAbsent: boolean) {
+    if (!becameAbsent || this.closed || this.pendingDepartures.has(human.id)) return;
+    const timer = setTimeout(() => {
+      this.pendingDepartures.delete(human.id);
+      if (!this.closed) this.deliver(human, "left");
+    }, this.graceMs);
+    timer.unref();
+    this.pendingDepartures.set(human.id, timer);
+  }
+
+  shutdown() {
+    this.closed = true;
+    for (const timer of this.pendingDepartures.values()) clearTimeout(timer);
+    const cancelled = this.pendingDepartures.size;
+    this.pendingDepartures.clear();
+    return cancelled;
+  }
+
+  private deliver(human: PresenceHuman, event: HumanPresenceEvent) {
+    void this.announce(human, event).catch((error) => this.onError(error, event));
+  }
+}
 
 export function humanPresenceAnnouncement(name: string, event: HumanPresenceEvent) {
   return `${name} has ${event} the chat`;
@@ -23,7 +74,7 @@ export class HumanPresenceRegistry {
   private readonly humans = new Map<string, HumanPresence>();
   private readonly connectionCounts = new Map<string, number>();
 
-  join(input: { name?: unknown; style?: unknown }, resumeId?: unknown) {
+  join(input: { name?: unknown; style?: unknown; avatarUrl?: unknown }, resumeId?: unknown) {
     const name = cleanName(input.name);
     if (!name) throw new Error("Your name is required.");
     const requestedId = typeof resumeId === "string" && /^[a-zA-Z0-9-]{8,80}$/.test(resumeId) ? resumeId : undefined;
@@ -33,6 +84,7 @@ export class HumanPresenceRegistry {
       id,
       name,
       style: sanitizeChatStyle(input.style, existing?.style || DEFAULT_PARTICIPANT_STYLES.you),
+      ...(validHumanAvatarDataUrl(input.avatarUrl) ? { avatarUrl: input.avatarUrl } : existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
     };
     this.humans.set(id, human);
     return structuredClone(human);
@@ -49,6 +101,15 @@ export class HumanPresenceRegistry {
     const human = this.humans.get(id);
     if (!human) return undefined;
     human.style = sanitizeChatStyle(style, human.style);
+    return structuredClone(human);
+  }
+
+  updateAvatar(id: unknown, avatarUrl: string | undefined) {
+    if (typeof id !== "string") return undefined;
+    const human = this.humans.get(id);
+    if (!human) return undefined;
+    if (avatarUrl) human.avatarUrl = avatarUrl;
+    else delete human.avatarUrl;
     return structuredClone(human);
   }
 

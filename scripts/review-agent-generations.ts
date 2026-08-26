@@ -55,8 +55,13 @@ for (const generation of generations) {
   const duration = completed?.durationMs ?? cancelled?.durationMs ?? failed?.durationMs ?? "?";
 
   const model = started?.modelId || "legacy/unknown";
-  console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  model=${model}  ${status}  generation=${duration}ms  retries=${retries}`);
+  const selection = [started?.providerId, model].filter(Boolean).join("/");
+  const variant = started?.variant ? ` variant=${started.variant}` : "";
+  console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  model=${selection}${variant}  ${status}  generation=${duration}ms  retries=${retries}`);
   console.log(`id=${generation[0]?.generationId}  prompt=${started?.promptCharacters ?? "?"} chars  raw=${completed?.responseCharacters ?? "?"} chars  visible=${interpreted?.visibleMessageCount ?? "?"}  removed/protocol=${interpreted?.removedOrProtocolCharacters ?? "?"} chars`);
+  const provider = cancelled || failed || completed;
+  const usage = provider?.providerUsage as Record<string, unknown> | undefined;
+  if (usage) console.log(`usage=${usage.totalTokens ?? "?"} tokens (${usage.inputTokens ?? "?"} in, ${usage.outputTokens ?? "?"} out, ${usage.reasoningTokens ?? "?"} reasoning, ${usage.cacheReadTokens ?? "?"} cache read, ${usage.cacheWriteTokens ?? "?"} cache write)  cost=$${Number(provider?.providerCostUsd || 0).toFixed(6)}  tools=${provider?.toolCalls ?? 0} (${provider?.toolFailures ?? 0} failed)  steps=${provider?.providerSteps ?? 0}${provider?.providerFinishReason ? `  finish=${provider.providerFinishReason}` : ""}`);
   if (failed?.error) console.log(`error: ${failed.error}`);
   if (cancelled?.reason) console.log(`cancelled: ${cancelled.reason}`);
   if (completed?.rawResponse) console.log(`raw response:\n${completed.rawResponse}`);

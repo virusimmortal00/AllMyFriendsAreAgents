@@ -41,8 +41,8 @@ None. Closed as [#13](https://github.com/virusimmortal00/AllMyFriendsAreAgents/i
 - Cursor Composer traced the current per-character App-state, persistence, mention, and transcript-render path; Cursor Grok required the incoming-SSE case remain explicit; Codex Terra added mobile focus/caret/selection stability.
 - Bobbo narrowed V1 to the Chrome iOS message composer for direct validation and deferred Windows Chrome validation with Chankster to V2.
 - Tracking issue: [#13](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/13).
-- No implementation, merge, or live deployment exists.
+- Pre-shipment snapshot: at the time of the original room investigation, no implementation, merge, or live deployment existed. The implementation later merged in [PR #21](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/21), and #13 is closed.
 
 # Open questions
 
-- Which input-path work dominates the slow frames, and does it scale primarily with transcript length, streaming frequency, draft size, or a combination?
+- None. The original profiling question above is retained in the historical evidence and is no longer active work.

@@ -69,6 +69,7 @@ describe("continuation repository contract", () => {
         { ...blocked, projectPathHash: "b".repeat(64) }, { ...blocked, owner: "claude-sonnet" as AgentId, authority: { ...blocked.authority, agent: "claude-sonnet" as AgentId } },
         { ...blocked, task: { ...blocked.task, taskId: "other-task" } }, { ...blocked, taskRevision: blocked.taskRevision + 1 }, { ...blocked, assignmentReferenceId: "other-ref" },
         { ...blocked, authority: { ...blocked.authority, fencingToken: blocked.authority.fencingToken + 1 } }, { ...blocked, createdAt: "2026-08-24T11:00:00.000Z" }, { ...blocked, policyRevision: blocked.policyRevision + 1 },
+        { ...blocked, roomOrigin: { kind: "ROOM_WORK_REQUEST", requestId: "request-1", messageId: "message-1", requestedBy: "human-1" } },
         { ...blocked, roomId: "foreign-room", task: { ...blocked.task, roomId: "foreign-room" } },
       ];
       for (const mutation of mutations) await expect(store.compareAndSetContinuation(2, mutation, { ...blockedEvent, jobId: mutation.jobId, trigger: mutation.trigger, policyRevision: mutation.policyRevision }), backend).rejects.toThrow(/provenance|audit/);

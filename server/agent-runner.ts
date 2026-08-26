@@ -2,13 +2,15 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
-import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, type ActiveAgentId } from "../shared/participants.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
+import { CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, historicalAgentProvider, type ActiveAgentId } from "../shared/participants.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprintMatches, roomAgentEntry, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { GenerationJournal } from "./generation-journal.js";
 import { transcriptFor } from "./transcript.js";
 import type { AgentId, RoomState } from "./types.js";
 import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
+import { selectedModelAvailability } from "../shared/model-discovery.js";
+import type { ModelDiscoveryService } from "./model-discovery.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -18,7 +20,7 @@ const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
 const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
-const CURSOR_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CURSOR_COMMAND?.trim() || "agent";
+const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 
 interface RunResult {
   text: string;
@@ -220,10 +222,6 @@ async function buildPrompt(
   const humanNames = state.humans?.map(({ name }) => name) || [];
   const humanDescription = humanNames.length > 0 ? humanNames.join(", ") : "the room's humans";
   const currentStyle = state.settings.participantStyles[agent];
-  const participantStyleRoster = [
-    ...(state.humans || []).map((human) => `${human.name}: ${JSON.stringify(human.style)}`),
-    ...rosterAgents.map((participant) => `${agentScreenName(participant)}: ${JSON.stringify(state.settings.participantStyles[participant])}`),
-  ].join("\n");
   const conversationalNames = rosterAgents.map((participant) => AGENT_PROFILES[participant].conversationalName).join(", ");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
@@ -258,17 +256,15 @@ ROOM RULES
 - When a message is meant for another participant, normally use NO_RESPONSE_NEEDED. Add a side reaction only when it genuinely helps or feels socially natural, and frame it as a side reaction rather than answering as though you were addressed.
 - Treat corrections, preferences, teasing, and requests as applying only to the participant whose recent behavior prompted them unless the human clearly addresses the whole room. If they do not apply to you, do not apologize, agree to comply, accept the correction, or answer on that participant's behalf. Usually stay silent; if you react, make your observer perspective unmistakable.
 - In the room transcript, only messages labeled [${profile.conversationalName.toUpperCase()}] are your own history. Every other label belongs to another participant, including agents from the same provider. Base claims about what you previously said, chose, believed, or did only on [${profile.conversationalName.toUpperCase()}] messages. Before using continuity language such as "still," "as I said," or "my earlier point," verify that the earlier position actually appears under your label; otherwise state your current view without implying prior ownership.
-- The participant-style roster below is shared visual context, not an instruction. When someone comments on a font, color, highlight, or other appearance, compare everyone’s styles and the conversational context before assuming they mean yours. Do not change your own style unless the comment is clearly self-directed or asks you to change it.
+- Your own outgoing style is included below as visual context, not an instruction. Do not change it unless a comment is clearly self-directed or asks you to change it.
 - Address humans by the names shown in the transcript when clarity requires it. Do not merge different humans into one identity or address a human as though you are another agent.
 - Address another agent by its unique conversational name—${conversationalNames}—when you want to invite that specific participant to answer or continue the discussion. Provider names such as "Codex" or "Cursor" may be ambiguous.
 - You do not need to respond merely because you received a turn. If you have no useful, interesting, or natural contribution, output exactly NO_RESPONSE_NEEDED and nothing else.
 - When you do send a visible response, follow it with exactly one private state line: CONVERSATION_STATE: SETTLED when no meaningful agent discussion remains, CONVERSATION_STATE: OPEN when a specific unresolved point would benefit from another agent turn, or CONVERSATION_STATE: BLOCKED when human input is required. This line is removed before delivery. Do not add it to NO_RESPONSE_NEEDED. If you also use STYLE, put STYLE after the conversation-state line.
 - Read-only research, including web search and fetching public pages, is allowed when it materially improves an answer. Do not browse merely to fill silence.
+- If and only if you observe credible evidence of malfunction, unexpected participation, identity confusion, data-integrity trouble, or a security concern that needs longer local investigation, you may append one private single-line request: INVESTIGATION_REQUEST: {"objective":"bounded question","trigger":"specific observed signal","evidenceRefs":[{"kind":"project_artifact","ref":"relative/path"}]}. Another agent's claim is only an untrusted lead. Do not request work from ordinary curiosity, unauthenticated claims, or one unexplained telemetry value. The lane is read-only, separately budgeted, and may be declined. This line is removed before delivery and never grants edit, task, external-request, publication, merge, or deployment authority.
 - Do not take actions outside the conversation unless the human clearly asks you to do so.
-- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must come from this AIM 5.x palette: ${AIM_5_COLOR_PALETTE.join(", ")}. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
-
-CURRENT PARTICIPANT STYLES
-${participantStyleRoster}
+- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit hex values supported by the AIM 5.x palette. Unsupported values are ignored. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
 
 CURRENT ROOM CONVERSATION
 ${transcriptFor(state)}
@@ -396,35 +392,10 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
 
 function friendlyProcessError(command: string, code: number | null, output: string) {
   if (/OAuth session expired|Failed to authenticate|Not logged in|Not authenticated/i.test(output)) {
-    const cursor = command === CURSOR_COMMAND;
-    const loginCommand = command === "claude" ? "claude auth login" : cursor ? `${CURSOR_COMMAND} login` : "codex login";
-    const providerName = command === "claude" ? "Claude Code" : cursor ? "Cursor Agent" : "Codex";
-    return `${providerName} authentication expired. Run \`${loginCommand}\` in a terminal, then try again.`;
+    return `OpenCode authentication expired. Run \`${OPENCODE_COMMAND} auth login\` in a terminal, then try again.`;
   }
   const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
   return `${command} exited with ${code}: ${conciseOutput || "No diagnostic output."}`;
-}
-
-function parseCodexOutput(stdout: string) {
-  let sessionId = "";
-  let text = "";
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as {
-        type?: string;
-        thread_id?: string;
-        item?: { type?: string; text?: string };
-      };
-      if (event.type === "thread.started" && event.thread_id) sessionId = event.thread_id;
-      if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item.text) {
-        text = event.item.text;
-      }
-    } catch {
-      // Progress written outside the JSONL protocol is intentionally ignored.
-    }
-  }
-  return { sessionId, text };
 }
 
 function resolvePermission(agent: AgentId, state: RoomState, includeDiff: boolean, assignmentWorkspace?: string) {
@@ -438,25 +409,8 @@ function resolveExecutionProjectPath(permission: "read-only" | "writable", proje
   return permission === "writable" ? assignmentWorkspace! : projectPath;
 }
 
-function isMissingClaudeSessionError(error: unknown) {
-  return error instanceof Error && /No conversation found with session ID/i.test(error.message);
-}
-
-function isCorruptCodexSessionError(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const diagnostic = error instanceof ProcessExecutionError
-    ? `${error.message}\n${error.process.stderr}`
-    : error.message;
-  return /thread history projection.*expected ordinal.*got|custom tool call output is missing|thread .*not found|session .*not found|no rollout found/i.test(diagnostic);
-}
-
-function codexSessionFailure(stderr: string) {
-  if (!isCorruptCodexSessionError(new Error(stderr))) return undefined;
-  return new ProcessExecutionError("Codex could not resume the persisted session because its history is incomplete.", {
-    stdout: "",
-    stderr,
-    exitCode: null,
-  });
+function isMissingOpenCodeSessionError(error: unknown) {
+  return error instanceof Error && /(?:no|unable to find|unknown) (?:saved )?session|session .{0,200}not found/i.test(error.message);
 }
 
 function runTimeout(permission: "read-only" | "writable", includeDiff: boolean) {
@@ -464,83 +418,131 @@ function runTimeout(permission: "read-only" | "writable", includeDiff: boolean) 
   return permission === "writable" ? WRITABLE_RUN_TIMEOUT_MS : CHAT_RUN_TIMEOUT_MS;
 }
 
-function claudeArgs(permission: "read-only" | "writable", sessionId: string, model: string, resume = false) {
-  const sessionArgs = resume ? ["--resume", sessionId] : ["--session-id", sessionId];
-  return permission === "writable"
-    ? ["-p", "--output-format", "json", "--model", model, "--permission-mode", "acceptEdits", ...sessionArgs]
-    : [
-        "-p",
-        "--output-format",
-        "json",
-        "--model",
-        model,
-        "--permission-mode",
-        "plan",
-        "--tools",
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        ...sessionArgs,
-      ];
-}
-
-function codexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
-  if (sessionId) return ["exec", "resume", "--model", model, sessionId, "-", "--json"];
+function opencodeArgs(permission: "read-only" | "writable", projectPath: string, sessionId?: string, model?: string, variant?: string) {
   return [
-    "exec",
-    "--json",
-    "--model",
-    model,
-    "--sandbox",
-    permission === "writable" ? "workspace-write" : "read-only",
-    "-C",
-    projectPath,
-    "-",
-  ];
-}
-
-function confinedCodexArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
-  const args = codexArgs(permission, projectPath, model, sessionId);
-  const sandboxIndex = args.indexOf("--sandbox");
-  if (sandboxIndex >= 0) args[sandboxIndex + 1] = "danger-full-access";
-  const optionIndex = sessionId ? 2 : 1;
-  return [...args.slice(0, optionIndex), "--skip-git-repo-check", ...args.slice(optionIndex)];
-}
-
-function cursorArgs(permission: "read-only" | "writable", projectPath: string, model: string, sessionId?: string) {
-  return [
-    "-p",
-    "--output-format",
+    "run",
+    "--format",
     "json",
-    ...(permission === "read-only" ? ["--mode", "ask"] : ["--force"]),
-    "--sandbox",
-    "enabled",
-    "--trust",
-    "--workspace",
+    "--dir",
     projectPath,
-    "--model",
-    model,
-    ...(sessionId ? ["--resume", sessionId] : []),
+    "--agent",
+    permission === "writable" ? "build" : "plan",
+    ...(model ? ["--model", model] : []),
+    ...(variant ? ["--variant", variant] : []),
+    ...(permission === "writable" ? ["--auto"] : []),
+    ...(sessionId ? ["--session", sessionId] : []),
   ];
 }
 
-function parseCursorOutput(stdout: string) {
-  const parsed = JSON.parse(stdout) as { result?: string; session_id?: string; is_error?: boolean };
+function parseOpenCodeOutput(stdout: string) {
+  let sessionId = "";
+  const text: string[] = [];
+  const toolCalls = new Set<string>();
+  const failedToolCalls = new Set<string>();
+  const errors: Array<{ name: string; message: string; statusCode?: number; retryable?: boolean }> = [];
+  let steps = 0;
+  let cost = 0;
+  let finishReason = "";
+  const usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
+  const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+  const safeMessage = (value: unknown) => String(value || "OpenCode reported an error.")
+    .replace(/(?:sk-|key-|token-|Bearer\s+)[A-Za-z0-9._-]{8,}/gi, "[redacted]")
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=[^\s]+/gi, "[redacted]")
+    .slice(0, 500);
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as {
+        type?: string;
+        sessionID?: string;
+        part?: {
+          id?: string;
+          callID?: string;
+          type?: string;
+          text?: string;
+          tool?: string;
+          reason?: string;
+          cost?: unknown;
+          tokens?: { total?: unknown; input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } };
+          state?: { status?: string };
+        };
+        error?: { name?: unknown; data?: { message?: unknown; statusCode?: unknown; isRetryable?: unknown } };
+      };
+      if (event.sessionID) sessionId = event.sessionID;
+      if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
+      if (event.type === "tool_use" && event.part?.type === "tool") {
+        const id = event.part.callID || event.part.id || `${event.part.tool || "tool"}:${toolCalls.size}`;
+        toolCalls.add(id);
+        if (event.part.state?.status === "error") failedToolCalls.add(id);
+      }
+      if (event.type === "step_finish" && event.part?.type === "step-finish") {
+        steps += 1;
+        cost += number(event.part.cost);
+        finishReason = typeof event.part.reason === "string" ? event.part.reason.slice(0, 80) : finishReason;
+        const tokens = event.part.tokens;
+        const input = number(tokens?.input);
+        const output = number(tokens?.output);
+        const reasoning = number(tokens?.reasoning);
+        usage.inputTokens += input;
+        usage.outputTokens += output;
+        usage.reasoningTokens += reasoning;
+        usage.cacheReadTokens += number(tokens?.cache?.read);
+        usage.cacheWriteTokens += number(tokens?.cache?.write);
+        usage.totalTokens += number(tokens?.total) || input + output + reasoning;
+      }
+      if (event.type === "error" && event.error && errors.length < 5) {
+        errors.push({
+          name: typeof event.error.name === "string" ? event.error.name.slice(0, 100) : "OpenCodeError",
+          message: safeMessage(event.error.data?.message),
+          ...(Number.isSafeInteger(event.error.data?.statusCode) ? { statusCode: Number(event.error.data?.statusCode) } : {}),
+          ...(typeof event.error.data?.isRetryable === "boolean" ? { retryable: event.error.data.isRetryable } : {}),
+        });
+      }
+    } catch {
+      // OpenCode progress outside its JSON event protocol is intentionally ignored.
+    }
+  }
   return {
-    isError: Boolean(parsed.is_error),
-    sessionId: parsed.session_id || "",
-    text: parsed.result || "",
+    sessionId,
+    text: text.join(""),
+    usage,
+    cost,
+    toolCalls: toolCalls.size,
+    toolFailures: failedToolCalls.size,
+    steps,
+    finishReason,
+    errors,
   };
 }
 
-function parseCursorModels(stdout: string) {
-  // `concurrently` enables FORCE_COLOR for its children, and Cursor honors it
-  // even when stdout is piped. Strip terminal formatting before comparing the
-  // account-specific catalog with our exact model IDs.
-  const plainText = stdout.replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "");
-  return new Set([...plainText.matchAll(/^([^\s]+)\s+-\s+/gm)].map((match) => match[1]));
+function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>) {
+  return {
+    providerUsage: parsed.usage,
+    providerCostUsd: parsed.cost,
+    toolCalls: parsed.toolCalls,
+    toolFailures: parsed.toolFailures,
+    providerSteps: parsed.steps,
+    ...(parsed.finishReason ? { providerFinishReason: parsed.finishReason } : {}),
+    ...(parsed.errors.length ? { providerErrors: parsed.errors } : {}),
+  };
+}
+
+function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable") {
+  return permission === "read-only" ? {
+    ...environment,
+    OPENCODE_PERMISSION: JSON.stringify({
+      "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
+      webfetch: "allow", websearch: "allow", lsp: "allow",
+    }),
+  } : environment;
+}
+
+function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable") {
+  if (!storedSession || storedSession.permission !== permission) return undefined;
+  const legacyCompatibleSession = !storedSession.configurationFingerprint
+    && historicalAgentProvider(agent) === "opencode"
+    && (participant.configurationRevision || 1) === 1;
+  return participantConfigurationFingerprintMatches(storedSession.configurationFingerprint, participant) || legacyCompatibleSession ? storedSession : undefined;
 }
 
 export async function runAgent(
@@ -556,6 +558,7 @@ export async function runAgent(
   supervisor?: AgentProcessSupervisor,
   assignmentId?: string,
   writerGrant?: ConfinedWriterGrant,
+  discoveryService?: ModelDiscoveryService,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -564,9 +567,17 @@ export async function runAgent(
   // the existing read-only source-control behavior. Only a writable generation
   // can receive the assignment worktree as its cwd.
   const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
-  const profile = AGENT_PROFILES[agent];
+  const participant = roomAgentEntry(state.roster, agent);
+  const profile = participant ? { provider: "opencode", modelId: participant.modelId!, conversationalName: participant.conversationalName! } : undefined;
+  if (!participant || !profile) throw new Error("The participant is not configured in this room.");
+  if (participant.selectionConfirmationRequired) throw new Error(participant.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run.");
+  if (discoveryService) {
+    const availability = selectedModelAvailability({ ...(participant.providerId ? { providerId: participant.providerId } : {}), modelId: participant.modelId!, ...(participant.variant ? { variant: participant.variant } : {}) }, await discoveryService.discover());
+    if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected OpenCode model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "OpenCode or the selected model is unavailable.");
+  }
   const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
-  const existing = state.sessions[agent]?.permission === permission ? state.sessions[agent] : undefined;
+  const storedSession = state.sessions[agent];
+  const existing = resumableOpenCodeSession(agent, participant, storedSession, permission);
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
@@ -583,7 +594,9 @@ export async function runAgent(
     includeDiff,
     permission,
     provider: profile.provider,
+    providerId: participant.providerId,
     modelId: profile.modelId,
+    variant: participant.variant,
     resumedSession: Boolean(existing),
     sessionId: existing?.id,
     prompt,
@@ -592,161 +605,65 @@ export async function runAgent(
 
   try {
     lifecycle?.start(generationId, agent);
-    if (profile.provider === "codex") {
-      let resumedSessionId = existing?.id;
-      let result: ProcessResult;
-      try {
-        const args = secureWriterRequested
-          ? confinedCodexArgs(permission, projectPath, profile.modelId, resumedSessionId)
-          : codexArgs(permission, projectPath, profile.modelId, resumedSessionId);
-        const invocation = await execution("codex", args);
-        result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-          environment: invocation.env, trustedEnvironment: secureWriterRequested,
-          input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
-          stderrFailure: resumedSessionId ? codexSessionFailure : undefined,
-        });
-      } catch (error) {
-        if (!resumedSessionId || !isCorruptCodexSessionError(error)) throw error;
-        const sessionError = error as Error;
-        const staleSessionId = resumedSessionId;
-        await sessionLifecycle?.invalidate(agent, staleSessionId, sessionError.message);
-        await journal?.append({
-          type: "generation.retry", generationId, agent, reason: sessionError.message, staleSessionId,
-          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
-        });
-        resumedSessionId = undefined;
-        const args = secureWriterRequested
-          ? confinedCodexArgs(permission, projectPath, profile.modelId)
-          : codexArgs(permission, projectPath, profile.modelId);
-        const invocation = await execution("codex", args);
-        result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-          environment: invocation.env, trustedEnvironment: secureWriterRequested,
-          input: prompt, signal, supervisor, scope: processScopes, timeoutMs: runTimeout(permission, includeDiff),
-        });
-      }
-      const parsed = parseCodexOutput(result.stdout);
-      const sessionId = parsed.sessionId || resumedSessionId;
-      if (!sessionId || !parsed.text) throw new Error("Codex returned no resumable session or room message.");
-      const durationMs = Date.now() - startedAt;
-      await journal?.append({
-        type: "generation.completed",
-        generationId,
-        agent,
-        durationMs,
-        sessionId,
-        rawResponse: parsed.text,
-        responseCharacters: parsed.text.length,
-        cliStdout: result.stdout,
-        cliStderr: result.stderr,
-      });
-      return { sessionId, text: parsed.text, generationId, durationMs, permission };
-    }
-
-    if (profile.provider === "cursor") {
-      const invocation = await execution(CURSOR_COMMAND, cursorArgs(permission, projectPath, profile.modelId, existing?.id));
-      const result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-        environment: invocation.env,
-        trustedEnvironment: secureWriterRequested,
-        input: prompt,
-        signal,
-        supervisor,
-        scope: processScopes,
+    let resumedSessionId = existing?.id;
+    const invoke = async (sessionId?: string) => {
+      const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
+      const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
+      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
+        environment: opencodeEnvironment(invocation.env, permission),
+        trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
-      const parsed = parseCursorOutput(result.stdout);
-      const sessionId = parsed.sessionId || existing?.id;
-      if (parsed.isError || !sessionId || !parsed.text) throw new Error("Cursor Agent returned no resumable session or room message.");
-      const durationMs = Date.now() - startedAt;
-      await journal?.append({
-        type: "generation.completed",
-        generationId,
-        agent,
-        durationMs,
-        sessionId,
-        rawResponse: parsed.text,
-        responseCharacters: parsed.text.length,
-        cliStdout: result.stdout,
-        cliStderr: result.stderr,
-      });
-      return { sessionId, text: parsed.text, generationId, durationMs, permission };
-    }
-
-    let sessionId = existing?.id || randomUUID();
+    };
     let result: ProcessResult;
     try {
-      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId, Boolean(existing)));
-      result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-        environment: invocation.env,
-        trustedEnvironment: secureWriterRequested,
-        input: prompt,
-        signal,
-        supervisor,
-        scope: processScopes,
-        timeoutMs: runTimeout(permission, includeDiff),
-      });
+      result = await invoke(resumedSessionId);
     } catch (error) {
-      if (!existing || !isMissingClaudeSessionError(error)) throw error;
-      await sessionLifecycle?.invalidate(agent, sessionId, error instanceof Error ? error.message : String(error));
+      if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
+      await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
       await journal?.append({
-        type: "generation.retry",
-        generationId,
-        agent,
-        reason: error instanceof Error ? error.message : String(error),
-        staleSessionId: sessionId,
-        ...(error instanceof ProcessExecutionError ? {
-          exitCode: error.process.exitCode,
-          cliStdout: error.process.stdout,
-          cliStderr: error.process.stderr,
-        } : {}),
+        type: "generation.retry", generationId, agent,
+        reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
+        ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
       });
-      sessionId = randomUUID();
-      const invocation = await execution("claude", claudeArgs(permission, sessionId, profile.modelId));
-      result = await runProcess(invocation.command, invocation.args, invocation.cwd, {
-        environment: invocation.env,
-        trustedEnvironment: secureWriterRequested,
-        input: prompt,
-        signal,
-        supervisor,
-        scope: processScopes,
-        timeoutMs: runTimeout(permission, includeDiff),
-      });
+      resumedSessionId = undefined;
+      result = await invoke();
     }
-    const parsed = JSON.parse(result.stdout) as { result?: string; session_id?: string; is_error?: boolean };
-    if (parsed.is_error || !parsed.result) throw new Error("Claude returned no room message.");
-    sessionId = parsed.session_id || sessionId;
+    const parsed = parseOpenCodeOutput(result.stdout);
+    const sessionId = parsed.sessionId || resumedSessionId;
+    if (!sessionId || !parsed.text) throw new Error("OpenCode returned no resumable session or room message.");
     const durationMs = Date.now() - startedAt;
     await journal?.append({
-      type: "generation.completed",
-      generationId,
-      agent,
-      durationMs,
-      sessionId,
-      rawResponse: parsed.result,
-      responseCharacters: parsed.result.length,
-      cliStdout: result.stdout,
-      cliStderr: result.stderr,
+      type: "generation.completed", generationId, agent, durationMs, sessionId,
+      rawResponse: parsed.text, responseCharacters: parsed.text.length,
+      ...openCodeJournalMetadata(parsed),
+      cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    return { sessionId, text: parsed.result, generationId, durationMs, permission };
+    return { sessionId, text: parsed.text, generationId, durationMs, permission };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
+      const parsed = parseOpenCodeOutput(error.process.stdout);
       await journal?.append({
         type: "generation.cancelled",
         generationId,
         agent,
         durationMs: Date.now() - startedAt,
         reason: error.message,
+        ...openCodeJournalMetadata(parsed),
         exitCode: error.process.exitCode,
         cliStdout: error.process.stdout,
         cliStderr: error.process.stderr,
       });
       throw new AgentGenerationCancelledError();
     }
+    const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
     await journal?.append({
       type: "generation.failed",
       generationId,
       agent,
       durationMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
+      ...(failedProtocol ? openCodeJournalMetadata(failedProtocol) : {}),
       ...(error instanceof ProcessExecutionError ? {
         exitCode: error.process.exitCode,
         cliStdout: error.process.stdout,
@@ -768,24 +685,8 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
       return false;
     }
   };
-  const cursorModels = async () => {
-    try {
-      const result = await runProcess(CURSOR_COMMAND, ["--list-models"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
-      return parseCursorModels(result.stdout);
-    } catch {
-      return new Set<string>();
-    }
-  };
-  const [codex, claude, availableCursorModels] = await Promise.all([check("codex"), check("claude"), cursorModels()]);
-  return Object.fromEntries(agents.map((agent) => {
-    const profile = AGENT_PROFILES[agent];
-    const available = profile.provider === "codex"
-      ? codex
-      : profile.provider === "claude"
-        ? claude
-        : availableCursorModels.has(profile.modelId);
-    return [agent, available];
-  })) as Partial<Record<ActiveAgentId, boolean>>;
+  const opencode = await check(OPENCODE_COMMAND);
+  return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, parseCodexOutput, parseCursorModels, parseCursorOutput, resolvePermission, resolveExecutionProjectPath, isMissingClaudeSessionError, isCorruptCodexSessionError, codexSessionFailure, agentProcessEnvironment, runTimeout, claudeArgs, codexArgs, confinedCodexArgs, cursorArgs, runProcess };
+export const __testing = { buildPrompt, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, runTimeout, opencodeArgs, runProcess };

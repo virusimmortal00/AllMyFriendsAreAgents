@@ -38,7 +38,9 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
     if (!active) return;
     const restoreFocusTo = returnFocusTo || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     const unlockBodyScroll = lockBodyScroll();
-    dialogRef.current?.focus();
+    const initialFocus = dialogRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+      || focusableElements(dialogRef.current)[0];
+    (initialFocus || dialogRef.current)?.focus();
     return () => {
       unlockBodyScroll();
       if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
@@ -51,6 +53,14 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
       event.stopPropagation();
       onCloseRef.current();
       return;
+    }
+    if (event.key === "Enter" && !(event.target instanceof HTMLTextAreaElement) && !(event.target instanceof HTMLButtonElement)) {
+      const defaultButton = dialogRef.current?.querySelector<HTMLButtonElement>("[data-default-button]:not(:disabled)");
+      if (defaultButton) {
+        event.preventDefault();
+        defaultButton.click();
+        return;
+      }
     }
     if (event.key !== "Tab") return;
     const focusable = focusableElements(dialogRef.current);
@@ -68,7 +78,9 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
   }
 
   function onBackdropMouseDown(event: MouseEvent<HTMLDivElement>) {
-    if (event.currentTarget === event.target) onCloseRef.current();
+    // Windows property sheets and modal dialogs require an explicit command.
+    // Keep the handler so dialog backdrops do not leak pointer events to the owner.
+    if (event.currentTarget === event.target) event.preventDefault();
   }
 
   return { dialogRef, onDialogKeyDown, onBackdropMouseDown };
@@ -91,11 +103,16 @@ export function useDismissibleLayer(open: boolean, onDismiss: () => void) {
       onDismissRef.current();
       triggerRef.current?.focus();
     };
+    const dismissFromFocus = (event: FocusEvent) => {
+      if (!layerRef.current?.contains(event.target as Node)) onDismissRef.current();
+    };
     document.addEventListener("pointerdown", dismissOutside);
     document.addEventListener("keydown", dismissFromKeyboard);
+    document.addEventListener("focusin", dismissFromFocus);
     return () => {
       document.removeEventListener("pointerdown", dismissOutside);
       document.removeEventListener("keydown", dismissFromKeyboard);
+      document.removeEventListener("focusin", dismissFromFocus);
     };
   }, [open]);
 

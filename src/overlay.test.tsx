@@ -64,13 +64,13 @@ describe("overlay foundation", () => {
     const trigger = screen.getByRole("button", { name: "Open agent settings" });
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Agent Settings" });
-    await waitFor(() => expect(document.activeElement).toBe(dialog));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close agent settings" })));
     expect(document.body.style.overflow).toBe("hidden");
 
     await user.tab();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close agent settings" }));
+    expect(document.activeElement).toBe(screen.getByRole("checkbox", { name: "Allow this agent to edit project files" }));
     await user.tab({ shift: true });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close agent settings" }));
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -78,7 +78,7 @@ describe("overlay foundation", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
-  it("closes a modal only when the backdrop itself is pressed", async () => {
+  it("requires an explicit command instead of dismissing from the backdrop", async () => {
     const user = userEvent.setup();
     render(<AgentSettingsFlow />);
     await user.click(screen.getByRole("button", { name: "Open agent settings" }));
@@ -86,7 +86,7 @@ describe("overlay foundation", () => {
     fireEvent.mouseDown(dialog);
     expect(screen.getByRole("dialog")).toBe(dialog);
     fireEvent.mouseDown(dialog.parentElement!);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("dialog")).toBe(dialog);
   });
 
   it("dismisses popovers from outside press and Escape and restores the trigger", async () => {
@@ -102,6 +102,13 @@ describe("overlay foundation", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(trigger);
+
+    await user.click(trigger);
+    await user.tab();
+    expect(screen.getByRole("menu")).toBeTruthy();
+    await user.tab();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Outside" }));
   });
 
   it("provides a real Help dialog with visible and keyboard close paths", async () => {

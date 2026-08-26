@@ -1,4 +1,4 @@
-import type { ParticipantId } from "./participants.js";
+import { isParticipantId, type ParticipantId } from "./participants.js";
 
 export const CHAT_FONT_FAMILIES = [
   "Arial",
@@ -158,6 +158,15 @@ export const DEFAULT_PARTICIPANT_STYLES: ParticipantStyles = {
     italic: false,
     underline: false,
   },
+  "opencode-configured": {
+    fontFamily: "Verdana",
+    fontSize: 17,
+    textColor: "#2b7274",
+    backgroundColor: "#ffffff",
+    bold: true,
+    italic: false,
+    underline: false,
+  },
 };
 
 function sanitizePaletteColor(value: unknown, fallback: string, safeDefault: string) {
@@ -185,11 +194,13 @@ export function sanitizeChatStyle(input: unknown, fallback: ChatStyle): ChatStyl
 export function normalizeParticipantStyles(input: unknown): ParticipantStyles {
   const value = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const normalized = {} as ParticipantStyles;
-  for (const participant of Object.keys(DEFAULT_PARTICIPANT_STYLES) as ParticipantId[]) {
+  const participants = new Set<ParticipantId>(Object.keys(DEFAULT_PARTICIPANT_STYLES) as ParticipantId[]);
+  for (const participant of Object.keys(value)) if (isParticipantId(participant)) participants.add(participant);
+  for (const participant of participants) {
     const legacy = participant === "codex-sol" ? value.codex : participant === "claude-sonnet" ? value.claude : undefined;
     normalized[participant] = sanitizeChatStyle(
       value[participant] ?? legacy,
-      DEFAULT_PARTICIPANT_STYLES[participant],
+      DEFAULT_PARTICIPANT_STYLES[participant] || DEFAULT_PARTICIPANT_STYLES["codex-sol"],
     );
   }
   return normalized;

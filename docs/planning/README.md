@@ -6,16 +6,14 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 
 ## Current work
 
-- [Cross-platform compose lag](compose-lag-cross-platform.md) — [#13](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/13)
-- [Typing indicator truthfulness](typing-indicator-truthfulness.md) — [#25](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/25)
-- [Large-message autoscroll](large-message-autoscroll.md) — [#26](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/26)
-- [AIM window controls](aim-window-controls.md) — [#27](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/27)
-- [Cross-provider project write toggle](project-permissions-toggle.md) — [#4](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/4)
-- [Participant mentions and autocomplete](participant-mentions.md) — [#5](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/5)
-- [Scoped GitHub contribution broker](18-scoped-github-contribution-broker.md) — [#18](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/18)
-- [Exact-commit contribution gates](20-exact-commit-contribution-gates.md) — [#20](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/20)
-- [Persistent live room roster](48-persistent-live-roster.md) — [#48](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/48)
-- [Governed assignment-scoped developer workspaces](9-governed-assignment-workspaces.md) — [#9](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/9)
+No planning document currently represents active work. Use the repository's open
+GitHub Issues for the current backlog.
+
+## Historical records
+
+Completed and superseded planning records remain in this directory for provenance.
+Their frontmatter links to the canonical issue and records a terminal `done` or
+`superseded` status; they are not an actionable backlog.
 
 ## Working rules
 
@@ -28,4 +26,7 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 
 Allowed status values are `proposed`, `active`, `blocked`, `done`, and `superseded`.
 
-`pnpm check:planning-docs` is the read-only guardrail. It never writes to GitHub. Bot-driven sync stays deferred to [#18](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/18). When first-class tasks land in [#17](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/17), these files should become generated or exported views rather than separately maintained state.
+`pnpm check:planning-docs` is the read-only guardrail. It never writes to GitHub.
+GitHub Issues remain the hand-authored source of truth; any future room action that
+creates or updates one must use a separately governed, scoped operation rather than
+turning these historical files into a second mutable tracker.

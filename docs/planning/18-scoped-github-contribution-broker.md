@@ -30,7 +30,9 @@ Merged to `main` through PR #44 at `d20d3c0466f811d040305827a23b948c2a2c5dfc`. T
 
 # Next action
 
-No action remains in this bounded phase. Continue exact publication, merge, and deployment gating in #20.
+No action remains in this bounded phase. The former eligibility-set and concurrent
+room-writer follow-up in #12 was closed as superseded; future use of this broker
+belongs to separate implementation-worker jobs under #60 and #70.
 
 # Evidence
 
@@ -41,4 +43,4 @@ No action remains in this bounded phase. Continue exact publication, merge, and 
 
 # Open questions
 
-- None for this bounded phase. Broader eligibility-set and concurrent-writer UX remain owned by #12.
+- None for this bounded phase.
