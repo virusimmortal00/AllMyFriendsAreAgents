@@ -39,6 +39,16 @@ const CONVERSATION_STATE = /^\s*CONVERSATION_STATE:\s*(SETTLED|OPEN|BLOCKED)\s*$
 const INVESTIGATION_REQUEST = /^\s*INVESTIGATION_REQUEST:\s*(\{[^\n]*\})\s*$/im;
 const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
 const WHOLE_ROOM_EXCLUSION = /\b(?:not everyone|not everybody|no need for (?:everyone|everybody|all of you)|(?:everyone|everybody) (?:doesn['’]?t|does not|needn['’]?t|need not) need to)\b/i;
+const BROADCAST_AUDIENCE = "(?:everyone|everybody|all of you|you all|you guys|y[’']?all)";
+const YES_NO_AUXILIARY = "(?:can|could|do|does|did|are|is|was|were|have|has|had|will|would|should|may|might|must)";
+const SHORT_YES_NO_BROADCAST = new RegExp(`^(?:(?:hey|hi)[,\\s]+)?(?:${YES_NO_AUXILIARY}\\s+${BROADCAST_AUDIENCE}\\b|${BROADCAST_AUDIENCE}\\s+(?:all\\s+)?${YES_NO_AUXILIARY}\\b)`, "i");
+const ANYONE_CAPABILITY_BROADCAST = /\b(?:(?:can|could|would|will)\s+any(?:one|body)|any(?:one|body)\s+(?:can|could|would|will|is (?:able|available) to))\b/i;
+const DISTINCT_RESPONSE_REQUEST = /\b(?:each|separately|individually|every one|your own (?:take|view|opinion|answer|experience)|from (?:everyone|everybody|all of you|you all|you guys|y[’']?all))\b/i;
+
+export interface BroadcastPolicy {
+  inviteAll: boolean;
+  stopOnSettledResponse: boolean;
+}
 
 function hashUnit(value: string) {
   let hash = 2166136261;
@@ -97,11 +107,26 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   });
 }
 
-export function latestHumanInvitesWholeRoom(state: RoomState) {
+export function latestHumanBroadcastPolicy(state: RoomState): BroadcastPolicy {
   const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
-  return Boolean(latestHumanMessage
-    && WHOLE_ROOM_INVITATION.test(latestHumanMessage.text)
-    && !WHOLE_ROOM_EXCLUSION.test(latestHumanMessage.text));
+  if (!latestHumanMessage || WHOLE_ROOM_EXCLUSION.test(latestHumanMessage.text)) {
+    return { inviteAll: false, stopOnSettledResponse: false };
+  }
+  const text = latestHumanMessage.text.trim();
+  const asksForDistinctResponses = DISTINCT_RESPONSE_REQUEST.test(text);
+  const shortYesNoBroadcast = text.endsWith("?")
+    && text.split(/\s+/).length <= 18
+    && SHORT_YES_NO_BROADCAST.test(text);
+  const singleAnswerBroadcast = !asksForDistinctResponses
+    && (shortYesNoBroadcast || ANYONE_CAPABILITY_BROADCAST.test(text));
+  return {
+    inviteAll: WHOLE_ROOM_INVITATION.test(text) && !singleAnswerBroadcast,
+    stopOnSettledResponse: singleAnswerBroadcast,
+  };
+}
+
+export function latestHumanInvitesWholeRoom(state: RoomState) {
+  return latestHumanBroadcastPolicy(state).inviteAll;
 }
 
 export function roomMessageTurns(state: RoomState): ConversationTurn[] {
@@ -193,7 +218,7 @@ export async function runEnergyConversation(
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
-  options: { inviteAll?: boolean } = {},
+  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean } = {},
 ): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
   const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
@@ -217,6 +242,7 @@ export async function runEnergyConversation(
   let secondaryAttempts = 0;
   let nextOutcomeKey = 0;
   let cancelled = false;
+  let broadcastSettled = false;
   const visibleOutcomes: EnergyOutcome[] = [];
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
@@ -239,12 +265,13 @@ export async function runEnergyConversation(
       }
       lastOutcome = outcome;
       visibleOutcomes.push(outcome);
+      if (options.stopOnSettledResponse && result.conversationState === "settled") broadcastSettled = true;
     }
     return outcome;
   };
 
   if (options.inviteAll) {
-    while (remaining.length > 0 && !cancelled && visibleMessagesDelivered < hardMessageCeiling) {
+    while (remaining.length > 0 && !cancelled && !broadcastSettled && visibleMessagesDelivered < hardMessageCeiling) {
       await record(remaining.shift()!, 1);
     }
   } else {
@@ -253,10 +280,12 @@ export async function runEnergyConversation(
     }
   }
   if (!lastOutcome || cancelled) return { settled: !cancelled };
+  if (broadcastSettled) return { settled: true };
 
   while (responseTurns < hardTurnCeiling
     && visibleMessagesDelivered < hardMessageCeiling
-    && !cancelled) {
+    && !cancelled
+    && !broadcastSettled) {
     const mention = pendingMentions.shift();
     if (mention) {
       const pair = [mention.source, mention.target].sort().join(":");
@@ -309,6 +338,7 @@ export async function runEnergyConversation(
   }
 
   if (cancelled) return { settled: false };
+  if (broadcastSettled) return { settled: true };
 
   const explicitlyUnresolved = visibleOutcomes.some(({ result }) => result.conversationState === "open" || result.conversationState === "blocked");
   if (!explicitlyUnresolved) return { settled: true };

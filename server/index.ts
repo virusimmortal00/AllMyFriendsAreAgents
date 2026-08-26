@@ -10,7 +10,7 @@ import { ROOM_PROTOCOL_VERSION } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { conversationRandom, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry } from "./developer-team.js";
@@ -460,13 +460,13 @@ async function performTurn(turn: ConversationTurn) {
   }
 }
 
-async function performConversation(turns: ConversationTurn[], staged = false, inviteAll = false) {
+async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}) {
   const snapshot = store.snapshot();
   const energy = snapshot.settings.conversationEnergy;
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
   if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), { inviteAll });
+    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), broadcastPolicy);
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
@@ -738,11 +738,7 @@ app.post("/api/messages", async (request, response) => {
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
     const conversationState = roomSnapshot();
-    await performConversation(
-      roomMessageTurns(conversationState),
-      true,
-      latestHumanInvitesWholeRoom(conversationState),
-    );
+    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
   }));
   return response.status(202).json(messageMutationAcknowledgement(accepted, continuation));
 });
@@ -769,11 +765,7 @@ app.post("/api/developer/messages", async (request, response) => {
   broadcast();
   jobs.enqueue("developer-message-conversation", () => runJob(async () => {
     const conversationState = roomSnapshot();
-    await performConversation(
-      roomMessageTurns(conversationState),
-      true,
-      latestHumanInvitesWholeRoom(conversationState),
-    );
+    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
   }));
   return response.status(202).json({ accepted: true, message, room: developerRoomView() });
 });
