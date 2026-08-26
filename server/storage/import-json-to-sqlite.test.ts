@@ -159,6 +159,23 @@ describe("JSON to SQLite import", () => {
     persisted.close();
   });
 
+  it("keeps re-import idempotent when only the provenance observation time changes", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-observed-at-test-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    const source = await RoomStore.open(projectRoot, sourceStateDirectory);
+    const deployment = { schemaVersion: 1 as const, commitSha: "5".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"6".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    await source.setDeployment(deployment);
+    const imported = await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
+
+    await source.setDeployment({ ...deployment, observedAt: "2026-08-26T01:00:00.000Z" });
+    await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(imported);
+    const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(persisted.snapshot().deployment).toEqual(deployment);
+    persisted.close();
+  });
+
   it("removes governed destination records before an explicit overwrite import", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-overwrite-test-"));
     temporaryDirectories.push(projectRoot);

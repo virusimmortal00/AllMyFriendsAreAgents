@@ -1421,11 +1421,21 @@ function samePersistedRoomState(left: RoomState, right: RoomState) {
   return JSON.stringify(left.messages) === JSON.stringify(right.messages)
     && JSON.stringify(left.sessions) === JSON.stringify(right.sessions)
     && JSON.stringify(left.settings) === JSON.stringify(right.settings)
-    && JSON.stringify(left.deployment) === JSON.stringify(right.deployment)
+    && sameDeploymentIdentity(left.deployment, right.deployment)
     && JSON.stringify(normalizeRoomAgentRoster(left.roster)) === JSON.stringify(normalizeRoomAgentRoster(right.roster))
     && left.status === right.status
     && left.activeAgent === right.activeAgent
     && left.error === right.error;
+}
+
+function sameDeploymentIdentity(left: RoomState["deployment"], right: RoomState["deployment"]) {
+  if (!left || !right) return left === right;
+  return left.schemaVersion === right.schemaVersion
+    && left.commitSha === right.commitSha
+    && JSON.stringify(left.reference) === JSON.stringify(right.reference)
+    && left.worktree === right.worktree
+    && left.epoch === right.epoch
+    && left.unavailableReason === right.unavailableReason;
 }
 
 function normalizeMilestoneInput(milestone: { readonly id: string; readonly state: ImprovementMilestoneState; readonly summary: string }) {
