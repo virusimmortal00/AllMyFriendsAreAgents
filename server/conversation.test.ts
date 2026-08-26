@@ -326,6 +326,18 @@ describe("room message policy", () => {
     expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
   });
 
+  it("recognizes each-of-you phrasing as an explicit request for distinct answers", () => {
+    const state = roomState([{
+      id: "human",
+      speaker: "you",
+      text: "Each of you, share one concern.",
+      timestamp: "2026-08-19T12:00:00Z",
+    }]);
+
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
+    expect(roomMessageTurns(state)[0]?.instruction).toContain("explicitly invites the whole room");
+  });
+
   it("respects an explicit statement that the whole room need not answer", () => {
     const state = roomState([{
       id: "human",

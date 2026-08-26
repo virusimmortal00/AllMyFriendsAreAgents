@@ -37,13 +37,13 @@ const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
 const CONVERSATION_STATE = /^\s*CONVERSATION_STATE:\s*(SETTLED|OPEN|BLOCKED)\s*$/im;
 const INVESTIGATION_REQUEST = /^\s*INVESTIGATION_REQUEST:\s*(\{[^\n]*\})\s*$/im;
-const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
+const WHOLE_ROOM_INVITATION = /\b(?:everyone|everybody|all of you|each of you|every one of you|you all|you guys|whole room|entire room|hi all|hey all)\b|\by[’']?all\b/i;
 const WHOLE_ROOM_EXCLUSION = /\b(?:not everyone|not everybody|no need for (?:everyone|everybody|all of you)|(?:everyone|everybody) (?:doesn['’]?t|does not|needn['’]?t|need not) need to)\b/i;
 const BROADCAST_AUDIENCE = "(?:everyone|everybody|all of you|you all|you guys|y[’']?all)";
 const YES_NO_AUXILIARY = "(?:can|could|do|does|did|are|is|was|were|have|has|had|will|would|should|may|might|must)";
 const SHORT_YES_NO_BROADCAST = new RegExp(`^(?:(?:hey|hi)[,\\s]+)?(?:${YES_NO_AUXILIARY}\\s+${BROADCAST_AUDIENCE}\\b|${BROADCAST_AUDIENCE}\\s+(?:all\\s+)?${YES_NO_AUXILIARY}\\b)`, "i");
 const ANYONE_CAPABILITY_BROADCAST = /\b(?:(?:can|could|would|will)\s+any(?:one|body)|any(?:one|body)\s+(?:can|could|would|will|is (?:able|available) to))\b/i;
-const DISTINCT_RESPONSE_REQUEST = /\b(?:each|separately|individually|every one|your own (?:take|view|opinion|answer|experience)|from (?:everyone|everybody|all of you|you all|you guys|y[’']?all))\b/i;
+const DISTINCT_RESPONSE_REQUEST = /\b(?:each|separately|individually|every one|your own (?:take|view|opinion|answer|experience)|from (?:everyone|everybody|all of you|each of you|every one of you|you all|you guys|y[’']?all))\b/i;
 
 export interface BroadcastPolicy {
   inviteAll: boolean;
