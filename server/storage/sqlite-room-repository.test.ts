@@ -149,6 +149,7 @@ describe("SQLite room repository", () => {
     const betaStyle = { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], textColor: "#6c1739" };
     await store.updateParticipantStyle(alpha.agentId, alphaStyle);
     await store.updateParticipantStyle(beta.agentId, betaStyle);
+    await store.updateSettings({ writableAgent: alpha.agentId });
     await store.setSession(alpha.agentId, "alpha-session", "read-only");
     await store.setSession(beta.agentId, "beta-session", "read-only");
     await store.addMessage(alpha.agentId, "Alpha history");
@@ -160,6 +161,7 @@ describe("SQLite room repository", () => {
     expect(snapshot.roster?.entries).toEqual([expect.objectContaining(alpha), expect.objectContaining(beta)]);
     expect(snapshot.settings.participantStyles[alpha.agentId]).toEqual(alphaStyle);
     expect(snapshot.settings.participantStyles[beta.agentId]).toEqual(betaStyle);
+    expect(snapshot.settings.writableAgent).toBe(alpha.agentId);
     expect(snapshot.sessions[alpha.agentId]?.id).toBe("alpha-session");
     expect(snapshot.sessions[beta.agentId]?.id).toBe("beta-session");
     expect(snapshot.messages.slice(-2)).toEqual([
