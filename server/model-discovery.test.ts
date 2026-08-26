@@ -45,6 +45,7 @@ describe("OpenCode model discovery", () => {
     const result = { status: "available" as const, discoveredAt: new Date(0).toISOString(), models: [{ providerId: "provider", modelId: "model", displayName: "Model", provenance: "opencode-catalog" as const, variants: [{ id: "fast", displayName: "Fast" }], capabilities: { reasoningEffort: ["high"] } }] };
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", variant: "removed" }, result)).toMatchObject({ available: false, reason: "variant_removed" });
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", reasoningEffort: "removed" }, result)).toMatchObject({ available: false, reason: "reasoning_effort_removed" });
+    expect(selectedModelAvailability({ providerId: "provider", modelId: "model", variant: "fast", reasoningEffort: "high" }, result)).toMatchObject({ available: false, reason: "variant_conflict" });
   });
 
   it("discovers OpenCode models with their provider identity", async () => {

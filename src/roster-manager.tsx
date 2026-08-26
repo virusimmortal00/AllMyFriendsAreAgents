@@ -48,7 +48,6 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
   const [newProvider, setNewProvider] = useState("");
   const [newModel, setNewModel] = useState("");
   const [newVariant, setNewVariant] = useState("");
-  const [newEffort, setNewEffort] = useState("");
   const [draftCreatedAgentIds, setDraftCreatedAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [controlStatus, setControlStatus] = useState<{ claimed: boolean; bootstrapConfigured: boolean } | null>(null);
@@ -126,8 +125,7 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
   const selectedReference = selectedEntry ? {
     ...(selectedEntry.providerId ? { providerId: selectedEntry.providerId } : {}),
     modelId: selectedEntry.modelId || selectedProfile?.modelId || "",
-    ...(selectedEntry.variant ? { variant: selectedEntry.variant } : {}),
-    ...(selectedEntry.reasoningEffort ? { reasoningEffort: selectedEntry.reasoningEffort } : {}),
+    ...(selectedEntry.variant || selectedEntry.reasoningEffort ? { variant: selectedEntry.variant || selectedEntry.reasoningEffort } : {}),
   } : undefined;
   const selectedModel = selectedReference ? discoveredModels.find((model) => model.modelId === selectedReference.modelId && (model.providerId || "") === (selectedReference.providerId || "")) : undefined;
   const selectedModelAvailable = Boolean(modelDiscovery && selectedReference?.modelId && selectedModelAvailability(selectedReference, modelDiscovery).available);
@@ -223,7 +221,6 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
       ...(newProvider ? { providerId: newProvider } : {}),
       modelId: newModel,
       ...(newVariant ? { variant: newVariant } : {}),
-      ...(newEffort ? { reasoningEffort: newEffort } : {}),
       enabled: true,
       supportsProjectWrites: true,
       configurationRevision: 1,
@@ -235,7 +232,6 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
     setNewProvider("");
     setNewModel("");
     setNewVariant("");
-    setNewEffort("");
     setError("");
   }
 
@@ -308,7 +304,7 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
                         {!selectedModel && selectedReference.modelId ? <p className="roster-model-unavailable">The configured model is not in the current catalog. Choose another model to change it.</p> : null}
                         {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
                       </section>
-                      <div className="roster-model-options"><label>Variant<select value={selectedEntry.variant || ""} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, variant: event.target.value || undefined })}><option value="">Default</option>{selectedEntry.variant && !selectedModel?.variants?.some(({ id }) => id === selectedEntry.variant) ? <option value={selectedEntry.variant}>{selectedEntry.variant} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}</option>)}</select></label><label>Reasoning effort<select value={selectedEntry.reasoningEffort || ""} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, reasoningEffort: event.target.value || undefined })}><option value="">Default</option>{selectedEntry.reasoningEffort && !selectedModel?.capabilities?.reasoningEffort?.includes(selectedEntry.reasoningEffort) ? <option value={selectedEntry.reasoningEffort}>{selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.capabilities?.reasoningEffort?.map((effort) => <option key={effort}>{effort}</option>)}</select></label></div>
+                      <div className="roster-model-options"><label>Variant / reasoning effort<select value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => { const { reasoningEffort: _legacyEffort, ...entry } = selectedEntry; replaceAt(selectedIndex, { ...entry, variant: event.target.value || undefined }); }}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
                       {selectedEntry.sessionInvalidationReason ? <div className="roster-diagnostic"><p>{selectedEntry.sessionInvalidationReason}</p>{selectedEntry.selectionConfirmationRequired && selectedModelAvailable ? <button type="button" className="classic-button" onClick={() => replaceAt(selectedIndex, { ...selectedEntry, sessionInvalidationReason: "", selectionConfirmationRequired: undefined })}>Confirm selected OpenCode model</button> : null}</div> : null}
                     </div>
                     <section className="roster-danger-zone"><span><strong>Delete configuration</strong><small>Deactivation is reversible. Deleting removes this alias and its settings from the room.</small></span><button type="button" disabled={saving} onClick={(event) => setDeleteRequest({ agentId: selectedEntry.agentId, returnFocusTo: event.currentTarget })}>Delete agent…</button></section>
@@ -317,13 +313,13 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
                   <section className="roster-discovery roster-discovery--workspace" aria-labelledby="roster-explore-heading">
                     {newSelectedModel ? (
                       <>
-                        <header className="roster-journey-heading"><span className="roster-step-badge">Step 2 of 2</span><div><h3 id="roster-explore-heading">Create your agent</h3><p>Give this model a memorable name. You can change its model or deactivate it later.</p></div><button type="button" className="classic-button" onClick={() => { setNewProvider(""); setNewModel(""); setNewVariant(""); setNewEffort(""); }}>← Choose a different model</button></header>
+                        <header className="roster-journey-heading"><span className="roster-step-badge">Step 2 of 2</span><div><h3 id="roster-explore-heading">Create your agent</h3><p>Give this model a memorable name. You can change its model or deactivate it later.</p></div><button type="button" className="classic-button" onClick={() => { setNewProvider(""); setNewModel(""); setNewVariant(""); }}>← Choose a different model</button></header>
                         <section className="roster-selected-model" aria-label={`Selected model: ${newSelectedModel.displayName}`}>
                           <ProviderMark authorId={newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId)} accessProviderId={newSelectedModel.providerId} />
                           <div><strong>{newSelectedModel.displayName}</strong><span>Built by {newSelectedModel.authorDisplayName || providerDisplayName(newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId))}{newSelectedModel.providerId ? ` · accessed through ${newSelectedModel.accessProviderDisplayName || providerDisplayName(newSelectedModel.providerId)}` : ""}</span>{newSelectedModel.description ? <p>{newSelectedModel.description}</p> : null}</div>
                           <dl><div><dt>Input</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.inputPerMillion)} / 1M</dd></div><div><dt>Output</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.outputPerMillion)} / 1M</dd></div></dl>
                         </section>
-                        <form className="roster-create-panel" onSubmit={(event) => { event.preventDefault(); if (newName.trim() && !saving) createParticipant(); }}><h4>Name and configure the agent</h4><label>Agent alias<input ref={newNameInputRef} value={newName} maxLength={48} aria-invalid={Boolean(newNameError)} aria-describedby={newNameError ? "new-agent-alias-error" : undefined} placeholder="For example: Scout or Code Coach" onChange={(event) => { setNewName(event.target.value); setNewNameError(""); }} />{newNameError ? <small id="new-agent-alias-error" className="roster-field-error" role="alert">{newNameError}</small> : null}</label><div className="roster-model-options"><label>Variant<select value={newVariant} onChange={(event) => setNewVariant(event.target.value)}><option value="">Default</option>{newSelectedModel.variants?.map(({ id, displayName }) => <option value={id} key={id}>{displayName}</option>)}</select></label><label>Reasoning effort<select value={newEffort} onChange={(event) => setNewEffort(event.target.value)}><option value="">Default</option>{newSelectedModel.capabilities?.reasoningEffort?.map((effort) => <option key={effort}>{effort}</option>)}</select></label></div><button type="submit" className="classic-button roster-create-button" disabled={!newName.trim() || saving}>Add agent to roster draft</button><small>You will review the agent once more before saving the roster.</small></form>
+                        <form className="roster-create-panel" onSubmit={(event) => { event.preventDefault(); if (newName.trim() && !saving) createParticipant(); }}><h4>Name and configure the agent</h4><label>Agent alias<input ref={newNameInputRef} value={newName} maxLength={48} aria-invalid={Boolean(newNameError)} aria-describedby={newNameError ? "new-agent-alias-error" : undefined} placeholder="For example: Scout or Code Coach" onChange={(event) => { setNewName(event.target.value); setNewNameError(""); }} />{newNameError ? <small id="new-agent-alias-error" className="roster-field-error" role="alert">{newNameError}</small> : null}</label><div className="roster-model-options"><label>Variant / reasoning effort<select value={newVariant} onChange={(event) => setNewVariant(event.target.value)}><option value="">Default</option>{newSelectedModel.variants?.map(({ id, displayName }) => <option value={id} key={id}>{displayName}{newSelectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div><button type="submit" className="classic-button roster-create-button" disabled={!newName.trim() || saving}>Add agent to roster draft</button><small>You will review the agent once more before saving the roster.</small></form>
                       </>
                     ) : (
                       <>
@@ -331,7 +327,7 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
                         <p className="roster-discovery-intro">Compare model makers, access providers, popularity, capabilities, context, and live pricing. The maker builds the model; the provider gives this room access to it.</p>
                         <div className="roster-discovery-status"><strong>{modelDiscovery?.status || "loading"}</strong>{modelDiscovery?.diagnostic ? <span>{modelDiscovery.diagnostic}</span> : null}<button type="button" disabled={refreshing} onClick={() => { setRefreshing(true); void refreshModelDiscovery().then(setModelDiscovery).catch((reason) => setError(reason instanceof Error ? reason.message : "Discovery refresh failed.")).finally(() => setRefreshing(false)); }}>{refreshing ? "Refreshing…" : "Refresh"}</button><button type="button" onClick={() => { void initiateProviderSetup().then((result: { command?: string[]; instruction?: string }) => setSetupInstruction(`${result.instruction || "Run on the server host:"} ${(result.command || []).join(" ")}`)).catch((reason) => setError(reason instanceof Error ? reason.message : "Provider setup could not be initiated.")); }}>OpenCode setup instructions</button></div>
                         {setupInstruction ? <p className="roster-diagnostic" role="status">{setupInstruction}</p> : null}
-                        <RichModelPicker models={discoveredModels} providerId="" modelId="" onChange={(model) => { setNewProvider(model.providerId || ""); setNewModel(model.modelId); setNewVariant(""); setNewEffort(""); }} />
+                        <RichModelPicker models={discoveredModels} providerId="" modelId="" onChange={(model) => { setNewProvider(model.providerId || ""); setNewModel(model.modelId); setNewVariant(""); }} />
                       </>
                     )}
                   </section>

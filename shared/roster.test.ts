@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
   it("defaults to the public roster without Gemini Pro", () => {
@@ -88,6 +88,24 @@ describe("room roster contract", () => {
     expect(participantConfigurationFingerprintMatches(JSON.stringify({ harness: "opencode", providerId: "openai", modelId: "gpt-5.6", variant: "high" }), entry)).toBe(true);
     expect(participantConfigurationFingerprintMatches(JSON.stringify({ harness: "codex", providerId: "openai", modelId: "gpt-5.6", variant: "high" }), entry)).toBe(false);
     expect(participantConfigurationFingerprintMatches(participantConfigurationFingerprint(entry), entry)).toBe(true);
+  });
+
+  it("migrates legacy reasoning effort to the one OpenCode variant selection", () => {
+    const entry = { agentId: "agent-66666666-6666-4666-8666-666666666666", conversationalName: "Reasoner", providerId: "openai", modelId: "gpt-5.6", reasoningEffort: "high", enabled: true };
+    expect(validateRosterEntries([entry])).toEqual([expect.objectContaining({ variant: "high" })]);
+    expect(validateRosterEntries([entry])?.[0]).not.toHaveProperty("reasoningEffort");
+    expect(roomAgentModelReference(entry)).toEqual({ providerId: "openai", modelId: "gpt-5.6", variant: "high" });
+    expect(participantConfigurationFingerprintMatches(JSON.stringify({ providerId: "openai", modelId: "gpt-5.6", reasoningEffort: "high" }), entry)).toBe(true);
+  });
+
+  it("rejects new conflicting variants and fails persisted conflicts closed", () => {
+    const entry = { agentId: "agent-66666666-6666-4666-8666-666666666667", conversationalName: "Conflict", providerId: "openai", modelId: "gpt-5.6", variant: "high", reasoningEffort: "low", enabled: true };
+    expect(validateRosterEntries([entry])).toBeUndefined();
+    expect(normalizeRoomAgentRoster({ schemaVersion: 3, revision: 2, entries: [entry] }).entries[0]).toMatchObject({
+      variant: "high",
+      selectionConfirmationRequired: true,
+      sessionInvalidationReason: expect.stringContaining("Conflicting legacy variant"),
+    });
   });
 
   it("fails legacy or malformed projections back to the safe default", () => {

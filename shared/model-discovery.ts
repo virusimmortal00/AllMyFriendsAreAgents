@@ -11,6 +11,7 @@ export interface ModelReference {
   readonly providerId?: string;
   readonly modelId: string;
   readonly variant?: string;
+  /** Legacy selection field. OpenCode represents reasoning effort as a variant. */
   readonly reasoningEffort?: string;
 }
 
@@ -94,8 +95,13 @@ export interface ModelDiscoveryResult {
 
 export interface ModelAvailability {
   readonly available: boolean;
-  readonly reason?: "runtime_unavailable" | "model_removed" | "provider_removed" | "variant_removed" | "reasoning_effort_removed" | "selection_unpinnable";
+  readonly reason?: "runtime_unavailable" | "model_removed" | "provider_removed" | "variant_removed" | "reasoning_effort_removed" | "variant_conflict" | "selection_unpinnable";
   readonly diagnostic?: string;
+}
+
+export function resolveOpenCodeVariant(reference: Pick<ModelReference, "variant" | "reasoningEffort">) {
+  const conflict = Boolean(reference.variant && reference.reasoningEffort && reference.variant !== reference.reasoningEffort);
+  return { variant: reference.variant || reference.reasoningEffort, conflict };
 }
 
 export function validDiscoveryId(value: unknown): value is string {
@@ -117,6 +123,10 @@ export function modelKey(model: Pick<DiscoveredModel, "providerId" | "modelId">)
 }
 
 export function selectedModelAvailability(reference: ModelReference, result: ModelDiscoveryResult): ModelAvailability {
+  const selection = resolveOpenCodeVariant(reference);
+  if (selection.conflict) {
+    return { available: false, reason: "variant_conflict", diagnostic: "OpenCode accepts one variant selection; choose either the stored variant or reasoning effort." };
+  }
   if (["cli_missing", "authentication_required", "configuration_required", "error"].includes(result.status)) {
     return { available: false, reason: "runtime_unavailable", diagnostic: result.diagnostic };
   }
@@ -128,11 +138,8 @@ export function selectedModelAvailability(reference: ModelReference, result: Mod
       && (result.configuredDefault.providerId || "") === (reference.providerId || "")) return { available: true };
     return { available: false, reason: reference.providerId ? "provider_removed" : "model_removed" };
   }
-  if (reference.variant && !model.variants?.some(({ id }) => id === reference.variant)) {
-    return { available: false, reason: "variant_removed" };
-  }
-  if (reference.reasoningEffort && !model.capabilities?.reasoningEffort?.includes(reference.reasoningEffort)) {
-    return { available: false, reason: "reasoning_effort_removed" };
+  if (selection.variant && !model.variants?.some(({ id }) => id === selection.variant)) {
+    return { available: false, reason: reference.reasoningEffort && !reference.variant ? "reasoning_effort_removed" : "variant_removed" };
   }
   return { available: true };
 }

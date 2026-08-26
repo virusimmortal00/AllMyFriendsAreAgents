@@ -156,6 +156,7 @@ describe("roster manager", () => {
         authorDisplayName: "Google",
         accessProviderDisplayName: "OpenRouter",
         pricing: { inputPerMillion: 0.375, outputPerMillion: 1.875 },
+        variants: [{ id: "low", displayName: "low" }, { id: "high", displayName: "high" }],
         capabilities: { reasoning: true, toolCall: true, reasoningEffort: ["low", "high"] },
         provenance: "opencode-catalog",
       }],
@@ -173,6 +174,8 @@ describe("roster manager", () => {
 
     await user.click(screen.getByRole("button", { name: /Gemini 3.7 Flash/ }));
     expect(screen.getByRole("heading", { name: "Create your agent" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Variant / reasoning effort" })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Reasoning effort" })).toBeNull();
     expect(screen.queryByRole("searchbox", { name: "Search models" })).toBeNull();
     const alias = screen.getByRole("textbox", { name: "Agent alias" });
     expect(document.activeElement).toBe(alias);
