@@ -11,6 +11,7 @@ import type { AgentId, RoomState } from "./types.js";
 import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
+import { deploymentPromptContext, type DeploymentProvenance } from "./deployment-provenance.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -28,6 +29,7 @@ interface RunResult {
   generationId: string;
   durationMs: number;
   permission: "read-only" | "writable";
+  codeEpoch?: string;
 }
 
 interface ProcessResult {
@@ -197,9 +199,10 @@ export function isAgentGenerationCancelledError(error: unknown) {
   return error instanceof AgentGenerationCancelledError;
 }
 
-async function currentDiff(projectPath: string) {
+async function currentDiff(projectPath: string, deployedCommit: string | null | undefined) {
+  if (!deployedCommit) return "(No deployed commit is available; no diff comparison was attempted.)";
   try {
-    const { stdout } = await execFileAsync("git", ["diff", "--no-ext-diff", "--"], {
+    const { stdout } = await execFileAsync("git", ["diff", "--no-ext-diff", deployedCommit, "--"], {
       cwd: projectPath,
       maxBuffer: DIFF_LIMIT * 2,
     });
@@ -228,12 +231,13 @@ async function buildPrompt(
 - The human explicitly requested a worktree review for this turn.
 - Your current access is ${permission}. Do not attempt edits during a review.
 
-CURRENT WORKTREE DIFF
-${(await currentDiff(state.settings.projectPath)) || "(The worktree has no unstaged diff.)"}\n`
+CURRENT TRACKED WORKTREE DIFF AGAINST DEPLOYED COMMIT ${state.deployment?.commitSha || "(unavailable)"}
+${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) || "(The tracked worktree has no diff against the deployed commit. Untracked files are not included.)"}\n`
     : "";
   const developmentContext = permission === "writable"
     ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
     : "";
+  const deploymentContext = `\nDEPLOYMENT SOURCE PROVENANCE (server-derived, read-only snapshot)\n${deploymentPromptContext(state.deployment)}\n- Reading a current file establishes only its current contents. It is not evidence of what another commit contained.\n- Claim a commit-to-commit or worktree diff only when explicit diff evidence is present in this prompt.\n`;
   return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
 
 ROOM NAME
@@ -268,6 +272,7 @@ ROOM RULES
 
 CURRENT ROOM CONVERSATION
 ${transcriptFor(state)}
+${deploymentContext}
 ${reviewContext}
 ${developmentContext}
 
@@ -537,12 +542,25 @@ function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-o
   } : environment;
 }
 
-function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable") {
-  if (!storedSession || storedSession.permission !== permission) return undefined;
+function openCodeSessionDecision(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable", deployment?: DeploymentProvenance) {
+  if (!storedSession) return { kind: "fresh" as const, reason: "no persisted provider session" };
+  if (storedSession.permission !== permission) return { kind: "invalidate" as const, reason: `permission changed from ${storedSession.permission} to ${permission}` };
   const legacyCompatibleSession = !storedSession.configurationFingerprint
     && historicalAgentProvider(agent) === "opencode"
     && (participant.configurationRevision || 1) === 1;
-  return participantConfigurationFingerprintMatches(storedSession.configurationFingerprint, participant) || legacyCompatibleSession ? storedSession : undefined;
+  if (!participantConfigurationFingerprintMatches(storedSession.configurationFingerprint, participant) && !legacyCompatibleSession) {
+    return { kind: "invalidate" as const, reason: "participant configuration changed" };
+  }
+  if (!deployment) return { kind: "invalidate" as const, reason: "deployment provenance unavailable" };
+  if (storedSession.codeEpoch !== deployment.epoch) {
+    return { kind: "invalidate" as const, reason: storedSession.codeEpoch ? "deployment code epoch changed" : "persisted session predates deployment epoch binding" };
+  }
+  return { kind: "reuse" as const, reason: "permission, participant configuration, and deployment code epoch match", session: storedSession };
+}
+
+function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable", deployment?: DeploymentProvenance) {
+  const decision = openCodeSessionDecision(agent, participant, storedSession, permission, deployment);
+  return decision.kind === "reuse" ? decision.session : undefined;
 }
 
 export async function runAgent(
@@ -577,7 +595,11 @@ export async function runAgent(
   }
   const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
   const storedSession = state.sessions[agent];
-  const existing = resumableOpenCodeSession(agent, participant, storedSession, permission);
+  const sessionDecision = openCodeSessionDecision(agent, participant, storedSession, permission, state.deployment);
+  const existing = sessionDecision.kind === "reuse" ? sessionDecision.session : undefined;
+  if (sessionDecision.kind === "invalidate" && storedSession) {
+    await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
+  }
   const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
@@ -585,6 +607,16 @@ export async function runAgent(
   const execution = async (command: string, args: readonly string[]) => secureWriterRequested
     ? confinedWriterInvocation(command, args, writerGrant!)
     : { command, args: [...args], cwd: projectPath, env: process.env };
+  await journal?.append({
+    type: sessionDecision.kind === "reuse" ? "session.reused" : sessionDecision.kind === "invalidate" ? "session.invalidated" : "session.fresh",
+    generationId,
+    agent,
+    reason: sessionDecision.reason,
+    permission,
+    deploymentEpoch: state.deployment?.epoch,
+    storedSessionEpoch: storedSession?.codeEpoch,
+    sessionId: storedSession?.id,
+  });
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -599,6 +631,7 @@ export async function runAgent(
     variant: participant.variant,
     resumedSession: Boolean(existing),
     sessionId: existing?.id,
+    deploymentEpoch: state.deployment?.epoch,
     prompt,
     promptCharacters: prompt.length,
   });
@@ -639,7 +672,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    return { sessionId, text: parsed.text, generationId, durationMs, permission };
+    return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
       const parsed = parseOpenCodeOutput(error.process.stdout);
@@ -689,4 +722,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
