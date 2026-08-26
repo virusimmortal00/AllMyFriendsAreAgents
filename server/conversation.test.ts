@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { latestHumanBroadcastPolicy, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
@@ -303,6 +303,41 @@ describe("room message policy", () => {
     expect(latestHumanInvitesWholeRoom(state)).toBe(false);
   });
 
+  it.each([
+    "You guys can all read code?",
+    "Can you all see the diff?",
+    "Could anyone review this?",
+    "Anyone can grab this task",
+  ])("routes a single-answer broadcast through the settled-response guard: %s", (text) => {
+    const state = roomState([{ id: "human", speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" }]);
+
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: false, stopOnSettledResponse: true });
+    expect(roomMessageTurns(state)[0]?.instruction).not.toContain("explicitly invites the whole room");
+  });
+
+  it("preserves an explicit request for distinct answers", () => {
+    const state = roomState([{
+      id: "human",
+      speaker: "you",
+      text: "Can you all each share your own take?",
+      timestamp: "2026-08-19T12:00:00Z",
+    }]);
+
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
+  });
+
+  it("recognizes each-of-you phrasing as an explicit request for distinct answers", () => {
+    const state = roomState([{
+      id: "human",
+      speaker: "you",
+      text: "Each of you, share one concern.",
+      timestamp: "2026-08-19T12:00:00Z",
+    }]);
+
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
+    expect(roomMessageTurns(state)[0]?.instruction).toContain("explicitly invites the whole room");
+  });
+
   it("respects an explicit statement that the whole room need not answer", () => {
     const state = roomState([{
       id: "human",
@@ -433,6 +468,37 @@ describe("conversation energy", () => {
     await runEnergyConversation(candidates, "balanced", performTurn, () => 1, { inviteAll: true });
 
     expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
+  });
+
+  it("closes a flood-prone broadcast after the first settled visible response", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 0 })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    const result = await runEnergyConversation(candidates, "party", performTurn, () => 0, { stopOnSettledResponse: true });
+
+    expect(result).toEqual({ settled: true });
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
+  });
+
+  it("closes a flood-prone broadcast when a later response settles an initially open answer", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
+      .mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 0, { stopOnSettledResponse: true });
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
+  });
+
+  it("keeps collecting explicitly requested takes when the settled-response guard is absent", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    await runEnergyConversation(candidates, "party", performTurn, () => 0, { inviteAll: true });
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
   });
 
   it("honors direct invitations across the soft budget but stops at the hard ceiling", async () => {
