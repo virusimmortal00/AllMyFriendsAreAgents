@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../../shared/chat-style.js";
-import { isConversationEnergy } from "../../shared/conversation-energy.js";
+import { DEFAULT_CONVERSATION_ENERGY, isConversationEnergy } from "../../shared/conversation-energy.js";
 import {
   applyImprovementChange as applyDomainImprovementChange,
   type DomainActor,
@@ -1217,7 +1217,7 @@ export class SqliteRoomRepository implements RoomRepository {
       roomName: row.name,
       topic: row.topic,
       writableAgent: normalizeWritableAgent(row.writable_agent),
-      conversationEnergy: isConversationEnergy(row.conversation_energy) ? row.conversation_energy : "balanced",
+      conversationEnergy: isConversationEnergy(row.conversation_energy) ? row.conversation_energy : DEFAULT_CONVERSATION_ENERGY,
       projectPath: configuredProjectPath || row.project_path || this.projectRoot,
       participantStyles,
     };

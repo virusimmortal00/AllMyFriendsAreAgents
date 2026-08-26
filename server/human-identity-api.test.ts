@@ -79,6 +79,7 @@ describe("adversarial human identity API", () => {
     const spoof = { humanId: "public-victim-id", actorId: "public-victim-id" };
     const attempts: Array<[string, string, Record<string, unknown>]> = [
       ["PATCH", "/api/style", { ...spoof, style: { textColor: "#ec301a" } }],
+      ["PATCH", "/api/avatar", { ...spoof, avatarUrl: null }],
       ["POST", "/api/messages", { ...spoof, text: "", clientMessageId: "message_123" }],
       ["PATCH", "/api/settings", { ...spoof, roomName: "Hostile rename" }],
       ["POST", "/api/actions", { ...spoof, action: "ask", target: "codex-sol" }],
@@ -116,6 +117,14 @@ describe("adversarial human identity API", () => {
     expect(attack.status).toBe(200);
     expect((await attack.json() as { id: string; style: { textColor: string } })).toMatchObject({ id: attacker.id, style: { textColor: "#fefe1e" } });
 
+    const avatarUrl = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64")}`;
+    const avatarAttack = await jsonCall(base, "/api/avatar", {
+      method: "PATCH",
+      body: JSON.stringify({ id: victim.id, humanId: victim.id, actorId: victim.id, avatarUrl }),
+    }, attackerCookie);
+    expect(avatarAttack.status).toBe(200);
+    expect(await avatarAttack.json()).toMatchObject({ id: attacker.id, avatarUrl });
+
     const permissionAttack = await jsonCall(base, "/api/settings", {
       method: "PATCH",
       body: JSON.stringify({ actorId: victim.id, humanId: victim.id, writableAgent: "codex-sol" }),
@@ -128,6 +137,8 @@ describe("adversarial human identity API", () => {
       method: "POST",
       body: JSON.stringify({ id: attacker.id, name: "Alex", style: victim.style }),
     }, victimCookie);
-    expect(await victimResume.json()).toMatchObject({ id: victim.id, style: { textColor: "#3074fd" } });
+    const resumedVictim = await victimResume.json();
+    expect(resumedVictim).toMatchObject({ id: victim.id, style: { textColor: "#3074fd" } });
+    expect(resumedVictim).not.toHaveProperty("avatarUrl");
   });
 });

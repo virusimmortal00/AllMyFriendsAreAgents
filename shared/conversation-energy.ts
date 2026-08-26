@@ -1,6 +1,7 @@
 export const CONVERSATION_ENERGY_LEVELS = ["low", "balanced", "lively", "party"] as const;
 
 export type ConversationEnergy = (typeof CONVERSATION_ENERGY_LEVELS)[number];
+export const DEFAULT_CONVERSATION_ENERGY: ConversationEnergy = "party";
 
 export interface ConversationEnergyPolicy {
   label: string;
@@ -56,7 +57,7 @@ export function isConversationEnergy(value: unknown): value is ConversationEnerg
 }
 
 export function migrateMaxRounds(value: unknown): ConversationEnergy {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "balanced";
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CONVERSATION_ENERGY;
   if (value <= 1) return "low";
   if (value <= 3) return "balanced";
   if (value <= 6) return "lively";

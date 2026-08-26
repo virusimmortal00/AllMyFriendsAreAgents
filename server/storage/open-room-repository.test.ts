@@ -18,6 +18,7 @@ describe("room repository factory", () => {
     const repository = await openRoomRepository(projectRoot);
 
     expect(repository.snapshot().settings.roomName).toBe("The Agent Room");
+    expect(repository.snapshot().settings.conversationEnergy).toBe("party");
   });
 
   it("opens SQLite only when it is explicitly selected", async () => {
@@ -30,6 +31,7 @@ describe("room repository factory", () => {
     const repository = await openRoomRepository(projectRoot, configuration);
 
     expect(repository.snapshot().settings.roomName).toBe("The Agent Room");
+    expect(repository.snapshot().settings.conversationEnergy).toBe("party");
   });
 
   it("fails closed while the postgres adapter is incomplete", async () => {

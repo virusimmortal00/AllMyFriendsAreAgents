@@ -15,29 +15,38 @@ describe("RoomRoster", () => {
       "cursor-gemini-flash": true,
       "cursor-glm": true,
     }} agentHealth={{}} humans={[
-      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you },
+      { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you, avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
-    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} />);
+    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} onConfigureHumanAvatar={() => undefined} />);
 
     expect(html).not.toContain("8 entities");
     expect(html).not.toContain("6 agents");
     expect(html).not.toContain("2 humans");
     expect(html).not.toContain("Codex [gpt-5.6 Luna]");
     expect(html).not.toContain("Codex [gpt-5.6 Terra]");
-    expect(html).toContain("Codex [gpt-5.6 Sol]");
+    expect(html).toContain(">Sol</strong>");
     expect(html).not.toContain("Claude [Claude Opus 5]");
-    expect(html).toContain("Cursor [Grok 4.6]");
+    expect(html).toContain(">Grok</strong>");
     expect(html).not.toContain("Cursor [Gemini 3.1 Pro]");
-    expect(html).toContain("Cursor [Composer 2.5]");
-    expect(html).toContain("Cursor [Gemini 3.7 Flash]");
-    expect(html).toContain("Cursor [GLM 5.2]");
+    expect(html).toContain(">Composer</strong>");
+    expect(html).toContain(">Flash</strong>");
+    expect(html).toContain(">GLM</strong>");
     expect(html).toContain("Alice (You)");
     expect(html).toContain("Bob");
-    expect(html).toContain("Claude [Claude Sonnet 5]");
+    expect(html).toContain(">Claude</strong>");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Codex|Claude|Cursor)/g)).toHaveLength(6);
+    expect(html.match(/aria-label="Configure (?:Sol|Claude|Grok|Composer|Flash|GLM)"/g)).toHaveLength(6);
+    expect(html).toContain("https://models.dev/logos/openai.svg");
+    expect(html).toContain("https://models.dev/logos/anthropic.svg");
+    expect(html).toContain('aria-label="xAI model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Google model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Z.ai model, accessed through Cursor"');
+    expect(html).toContain('aria-label="Cursor model"');
     expect(html).not.toContain("Configure You");
+    expect(html).toContain('aria-label="Alice&#x27;s profile photo"');
+    expect(html).toContain('aria-label="Bob&#x27;s initials"');
+    expect(html).toContain('aria-label="Change your profile photo"');
   });
 
   it("identifies only agents with an active server generation", () => {
@@ -48,10 +57,23 @@ describe("RoomRoster", () => {
       onConfigureAgent={() => undefined}
     />);
 
-    expect(html).toContain('aria-label="Codex [gpt-5.6 Sol] is generating a response"');
-    expect(html).toContain('aria-label="Cursor [Gemini 3.7 Flash] is generating a response"');
-    expect(html).not.toContain('aria-label="Claude [Claude Sonnet 5] is generating a response"');
+    expect(html).toContain('aria-label="Sol is generating a response"');
+    expect(html).toContain('aria-label="Flash is generating a response"');
+    expect(html).not.toContain('aria-label="Claude is generating a response"');
     expect(html.match(/presence-row--active/g)).toHaveLength(2);
+  });
+
+  it("groups the displayed agent list without changing roster behavior", () => {
+    const html = renderToStaticMarkup(<RoomRoster
+      agents={["codex-sol", "cursor-gemini-flash", "claude-sonnet"]}
+      agentListSort="maker"
+      humans={[]}
+      currentHumanId="alice-id"
+      onConfigureAgent={() => undefined}
+    />);
+
+    expect(html.indexOf('class="presence-group-label" role="presentation">Anthropic')).toBeLessThan(html.indexOf('class="presence-group-label" role="presentation">Google'));
+    expect(html.indexOf('class="presence-group-label" role="presentation">Google')).toBeLessThan(html.indexOf('class="presence-group-label" role="presentation">OpenAI'));
   });
 });
 

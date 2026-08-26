@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promise
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_PARTICIPANT_STYLES, normalizeParticipantStyles, sanitizeChatStyle, type ChatStyle, type StyledParticipant } from "../shared/chat-style.js";
-import { isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
+import { DEFAULT_CONVERSATION_ENERGY, isConversationEnergy, migrateMaxRounds } from "../shared/conversation-energy.js";
 import {
   applyImprovementChange as applyDomainImprovementChange,
   type ChangeResult,
@@ -120,7 +120,7 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
       roomName: DEFAULT_ROOM_NAME,
       topic: DEFAULT_ROOM_TOPIC,
       writableAgent: "nobody",
-      conversationEnergy: "balanced",
+      conversationEnergy: DEFAULT_CONVERSATION_ENERGY,
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },

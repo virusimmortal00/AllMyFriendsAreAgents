@@ -8,6 +8,7 @@ import {
   type ModelDiscoveryResult,
   type ModelReference,
 } from "../shared/model-discovery.js";
+import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation.js";
 
 const execFileAsync = promisify(execFile);
 export const DISCOVERY_TIMEOUT_MS = 10_000;
@@ -88,6 +89,22 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
     if (!validDiscoveryId(providerId) || !validModelDiscoveryId(modelId)) continue;
     const variantMatch = line.match(/\bvariants?[:=]\s*([A-Za-z0-9._,+@/-]+)/i);
     let variantIds = variantMatch?.[1].split(",").filter(validDiscoveryId) || [];
+    let detail: {
+      name?: unknown;
+      family?: unknown;
+      status?: unknown;
+      release_date?: unknown;
+      cost?: { input?: unknown; output?: unknown; cache?: { read?: unknown; write?: unknown } };
+      limit?: { context?: unknown; input?: unknown; output?: unknown };
+      capabilities?: {
+        reasoning?: unknown;
+        toolcall?: unknown;
+        attachment?: unknown;
+        input?: Record<string, unknown>;
+        output?: Record<string, unknown>;
+      };
+      variants?: Record<string, unknown>;
+    } | undefined;
     if (!variantIds.length && lines[index + 1]?.trim().startsWith("{")) {
       let json = "";
       let depth = 0;
@@ -101,14 +118,57 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
         }
       }
       try {
-        const detail = JSON.parse(json) as { variants?: Record<string, unknown> };
-        variantIds = Object.keys(detail.variants || {}).filter(validDiscoveryId);
+        const parsedDetail = JSON.parse(json) as NonNullable<typeof detail>;
+        detail = parsedDetail;
+        variantIds = Object.keys(parsedDetail.variants || {}).filter(validDiscoveryId);
       } catch {
         // Keep the model entry without metadata when verbose details are malformed.
       }
     }
     const variants = variantIds.map((id) => ({ id, displayName: id }));
-    models.push({ providerId, modelId, displayName: token, ...(variants?.length ? { variants } : {}), provenance: "opencode-catalog" });
+    const authorId = modelAuthorId(providerId, modelId);
+    const authorDisplayName = providerDisplayName(authorId);
+    const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+    const modalities = (value: Record<string, unknown> | undefined) => Object.entries(value || {}).flatMap(([id, supported]) => supported === true ? [id] : []);
+    const reasoningEffort = Object.entries(detail?.variants || {}).flatMap(([id, value]) => {
+      if (!validDiscoveryId(id) || !value || typeof value !== "object") return [];
+      const variant = value as { reasoningEffort?: unknown; reasoning?: { effort?: unknown } };
+      return typeof variant.reasoningEffort === "string" || typeof variant.reasoning?.effort === "string" ? [id] : [];
+    });
+    const pricing = {
+      inputPerMillion: number(detail?.cost?.input),
+      outputPerMillion: number(detail?.cost?.output),
+      cacheReadPerMillion: number(detail?.cost?.cache?.read),
+      cacheWritePerMillion: number(detail?.cost?.cache?.write),
+    };
+    const limits = {
+      context: number(detail?.limit?.context),
+      input: number(detail?.limit?.input),
+      output: number(detail?.limit?.output),
+    };
+    const capabilities = {
+      ...(reasoningEffort.length ? { reasoningEffort } : {}),
+      ...(typeof detail?.capabilities?.reasoning === "boolean" ? { reasoning: detail.capabilities.reasoning } : {}),
+      ...(typeof detail?.capabilities?.toolcall === "boolean" ? { toolCall: detail.capabilities.toolcall } : {}),
+      ...(typeof detail?.capabilities?.attachment === "boolean" ? { attachment: detail.capabilities.attachment } : {}),
+      inputModalities: modalities(detail?.capabilities?.input),
+      outputModalities: modalities(detail?.capabilities?.output),
+    };
+    models.push({
+      providerId,
+      modelId,
+      displayName: typeof detail?.name === "string" && detail.name.trim() ? detail.name.trim().slice(0, 160) : friendlyModelName(modelId),
+      ...(typeof detail?.family === "string" ? { family: detail.family.slice(0, 100) } : {}),
+      ...(authorId ? { authorId, authorDisplayName } : {}),
+      accessProviderDisplayName: providerDisplayName(providerId),
+      ...(typeof detail?.status === "string" ? { status: detail.status.slice(0, 40) } : {}),
+      ...(typeof detail?.release_date === "string" ? { releaseDate: detail.release_date.slice(0, 20) } : {}),
+      ...(Object.values(pricing).some((value) => value !== undefined) ? { pricing } : {}),
+      ...(Object.values(limits).some((value) => value !== undefined) ? { limits } : {}),
+      ...(Object.keys(capabilities).length ? { capabilities } : {}),
+      ...(variants.length ? { variants } : {}),
+      provenance: "opencode-catalog",
+    });
   }
   return uniqueModels(models);
 }
@@ -121,7 +181,8 @@ function configuredReference(): ModelReference | undefined {
 }
 
 function configuredModel(reference: ModelReference): DiscoveredModel {
-  return { ...reference, displayName: reference.providerId ? `${reference.providerId}/${reference.modelId}` : reference.modelId, provenance: "configured-default" };
+  const authorId = modelAuthorId(reference.providerId, reference.modelId);
+  return { ...reference, displayName: friendlyModelName(reference.modelId), ...(authorId ? { authorId, authorDisplayName: providerDisplayName(authorId) } : {}), accessProviderDisplayName: providerDisplayName(reference.providerId), provenance: "configured-default" };
 }
 
 export class ModelDiscoveryService {

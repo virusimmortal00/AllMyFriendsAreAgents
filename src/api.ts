@@ -7,7 +7,7 @@ import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
-import type { ModelDiscoveryResult, ModelAvailability } from "../shared/model-discovery";
+import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails } from "../shared/model-discovery";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -120,6 +120,12 @@ export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
   return request("/api/model-discovery/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
 }
 
+export async function loadModelOfferDetails(providerId: string, modelId: string, signal?: AbortSignal): Promise<ModelOfferDetails> {
+  const query = new URLSearchParams({ providerId, modelId });
+  return request(`/api/model-details?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
+}
+
 export async function loadRoster(): Promise<RosterResponse> {
   return request("/api/roster", { method: "GET", cache: "no-store" }).then((response) => response.json());
 }
@@ -148,10 +154,10 @@ export async function updateSettings(settings: { roomName?: string; topic?: stri
   });
 }
 
-export async function joinRoom(profile: { id?: string; name: string; style?: ChatStyle }): Promise<HumanPresence> {
+export async function joinRoom(profile: { id?: string; name: string; style?: ChatStyle; avatarUrl?: string }): Promise<HumanPresence> {
   return request("/api/humans", {
     method: "POST",
-    body: JSON.stringify({ name: profile.name, style: profile.style }),
+    body: JSON.stringify({ name: profile.name, style: profile.style, avatarUrl: profile.avatarUrl }),
   }).then((response) => response.json());
 }
 
@@ -160,6 +166,13 @@ export async function updateMyStyle(style: ChatStyle) {
     method: "PATCH",
     body: JSON.stringify({ style }),
   });
+}
+
+export async function updateMyAvatar(avatarUrl?: string): Promise<HumanPresence> {
+  return request("/api/avatar", {
+    method: "PATCH",
+    body: JSON.stringify({ avatarUrl: avatarUrl || null }),
+  }).then((response) => response.json());
 }
 
 export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {

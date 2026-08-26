@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyAvatar, updateMyStyle, updateSettings } from "./api";
 import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, PeopleDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
@@ -23,6 +23,10 @@ import { Contributions } from "./contributions";
 import { RosterManagerDialog } from "./roster-manager";
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
 import { ClassicMenuBar, type ClassicMenuDefinition } from "./classic-menu";
+import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agent-list-sort";
+import { HumanAvatarDialog } from "./human-avatar";
+import { validHumanAvatarDataUrl } from "../shared/human-avatar";
+import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -30,7 +34,7 @@ const EMPTY_ROOM: RoomState = {
     roomName: "The Agent Room",
     topic: "Open conversation",
     writableAgent: "nobody",
-    conversationEnergy: "balanced",
+    conversationEnergy: DEFAULT_CONVERSATION_ENERGY,
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",
@@ -59,6 +63,7 @@ function loadHumanProfile(): HumanPresence | null {
       id: value.id,
       name: value.name,
       style: sanitizeChatStyle(value.style, DEFAULT_PARTICIPANT_STYLES.you),
+      ...(validHumanAvatarDataUrl(value.avatarUrl) ? { avatarUrl: value.avatarUrl } : {}),
     };
   } catch {
     return null;
@@ -131,9 +136,12 @@ export default function App() {
   const [changeNameConsequences, setChangeNameConsequences] = useState({ hasDraft: false, hasPending: false });
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
   const [peopleOpen, setPeopleOpen] = useState(false);
+  const [humanAvatarOpen, setHumanAvatarOpen] = useState(false);
+  const [humanAvatarSaving, setHumanAvatarSaving] = useState(false);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [rosterTrigger, setRosterTrigger] = useState<HTMLButtonElement | null>(null);
+  const [agentListSort, setAgentListSort] = useState<AgentListSort>(() => loadAgentListSort(typeof window === "undefined" ? undefined : window.localStorage));
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
   const [workshopLoading, setWorkshopLoading] = useState(false);
@@ -165,6 +173,7 @@ export default function App() {
   const changeNameTrigger = useRef<HTMLButtonElement | null>(null);
   const roomSettingsTrigger = useRef<HTMLButtonElement | null>(null);
   const peopleTrigger = useRef<HTMLButtonElement | null>(null);
+  const humanAvatarTrigger = useRef<HTMLButtonElement | null>(null);
   const changeNameSubmitting = useRef(false);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
@@ -478,6 +487,31 @@ export default function App() {
     });
   }
 
+  async function changeMyAvatar(avatarUrl?: string) {
+    if (!human) throw new Error("Join the room before changing your profile photo.");
+    const previousHuman = human;
+    const nextHuman = { ...human, avatarUrl };
+    setHumanAvatarSaving(true);
+    setHuman(nextHuman);
+    setSavedHuman(nextHuman);
+    saveHumanProfile(nextHuman);
+    setClientError("");
+    try {
+      const saved = await updateMyAvatar(avatarUrl);
+      setHuman(saved);
+      setSavedHuman(saved);
+      saveHumanProfile(saved);
+    } catch (error) {
+      setHuman(previousHuman);
+      setSavedHuman(previousHuman);
+      saveHumanProfile(previousHuman);
+      setClientError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setHumanAvatarSaving(false);
+    }
+  }
+
   function changeTranscriptMagnification(direction: -1 | 1) {
     setTranscriptMagnification((current) => {
       const next = adjacentTranscriptMagnification(current, direction);
@@ -664,6 +698,14 @@ export default function App() {
   const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
   const openRoster = useCallback((trigger: HTMLButtonElement) => { setRosterTrigger(trigger); setRosterOpen(true); }, []);
+  const openHumanAvatar = useCallback((trigger: HTMLButtonElement) => {
+    humanAvatarTrigger.current = trigger;
+    setHumanAvatarOpen(true);
+  }, []);
+  const changeAgentListSort = useCallback((sort: AgentListSort) => {
+    setAgentListSort(sort);
+    saveAgentListSort(typeof window === "undefined" ? undefined : window.localStorage, sort);
+  }, []);
   const openRoomSettings = useCallback((trigger: HTMLButtonElement) => {
     roomSettingsTrigger.current = trigger;
     setPeopleOpen(false);
@@ -767,7 +809,7 @@ export default function App() {
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
           </section>
           <div className="right-rail">
-            <RoomRoster agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openHumanAvatar} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -792,7 +834,8 @@ export default function App() {
         </div>
 
         {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
-        {peopleOpen ? <PeopleDialog agents={enabledAgents} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureAgent={setConfiguredAgent} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
+        {peopleOpen ? <PeopleDialog roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openHumanAvatar} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
+        {humanAvatarOpen ? <HumanAvatarDialog human={human} busy={humanAvatarSaving} returnFocusTo={humanAvatarTrigger.current} onAvatarChange={changeMyAvatar} onClose={() => setHumanAvatarOpen(false)} /> : null}
 
         {configuredAgent ? (
           <AgentSettingsDialog
@@ -807,6 +850,8 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           initialRoster={roster}
+          agentListSort={agentListSort}
+          onAgentListSortChange={changeAgentListSort}
           returnFocusTo={rosterTrigger}
           onSaved={(nextRoster) => setRoom((current) => ({
             ...current,

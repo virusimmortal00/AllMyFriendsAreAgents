@@ -39,6 +39,17 @@ describe("HumanPresenceRegistry", () => {
     expect(rejoined.style.textColor).toBe("#ed36ff");
   });
 
+  it("keeps a validated profile photo with the human identity and can remove it", () => {
+    const humans = new HumanPresenceRegistry();
+    const avatarUrl = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64")}`;
+    const alice = humans.join({ name: "Alice", avatarUrl });
+
+    expect(alice.avatarUrl).toBe(avatarUrl);
+    expect(humans.join({ name: "Alice" }, alice.id).avatarUrl).toBe(avatarUrl);
+    expect(humans.updateAvatar(alice.id, undefined)).not.toHaveProperty("avatarUrl");
+    expect(humans.join({ name: "Alice", avatarUrl: "https://example.com/tracker.png" }, alice.id)).not.toHaveProperty("avatarUrl");
+  });
+
   it("rejects blank names", () => {
     const humans = new HumanPresenceRegistry();
     expect(() => humans.join({ name: "   " })).toThrow("Your name is required.");

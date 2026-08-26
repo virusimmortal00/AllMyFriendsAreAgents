@@ -29,6 +29,7 @@ export interface HumanPresence {
   id: string;
   name: string;
   style: ChatStyle;
+  avatarUrl?: string;
 }
 
 export interface AgentSession {

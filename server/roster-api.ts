@@ -8,6 +8,7 @@ import type { HumanPresenceRegistry } from "./human-presence.js";
 import { sessionHuman, type HumanSessions } from "./human-session.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
+import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, type ControlPlaneStore } from "./control-plane.js";
 
 export function registerRosterRoutes(input: {
@@ -19,10 +20,12 @@ export function registerRosterRoutes(input: {
   generations: ActiveGenerationTracker;
   broadcast: () => void;
   discovery?: ModelDiscoveryService;
+  intelligence?: OpenRouterCatalogService;
   control?: ControlPlaneStore;
 }) {
   const { app, store, humans, sessions, processes, generations, broadcast } = input;
   const discovery = input.discovery || new ModelDiscoveryService();
+  const intelligence = input.intelligence;
   const control = input.control;
   const authorize = (request: express.Request, response: express.Response, capability: "PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE" | readonly ("PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE")[], csrf = false) => {
     if (control) {
@@ -40,7 +43,8 @@ export function registerRosterRoutes(input: {
   };
   const projection = async (refresh = false) => {
     const roster = normalizeRoomAgentRoster(store.snapshot().roster);
-    const modelDiscovery = await discovery.discover(refresh);
+    const discovered = await discovery.discover(refresh);
+    const modelDiscovery = intelligence ? await intelligence.enrich(discovered) : discovered;
     return {
       roster,
       catalog: SUPPORTED_AGENT_IDS.map((agentId) => ({ ...AGENT_PROFILES[agentId], agentId })),
@@ -58,7 +62,23 @@ export function registerRosterRoutes(input: {
 
   app.post("/api/model-discovery/refresh", async (request, response) => {
     if (!authorize(request, response, "PROVIDER_VIEW", true)) return;
-    response.set("Cache-Control", "no-store").json(await discovery.discover(true));
+    const discovered = await discovery.discover(true);
+    response.set("Cache-Control", "no-store").json(intelligence ? await intelligence.enrich(discovered) : discovered);
+  });
+
+  app.get("/api/model-details", async (request, response) => {
+    if (!authorize(request, response, ["PROVIDER_VIEW", "MODEL_SELECT"])) return;
+    const providerId = typeof request.query.providerId === "string" ? request.query.providerId : "";
+    const modelId = typeof request.query.modelId === "string" ? request.query.modelId : "";
+    if (!providerId || !modelId) return response.status(400).json({ error: "providerId and modelId are required." });
+    if (!intelligence) return response.status(404).json({ error: "Live provider offers are not configured." });
+    try {
+      const details = await intelligence.details(providerId, modelId);
+      if (!details) return response.status(404).json({ error: "Live provider offers are not available for this model." });
+      return response.set("Cache-Control", "private, max-age=120").json(details);
+    } catch {
+      return response.status(503).json({ error: "Live provider offers are temporarily unavailable." });
+    }
   });
 
   app.put("/api/roster", async (request, response) => {

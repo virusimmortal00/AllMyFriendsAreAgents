@@ -19,15 +19,68 @@ export interface ModelVariant {
   readonly displayName: string;
 }
 
+export interface ModelPricing {
+  readonly inputPerMillion?: number;
+  readonly outputPerMillion?: number;
+  readonly cacheReadPerMillion?: number;
+  readonly cacheWritePerMillion?: number;
+}
+
+export interface ModelOffer {
+  readonly providerName: string;
+  readonly providerId?: string;
+  readonly inputPerMillion?: number;
+  readonly outputPerMillion?: number;
+  readonly discount?: number;
+  readonly uptime?: number;
+  readonly latencySeconds?: number;
+  readonly throughputTokensPerSecond?: number;
+}
+
+export interface ModelOfferDetails {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly offers: readonly ModelOffer[];
+  readonly fetchedAt: string;
+}
+
 export interface DiscoveredModel {
   readonly providerId?: string;
   readonly modelId: string;
   readonly displayName: string;
+  readonly description?: string;
+  readonly family?: string;
+  readonly authorId?: string;
+  readonly authorDisplayName?: string;
+  readonly accessProviderDisplayName?: string;
+  readonly status?: string;
+  readonly releaseDate?: string;
+  readonly pricing?: ModelPricing;
+  readonly limits?: {
+    readonly context?: number;
+    readonly input?: number;
+    readonly output?: number;
+  };
+  readonly popularity?: {
+    readonly rank: number;
+    readonly window: "weekly";
+    readonly source: "openrouter";
+  };
+  readonly benchmarks?: {
+    readonly intelligence?: number;
+    readonly coding?: number;
+    readonly agentic?: number;
+  };
   readonly variants?: readonly ModelVariant[];
   readonly provenance: ModelProvenance;
   readonly capabilities?: {
     readonly reasoningEffort?: readonly string[];
     readonly contextOptions?: readonly string[];
+    readonly reasoning?: boolean;
+    readonly toolCall?: boolean;
+    readonly attachment?: boolean;
+    readonly inputModalities?: readonly string[];
+    readonly outputModalities?: readonly string[];
   };
 }
 
