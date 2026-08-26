@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
-import { DISCOVERY_OUTPUT_LIMIT, ModelDiscoveryService, parseOpenCodeModelCatalog, type DiscoveryExecutor } from "./model-discovery.js";
+import { DISCOVERY_OUTPUT_LIMIT, MINIMUM_OPENCODE_VERSION, ModelDiscoveryService, parseOpenCodeModelCatalog, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
 
 describe("OpenCode model discovery", () => {
   it("preserves provider/model and variant identities", () => {
@@ -49,42 +49,62 @@ describe("OpenCode model discovery", () => {
   });
 
   it("discovers OpenCode models with their provider identity", async () => {
-    const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "provider/model variants:fast\n", stderr: "" }));
-    await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({ status: "available", models: [expect.objectContaining({ providerId: "provider", modelId: "model" })] });
-    expect(execute).toHaveBeenCalledWith(expect.any(String), ["models", "--verbose"], undefined);
+    const execute = vi.fn<DiscoveryExecutor>(async (_command, args) => ({ stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "provider/model variants:fast\n", stderr: "" }));
+    await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({
+      status: "available",
+      runtime: { version: MINIMUM_OPENCODE_VERSION, compatible: true, protocol: "opencode-cli-jsonl-v1", capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] },
+      models: [expect.objectContaining({ providerId: "provider", modelId: "model" })],
+    });
+    expect(execute).toHaveBeenNthCalledWith(1, expect.any(String), ["--version"], undefined);
+    expect(execute).toHaveBeenNthCalledWith(2, expect.any(String), ["models", "--verbose"], undefined);
+  });
+
+  it("fails closed before catalog discovery for unsupported or malformed versions", async () => {
+    expect(parseOpenCodeRuntimeVersion("1.18.17\n")).toMatchObject({ compatible: false });
+    expect(parseOpenCodeRuntimeVersion("1.18.18\n")).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion("2.0.0\n")).toMatchObject({ compatible: false });
+    expect(parseOpenCodeRuntimeVersion("unexpected")).toBeUndefined();
+    const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.17\n", stderr: "" }));
+    await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({ status: "runtime_incompatible", runtime: { version: "1.18.17", compatible: false }, models: [] });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("distinguishes CLI, authentication, configuration, and malformed output errors", async () => {
     const missing = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
     await expect(new ModelDiscoveryService(async () => { throw missing; }).discover()).resolves.toMatchObject({ status: "cli_missing" });
-    await expect(new ModelDiscoveryService(async () => { throw new Error("Not authenticated bearer-secret-value"); }).discover()).resolves.toMatchObject({ status: "authentication_required", diagnostic: "OpenCode requires authentication." });
-    await expect(new ModelDiscoveryService(async () => { throw new Error("Provider configuration required"); }).discover()).resolves.toMatchObject({ status: "configuration_required" });
-    await expect(new ModelDiscoveryService(async () => ({ stdout: "not a catalog", stderr: "" })).discover()).resolves.toMatchObject({ status: "error" });
+    const afterVersion = (failure: Error) => new ModelDiscoveryService(async (_command, args) => {
+      if (args[0] === "--version") return { stdout: `${MINIMUM_OPENCODE_VERSION}\n`, stderr: "" };
+      throw failure;
+    });
+    await expect(afterVersion(new Error("Not authenticated bearer-secret-value")).discover()).resolves.toMatchObject({ status: "authentication_required", diagnostic: "OpenCode requires authentication.", runtime: { version: MINIMUM_OPENCODE_VERSION } });
+    await expect(afterVersion(new Error("Provider configuration required")).discover()).resolves.toMatchObject({ status: "configuration_required", runtime: { version: MINIMUM_OPENCODE_VERSION } });
+    await expect(new ModelDiscoveryService(async (_command, args) => ({ stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "not a catalog", stderr: "" })).discover()).resolves.toMatchObject({ status: "error", runtime: { version: MINIMUM_OPENCODE_VERSION } });
   });
 
   it("honors cancellation signals without caching the aborted caller's result", async () => {
     const controller = new AbortController();
-    const execute = vi.fn<DiscoveryExecutor>(async (_command, _args, signal) => {
+    const execute = vi.fn<DiscoveryExecutor>(async (_command, args, signal) => {
       if (signal) {
         expect(signal).toBe(controller.signal);
         throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
       }
-      return { stdout: "provider/model\n", stderr: "" };
+      return { stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "provider/model\n", stderr: "" };
     });
     controller.abort();
     const service = new ModelDiscoveryService(execute);
     await expect(service.discover(false, controller.signal)).resolves.toMatchObject({ status: "error", models: [] });
     await expect(service.discover()).resolves.toMatchObject({ status: "available", models: [expect.objectContaining({ modelId: "model" })] });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it("coalesces fresh requests and refreshes stale or explicitly refreshed entries", async () => {
     let now = 0;
-    const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "provider/model\n", stderr: "" }));
+    const execute = vi.fn<DiscoveryExecutor>(async (_command, args) => ({ stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "provider/model\n", stderr: "" }));
     const service = new ModelDiscoveryService(execute, () => now, 30);
     await Promise.all([service.discover(), service.discover()]);
-    expect(execute).toHaveBeenCalledTimes(1);
-    now = 31; await service.discover(); expect(execute).toHaveBeenCalledTimes(2);
-    await service.discover(true); expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(2);
+    now = 31; await service.discover(); expect(execute).toHaveBeenCalledTimes(4);
+    await service.discover(true); expect(execute).toHaveBeenCalledTimes(6);
   });
 });
