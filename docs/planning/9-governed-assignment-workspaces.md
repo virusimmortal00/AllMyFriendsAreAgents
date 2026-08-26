@@ -34,8 +34,9 @@ project path and assignment state had no durable workspace boundary.
 Concretely, this ticket:
 
 - keeps the shipped trusted single-writer lifecycle recoverable across restarts;
-- adds a fail-closed, assignment-scoped Git broker before allowing concurrency;
-- adds durable exclusive workspace ownership for concurrent assignments; and
+- adds a fail-closed, assignment-scoped Git broker and confined writer startup;
+- preserves reusable assignment-workspace identity, recovery, fencing, and audit
+  foundations for separately authorized implementation workers; and
 - keeps merge and deployment behind distinct, immutable authorization gates.
 
 **What this is NOT:**
@@ -80,7 +81,6 @@ disabled, and explicit reviews continue through the existing read-only adapter.
 - writable-process cwd selection and preserved read-only review behavior;
 - restart reconciliation and conservative cleanup;
 - an assignment-scoped Git broker and confined writer startup;
-- durable workspace leases for controlled concurrency; and
 - separate merge and deployment decisions tied to immutable commits.
 
 **Out:**
@@ -138,9 +138,9 @@ existing read-only source-control adapter.
 | [`server/writer-confinement.ts`](../../server/writer-confinement.ts) | Attested fail-closed macOS/Linux writer confinement. |
 | [`server/git-security-boundary.test.ts`](../../server/git-security-boundary.test.ts) | Real-Git adversarial broker, ingress, and confinement coverage. |
 
-Existing migration, import, developer-team, and runner test files are modified with
-the corresponding contract coverage. The Phase 3 and Phase 4 file inventory will
-be added when those designs lock; no placeholder files are created.
+Existing migration, import, developer-team, and runner test files were modified with
+the corresponding contract coverage. The retired Phase 3 room-participant
+concurrency plan has no implementation inventory.
 
 ## Phasing
 

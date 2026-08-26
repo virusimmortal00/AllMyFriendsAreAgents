@@ -62,14 +62,15 @@ export function extractClosingIssueNumbers(text: string): number[] {
   return [...new Set([...text.matchAll(CLOSING_KEYWORD)].map((match) => Number(match[1])))];
 }
 
-interface PullRequestClosingText {
+interface PullRequestPayload {
   title?: string;
   body?: string;
   commits?: Array<{ messageHeadline?: string; messageBody?: string }>;
+  files?: Array<{ path?: string }>;
 }
 
 /** GitHub closing keywords apply to PR descriptions and commit messages, not PR titles. */
-export function extractPullRequestClosingIssueNumbers(payload: PullRequestClosingText): number[] {
+export function extractPullRequestClosingIssueNumbers(payload: PullRequestPayload): number[] {
   const commitText = (payload.commits ?? [])
     .map((commit) => `${commit.messageHeadline ?? ""}\n${commit.messageBody ?? ""}`)
     .join("\n");
@@ -83,6 +84,7 @@ export function evaluatePlanningDocSync(input: {
   documents: readonly PlanningDocRecord[];
   issueStates: ReadonlyMap<number, IssueState>;
   closingIssueNumbers: readonly number[];
+  changedPaths: ReadonlySet<string>;
 }): SyncViolation[] {
   const violations: SyncViolation[] = [];
   const documentsByIssue = new Map<number, PlanningDocRecord[]>();
@@ -115,6 +117,13 @@ export function evaluatePlanningDocSync(input: {
   for (const issueNumber of input.closingIssueNumbers) {
     const matches = documentsByIssue.get(issueNumber) ?? [];
     for (const document of matches) {
+      if (!input.changedPaths.has(document.path)) {
+        violations.push({
+          path: document.path,
+          reason: `PR closes #${issueNumber} but ${path.basename(document.path)} is unchanged`,
+        });
+        continue;
+      }
       if (!LIVE_STATUSES.has(document.status ?? "")) continue;
       violations.push({
         path: document.path,
@@ -131,7 +140,7 @@ export function evaluatePlanningDocSync(input: {
  */
 export function runSelfCheck(): string[] {
   const failures: string[] = [];
-  const closingKeywordCases: Array<{ name: string; payload: PullRequestClosingText; expected: number[] }> = [
+  const closingKeywordCases: Array<{ name: string; payload: PullRequestPayload; expected: number[] }> = [
     { name: "colon-separated closing keywords are recognized", payload: { body: "Closes: #24" }, expected: [24] },
     { name: "PR titles do not imply issue closure", payload: { title: "Closes #24", body: "No closing keyword here." }, expected: [] },
     { name: "commit messages can close issues", payload: { commits: [{ messageHeadline: "Fixes #25" }] }, expected: [25] },
@@ -146,17 +155,17 @@ export function runSelfCheck(): string[] {
     {
       name: "proposed notes without an issue stay allowed",
       expected: 0,
-      input: { documents: [{ path: "a.md", status: "proposed" }], issueStates: new Map(), closingIssueNumbers: [] },
+      input: { documents: [{ path: "a.md", status: "proposed" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
     },
     {
       name: "active work without an issue fails",
       expected: 1,
-      input: { documents: [{ path: "a.md", status: "active" }], issueStates: new Map(), closingIssueNumbers: [] },
+      input: { documents: [{ path: "a.md", status: "active" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
     },
     {
       name: "unknown statuses fail closed",
       expected: 1,
-      input: { documents: [{ path: "a.md", status: "in-progress" }], issueStates: new Map(), closingIssueNumbers: [] },
+      input: { documents: [{ path: "a.md", status: "in-progress" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
     },
     {
       name: "active work with an open issue passes",
@@ -165,6 +174,7 @@ export function runSelfCheck(): string[] {
         documents: [{ path: "a.md", status: "active", issue: 24 }],
         issueStates: new Map([[24, { number: 24, state: "OPEN" }]]),
         closingIssueNumbers: [],
+        changedPaths: new Set(),
       },
     },
     {
@@ -174,6 +184,7 @@ export function runSelfCheck(): string[] {
         documents: [{ path: "a.md", status: "proposed", issue: 13 }],
         issueStates: new Map([[13, { number: 13, state: "CLOSED" }]]),
         closingIssueNumbers: [],
+        changedPaths: new Set(),
       },
     },
     {
@@ -183,6 +194,7 @@ export function runSelfCheck(): string[] {
         documents: [{ path: "a.md", status: "superseded", issue: 13 }],
         issueStates: new Map([[13, { number: 13, state: "CLOSED" }]]),
         closingIssueNumbers: [13],
+        changedPaths: new Set(["a.md"]),
       },
     },
     {
@@ -192,6 +204,27 @@ export function runSelfCheck(): string[] {
         documents: [{ path: "compose.md", status: "proposed", issue: 13 }],
         issueStates: new Map([[13, { number: 13, state: "OPEN" }]]),
         closingIssueNumbers: [13],
+        changedPaths: new Set(["compose.md"]),
+      },
+    },
+    {
+      name: "closing an issue requires changing its terminal planning record",
+      expected: 1,
+      input: {
+        documents: [{ path: "compose.md", status: "done", issue: 13 }],
+        issueStates: new Map([[13, { number: 13, state: "OPEN" }]]),
+        closingIssueNumbers: [13],
+        changedPaths: new Set(),
+      },
+    },
+    {
+      name: "closing an issue passes when its terminal planning record changed",
+      expected: 0,
+      input: {
+        documents: [{ path: "compose.md", status: "done", issue: 13 }],
+        issueStates: new Map([[13, { number: 13, state: "OPEN" }]]),
+        closingIssueNumbers: [13],
+        changedPaths: new Set(["compose.md"]),
       },
     },
   ];
@@ -240,7 +273,7 @@ async function loadPlanningDocuments(planningDirectory: string): Promise<Plannin
   const names = (await readdir(planningDirectory)).filter((name) => name.endsWith(".md") && !SKIP_FILES.has(name)).sort();
   return Promise.all(names.map(async (name) => {
     const filePath = path.join(planningDirectory, name);
-    return { path: filePath, ...parsePlanningFrontmatter(await readFile(filePath, "utf8")) };
+    return { path: path.posix.join("docs/planning", name), ...parsePlanningFrontmatter(await readFile(filePath, "utf8")) };
   }));
 }
 
@@ -257,14 +290,20 @@ async function loadIssueStates(repo: string, issueNumbers: readonly number[]): P
 }
 
 /**
- * Collects closing keywords from a PR body and commit messages when a PR number is known.
+ * Collects closing keywords and changed paths when a PR number is known.
  */
-async function loadClosingIssueNumbers(repo: string, pullRequest: string | undefined): Promise<number[]> {
-  if (!pullRequest) return [];
+async function loadPullRequestContext(repo: string, pullRequest: string | undefined): Promise<{
+  closingIssueNumbers: number[];
+  changedPaths: ReadonlySet<string>;
+}> {
+  if (!pullRequest) return { closingIssueNumbers: [], changedPaths: new Set() };
   const payload = JSON.parse(await runCommand("gh", [
-    "pr", "view", pullRequest, "--repo", repo, "--json", "body,commits",
-  ])) as PullRequestClosingText;
-  return extractPullRequestClosingIssueNumbers(payload);
+    "pr", "view", pullRequest, "--repo", repo, "--json", "body,commits,files",
+  ])) as PullRequestPayload;
+  return {
+    closingIssueNumbers: extractPullRequestClosingIssueNumbers(payload),
+    changedPaths: new Set((payload.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value))),
+  };
 }
 
 /**
@@ -302,10 +341,10 @@ async function main() {
 
   const planningDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../docs/planning");
   const documents = await loadPlanningDocuments(planningDirectory);
-  const closingIssueNumbers = await loadClosingIssueNumbers(repo, option("pr") || process.env.PR_NUMBER);
+  const pullRequestContext = await loadPullRequestContext(repo, option("pr") || process.env.PR_NUMBER);
   const issueNumbers = [...new Set(documents.map((document) => document.issue).filter((value): value is number => Boolean(value)))];
   const issueStates = await loadIssueStates(repo, issueNumbers);
-  reportViolations(evaluatePlanningDocSync({ documents, issueStates, closingIssueNumbers }), mode);
+  reportViolations(evaluatePlanningDocSync({ documents, issueStates, ...pullRequestContext }), mode);
 }
 
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
