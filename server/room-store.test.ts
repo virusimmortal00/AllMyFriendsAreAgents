@@ -42,14 +42,15 @@ describe("room style persistence", () => {
     const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
     const first = { agentId: "agent-11111111-1111-4111-8111-111111111111", conversationalName: "Alpha", harness: "codex" as const, modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
     const second = { agentId: "agent-22222222-2222-4222-8222-222222222222", conversationalName: "Beta", harness: "codex" as const, modelId: "gpt-5.6-terra", enabled: true, supportsProjectWrites: true, configurationRevision: 1 };
+    const epoch = `deployment-v1:${"9".repeat(64)}`;
     await store.updateRoster(1, [first, second]);
-    await store.setSession(first.agentId, "alpha-session", "read-only");
-    await store.setSession(second.agentId, "beta-session", "read-only");
+    await store.setSession(first.agentId, "alpha-session", "read-only", epoch);
+    await store.setSession(second.agentId, "beta-session", "read-only", epoch);
     await store.addMessage(first.agentId, "historical alpha");
     await store.updateRoster(2, [{ ...first, modelId: "gpt-5.6-luna" }, second]);
     const state = store.snapshot();
     expect(state.sessions[first.agentId]).toBeUndefined();
-    expect(state.sessions[second.agentId]?.id).toBe("beta-session");
+    expect(state.sessions[second.agentId]).toMatchObject({ id: "beta-session", codeEpoch: epoch });
     expect(state.roster?.entries[0]).toMatchObject({ agentId: first.agentId, modelId: "gpt-5.6-luna", configurationRevision: 2, sessionInvalidationReason: expect.stringContaining("invalidated") });
     expect(state.messages.at(-1)).toMatchObject({ speaker: first.agentId, speakerName: "Alpha", text: "historical alpha" });
   });
@@ -239,13 +240,16 @@ describe("room style persistence", () => {
     temporaryDirectories.push(projectRoot);
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
-    await store.setSession("codex-sol", "existing-session", "read-only");
+    const deployment = { schemaVersion: 1 as const, commitSha: "f".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"a".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    await store.setDeployment(deployment);
+    await store.setSession("codex-sol", "existing-session", "read-only", deployment.epoch);
 
     await store.updateSettings({ roomName: "Friday Night Agents" });
 
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
     expect(reopened.snapshot().settings.roomName).toBe("Friday Night Agents");
-    expect(reopened.snapshot().sessions["codex-sol"]?.id).toBe("existing-session");
+    expect(reopened.snapshot().deployment).toEqual(deployment);
+    expect(reopened.snapshot().sessions["codex-sol"]).toMatchObject({ id: "existing-session", codeEpoch: deployment.epoch });
   });
 
   it("restricts persisted room state to the current OS user", async () => {

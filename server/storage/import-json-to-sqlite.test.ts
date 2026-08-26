@@ -36,7 +36,9 @@ describe("JSON to SQLite import", () => {
       "chat",
       DEFAULT_PARTICIPANT_STYLES["codex-terra"],
     );
-    await legacyStore.setSession("codex-sol", "imported-session", "read-only");
+    const deployment = { schemaVersion: 1 as const, commitSha: "c".repeat(40), reference: { kind: "detached" as const }, worktree: "clean" as const, epoch: `deployment-v1:${"e".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    await legacyStore.setDeployment(deployment);
+    await legacyStore.setSession("codex-sol", "imported-session", "read-only", deployment.epoch);
     const assignment: AssignmentRecord = {
       assignmentId: "imported-assignment", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 1,
       agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/imported",
@@ -85,7 +87,8 @@ describe("JSON to SQLite import", () => {
     expect(await readFile(sourceContinuationsPath, "utf8")).toBe(sourceContinuationsBefore);
     const importedStore = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
-    expect(importedStore.snapshot().sessions["codex-sol"]?.id).toBe("imported-session");
+    expect(importedStore.snapshot().deployment).toEqual(deployment);
+    expect(importedStore.snapshot().sessions["codex-sol"]).toMatchObject({ id: "imported-session", codeEpoch: deployment.epoch });
     expect(importedStore.snapshot().sessions["codex-terra"]).toBeUndefined();
     expect(importedStore.snapshot().messages.find(({ speaker }) => speaker === "codex-terra")).toMatchObject({
       text: "Keep this historical speaker",
@@ -135,6 +138,25 @@ describe("JSON to SQLite import", () => {
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
       .rejects.toThrow("already contains a different default room");
+  });
+
+  it("rejects a re-import whose only change is deployment provenance", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-provenance-test-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    const source = await RoomStore.open(projectRoot, sourceStateDirectory);
+    const firstDeployment = { schemaVersion: 1 as const, commitSha: "1".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"2".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
+    const changedDeployment = { ...firstDeployment, commitSha: "3".repeat(40), epoch: `deployment-v1:${"4".repeat(64)}`, observedAt: "2026-08-26T01:00:00.000Z" };
+    await source.setDeployment(firstDeployment);
+    await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
+
+    await source.setDeployment(changedDeployment);
+    await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
+      .rejects.toThrow("already contains a different default room");
+    const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(persisted.snapshot().deployment).toEqual(firstDeployment);
+    persisted.close();
   });
 
   it("removes governed destination records before an explicit overwrite import", async () => {

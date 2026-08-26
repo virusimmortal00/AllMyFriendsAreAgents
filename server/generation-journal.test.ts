@@ -17,6 +17,8 @@ describe("GenerationJournal", () => {
     const journal = await GenerationJournal.open(directory);
 
     await Promise.all([
+      journal.append({ type: "session.reused", generationId: "one", agent: "codex-sol", reason: "deployment code epoch match", deploymentEpoch: `deployment-v1:${"a".repeat(64)}` }),
+      journal.append({ type: "session.invalidated", generationId: "two", agent: "claude-sonnet", reason: "deployment code epoch changed", storedSessionEpoch: `deployment-v1:${"b".repeat(64)}` }),
       journal.append({ type: "generation.started", generationId: "one", agent: "codex-sol", prompt: "hello" }),
       journal.append({ type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 123, rawResponse: "hi" }),
     ]);
@@ -25,8 +27,9 @@ describe("GenerationJournal", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(entries).toHaveLength(2);
-    expect(entries.map(({ type }) => type)).toEqual(["generation.started", "generation.completed"]);
+    expect(entries).toHaveLength(4);
+    expect(entries.map(({ type }) => type)).toEqual(["session.reused", "session.invalidated", "generation.started", "generation.completed"]);
+    expect(entries.slice(0, 2).map(({ reason }) => reason)).toEqual(["deployment code epoch match", "deployment code epoch changed"]);
     expect(entries.every(({ timestamp }) => typeof timestamp === "string")).toBe(true);
     expect((await stat(path.dirname(journal.path))).mode & 0o777).toBe(0o700);
     expect((await stat(journal.path)).mode & 0o777).toBe(0o600);
