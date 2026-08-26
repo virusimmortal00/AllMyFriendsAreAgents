@@ -35,6 +35,7 @@ import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
 import { registerTaskRoutes } from "./task-api.js";
 import { HumanSessions, joinHumanWithSession, sessionHuman } from "./human-session.js";
+import { validHumanAvatarDataUrl } from "../shared/human-avatar.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
 import { registerContinuationRoutes, roomContinuationRequestValidationError, roomContinuationRequestsMatch } from "./continuation-api.js";
 import type { ContinuationInitiationOutcome, RoomContinuationWorkRequest } from "../shared/protocol.js";
@@ -54,6 +55,7 @@ import { GovernedContributionExecutor, UnavailableContributionExecutor } from ".
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
+import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 
@@ -85,6 +87,7 @@ const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const modelDiscovery = new ModelDiscoveryService();
+const openRouterCatalog = new OpenRouterCatalogService();
 const controlPlane = await ControlPlaneStore.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const humanSessions = new HumanSessions();
@@ -623,7 +626,7 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, control: controlPlane, broadcast });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -671,6 +674,19 @@ app.patch("/api/style", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
   const human = actor ? humans.updateStyle(actor.id, request.body?.style) : undefined;
   if (!human) return response.status(401).json({ error: "Join the room before changing your style." });
+  broadcast();
+  response.json(human);
+});
+
+app.patch("/api/avatar", (request, response) => {
+  const actor = sessionHuman(request, humans, humanSessions);
+  if (!actor) return response.status(401).json({ error: "Join the room before changing your profile photo." });
+  const requested = request.body?.avatarUrl;
+  if (requested !== null && requested !== "" && !validHumanAvatarDataUrl(requested)) {
+    return response.status(400).json({ error: "Choose a valid PNG, JPEG, or WebP profile photo." });
+  }
+  const human = humans.updateAvatar(actor.id, requested || undefined);
+  if (!human) return response.status(401).json({ error: "Join the room before changing your profile photo." });
   broadcast();
   response.json(human);
 });

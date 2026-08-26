@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   loadWorkshop: vi.fn(),
   runAction: vi.fn(),
   sendMessage: vi.fn(),
+  updateMyAvatar: vi.fn(),
   updateMyStyle: vi.fn(),
   updateSettings: vi.fn(),
 }));
@@ -140,6 +141,7 @@ beforeEach(() => {
     accepted: true, duplicate: false, clientMessageId, messageId: `server-${clientMessageId}`,
   }));
   api.updateMyStyle.mockResolvedValue(human);
+  api.updateMyAvatar.mockResolvedValue(human);
   api.updateSettings.mockResolvedValue(room("settings"));
 });
 
@@ -329,14 +331,14 @@ describe("rendered reconnect recovery", () => {
       activeGenerations: { first: "codex-sol", second: "codex-sol" },
     })));
     expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
-    expect(screen.getByRole("status", { name: "OpenCode [openai/gpt-5.6-sol] is generating a response" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Sol is generating a response" })).toBeTruthy();
 
     act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
       activeGenerations: { first: "codex-sol", second: "claude-sonnet" },
     })));
     expect(screen.getByText("Agents are typing...")).toBeTruthy();
-    expect(screen.getByRole("status", { name: "OpenCode [openai/gpt-5.6-sol] is generating a response" })).toBeTruthy();
-    expect(screen.getByRole("status", { name: "OpenCode [anthropic/claude-sonnet-5] is generating a response" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Sol is generating a response" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Claude is generating a response" })).toBeTruthy();
   });
 
   it("warns before resetting identity and preserves room state and draft when canceled", async () => {
@@ -383,7 +385,7 @@ describe("rendered reconnect recovery", () => {
       status: "working",
       activeGenerations: { response: "codex-sol" },
     })));
-    await screen.findByRole("status", { name: "OpenCode [openai/gpt-5.6-sol] is generating a response" });
+    await screen.findByRole("status", { name: "Sol is generating a response" });
 
     await chooseMenuItem(user, "Room", "Room properties...");
     const dialog = screen.getByRole("dialog", { name: "Room Properties" });

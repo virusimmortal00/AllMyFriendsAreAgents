@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyStyle, updateRoster, updateSettings } from "./api";
+import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyStyle, updateRoster, updateSettings } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -26,6 +26,7 @@ describe("browser identity requests", () => {
       if (path === "/api/humans") return new Response(JSON.stringify({ id: "server-human", name: "Ada", style }), { status: 201 });
       if (path === "/api/messages") return new Response(JSON.stringify({ accepted: true, duplicate: false, clientMessageId: "message_123", messageId: "server-message" }));
       if (path === "/api/style") return new Response(JSON.stringify({ id: "server-human", name: "Ada", style }));
+      if (path === "/api/avatar") return new Response(JSON.stringify({ id: "server-human", name: "Ada", style }));
       return new Response(JSON.stringify({ settings: {} }));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -33,6 +34,7 @@ describe("browser identity requests", () => {
     await joinRoom({ id: "public-id-must-not-be-authority", name: "Ada", style });
     await sendMessage("Hello", "message_123");
     await updateMyStyle(style);
+    await updateMyAvatar("data:image/jpeg;base64,/9j/AA==");
     await updateSettings({ writableAgent: "codex-sol" });
     await authorizeHeartbeat(3);
     await emergencyStopHeartbeat(4);
@@ -42,6 +44,7 @@ describe("browser identity requests", () => {
       { name: "Ada", style },
       { text: "Hello", clientMessageId: "message_123", mentions: [] },
       { style },
+      { avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
       { writableAgent: "codex-sol" },
       { expectedRevision: 3, reason: "Explicitly authorized from the visible heartbeat control" },
       { expectedRevision: 4, reason: "Emergency stop requested from the visible control" },

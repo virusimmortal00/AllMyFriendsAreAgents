@@ -11,6 +11,24 @@ describe("OpenCode model discovery", () => {
     ]);
   });
 
+  it("preserves friendly catalog metadata used by the model picker", () => {
+    const [model] = parseOpenCodeModelCatalog(`openrouter/google/gemini-3.7-flash
+{"name":"Gemini 3.7 Flash","family":"gemini","release_date":"2026-08-20","cost":{"input":0.375,"output":1.875,"cache":{"read":0.04}},"limit":{"context":1048576,"output":65536},"capabilities":{"reasoning":true,"toolcall":true,"attachment":true,"input":{"text":true,"image":true},"output":{"text":true}},"variants":{"high":{"reasoningEffort":"high"}}}
+`);
+
+    expect(model).toMatchObject({
+      providerId: "openrouter",
+      modelId: "google/gemini-3.7-flash",
+      displayName: "Gemini 3.7 Flash",
+      authorId: "google",
+      authorDisplayName: "Google",
+      accessProviderDisplayName: "OpenRouter",
+      pricing: { inputPerMillion: 0.375, outputPerMillion: 1.875, cacheReadPerMillion: 0.04 },
+      limits: { context: 1_048_576, output: 65_536 },
+      capabilities: { reasoning: true, toolCall: true, attachment: true, inputModalities: ["text", "image"], outputModalities: ["text"], reasoningEffort: ["high"] },
+    });
+  });
+
   it("accepts a bounded OpenRouter-sized verbose catalog", () => {
     const verboseCatalog = `${Array.from({ length: 410 }, () => `# ${"x".repeat(1_000)}`).join("\n")}\nopenrouter/openai/gpt-5.2\n`;
     expect(Buffer.byteLength(verboseCatalog)).toBeGreaterThan(256_000);

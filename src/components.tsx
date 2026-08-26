@@ -8,7 +8,7 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
-import { AGENT_IDS, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
 import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
@@ -18,6 +18,11 @@ import { workshopLayout } from "./workshop-dialog";
 import { reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageMention } from "../shared/mentions";
 import { useDismissibleLayer, useModalOverlay } from "./overlay";
 import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
+import type { RoomAgentRoster } from "../shared/roster";
+import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
+import { ProviderMark } from "./provider-mark";
+import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
+import { HumanAvatar } from "./human-avatar";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -93,8 +98,11 @@ export function RoomRoster({
   currentHumanId,
   onConfigureAgent,
   agents = AGENT_IDS,
+  roster,
+  agentListSort = "room",
   onOpenRoomProperties,
   onManageRoster,
+  onConfigureHumanAvatar,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
@@ -103,53 +111,76 @@ export function RoomRoster({
   currentHumanId: string;
   onConfigureAgent: (agent: ActiveAgentId) => void;
   agents?: readonly ActiveAgentId[];
+  roster?: RoomAgentRoster;
+  agentListSort?: AgentListSort;
   onOpenRoomProperties?: (trigger: HTMLButtonElement) => void;
   onManageRoster?: (trigger: HTMLButtonElement) => void;
+  onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
 }) {
   const healthText = (health: AgentHealth) => health.status === "cooldown"
     ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
     : "Unavailable";
-  const presentAgents = agents.filter((agent) => availability?.[agent] !== false);
+  const presentAgents = sortAgentListItems(agents.filter((agent) => availability?.[agent] !== false).map((agent) => {
+    const rosterEntry = roster?.entries.find((entry) => entry.agentId === agent);
+    const profile = AGENT_PROFILES[agent];
+    const alias = rosterEntry?.conversationalName || profile?.conversationalName || participantScreenName(agent);
+    const providerId = rosterEntry?.providerId || profile?.provider;
+    const modelId = rosterEntry?.modelId || profile?.modelId || "configured";
+    return { agentId: agent, alias, providerId, modelId, authorId: modelAuthorId(providerId, modelId) };
+  }), agentListSort);
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
       <div className="presence-list" role="list">
-        {presentAgents.map((agent) => {
+        {presentAgents.map((item, index) => {
+          const agent = item.agentId;
           const active = activeAgents?.has(agent) ?? false;
+          const { alias, providerId, modelId, authorId } = item;
+          const modelName = friendlyModelName(modelId);
+          const routeName = providerDisplayName(providerId);
+          const availableLabel = `${alias}: ${modelName} via ${routeName}`;
+          const groupLabel = agentListGroupLabel(item, agentListSort);
+          const previousGroupLabel = index > 0 ? agentListGroupLabel(presentAgents[index - 1], agentListSort) : undefined;
           return (
-            <div className={`presence-row${active ? " presence-row--active" : ""}`} role="listitem" key={agent}>
+            <Fragment key={agent}>
+            {groupLabel && groupLabel !== previousGroupLabel ? <div className="presence-group-label" role="presentation">{groupLabel}</div> : null}
+            <div className={`presence-row${active ? " presence-row--active" : ""}`} role="listitem">
               <span
                 className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
-                aria-label={agentHealth?.[agent] ? `${agentScreenName(agent)}: ${agentHealth[agent].message}` : `${agentScreenName(agent)}: available`}
+                aria-label={agentHealth?.[agent] ? `${availableLabel}: ${agentHealth[agent].message}` : `${availableLabel}: available`}
                 title={agentHealth?.[agent]?.message || "Available"}
               />
+              <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
               <span className="presence-identity">
-                <strong className={`speaker speaker--${agent}`}>{participantScreenName(agent)}</strong>
+                <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
+                <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
                 {active
                   ? <small className="presence-activity-label">Generating a response…</small>
                   : agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
               </span>
               <span className="presence-agent-actions">
                 {active ? (
-                  <span className="agent-activity-indicator" role="status" aria-label={`${agentScreenName(agent)} is generating a response`} title="Generating a response">
+                  <span className="agent-activity-indicator" role="status" aria-label={`${alias} is generating a response`} title="Generating a response">
                     <i /><i /><i />
                   </span>
                 ) : null}
                 <button
                   type="button"
                   className="agent-settings-button"
-                  aria-label={`Configure ${agentScreenName(agent)}`}
-                  title={`Settings for ${agentScreenName(agent)}`}
+                  aria-label={`Configure ${alias}`}
+                  title={`Settings for ${alias}`}
                   onClick={() => onConfigureAgent(agent)}
                 >⚙</button>
               </span>
             </div>
+            </Fragment>
           );
         })}
         {humans.map((human) => (
           <div className="presence-row" role="listitem" key={human.id}>
             <span className="presence-status" aria-hidden="true" />
-            <strong className="speaker speaker--you">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
-            <span className="presence-row-spacer" aria-hidden="true" />
+            <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} compact />
+            <strong className="speaker speaker--you presence-human-name">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
+            {human.id === currentHumanId && onConfigureHumanAvatar ? <button type="button" className="agent-settings-button human-avatar-settings-button" aria-label="Change your profile photo" title="Profile photo" onClick={(event) => onConfigureHumanAvatar(event.currentTarget)}>📷</button> : <span className="presence-row-spacer" aria-hidden="true" />}
           </div>
         ))}
       </div>

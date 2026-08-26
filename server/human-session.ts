@@ -39,7 +39,7 @@ export function sessionHuman(request: express.Request, humans: HumanPresenceRegi
 /** A client may resume only the identity already bound to its opaque server session. */
 export function joinHumanWithSession(request: express.Request, response: express.Response, humans: HumanPresenceRegistry, sessions: HumanSessions) {
   const sessionHumanId = sessions.humanId(request.header("cookie"));
-  const human = humans.join({ name: request.body?.name, style: request.body?.style }, sessionHumanId);
+  const human = humans.join({ name: request.body?.name, style: request.body?.style, avatarUrl: request.body?.avatarUrl }, sessionHumanId);
   setHumanSession(response, sessions, human.id);
   return human;
 }
