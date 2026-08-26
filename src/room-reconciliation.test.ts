@@ -109,4 +109,51 @@ describe("room delta reconciliation", () => {
     expect(restarted.kind).toBe("applied");
     if (restarted.kind === "applied") expect(restarted.room.messages.map(({ id }) => id)).toEqual(["new"]);
   });
+
+  it("accepts a fresh snapshot whose writable agent is an enabled dynamic roster participant", () => {
+    const dynamicAgent = "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const dynamicRoster = {
+      schemaVersion: 3 as const,
+      revision: 2,
+      entries: [{
+        agentId: dynamicAgent,
+        conversationalName: "Dynamic writer",
+        providerId: "openrouter",
+        modelId: "example/dynamic-writer",
+        enabled: true,
+        supportsProjectWrites: true,
+        configurationRevision: 1,
+      }],
+    };
+    const dynamicState = state([], {
+      roster: dynamicRoster,
+      settings: { ...state().settings, writableAgent: dynamicAgent },
+    });
+
+    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState))).toMatchObject({
+      kind: "applied",
+      room: { settings: { writableAgent: dynamicAgent } },
+    });
+  });
+
+  it("rejects an unlisted, disabled, or read-only dynamic writable agent", () => {
+    const dynamicAgent = "agent-ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb";
+    const dynamicState = (entries: NonNullable<RoomState["roster"]>["entries"]) => state([], {
+      roster: { schemaVersion: 3, revision: 2, entries },
+      settings: { ...state().settings, writableAgent: dynamicAgent },
+    });
+    const entry = {
+      agentId: dynamicAgent,
+      conversationalName: "Dynamic writer",
+      providerId: "openrouter",
+      modelId: "example/dynamic-writer",
+      enabled: true,
+      supportsProjectWrites: true,
+      configurationRevision: 1,
+    };
+
+    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([]))).kind).toBe("resync");
+    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([{ ...entry, enabled: false }]))).kind).toBe("resync");
+    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([{ ...entry, supportsProjectWrites: false }]))).kind).toBe("resync");
+  });
 });

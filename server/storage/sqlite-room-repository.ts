@@ -1213,6 +1213,10 @@ export class SqliteRoomRepository implements RoomRepository {
     if (!row) throw new Error("The SQLite default room does not exist.");
     const participantStyles = normalizeParticipantStyles(parseJson(row.participant_styles_json, {}));
     const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
+    const storedRosterEntries: Array<Record<string, unknown> & { agentId: string; enabled: boolean }> = (
+      this.database.prepare("SELECT agent_id, enabled, configuration_json FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string }>
+    ).map((entry) => ({ ...parseJson<Record<string, unknown>>(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled) }));
+    const roster = normalizeRoomAgentRoster({ ...(row.roster_schema_version === 3 ? { schemaVersion: 3 as const } : {}), revision: row.roster_revision, entries: storedRosterEntries });
     const settings: RoomSettings = {
       roomName: row.name,
       topic: row.topic,
@@ -1221,10 +1225,6 @@ export class SqliteRoomRepository implements RoomRepository {
       projectPath: configuredProjectPath || row.project_path || this.projectRoot,
       participantStyles,
     };
-    const storedRosterEntries: Array<Record<string, unknown> & { agentId: string; enabled: boolean }> = (
-      this.database.prepare("SELECT agent_id, enabled, configuration_json FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string }>
-    ).map((entry) => ({ ...parseJson<Record<string, unknown>>(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled) }));
-    const roster = normalizeRoomAgentRoster({ ...(row.roster_schema_version === 3 ? { schemaVersion: 3 as const } : {}), revision: row.roster_revision, entries: storedRosterEntries });
     const enabledAgents = new Set(enabledRoomAgentIds(roster));
     if (settings.writableAgent !== "nobody" && !enabledAgents.has(settings.writableAgent)) settings.writableAgent = "nobody";
     const messages = (this.database.prepare("SELECT * FROM messages WHERE room_id = ? ORDER BY row_id").all(DEFAULT_ROOM_ID) as unknown as MessageRow[])
