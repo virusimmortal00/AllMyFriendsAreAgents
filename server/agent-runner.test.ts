@@ -26,7 +26,28 @@ describe("OpenCode runtime contract", () => {
       JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "One " } }),
       "non-protocol progress",
       JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "answer." } }),
-    ].join("\n"))).toEqual({ sessionId: "ses_open", text: "One answer." });
+    ].join("\n"))).toMatchObject({ sessionId: "ses_open", text: "One answer.", cost: 0, toolCalls: 0, steps: 0, errors: [] });
+  });
+
+  it("extracts bounded provider usage, tool, finish, and error diagnostics", () => {
+    const parsed = __testing.parseOpenCodeOutput([
+      JSON.stringify({ type: "tool_use", sessionID: "ses_open", part: { id: "part-1", callID: "call-1", type: "tool", tool: "read", state: { status: "completed" } } }),
+      JSON.stringify({ type: "tool_use", sessionID: "ses_open", part: { id: "part-2", callID: "call-2", type: "tool", tool: "grep", state: { status: "error" } } }),
+      JSON.stringify({ type: "step_finish", sessionID: "ses_open", part: { type: "step-finish", reason: "tool-calls", cost: 0.01, tokens: { total: 15, input: 10, output: 3, reasoning: 2, cache: { read: 4, write: 1 } } } }),
+      JSON.stringify({ type: "step_finish", sessionID: "ses_open", part: { type: "step-finish", reason: "stop", cost: 0.02, tokens: { input: 7, output: 5, reasoning: 0, cache: { read: 2, write: 0 } } } }),
+      JSON.stringify({ type: "error", sessionID: "ses_open", error: { name: "APIError", data: { message: "Bearer provider-secret-value failed", statusCode: 429, isRetryable: true, responseBody: "not retained" } } }),
+    ].join("\n"));
+
+    expect(parsed).toMatchObject({
+      sessionId: "ses_open",
+      usage: { inputTokens: 17, outputTokens: 8, reasoningTokens: 2, cacheReadTokens: 6, cacheWriteTokens: 1, totalTokens: 27 },
+      cost: 0.03,
+      toolCalls: 2,
+      toolFailures: 1,
+      steps: 2,
+      finishReason: "stop",
+      errors: [{ name: "APIError", message: "[redacted] failed", statusCode: 429, retryable: true }],
+    });
   });
 
   it("maps room permissions without replacing OpenCode provider configuration", () => {
