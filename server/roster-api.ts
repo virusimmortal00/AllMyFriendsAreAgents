@@ -63,9 +63,12 @@ export function registerRosterRoutes(input: {
 
   app.put("/api/roster", async (request, response) => {
     const expectedRevision = request.body?.expectedRevision;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+      return response.status(400).json({ error: "A positive expectedRevision is required." });
+    }
     const entries = validateRosterEntries(request.body?.entries)?.map((entry) => ({ ...entry, supportsProjectWrites: true }));
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || !entries) {
-      return response.status(400).json({ error: "A positive expectedRevision and unique supported roster entries are required." });
+    if (!entries) {
+      return response.status(400).json({ error: "Roster entries must use supported identifiers and unique participant IDs and conversational names." });
     }
     const before = normalizeRoomAgentRoster(store.snapshot().roster);
     const structuralChanged = entries.length !== before.entries.length || entries.some((entry, index) => {

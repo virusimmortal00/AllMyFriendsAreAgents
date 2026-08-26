@@ -4,9 +4,18 @@ import { DISCOVERY_OUTPUT_LIMIT, ModelDiscoveryService, parseOpenCodeModelCatalo
 
 describe("OpenCode model discovery", () => {
   it("preserves provider/model and variant identities", () => {
-    expect(parseOpenCodeModelCatalog('anthropic/claude-sonnet\n{"variants":{"high":{},"max":{}}}\nopenai/gpt-5.6\nanthropic/claude-sonnet\n')).toEqual([
+    expect(parseOpenCodeModelCatalog('anthropic/claude-sonnet\n{"variants":{"high":{},"max":{}}}\nopenai/gpt-5.6\nopenrouter/~openai/gpt-latest\nanthropic/claude-sonnet\n')).toEqual([
       expect.objectContaining({ providerId: "anthropic", modelId: "claude-sonnet", variants: [{ id: "high", displayName: "high" }, { id: "max", displayName: "max" }] }),
       expect.objectContaining({ providerId: "openai", modelId: "gpt-5.6" }),
+      expect.objectContaining({ providerId: "openrouter", modelId: "~openai/gpt-latest" }),
+    ]);
+  });
+
+  it("accepts a bounded OpenRouter-sized verbose catalog", () => {
+    const verboseCatalog = `${Array.from({ length: 410 }, () => `# ${"x".repeat(1_000)}`).join("\n")}\nopenrouter/openai/gpt-5.2\n`;
+    expect(Buffer.byteLength(verboseCatalog)).toBeGreaterThan(256_000);
+    expect(parseOpenCodeModelCatalog(verboseCatalog)).toEqual([
+      expect.objectContaining({ providerId: "openrouter", modelId: "openai/gpt-5.2" }),
     ]);
   });
 

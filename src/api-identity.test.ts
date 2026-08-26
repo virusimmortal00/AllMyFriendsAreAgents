@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { authorizeHeartbeat, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyStyle, updateSettings } from "./api";
+import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyStyle, updateRoster, updateSettings } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -51,5 +51,21 @@ describe("browser identity requests", () => {
       expect(body).not.toHaveProperty("humanId");
       expect(body).not.toHaveProperty("actorId");
     }
+  });
+
+  it("preserves JSON content type when a control-plane CSRF header is present", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-token" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 5, entries: [] }, catalog: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await controlLogin("owner", "twelve-character-password");
+    await updateRoster(4, []);
+
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-AMFAA-CSRF")).toBe("csrf-token");
+    expect(JSON.parse(String(init.body))).toEqual({ expectedRevision: 4, entries: [] });
   });
 });

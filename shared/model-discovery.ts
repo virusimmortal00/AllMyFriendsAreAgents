@@ -52,6 +52,13 @@ export function validDiscoveryId(value: unknown): value is string {
     && /^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$/.test(value);
 }
 
+export function validModelDiscoveryId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 200
+    && /^~?[A-Za-z0-9][A-Za-z0-9._:/+@-]*$/.test(value);
+}
+
 export function modelKey(model: Pick<DiscoveredModel, "providerId" | "modelId">) {
   return `${model.providerId || ""}\u0000${model.modelId}`;
 }

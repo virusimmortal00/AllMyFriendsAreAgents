@@ -31,6 +31,12 @@ describe("room roster contract", () => {
     expect(validateRosterEntries([{ ...entries[0] }, { ...entries[1], conversationalName: " alpha " }])).toBeUndefined();
   });
 
+  it("accepts OpenRouter alias model identifiers without allowing alias provider identifiers", () => {
+    const entry = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Router", providerId: "openrouter", modelId: "~openai/gpt-latest", enabled: true };
+    expect(validateRosterEntries([entry])).toEqual([expect.objectContaining(entry)]);
+    expect(validateRosterEntries([{ ...entry, providerId: "~openrouter" }])).toBeUndefined();
+  });
+
   it("preserves legacy participant identity while migrating execution to an unavailable OpenCode selection", () => {
     const roster = normalizeRoomAgentRoster({
       revision: 7,

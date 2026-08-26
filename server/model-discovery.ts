@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import {
   modelKey,
   validDiscoveryId,
+  validModelDiscoveryId,
   type DiscoveredModel,
   type ModelDiscoveryResult,
   type ModelReference,
@@ -10,7 +11,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 export const DISCOVERY_TIMEOUT_MS = 10_000;
-export const DISCOVERY_OUTPUT_LIMIT = 256_000;
+export const DISCOVERY_OUTPUT_LIMIT = 1_048_576;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
 
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
@@ -62,7 +63,7 @@ function classifyError(error: unknown): Pick<ModelDiscoveryResult, "status" | "d
 function uniqueModels(models: readonly DiscoveredModel[]) {
   const seen = new Set<string>();
   return models.filter((model) => {
-    if (!validDiscoveryId(model.modelId) || model.providerId && !validDiscoveryId(model.providerId)) return false;
+    if (!validModelDiscoveryId(model.modelId) || model.providerId && !validDiscoveryId(model.providerId)) return false;
     const key = modelKey(model);
     if (seen.has(key)) return false;
     seen.add(key);
@@ -84,7 +85,7 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
     if (slash <= 0) continue;
     const providerId = token.slice(0, slash);
     const modelId = token.slice(slash + 1);
-    if (!validDiscoveryId(providerId) || !validDiscoveryId(modelId)) continue;
+    if (!validDiscoveryId(providerId) || !validModelDiscoveryId(modelId)) continue;
     const variantMatch = line.match(/\bvariants?[:=]\s*([A-Za-z0-9._,+@/-]+)/i);
     let variantIds = variantMatch?.[1].split(",").filter(validDiscoveryId) || [];
     if (!variantIds.length && lines[index + 1]?.trim().startsWith("{")) {
@@ -115,7 +116,7 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
 function configuredReference(): ModelReference | undefined {
   const modelId = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_MODEL?.trim();
   const providerId = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_PROVIDER?.trim();
-  if (!modelId || !validDiscoveryId(modelId) || providerId && !validDiscoveryId(providerId)) return undefined;
+  if (!modelId || !validModelDiscoveryId(modelId) || providerId && !validDiscoveryId(providerId)) return undefined;
   return { ...(providerId ? { providerId } : {}), modelId };
 }
 

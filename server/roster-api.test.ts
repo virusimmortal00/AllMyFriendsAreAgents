@@ -26,7 +26,7 @@ async function fixture() {
   const generations = new ActiveGenerationTracker();
   const discovery = { discover: vi.fn(async () => ({ status: "available" as const, discoveredAt: new Date(0).toISOString(), models: [
     "openai/gpt-5.6-sol", "anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "cursor/cursor-grok-4.6-high", "cursor/composer-2.5", "cursor/gemini-3.7-flash-high", "cursor/glm-5.2-high",
-  ].map((identity) => { const [providerId, modelId] = identity.split("/"); return { providerId, modelId, displayName: identity, provenance: "opencode-catalog" as const }; }) })) } as unknown as ModelDiscoveryService;
+  ].map((identity) => { const separator = identity.indexOf("/"); const providerId = identity.slice(0, separator); const modelId = identity.slice(separator + 1); return { providerId, modelId, displayName: identity, provenance: "opencode-catalog" as const }; }).concat([{ providerId: "openrouter", modelId: "~openai/gpt-latest", displayName: "openrouter/~openai/gpt-latest", provenance: "opencode-catalog" as const }]) })) } as unknown as ModelDiscoveryService;
   const app = express(); app.use(express.json());
   registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -60,6 +60,18 @@ describe("live roster API", () => {
       expect(response.status).toBe(200);
       expect(terminate).toHaveBeenCalledWith("agent:codex-sol");
       expect(api.generations.snapshot()).toEqual({});
+    } finally { await api.close(); }
+  });
+
+  it("creates a dynamic participant from an OpenRouter alias model", async () => {
+    const api = await fixture();
+    try {
+      const response = await api.call("/api/roster", { method: "PUT", body: JSON.stringify({
+        expectedRevision: 1,
+        entries: [{ agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Router", providerId: "openrouter", modelId: "~openai/gpt-latest", enabled: true }],
+      }) });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ roster: { revision: 2, entries: [expect.objectContaining({ conversationalName: "Router", providerId: "openrouter", modelId: "~openai/gpt-latest" })] } });
     } finally { await api.close(); }
   });
 });
