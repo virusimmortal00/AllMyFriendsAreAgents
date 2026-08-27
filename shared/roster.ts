@@ -1,5 +1,6 @@
 import { AGENT_IDS, historicalAgentProfile, isActiveAgentId, isAgentId, registerParticipantProfile, type ActiveAgentId } from "./participants.js";
 import { resolveOpenCodeVariant, validDiscoveryId, validModelDiscoveryId, type ModelReference } from "./model-discovery.js";
+import { normalizeCommandPermissions, validCommandPermissions, type CommandPermissions } from "./command-domain.js";
 
 export const MAX_ROOM_AGENTS = 32;
 
@@ -19,9 +20,10 @@ export interface RoomAgentRosterEntry {
   readonly selectionConfirmationRequired?: boolean;
   /** Server-owned prompt cursor. Roster mutation input cannot set this field. */
   readonly lastSeenMessageId?: string | null;
+  readonly commandPermissions?: CommandPermissions;
 }
 
-export type NormalizedRoomAgentRosterEntry = Omit<RoomAgentRosterEntry, "harness" | "reasoningEffort"> & Required<Pick<RoomAgentRosterEntry, "conversationalName" | "modelId" | "supportsProjectWrites" | "configurationRevision">>;
+export type NormalizedRoomAgentRosterEntry = Omit<RoomAgentRosterEntry, "harness" | "reasoningEffort"> & Required<Pick<RoomAgentRosterEntry, "conversationalName" | "modelId" | "supportsProjectWrites" | "configurationRevision" | "commandPermissions">>;
 
 export interface RoomAgentRoster {
   readonly schemaVersion?: 3;
@@ -43,7 +45,7 @@ export function legacyRosterEntry(agentId: string, enabled: boolean): Normalized
   const profile = historicalAgentProfile(agentId);
   if (!profile) return undefined;
   const providerId = legacyProviderId(profile.provider);
-  return { agentId, conversationalName: profile.conversationalName, ...(providerId ? { providerId } : {}), modelId: profile.modelId, enabled, supportsProjectWrites: profile.supportsProjectWrites, configurationRevision: 1, ...(profile.provider !== "opencode" ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run.", selectionConfirmationRequired: true } : {}) };
+  return { agentId, conversationalName: profile.conversationalName, ...(providerId ? { providerId } : {}), modelId: profile.modelId, enabled, supportsProjectWrites: profile.supportsProjectWrites, configurationRevision: 1, commandPermissions: normalizeCommandPermissions(undefined), ...(profile.provider !== "opencode" ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run.", selectionConfirmationRequired: true } : {}) };
 }
 
 function register(entry: NormalizedRoomAgentRosterEntry) {
@@ -66,6 +68,7 @@ function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boo
   if (value.providerId !== undefined && !validDiscoveryId(value.providerId)) return undefined;
   if (value.variant !== undefined && !validDiscoveryId(value.variant)) return undefined;
   if (value.reasoningEffort !== undefined && !validDiscoveryId(value.reasoningEffort)) return undefined;
+  if (options.rejectVariantConflict && value.commandPermissions !== undefined && !validCommandPermissions(value.commandPermissions)) return undefined;
   const variantSelection = resolveOpenCodeVariant(value);
   if (variantSelection.conflict && options.rejectVariantConflict) return undefined;
   const configurationRevision = Number.isSafeInteger(value.configurationRevision) && Number(value.configurationRevision) > 0 ? Number(value.configurationRevision) : 1;
@@ -76,7 +79,7 @@ function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boo
   const lastSeenMessageId = options.preserveServerPointers && (value.lastSeenMessageId === null || typeof value.lastSeenMessageId === "string" && value.lastSeenMessageId.length <= 200)
     ? value.lastSeenMessageId
     : undefined;
-  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(variantSelection.variant ? { variant: variantSelection.variant } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, ...(conflictReason ? { sessionInvalidationReason: conflictReason } : typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}), ...(lastSeenMessageId !== undefined ? { lastSeenMessageId } : {}) });
+  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(variantSelection.variant ? { variant: variantSelection.variant } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, commandPermissions: normalizeCommandPermissions(value.commandPermissions), ...(conflictReason ? { sessionInvalidationReason: conflictReason } : typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}), ...(lastSeenMessageId !== undefined ? { lastSeenMessageId } : {}) });
 }
 
 export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
