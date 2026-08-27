@@ -410,6 +410,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .roster-active-switch input:checked::after { transform: translateX(20px); }
 .roster-active-switch input:focus-visible { outline: 3px solid rgba(35,104,196,.35); outline-offset: 2px; }
 .roster-config-fields { display: grid; gap: 10px; padding: 12px; border: 1px solid #d2d7de; border-radius: 8px; background: #fff; }
+.roster-command-permissions { display: grid; gap: 7px; margin: 0; padding: 9px; border: 1px solid #c9d0d8; }
+.roster-command-permissions legend { padding: 0 4px; font-weight: 700; }
+.roster-command-permissions p { margin: 0; color: #596573; font-size: 12px; }
+.roster-permission-toggle { font-weight: 700; }
+.roster-command-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 10px; }
+.roster-command-list label, .roster-permission-toggle { display: flex; align-items: center; gap: 5px; }
 .roster-current-model { display: grid; gap: 8px; padding: 10px; border: 1px solid #d5d9df; border-radius: 7px; background: #f8f9fb; }
 .roster-current-model > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .roster-current-model > header > span { display: grid; min-width: 0; }
@@ -689,7 +695,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   z-index: 45;
   left: 8px;
   bottom: calc(100% - 42px);
-  width: min(430px, calc(100% - 128px));
+  width: min(520px, calc(100% - 16px));
   max-height: min(280px, 45vh);
   padding: 3px;
   overflow: auto;
@@ -697,9 +703,14 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   background: var(--chrome);
   box-shadow: 4px 5px 0 rgba(0,0,0,.28);
 }
-.mention-suggestions button { display: flex; width: 100%; align-items: baseline; gap: 8px; padding: 7px 9px; border: 0; background: transparent; text-align: left; }
+.mention-suggestions button { display: flex; width: 100%; min-width: 0; align-items: baseline; gap: 8px; padding: 7px 9px; border: 0; background: transparent; text-align: left; }
 .mention-suggestions button[aria-selected="true"], .mention-suggestions button:hover { background: var(--blue); color: white; }
-.mention-suggestions button span { overflow: hidden; opacity: .78; text-overflow: ellipsis; white-space: nowrap; }
+.mention-suggestions button strong, .mention-suggestions button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-suggestions button strong { flex: 0 1 auto; }
+.mention-suggestions button span { flex: 1; opacity: .78; }
+.mention-provider-mark { width: 12px; flex: 0 0 12px; font-size: 10px; text-align: center; }
+.mention-provider-mark--agent { color: #2368c4; }
+.mention-provider-mark--human { color: #5d6876; }
 
 .controls-panel { padding-bottom: 8px; background: var(--chrome); }
 .room-settings-form { display: contents; }

@@ -20,6 +20,7 @@ import { ConfirmationDialog } from "./components";
 import { RichModelPicker } from "./model-picker";
 import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
+import { normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 
 export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
   initialRoster: RoomAgentRoster;
@@ -130,6 +131,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   } : undefined;
   const selectedModel = selectedReference ? discoveredModels.find((model) => model.modelId === selectedReference.modelId && (model.providerId || "") === (selectedReference.providerId || "")) : undefined;
   const selectedModelAvailable = Boolean(modelDiscovery && selectedReference?.modelId && selectedModelAvailability(selectedReference, modelDiscovery).available);
+  const selectedCommandPermissions = selectedEntry ? normalizeCommandPermissions(selectedEntry.commandPermissions) : undefined;
   const controlAuthenticationReady = Boolean(controlStatus && controlUsername && controlPassword.length >= 12 && (controlStatus.claimed || bootstrapSecret));
 
   function replaceAt(index: number, entry: RoomAgentRosterEntry) {
@@ -306,6 +308,21 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
                       </section>
                       <div className="roster-model-options"><label>Variant / reasoning effort<select value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => { const { reasoningEffort: _legacyEffort, ...entry } = selectedEntry; replaceAt(selectedIndex, { ...entry, variant: event.target.value || undefined }); }}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
+                      <fieldset className="roster-command-permissions">
+                        <legend>Agent commands</legend>
+                        <p>Choose which slash commands this agent may invoke. Human commands are controlled by the room server.</p>
+                        <label className="roster-permission-toggle"><input type="checkbox" checked={selectedCommandPermissions?.allowAll ?? true} disabled={saving} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: event.target.checked ? { allowAll: true, allowed: [...ROOM_COMMANDS] } : { allowAll: false, allowed: [...ROOM_COMMANDS] } })} /> Allow all commands</label>
+                        <div className="roster-command-list" aria-label={`Command permissions for ${selectedName}`}>
+                          {ROOM_COMMANDS.map((command) => {
+                            const checked = selectedCommandPermissions?.allowAll || selectedCommandPermissions?.allowed.includes(command);
+                            return <label key={command}><input type="checkbox" checked={checked} disabled={saving || selectedCommandPermissions?.allowAll} onChange={(event) => {
+                              const allowed = new Set(selectedCommandPermissions?.allowed || []);
+                              if (event.target.checked) allowed.add(command); else allowed.delete(command);
+                              replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: { allowAll: false, allowed: [...allowed] as RoomCommandName[] } });
+                            }} /> /{command}</label>;
+                          })}
+                        </div>
+                      </fieldset>
                       {selectedEntry.sessionInvalidationReason ? <div className="roster-diagnostic"><p>{selectedEntry.sessionInvalidationReason}</p>{selectedEntry.selectionConfirmationRequired && selectedModelAvailable ? <button type="button" className="classic-button" onClick={() => replaceAt(selectedIndex, { ...selectedEntry, sessionInvalidationReason: "", selectionConfirmationRequired: undefined })}>Confirm selected OpenCode model</button> : null}</div> : null}
                     </div>
                     <section className="roster-danger-zone"><span><strong>Delete configuration</strong><small>Deactivation is reversible. Deleting removes this alias and its settings from the room.</small></span><button type="button" disabled={saving} onClick={(event) => setDeleteRequest({ agentId: selectedEntry.agentId, returnFocusTo: event.currentTarget })}>Delete agent…</button></section>
