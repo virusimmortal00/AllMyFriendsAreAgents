@@ -1,4 +1,5 @@
 import type { AgentId } from "../shared/participants.js";
+import { randomUUID } from "node:crypto";
 
 export const ACTIVE_GENERATION_TIMEOUT_MS = 6 * 60_000;
 
@@ -6,6 +7,7 @@ export type ActiveGenerations = Record<string, AgentId>;
 
 export class ActiveGenerationTracker {
   private readonly generations = new Map<string, AgentId>();
+  private readonly reservations = new Map<string, AgentId>();
   private readonly timeouts = new Map<string, NodeJS.Timeout>();
 
   constructor(
@@ -33,9 +35,10 @@ export class ActiveGenerationTracker {
   }
 
   clear() {
-    if (this.generations.size === 0) return false;
+    if (this.generations.size === 0 && this.reservations.size === 0) return false;
     for (const timeout of this.timeouts.values()) clearTimeout(timeout);
     this.generations.clear();
+    this.reservations.clear();
     this.timeouts.clear();
     this.emit();
     return true;
@@ -44,11 +47,30 @@ export class ActiveGenerationTracker {
   clearAgent(agent: AgentId) {
     const matching = [...this.generations].filter(([, candidate]) => candidate === agent).map(([generationId]) => generationId);
     for (const generationId of matching) this.finish(generationId);
+    for (const [reservationId, candidate] of this.reservations) if (candidate === agent) this.reservations.delete(reservationId);
     return matching.length > 0;
   }
 
   snapshot(): ActiveGenerations {
     return Object.fromEntries(this.generations);
+  }
+
+  size() { return this.generations.size + this.reservations.size; }
+
+  reserve(agent: AgentId, limit: number) {
+    if (this.size() >= limit || [...this.generations.values(), ...this.reservations.values()].includes(agent)) return undefined;
+    const reservationId = `command:${randomUUID()}`;
+    this.reservations.set(reservationId, agent);
+    let released = false;
+    const release = () => { if (released) return false; released = true; return this.reservations.delete(reservationId); };
+    return {
+      release,
+      activate: (generationId: string) => {
+        if (released || !this.reservations.delete(reservationId)) return false;
+        released = true;
+        return this.start(generationId, agent);
+      },
+    };
   }
 
   private emit() {

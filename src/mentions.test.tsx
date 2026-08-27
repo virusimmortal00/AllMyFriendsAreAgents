@@ -72,7 +72,7 @@ describe("participant mention autocomplete", () => {
     await user.type(message, "hello @gr");
     expect(screen.getByRole("listbox", { name: "Mention a participant" })).toBeTruthy();
     await user.keyboard("{Enter}");
-    expect((message as HTMLTextAreaElement).value).toBe("hello @Grok");
+    expect((message as HTMLTextAreaElement).value).toBe("hello @Grok ");
     await user.type(message, " please review");
     expect(screen.getByLabelText("Mention metadata").textContent).toContain('"targetId":"cursor-grok"');
   });
@@ -116,5 +116,32 @@ describe("participant mention autocomplete", () => {
     fireEvent.paste(message, { clipboardData: { getData: () => "@Alice " } });
     fireEvent.change(message, { target: { value: "@Alice @Alice" } });
     expect(screen.getByLabelText("Paste mention metadata").textContent).toContain('"start":7,"end":13');
+  });
+
+  it("adds one trailing space without replacing following whitespace or mention ranges", async () => {
+    const user = userEvent.setup();
+    render(<MentionFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await user.type(message, "@gr");
+    await user.keyboard("{Enter}");
+    expect(message.value).toBe("@Grok ");
+    expect(screen.getByLabelText("Mention metadata").textContent).toContain('"end":5');
+  });
+
+  it("keeps keyboard navigation and preserves following whitespace for long names", async () => {
+    const user = userEvent.setup();
+    const name = "A very long participant alias that should stay a single line";
+    function LongNameFlow() {
+      const [draft, setDraft] = useState(`@long\nnext`);
+      return <ChatComposer draft={draft} mentions={[]} mentionCandidates={[{ targetKind: "human", targetId: "human-long", label: name, description: "Complete participant name", revision: 1 }]} style={DEFAULT_PARTICIPANT_STYLES.you} onDraftChange={setDraft} onStyleChange={() => undefined} onSubmit={(event) => event.preventDefault()} />;
+    }
+    render(<LongNameFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    message.focus(); message.setSelectionRange(5, 5);
+    fireEvent.select(message);
+    await user.keyboard("{ArrowDown}{ArrowUp}{Tab}");
+    expect(message.value).toBe(`@${name}\nnext`);
+    const option = screen.queryByRole("option", { name: new RegExp(`@${name}`) });
+    expect(option).toBeNull();
   });
 });

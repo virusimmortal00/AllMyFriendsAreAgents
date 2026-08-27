@@ -2,11 +2,28 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings } from "./api";
+import { ApiRequestError, authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings, voteOnPoll } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("browser identity requests", () => {
+  it("keeps one browser vote identity across retry and identity recovery without colliding across browsers", async () => {
+    const bodies: Array<{clientVoteId:string}> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path:string,init?:RequestInit)=>{bodies.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({kind:"accepted"}));}));
+    await voteOnPoll("poll-one",0);await voteOnPoll("poll-one",1);await voteOnPoll("poll-two",0);
+    expect(bodies[0]!.clientVoteId).toBe(bodies[1]!.clientVoteId);
+    expect(bodies[2]!.clientVoteId).not.toBe(bodies[0]!.clientVoteId);
+  });
+  it("reports a private command rejection as a known HTTP outcome", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Denied." }), { status: 400, headers: { "Content-Type": "application/json" } })));
+    await expect(sendMessage("/task no", "command-denied-1")).rejects.toMatchObject({ name: "ApiRequestError", message: "Denied.", outcomeUnknown: false, status: 400, body: { error: "Denied." } } satisfies Partial<ApiRequestError>);
+  });
+
+  it("returns a private command envelope from an expected HTTP 400", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ command: true, clientSubmissionId: "command-private-1", result: { kind: "private-error", message: "Only owners may run that command." } }), { status: 400, headers: { "Content-Type": "application/json" } })));
+    await expect(sendMessage("/task no", "command-private-1")).resolves.toMatchObject({ result: { kind: "private-error", message: "Only owners may run that command." } });
+  });
+
   it("reuses a continuation client message ID after an unknown outcome", async () => {
     const bodies: Array<Record<string, unknown>> = []; let attempt = 0;
     vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {

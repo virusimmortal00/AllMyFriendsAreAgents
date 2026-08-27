@@ -12,7 +12,7 @@ import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isAgentId, participantScree
 import type { ImplementationCapability, ImplementationUnavailableReason } from "../shared/protocol";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentHealth, AgentId, HumanPresence, RoomMessage } from "./types";
+import type { AgentHealth, AgentId, HumanPresence, PublicPollProjection, RoomMessage } from "./types";
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { workshopLayout } from "./workshop-dialog";
@@ -499,6 +499,17 @@ export const Transcript = memo(function Transcript({
   );
 });
 
+export function PollCards({ polls, disabled = false, onVote }: { polls: readonly PublicPollProjection[]; disabled?: boolean; onVote: (pollId: string, optionIndex: number) => void }) {
+  if (!polls.length) return null;
+  return <section className="poll-cards" aria-label="Room polls" aria-live="polite">
+    {polls.map((poll) => <article className="poll-card" key={poll.pollId}>
+      <h3>{poll.question}</h3>
+      <p>{poll.totalVotes} {poll.totalVotes === 1 ? "vote" : "votes"}</p>
+      <ol>{poll.options.map((option, index) => <li key={`${poll.pollId}:${index}`}><button type="button" disabled={disabled} onClick={() => onVote(poll.pollId, index)} aria-label={`Vote for ${option}`}>{option}</button><span aria-label={`${poll.tallies[index] || 0} votes`}>{poll.tallies[index] || 0}</span></li>)}</ol>
+    </article>)}
+  </section>;
+}
+
 export function WorkshopDialog({ data, loading, missing, error = "", connected = true, onRetry, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; error?: string; connected?: boolean; onRetry?: () => void; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
   const view = data?.improvement;
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
@@ -629,7 +640,9 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   function chooseMention(candidate: MentionCandidate) {
     if (!mentionQuery) return;
     const token = `@${candidate.label}`;
-    const nextDraft = `${draft.slice(0, mentionQuery.start)}${token}${draft.slice(mentionQuery.end)}`;
+    const following = draft.slice(mentionQuery.end);
+    const trailingSpace = following && /^\s/.test(following) ? "" : " ";
+    const nextDraft = `${draft.slice(0, mentionQuery.start)}${token}${trailingSpace}${following}`;
     const nextMention: MessageMention = {
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
@@ -646,7 +659,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       .sort((left, right) => left.start - right.start));
     setMentionQuery(null);
     requestAnimationFrame(() => {
-      const cursor = mentionQuery.start + token.length;
+      const cursor = mentionQuery.start + token.length + trailingSpace.length;
       textarea.current?.focus();
       textarea.current?.setSelectionRange(cursor, cursor);
     });
@@ -850,7 +863,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => chooseMention(candidate)}
             >
-              <strong>@{candidate.label}</strong><span>{candidate.description}</span>
+              <i className={`mention-provider-mark mention-provider-mark--${candidate.targetKind}`} aria-hidden="true">{candidate.targetKind === "agent" ? "◆" : "●"}</i><strong title={`@${candidate.label}${candidate.description ? ` — ${candidate.description}` : ""}`}>@{candidate.label}</strong><span title={candidate.description}>{candidate.description}</span>
             </button>
           ))}
         </div>

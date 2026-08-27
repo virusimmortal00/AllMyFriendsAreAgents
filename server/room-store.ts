@@ -53,6 +53,8 @@ import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
 import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
+import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
+import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_RECENT_POLLS, parseCommandPollCursor, type AcceptCommandResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -103,6 +105,12 @@ function sameStyle(left: ChatStyle | undefined, right: ChatStyle) {
     && left.underline === right.underline;
 }
 
+function validAttemptTransition(from: CommandAttempt["status"], to: CommandAttempt["status"]) {
+  return (from === "queued" && ["active", "failed", "superseded"].includes(to))
+    || (from === "active" && ["delivery-pending", "completed", "failed", "superseded"].includes(to))
+    || (from === "delivery-pending" && to === "completed");
+}
+
 function topicMessage(topic: string): RoomMessage {
   return {
     id: randomUUID(),
@@ -147,6 +155,7 @@ export class RoomStore implements RoomRepository {
   readonly assignmentsPath: string;
   readonly tasksPath: string;
   readonly continuationsPath: string;
+  readonly commandsPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -155,17 +164,20 @@ export class RoomStore implements RoomRepository {
   private taskQueue: Promise<void> = Promise.resolve();
   private continuationQueue: Promise<void> = Promise.resolve();
   private readonly contextSummaries = new Map<string, string>();
+  private commandQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
   private taskState: JsonTaskState;
   private continuationState: JsonContinuationState;
+  private commandState: JsonCommandState;
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState, commandState: JsonCommandState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.assignmentsPath = path.join(stateDirectory, "assignments.json");
     this.tasksPath = path.join(stateDirectory, "tasks.json");
     this.continuationsPath = path.join(stateDirectory, "continuations.json");
+    this.commandsPath = path.join(stateDirectory, "command-records.json");
     this.state = state;
     this.improvementState = improvementState;
     this.assignments = assignments;
@@ -176,6 +188,7 @@ export class RoomStore implements RoomRepository {
         this.contextSummaries.set(this.contextSummaryKey(entry), entry.summary);
       }
     }
+    this.commandState = commandState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -186,6 +199,7 @@ export class RoomStore implements RoomRepository {
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
     const tasksPath = path.join(stateDirectory, "tasks.json");
     const continuationsPath = path.join(stateDirectory, "continuations.json");
+    const commandsPath = path.join(stateDirectory, "command-records.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -212,6 +226,9 @@ export class RoomStore implements RoomRepository {
     const continuationState = await readFile(continuationsPath, "utf8")
       .then((contents) => normalizeJsonContinuationState(JSON.parse(contents), CANONICAL_ROOM_ID))
       .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonContinuationState(); throw error; });
+    const commandState = await readFile(commandsPath, "utf8")
+      .then((contents) => normalizeJsonCommandState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonCommandState(); throw error; });
 
     try {
       await chmod(statePath, 0o600);
@@ -279,7 +296,7 @@ export class RoomStore implements RoomRepository {
         ...(stored.roomConfiguration ? { roomConfiguration: normalizeRoomConfiguration(stored.roomConfiguration) } : {}),
         ...(configurationRevisionWasMissing ? { agentContextSummaries: [] } : {}),
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState, commandState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -297,7 +314,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState, commandState);
       await store.save();
       return store;
     }
@@ -336,6 +353,26 @@ export class RoomStore implements RoomRepository {
     this.state.messages.push(message);
     await this.save();
     return message;
+  }
+
+  async addCommandAuditMessageOnce(auditId: string, text: string) {
+    const id = `command-audit:${auditId}`;
+    const existing = this.state.messages.find((message) => message.id === id);
+    if (existing) return structuredClone(existing);
+    const message: RoomMessage = { id, speaker: "system", text: text.trim(), timestamp: new Date().toISOString(), kind: "status" };
+    this.state.messages.push(message);
+    await this.save();
+    return structuredClone(message);
+  }
+
+  async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number }) {
+    const id = `command-delivery:${attemptId}:${sequence}`;
+    const existing = this.state.messages.find((message) => message.id === id);
+    if (existing) return structuredClone(existing);
+    const participant = styledParticipant(speaker);
+    const messageStyle = participant ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant] || DEFAULT_PARTICIPANT_STYLES["codex-sol"]) : undefined;
+    const message: RoomMessage = { id, speaker, text: text.trim(), timestamp: new Date().toISOString(), kind: "chat", ...(messageStyle ? { style: messageStyle } : {}), ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}), ...(speaker !== "you" && speaker !== "system" ? { speakerName: AGENT_PROFILES[speaker]?.conversationalName || speaker } : {}) };
+    this.state.messages.push(message); await this.save(); return structuredClone(message);
   }
 
   async updateSettings(update: Partial<RoomSettings>) {
@@ -862,6 +899,70 @@ export class RoomStore implements RoomRepository {
     return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxMutationMatches(current, value, true)) throw new Error("Invalid continuation inbox archive or immutable provenance"); const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; if (!continuationInboxMatchesJob(value, job)) throw new Error("Continuation inbox provenance does not match its job"); const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; const archiveEvent = capacityArchiveAudit(archivedJob, job.status, value.updatedAt); if (!continuationAuditMatches(job, archivedJob, archiveEvent)) throw new Error("Invalid archived continuation projection"); return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, archiveEvent] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
   }
 
+  async createCommandSubmission(submission: CommandSubmission) {
+    if (!validSubmission(submission)) throw new Error("Invalid command submission");
+    return this.mutateCommands<CreateCommandSubmissionResult>((state) => { const duplicate = state.submissions.find((item) => item.roomId === submission.roomId && (item.submissionId === submission.submissionId || item.clientSubmissionId === submission.clientSubmissionId)); return duplicate ? { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } } : { next: { ...state, submissions: [...state.submissions, structuredClone(submission)] }, result: { kind: "created" as const, submission: structuredClone(submission) } }; });
+  }
+  async acceptCommand(acceptance: CommandAcceptance): Promise<AcceptCommandResult> {
+    if (!validCommandAcceptance(acceptance)) throw new Error("Invalid command acceptance");
+    return this.mutateCommands<AcceptCommandResult>((state) => {
+      const duplicate = state.submissions.find((item) => item.roomId === acceptance.submission.roomId && (item.submissionId === acceptance.submission.submissionId || item.clientSubmissionId === acceptance.submission.clientSubmissionId));
+      if (duplicate) return { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } };
+      const tombstone=state.tombstones.find((item)=>item.roomId===acceptance.submission.roomId&&(item.submissionId===acceptance.submission.submissionId||item.clientSubmissionId===acceptance.submission.clientSubmissionId));
+      if(tombstone)return{result:{kind:"compacted-duplicate" as const,tombstone:structuredClone(tombstone)}};
+      const actualRevision = state.roundRobin.find((item) => item.roomId === acceptance.submission.roomId)?.revision ?? 0;
+      if (acceptance.roundRobin && actualRevision !== acceptance.roundRobin.expectedRevision) return { result: { kind: "conflict" as const, actualRevision } };
+      return { next: { ...state, submissions: [...state.submissions, structuredClone(acceptance.submission)], audits: [...state.audits, structuredClone(acceptance.audit)], polls: acceptance.poll ? [...state.polls, structuredClone(acceptance.poll)] : state.polls, attempts: acceptance.attempt ? [...state.attempts, structuredClone(acceptance.attempt)] : state.attempts, povExecutions: acceptance.povExecution ? [...state.povExecutions, structuredClone(acceptance.povExecution)] : state.povExecutions, roundRobin: acceptance.roundRobin ? [...state.roundRobin.filter((item) => item.roomId !== acceptance.submission.roomId), structuredClone(acceptance.roundRobin.state)] : state.roundRobin }, result: { kind: "accepted" as const, acceptance: structuredClone(acceptance) } };
+    });
+  }
+  async reassignCommandAttempt(value: CommandReassignment) {
+    if (!validCommandReassignment(value)) throw new Error("Invalid command reassignment");
+    return this.mutateCommands<{ kind: "accepted"; current: CommandAttempt; next: CommandAttempt } | { kind: "conflict" | "not-found" }>((state) => {
+      const current = state.attempts.find((item) => item.roomId === value.current.roomId && item.attemptId === value.current.attemptId);
+      if (!current) return { result: { kind: "not-found" as const } };
+      const pointer = state.roundRobin.find((item) => item.roomId === value.current.roomId);
+      const conflicts = current.updatedAt !== value.expectedUpdatedAt
+        || current.submissionId !== value.current.submissionId
+        || current.attempt !== value.current.attempt
+        || current.agentId !== value.current.agentId
+        || current.createdAt !== value.current.createdAt
+        || !validAttemptTransition(current.status, value.current.status)
+        || (pointer?.revision ?? 0) !== value.roundRobin.expectedRevision
+        || state.attempts.some((item) => item.roomId === value.next.roomId && (item.attemptId === value.next.attemptId || item.submissionId === value.next.submissionId && item.attempt === value.next.attempt));
+      if (conflicts) return { result: { kind: "conflict" as const } };
+      return {
+        next: {
+          ...state,
+          attempts: [...state.attempts.map((item) => item === current ? structuredClone(value.current) : item), structuredClone(value.next)],
+          roundRobin: [...state.roundRobin.filter((item) => item.roomId !== value.current.roomId), structuredClone(value.roundRobin.state)],
+        },
+        result: { kind: "accepted" as const, current: structuredClone(value.current), next: structuredClone(value.next) },
+      };
+    });
+  }
+  async getCommandSubmission(roomId: string, submissionId: string) { await this.commandQueue; const value = this.commandState.submissions.find((item) => item.roomId === roomId && item.submissionId === submissionId); return value ? structuredClone(value) : undefined; }
+  async getRoundRobinState(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.roundRobin.find((item) => item.roomId === roomId) || { roomId, lastAssignedAgentId: null, revision: 0, updatedAt: new Date(0).toISOString() }); }
+  async compareAndSetRoundRobinState(expectedRevision: number, value: RoundRobinState) { if (!validRoundRobin(value) || value.revision !== expectedRevision + 1) throw new Error("Invalid round-robin state"); return this.mutateCommands<{ kind: "accepted"; state: RoundRobinState } | { kind: "conflict"; actualRevision: number }>((state) => { const actualRevision = state.roundRobin.find((item) => item.roomId === value.roomId)?.revision ?? 0; return actualRevision !== expectedRevision ? { result: { kind: "conflict" as const, actualRevision } } : { next: { ...state, roundRobin: [...state.roundRobin.filter((item) => item.roomId !== value.roomId), structuredClone(value)] }, result: { kind: "accepted" as const, state: structuredClone(value) } }; }); }
+  async createCommandAttempt(attempt: CommandAttempt) { if (!validAttempt(attempt)) throw new Error("Invalid command attempt"); return this.mutateCommands<{ kind: "created" | "duplicate"; attempt: CommandAttempt }>((state) => { const duplicate = state.attempts.find((item) => item.roomId === attempt.roomId && (item.attemptId === attempt.attemptId || item.submissionId === attempt.submissionId && item.attempt === attempt.attempt)); return duplicate ? { result: { kind: "duplicate" as const, attempt: structuredClone(duplicate) } } : { next: { ...state, attempts: [...state.attempts, structuredClone(attempt)] }, result: { kind: "created" as const, attempt: structuredClone(attempt) } }; }); }
+  async listCommandAttempts(roomId: string, submissionId: string) { await this.commandQueue; return structuredClone(this.commandState.attempts.filter((item) => item.roomId === roomId && item.submissionId === submissionId).sort((a, b) => a.attempt - b.attempt)); }
+  async listPendingCommandAttempts(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.attempts.filter((item) => item.roomId === roomId && (item.status === "queued" || item.status === "active" || item.status === "delivery-pending")).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.attemptId.localeCompare(b.attemptId))); }
+  async compareAndSetCommandAttempt(expectedUpdatedAt: string, attempt: CommandAttempt) { if (!validAttempt(attempt) || attempt.updatedAt === expectedUpdatedAt) throw new Error("Invalid command attempt transition"); return this.mutateCommands<{ kind: "accepted"; attempt: CommandAttempt } | { kind: "conflict" | "not-found" }>((state) => { const current = state.attempts.find((item) => item.roomId === attempt.roomId && item.attemptId === attempt.attemptId); if (!current) return { result: { kind: "not-found" as const } }; if (current.updatedAt !== expectedUpdatedAt || current.submissionId !== attempt.submissionId || current.attempt !== attempt.attempt || current.agentId !== attempt.agentId || current.createdAt !== attempt.createdAt || !validAttemptTransition(current.status, attempt.status)) return { result: { kind: "conflict" as const } }; return { next: { ...state, attempts: state.attempts.map((item) => item === current ? structuredClone(attempt) : item) }, result: { kind: "accepted" as const, attempt: structuredClone(attempt) } }; }); }
+  async createCommandPoll(poll: CommandPoll) { if (!validPoll(poll)) throw new Error("Invalid command poll"); return this.mutateCommands<{ kind: "created" | "duplicate"; poll: CommandPoll }>((state) => { const duplicate = state.polls.find((item) => item.roomId === poll.roomId && (item.pollId === poll.pollId || item.submissionId === poll.submissionId)); return duplicate ? { result: { kind: "duplicate" as const, poll: structuredClone(duplicate) } } : { next: { ...state, polls: [...state.polls, structuredClone(poll)] }, result: { kind: "created" as const, poll: structuredClone(poll) } }; }); }
+  async listCommandPolls(roomId: string,query:{limit?:number;before?:string}={}) { await this.commandQueue;const limit=Math.max(1,Math.min(MAX_RECENT_POLLS,query.limit||50));const before=parseCommandPollCursor(query.before); return structuredClone(this.commandState.polls.filter((poll) => poll.roomId === roomId&&(!before||poll.createdAt<before.createdAt||poll.createdAt===before.createdAt&&poll.pollId<before.pollId)).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.pollId.localeCompare(a.pollId)).slice(0,limit)); }
+  async getCommandPoll(roomId: string, pollId: string) { await this.commandQueue; const poll = this.commandState.polls.find((item) => item.roomId === roomId && item.pollId === pollId); return poll ? structuredClone(poll) : undefined; }
+  async createCommandVote(vote: CommandVote) { if (!validVote(vote)) throw new Error("Invalid command vote"); return this.mutateCommands<CreateCommandVoteResult>((state) => { const poll = state.polls.find((item) => item.roomId === vote.roomId && item.pollId === vote.pollId); if (!poll || vote.optionIndex >= poll.options.length) return { result: { kind: "rejected" as const, reason: "Poll or option does not exist in this room." } }; const duplicate = state.votes.find((item) => item.roomId === vote.roomId && item.pollId === vote.pollId && (item.voterId === vote.voterId || item.mutationId === vote.mutationId)); return duplicate ? { result: { kind: "duplicate" as const, vote: structuredClone(duplicate) } } : { next: { ...state, votes: [...state.votes, structuredClone(vote)] }, result: { kind: "created" as const, vote: structuredClone(vote) } }; }); }
+  async listCommandVotes(roomId: string, pollId: string) { await this.commandQueue; return structuredClone(this.commandState.votes.filter((item) => item.roomId === roomId && item.pollId === pollId)); }
+  async createCommandAuditIdentity(audit: CommandAuditIdentity) { if (!validAudit(audit)) throw new Error("Invalid command audit"); return this.mutateCommands<{ kind: "created" | "duplicate"; audit: CommandAuditIdentity }>((state) => { const duplicate = state.audits.find((item) => item.roomId === audit.roomId && (item.auditId === audit.auditId || item.submissionId === audit.submissionId)); return duplicate ? { result: { kind: "duplicate" as const, audit: structuredClone(duplicate) } } : { next: { ...state, audits: [...state.audits, structuredClone(audit)] }, result: { kind: "created" as const, audit: structuredClone(audit) } }; }); }
+  async getCommandAuditIdentity(roomId: string, submissionId: string) { await this.commandQueue; const audit = this.commandState.audits.find((item) => item.roomId === roomId && item.submissionId === submissionId); return audit ? structuredClone(audit) : undefined; }
+  async listCommandAuditIdentities(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.audits.filter((item) => item.roomId === roomId).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.auditId.localeCompare(b.auditId))); }
+  async listPendingPovExecutions(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.povExecutions.filter((item) => item.roomId===roomId&&(item.status==="queued"||item.status==="active")).sort((a,b)=>a.createdAt.localeCompare(b.createdAt))); }
+  async getPovExecution(roomId: string, submissionId: string) { await this.commandQueue; const value=this.commandState.povExecutions.find((item)=>item.roomId===roomId&&item.submissionId===submissionId);return value?structuredClone(value):undefined; }
+  async compareAndSetPovExecution(expectedUpdatedAt:string,execution:CommandPovExecution){if(!validPovExecution(execution)||execution.updatedAt===expectedUpdatedAt)throw new Error("Invalid POV execution transition");return this.mutateCommands<{kind:"accepted";execution:CommandPovExecution}|{kind:"conflict"|"not-found"}>((state)=>{const current=state.povExecutions.find((item)=>item.roomId===execution.roomId&&item.executionId===execution.executionId);if(!current)return{result:{kind:"not-found" as const}};const valid=current.updatedAt===expectedUpdatedAt&&current.submissionId===execution.submissionId&&current.createdAt===execution.createdAt&&JSON.stringify(current.targetAgentIds)===JSON.stringify(execution.targetAgentIds)&&current.processedTargetAgentIds.every((agent)=>execution.processedTargetAgentIds.includes(agent))&&(current.status==="queued"&&["active","failed","cancelled"].includes(execution.status)||current.status==="active"&&["active","completed","failed","cancelled"].includes(execution.status));if(!valid)return{result:{kind:"conflict" as const}};return{next:{...state,povExecutions:state.povExecutions.map((item)=>item.executionId===execution.executionId&&item.roomId===execution.roomId?structuredClone(execution):item)},result:{kind:"accepted" as const,execution:structuredClone(execution)}};});}
+  async appendDiagnostic(record: DiagnosticRecord) { if (!validDiagnostic(record)) throw new Error("Invalid diagnostic record"); return this.mutateCommands<{ kind: "created" | "duplicate"; record: DiagnosticRecord }>((state) => { const duplicate = state.diagnostics.find((item) => item.roomId === record.roomId && (item.recordId === record.recordId || item.correlationId === record.correlationId)); if (duplicate) return { result: { kind: "duplicate" as const, record: structuredClone(duplicate) } }; const cutoff = Date.now() - DIAGNOSTIC_RETENTION_MS; const retained = state.diagnostics.filter((item) => Date.parse(item.createdAt) >= cutoff); const peers = retained.filter((item) => item.roomId === record.roomId && item.agentId === record.agentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); const remove = new Set(peers.slice(0, Math.max(0, peers.length - MAX_DIAGNOSTICS_PER_ROOM_AGENT + 1)).map(({ recordId }) => recordId)); return { next: { ...state, diagnostics: [...retained.filter((item) => !remove.has(item.recordId)), structuredClone(record)] }, result: { kind: "created" as const, record: structuredClone(record) } }; }); }
+  async getDiagnostic(roomId: string, agentId: AgentId, recordId: string) { await this.commandQueue; const record = this.commandState.diagnostics.find((item) => item.roomId === roomId && item.agentId === agentId && item.recordId === recordId); return record ? structuredClone(record) : undefined; }
+  async listDiagnostics(roomId: string, input: AgentId | DiagnosticQuery, legacyLimit = 50) { await this.commandQueue; const query = typeof input === "string" ? { agentId: input, limit: legacyLimit } : input; const limit = Math.max(1, Math.min(MAX_DIAGNOSTIC_QUERY_LIMIT, query.limit || 50)); const search = query.search?.trim().toLocaleLowerCase().slice(0, MAX_DIAGNOSTIC_SEARCH_LENGTH); return structuredClone(this.commandState.diagnostics.filter((item) => item.roomId === roomId && item.agentId === query.agentId && (!query.reason || item.reason === query.reason) && (!search || `${item.reason}\n${item.promptHead || ""}\n${item.diagnosticText || ""}`.toLocaleLowerCase().includes(search))).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.recordId.localeCompare(a.recordId)).slice(0, limit)); }
+  async compactCommandRecords(roomId:string,now:string){const cutoff=Date.parse(now)-COMMAND_RECORD_RETENTION_MS;await this.mutateCommands<void>((state)=>{const scoped=state.submissions.filter((item)=>item.roomId===roomId).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));const pending=new Set([...state.attempts.filter((item)=>item.roomId===roomId&&["queued","active","delivery-pending"].includes(item.status)),...state.povExecutions.filter((item)=>item.roomId===roomId&&(item.status==="queued"||item.status==="active"))].map((item)=>item.submissionId));const keep=new Set(scoped.filter((item,index)=>pending.has(item.submissionId)||(index<MAX_COMMAND_SUBMISSIONS_PER_ROOM&&Date.parse(item.createdAt)>=cutoff)).map((item)=>item.submissionId));const removed=scoped.filter((item)=>!keep.has(item.submissionId));if(!removed.length)return{result:undefined};const removedIds=new Set(removed.map((item)=>item.submissionId));const pollIds=new Set(state.polls.filter((item)=>item.roomId===roomId&&removedIds.has(item.submissionId)).map((item)=>item.pollId));const newTombstones=removed.map((item)=>({roomId,submissionId:item.submissionId,clientSubmissionId:item.clientSubmissionId,command:item.command,compactedAt:now}));const otherRoomTombstones=state.tombstones.filter((item)=>item.roomId!==roomId);const roomTombstones=[...state.tombstones.filter((item)=>item.roomId===roomId&&!removedIds.has(item.submissionId)),...newTombstones].sort((a,b)=>b.compactedAt.localeCompare(a.compactedAt)||b.submissionId.localeCompare(a.submissionId)).slice(0,MAX_COMMAND_TOMBSTONES_PER_ROOM);const inRemovedRoom=(item:{roomId:string;submissionId:string})=>item.roomId===roomId&&removedIds.has(item.submissionId);return{next:{...state,submissions:state.submissions.filter((item)=>!inRemovedRoom(item)),attempts:state.attempts.filter((item)=>!inRemovedRoom(item)),povExecutions:state.povExecutions.filter((item)=>!inRemovedRoom(item)),polls:state.polls.filter((item)=>!inRemovedRoom(item)),votes:state.votes.filter((item)=>!(item.roomId===roomId&&pollIds.has(item.pollId))),audits:state.audits.filter((item)=>!inRemovedRoom(item)),tombstones:[...otherRoomTombstones,...roomTombstones]},result:undefined};});}
+
   private async mutateImprovements<T>(
     mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
   ): Promise<T> {
@@ -917,6 +1018,13 @@ export class RoomStore implements RoomRepository {
     const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
     const operation = this.continuationQueue.then(async () => { try { const changed = mutation(this.continuationState); if (changed.next) { const next = normalizeJsonContinuationState(changed.next, CANONICAL_ROOM_ID); const temporaryPath = `${this.continuationsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.continuationsPath); await chmod(this.continuationsPath, 0o600); this.continuationState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
     this.continuationQueue = operation.catch(() => undefined); return result;
+  }
+
+  private async mutateCommands<T>(mutation: (state: JsonCommandState) => { next?: JsonCommandState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.commandQueue.then(async () => { try { const changed = mutation(this.commandState); if (changed.next) { const next = normalizeJsonCommandState(changed.next); const temporaryPath = `${this.commandsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.commandsPath); await chmod(this.commandsPath, 0o600); this.commandState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    this.commandQueue = operation.catch(() => undefined); return result;
   }
 
   private async save() {

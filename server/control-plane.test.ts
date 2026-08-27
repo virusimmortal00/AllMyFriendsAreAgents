@@ -70,11 +70,11 @@ describe("durable control plane", () => {
     await store.bootstrap(secret, "owner", password);
     const owner = await store.authenticate("owner", password);
     const actor = store.require(request(owner?.token)).principal;
-    await store.recordAudit(actor.id, "PROVIDER_SETUP_FAILED", "opencode", { runtime: "opencode", status: "error", authorizationHeader: "Bearer audit-secret-sentinel", password });
+    await store.recordAudit(actor.id, "PROVIDER_SETUP_FAILED", "opencode", { runtime: "opencode", status: "error", allowAll: false, allowedCommands: "help,poll", authorizationHeader: "Bearer audit-secret-sentinel", password });
     const contents = await readFile(path.join(directory, "control-plane.json"), "utf8");
     expect(contents).not.toContain(secret);
     expect(contents).not.toContain(password);
     expect(contents).not.toContain("audit-secret-sentinel");
-    expect((await store.audit(actor)).at(-1)).toMatchObject({ action: "PROVIDER_SETUP_FAILED", metadata: { runtime: "opencode", status: "error" } });
+    expect((await store.audit(actor)).at(-1)).toMatchObject({ action: "PROVIDER_SETUP_FAILED", metadata: { runtime: "opencode", status: "error", allowAll: false, allowedCommands: "help,poll" } });
   });
 });

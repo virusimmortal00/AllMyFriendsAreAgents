@@ -56,6 +56,13 @@ export interface MessageMutationAcknowledgement {
   continuation?: ContinuationInitiationOutcome;
 }
 
+export interface CommandMutationAcknowledgement {
+  command: true;
+  clientSubmissionId: string;
+  /** This response is deliberately client-private; it is never a transcript record. */
+  result: { kind: "accepted" | "private-help" | "private-error"; commands?: string[]; message?: string; submissionId?: string; duplicate?: boolean; poll?: unknown };
+}
+
 export interface RoomContinuationWorkRequest {
   taskId: string;
   taskRevision: number;

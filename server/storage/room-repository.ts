@@ -30,6 +30,7 @@ import type { RoomAgentRoster, RoomAgentRosterEntry } from "../../shared/roster.
 import type { DeploymentProvenance } from "../deployment-provenance.js";
 import type { AgentContextSummaryKey } from "../transcript.js";
 import type { RoomConfiguration, RoomConfigurationUpdate } from "../room-configuration.js";
+import type { CommandRecordStore } from "../command-record.js";
 
 export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -117,7 +118,7 @@ export type EmergencyStopChangeResult =
   | { readonly kind: "accepted"; readonly emergencyStop: EmergencyStopProjection }
   | RevisionConflict;
 
-export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore {
+export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore, CommandRecordStore {
   snapshot(): RoomState;
   addMessage(
     speaker: RoomMessage["speaker"],
@@ -127,6 +128,8 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     burst?: { burstId: string; sequence: number },
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
   ): Promise<RoomMessage>;
+  addCommandAuditMessageOnce(auditId: string, text: string): Promise<RoomMessage>;
+  addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number }): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
   getRoomConfiguration(): Promise<RoomConfiguration>;
   updateRoomConfiguration(update: RoomConfigurationUpdate, actorId: string): Promise<RoomConfiguration>;

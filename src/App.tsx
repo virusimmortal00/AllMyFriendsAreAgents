@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings } from "./api";
-import { HelpDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -11,7 +11,7 @@ import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import { agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
-import type { AgentId, HumanPresence, RoomState, WorkshopResponse } from "./types";
+import type { AgentId, HumanPresence, PublicPollProjection, RoomState, WorkshopResponse } from "./types";
 import { Improvements, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
 import { reconcileRoomEvent } from "./room-reconciliation";
@@ -28,6 +28,7 @@ import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomConfigurationDialog } from "./room-configuration-dialog";
+import { Diagnostics } from "./diagnostics";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -150,9 +151,13 @@ export default function App() {
   const [continuationsView, setContinuationsView] = useState(false);
   const [investigationsView, setInvestigationsView] = useState(false);
   const [contributionsView, setContributionsView] = useState(false);
+  const [diagnosticsView, setDiagnosticsView] = useState(false);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
+  const [polls, setPolls] = useState<PublicPollProjection[]>([]);
+  const pollRequestSequence = useRef(0);
+  const [pollVotePending, setPollVotePending] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
@@ -215,6 +220,21 @@ export default function App() {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [Boolean(savedHuman), joinRequestRevision]);
+
+  // Polls are a separate, server-authoritative projection. Replacing this list
+  // (rather than incrementing local tallies) makes reconnect and replay idempotent.
+  useEffect(() => {
+    if (!human || !connected) { setPolls([]); return; }
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      const requestSequence = ++pollRequestSequence.current;
+      try { const result = await loadPolls(); if (!cancelled && requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []); } catch { /* the room connection owns recovery */ }
+      finally { if (!cancelled) timer = window.setTimeout(() => void refresh(), 2_000); }
+    };
+    void refresh();
+    return () => { cancelled = true; pollRequestSequence.current += 1; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [human?.id, connected, connectionEpoch]);
 
   useEffect(() => {
     if (!human) return;
@@ -544,22 +564,51 @@ export default function App() {
     if (!message || !human || !connected) return { restoreOnFailure: false };
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
-    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
+    // Slash commands are private control requests until the server projects an
+    // authoritative public outcome. Never flash the raw invocation in chat.
+    const isCommand = message.trimStart().startsWith("/");
+    if (!isCommand) setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
     try {
       setClientError("");
-      await sendMessage(message, clientMessageId, mentions);
+      const acknowledgement = await sendMessage(message, clientMessageId, mentions);
+      if ("command" in acknowledgement) {
+        if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
+        if (acknowledgement.result.kind === "private-help") {
+          const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
+          setConnectionNotice(notice);
+          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
+        } else if (acknowledgement.result.kind === "private-error") {
+          const notice = acknowledgement.result.message || "The command was rejected.";
+          setConnectionNotice(notice);
+          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
+        }
+      }
       return { restoreOnFailure: false };
     } catch (error) {
       const delivered = roomRef.current.messages.some(({ clientMessageId: deliveredId, id }) =>
         deliveredId === clientMessageId && !id.startsWith("pending-")
       );
-      setRoom((current) => discardOptimisticMessage(current, optimisticId));
+      if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
       if (error instanceof ApiRequestError && error.outcomeUnknown && !delivered) {
         setPendingSend({ clientMessageId, text: message, mentions });
       }
       setClientError(error instanceof Error ? error.message : String(error));
       return { restoreOnFailure: !(error instanceof ApiRequestError && error.outcomeUnknown) };
     }
+  }
+
+  function vote(pollId: string, optionIndex: number) {
+    if (pollVotePending || !connected) return;
+    setPollVotePending(`${pollId}:${optionIndex}`);
+    void voteOnPoll(pollId, optionIndex).then(async () => {
+      const requestSequence = ++pollRequestSequence.current;
+      try {
+        const result = await loadPolls();
+        if (requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []);
+      } catch { /* the periodic refresh owns poll projection recovery */ }
+    }).catch((error) => {
+      setClientError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
+    }).finally(() => setPollVotePending(null));
   }
 
   function resendPending() {
@@ -647,6 +696,7 @@ export default function App() {
     setContinuationsView(false);
     setInvestigationsView(false);
     setContributionsView(false);
+    setDiagnosticsView(false);
     navigateImprovements(null);
   }
 
@@ -657,7 +707,7 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  const chatActive = !improvementsView && !tasksView && !continuationsView && !investigationsView && !contributionsView;
+  const chatActive = !improvementsView && !tasksView && !continuationsView && !investigationsView && !contributionsView && !diagnosticsView;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
@@ -719,6 +769,8 @@ export default function App() {
       items: [
         { label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps },
         { type: "separator" },
+        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
+        { type: "separator" },
         { label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) },
         { label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) },
         { label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification },
@@ -731,11 +783,12 @@ export default function App() {
       disabled: true,
       items: [
         { label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } },
-        { label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements({ view: "list", scope: "active" }); } },
-        { label: "Tasks", accessKey: "T", checked: tasksView, onSelect: () => { if (tasksView) return; setTasksView(true); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements(null); } },
-        { label: "Continuations", accessKey: "o", checked: continuationsView, onSelect: () => { if (continuationsView) return; setContinuationsView(true); setTasksView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements(null); } },
-        { label: "Investigations", accessKey: "n", checked: investigationsView, onSelect: () => { if (investigationsView) return; setInvestigationsView(true); setContinuationsView(false); setTasksView(false); setContributionsView(false); navigateImprovements(null); } },
-        { label: "Reviewed contributions", accessKey: "R", checked: contributionsView, onSelect: () => { if (contributionsView) return; setContributionsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); navigateImprovements(null); } },
+        { label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements({ view: "list", scope: "active" }); } },
+        { label: "Tasks", accessKey: "T", checked: tasksView, onSelect: () => { if (tasksView) return; setTasksView(true); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
+        { label: "Continuations", accessKey: "o", checked: continuationsView, onSelect: () => { if (continuationsView) return; setContinuationsView(true); setTasksView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
+        { label: "Investigations", accessKey: "n", checked: investigationsView, onSelect: () => { if (investigationsView) return; setInvestigationsView(true); setContinuationsView(false); setTasksView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
+        { label: "Reviewed contributions", accessKey: "R", checked: contributionsView, onSelect: () => { if (contributionsView) return; setContributionsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
+        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
       ],
     },
     {
@@ -775,9 +828,10 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics agents={enabledAgents} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
+            <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} onVote={vote} />
           </section>
           <div className="right-rail">
             <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />

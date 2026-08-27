@@ -58,6 +58,9 @@ import { OpenCodeContextSummarizer } from "./context-summarizer.js";
 import { registerRoomHistoryRoutes } from "./room-history-api.js";
 import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
+import { CommandRuntime } from "./command-runtime.js";
+import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
+import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
@@ -308,7 +311,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
@@ -316,6 +319,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     return { cancelled: true };
   }
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
+  const sharedReservation = activeAgent ? activeGenerations.reserve(activeAgent, agentConcurrency) : undefined;
+  if (activeAgent && !sharedReservation) return { failed: true };
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
@@ -344,6 +349,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
       },
+      sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -357,6 +363,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     broadcast();
     return { failed: true };
   } finally {
+    sharedReservation?.release();
     generationCancellation.dispose();
   }
   if (!agentStillEnabled()) {
@@ -379,8 +386,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
   });
+  if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
 
   if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+    if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
     await store.clearSession(agent);
     await generationJournal.append({
       type: "generation.delivery",
@@ -431,13 +440,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         burstStarted = true;
       }
       if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-      await store.addMessage(
-        agent,
-        visibleMessage,
-        includeDiff ? "review" : "chat",
-        parsed.styleUpdate || currentStyle,
-        { burstId, sequence },
-      );
+      if(deliveryId)await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence});
+      else await store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence});
       deliveredMessageCount += 1;
       broadcast();
     },
@@ -542,7 +546,7 @@ async function performTurn(turn: ConversationTurn) {
   }
 }
 
-async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}) {
+async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
   const snapshot = store.snapshot();
   const energy = snapshot.settings.conversationEnergy;
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
@@ -550,15 +554,15 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
   if (staged) {
     await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
       ...broadcastPolicy,
-      concurrencyLimit: agentConcurrency,
+      concurrencyLimit: Math.max(1, concurrencyLimit),
     });
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-  await runAgentConversation(turns, followUpAllowance, performTurn, agentConcurrency);
+  await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
 }
 
-async function runJob(job: () => Promise<void>) {
+async function runJob(job: () => Promise<void>, propagateFailure = false) {
   try {
     await job();
     await store.setStatus("idle");
@@ -567,10 +571,79 @@ async function runJob(job: () => Promise<void>) {
     console.error("Agent command failed", error);
     await store.addMessage("system", "An agent command failed. Check the server log for details.", "status");
     await store.setStatus("error", undefined, "An agent command failed.");
+    if (propagateFailure) throw error;
   } finally {
     broadcast();
   }
 }
+
+function commandAgentAvailable(agent: import("../shared/participants.js").ActiveAgentId) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+  const active = activeGenerations.snapshot();
+  return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
+    && !Object.values(active).includes(agent) && activeGenerations.size() < agentConcurrency && !jobs.busy);
+}
+
+async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
+  const before = roomSnapshot();
+  const revision = roomActivity.current();
+  const activityCancellation = roomActivity.abortSignal(revision);
+  const signal = AbortSignal.any([hooks.signal, activityCancellation.signal]);
+  try {
+    const result = await runAgent(
+      agent, before, prompt || "Take the next useful concrete step for the assigned task and report the result concisely.", false,
+      generationJournal, signal, undefined, activeGenerations,
+      { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
+      undefined, undefined, modelDiscovery,
+      undefined,
+      { onGenerationStart: hooks.active, onPartial: hooks.partial },
+    );
+    if (await agentHealth.recordSuccess(agent)) broadcast();
+    const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
+    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
+    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
+  } catch (error) {
+    if (!isAgentGenerationCancelledError(error)) await agentHealth.recordFailure(agent,error);
+    throw error;
+  } finally { activityCancellation.dispose(); }
+}
+
+const commandRuntime = new CommandRuntime({
+  store,
+  roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
+  canLaunch: commandAgentAvailable,
+  reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
+  roomEpoch: () => String(roomActivity.current()),
+  roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
+  stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
+  stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
+  executeTask: performCommandTask,
+  executePov: async (agent, prompt, signal) => {
+    const reservation=activeGenerations.reserve(agent,agentConcurrency);
+    if(!reservation)throw new Error("Shared generation capacity is unavailable for POV execution.");
+    try{return await performCommandTask(agent,prompt,{signal,partial:()=>undefined,active:async(generationId)=>reservation.activate(generationId)});}
+    finally{reservation.release();}
+  },
+  deliverPov: async (deliveryId,agent,messages,result) => {
+    if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
+    const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+    if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence});
+    broadcast();
+    if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
+  },
+  publishStatus: async (auditId,text) => { await store.addCommandAuditMessageOnce(auditId,text); broadcast(); },
+  deliverTask: async (attemptId,agent,messages,result) => {
+    if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
+    const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+    if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
+    const burstId=randomUUID();
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence});
+    broadcast();
+    if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
+  },
+});
+await commandRuntime.initialize();
 
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
   await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
@@ -740,6 +813,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -798,6 +872,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, humans, sessions:humanSessions, text });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
@@ -1008,6 +1083,7 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   jobs.close();
+  await commandRuntime.close();
   roomActivity.interrupt();
   activeGenerations.clear();
   presenceAnnouncements.shutdown();

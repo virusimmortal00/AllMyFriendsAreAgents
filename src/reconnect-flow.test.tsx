@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   checkReady: vi.fn(),
   joinRoom: vi.fn(),
   loadRoom: vi.fn(),
+  loadPolls: vi.fn(),
   loadWorkshop: vi.fn(),
   runAction: vi.fn(),
   sendMessage: vi.fn(),
@@ -22,6 +23,7 @@ const api = vi.hoisted(() => ({
   updateMyProfile: vi.fn(),
   updateMyStyle: vi.fn(),
   updateSettings: vi.fn(),
+  voteOnPoll: vi.fn(),
 }));
 
 vi.mock("./api", async () => ({
@@ -135,6 +137,8 @@ beforeEach(() => {
   api.checkReady.mockResolvedValue({ instanceId: "ready", protocolVersion: ROOM_PROTOCOL_VERSION });
   api.joinRoom.mockResolvedValue(human);
   api.loadRoom.mockResolvedValue(room("load-only"));
+  api.loadPolls.mockResolvedValue({ items: [] });
+  api.voteOnPoll.mockResolvedValue({ kind: "accepted" });
   api.loadWorkshop.mockRejectedValue(new Error("not used"));
   api.runAction.mockResolvedValue({ accepted: true });
   api.sendMessage.mockImplementation(async (_text: string, clientMessageId: string) => ({
@@ -218,6 +222,46 @@ describe("rendered reconnect recovery", () => {
       messages: [{ id: "authoritative", clientMessageId, humanId: human.id, speaker: "you", text: "Optimistic once", timestamp: "2026-08-24T12:00:00.000Z" }],
     }));
     expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
+  });
+
+  it("never inserts a slash command optimistically before its private response arrives", async () => {
+    let resolveCommand!: (value: unknown) => void;
+    api.sendMessage.mockImplementationOnce(() => new Promise((resolve) => { resolveCommand = resolve; }));
+    const user = userEvent.setup();
+    const composer = await renderConnected();
+    await user.type(composer, "/help");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    expect(screen.queryByText("/help")).toBeNull();
+    act(() => resolveCommand({ command: true, clientSubmissionId: api.sendMessage.mock.calls[0][1], result: { kind: "private-help", commands: ["help"] } }));
+    expect(screen.queryByText("/help")).toBeNull();
+  });
+
+  it("keeps command errors private to the invoker instead of projecting raw slash text", async () => {
+    api.sendMessage.mockImplementationOnce(async (_text: string, clientSubmissionId: string) => ({ command: true, clientSubmissionId, result: { kind: "private-error", message: "Only room owners may run that command." } }));
+    const user = userEvent.setup();
+    const composer = await renderConnected([{ id: "audit", speaker: "system", text: "— Ada ran a command —", timestamp: "2026-08-24T12:00:00.000Z", kind: "status" }]);
+    await user.type(composer, "/task secret diagnostic");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Only room owners may run that command.")).toBeTruthy();
+    expect(screen.queryByText("/task secret diagnostic")).toBeNull();
+    expect(screen.queryByText("secret diagnostic")).toBeNull();
+  });
+
+  it("renders ordered authoritative poll tallies and replaces them after a vote without optimistic duplication", async () => {
+    const initial = { pollId: "poll-1", question: "Choose a path", options: ["B", "A"], tallies: [2, 1], totalVotes: 3 };
+    const projected = { ...initial, tallies: [2, 2], totalVotes: 4 };
+    api.loadPolls.mockResolvedValueOnce({ items: [initial] }).mockResolvedValueOnce({ items: [projected] });
+    const user = userEvent.setup();
+    await renderConnected();
+    expect(await screen.findByRole("region", { name: "Room polls" })).toBeTruthy();
+    const options = screen.getAllByRole("button", { name: /Vote for/ });
+    expect(options.map((option) => option.textContent)).toEqual(["B", "A"]);
+    expect(screen.getByLabelText("2 votes")).toBeTruthy();
+    await user.click(options[1]!);
+    await waitFor(() => expect(api.voteOnPoll).toHaveBeenCalledWith("poll-1", 1));
+    expect(await screen.findByText("4 votes")).toBeTruthy();
+    expect(screen.getAllByText("2")).toHaveLength(2);
   });
 
   it("does not offer a duplicate retry when the authoritative delta beats an ambiguous POST failure", async () => {

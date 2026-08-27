@@ -3,6 +3,11 @@ import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
+  it("migrates missing command permissions to allow-all and rejects malformed updates", () => {
+    const legacy = normalizeRoomAgentRoster({ schemaVersion: 3, revision: 2, entries: [{ agentId: "codex-sol", conversationalName: "Codex", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true }] });
+    expect(legacy.entries[0]?.commandPermissions).toEqual({ allowAll: true, allowed: ["task", "pov", "poll", "help"] });
+    expect(validateRosterEntries([{ ...legacy.entries[0]!, commandPermissions: { allowAll: false, allowed: ["unknown" as never] } }])).toBeUndefined();
+  });
   it("defaults to the public roster without Gemini Pro", () => {
     const roster = defaultRoomAgentRoster();
     expect(roster.revision).toBe(1);

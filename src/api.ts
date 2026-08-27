@@ -1,17 +1,19 @@
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
+import type { CommandMutationAcknowledgement, MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
+import type { DiagnosticRecord } from "./diagnostics";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 let controlCsrfToken = "";
+const pollVoteIds = new Map<string,string>();
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
@@ -20,7 +22,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-export async function request(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+export async function request(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS, acceptedErrorStatuses: readonly number[] = []) {
   const controller = new AbortController();
   const externalSignal = options.signal;
   const abortFromCaller = () => controller.abort(externalSignal?.reason);
@@ -35,7 +37,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
       headers,
       signal: controller.signal,
     });
-    if (!response.ok) {
+    if (!response.ok && !acceptedErrorStatuses.includes(response.status)) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
       throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, body);
     }
@@ -209,16 +211,58 @@ export async function updateMyProfile(profile: { name: string; avatarUrl?: strin
   }).then((response) => response.json());
 }
 
-export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {
+export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement | CommandMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
-  }).then((response) => response.json()).then((acknowledgement: unknown) => {
+  }, REQUEST_TIMEOUT_MS, [400]).then(async (response) => {
+    const acknowledgement: unknown = await response.json().catch(() => ({}));
+    if (!response.ok && !(response.status === 400 && isCommandAcknowledgement(acknowledgement))) {
+      const body = acknowledgement as { error?: string };
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, acknowledgement);
+    }
+    return acknowledgement;
+  }).then((acknowledgement: unknown) => {
+    if (isCommandAcknowledgement(acknowledgement) && acknowledgement.clientSubmissionId === clientMessageId) return acknowledgement;
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
     }
     return acknowledgement;
   });
+}
+
+function isCommandAcknowledgement(value: unknown): value is CommandMutationAcknowledgement { const acknowledgement=value as Partial<CommandMutationAcknowledgement>|null; return Boolean(acknowledgement&&acknowledgement.command===true&&typeof acknowledgement.clientSubmissionId==="string"&&acknowledgement.result&&(acknowledgement.result.kind==="accepted"||acknowledgement.result.kind==="private-help"||acknowledgement.result.kind==="private-error")); }
+
+export async function loadPolls() {
+  return request("/api/polls", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: import("./types").PublicPollProjection[] }>);
+}
+
+/** Diagnostics are intentionally never fetched as part of room state or SSE. */
+export async function loadDiagnostics(token: string, agentId: string, search = ""): Promise<{ items: DiagnosticRecord[] }> {
+  const query = new URLSearchParams({ agentId, limit: "50" });
+  if (search.trim()) query.set("search", search.trim().slice(0, 200));
+  return request(`/api/developer/diagnostics?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.json() as Promise<{ items: DiagnosticRecord[] }>);
+}
+
+export async function loadDiagnostic(token: string, agentId: string, recordId: string): Promise<DiagnosticRecord> {
+  const query = new URLSearchParams({ agentId });
+  return request(`/api/developer/diagnostics/${encodeURIComponent(recordId)}?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.json() as Promise<DiagnosticRecord>);
+}
+
+export async function voteOnPoll(pollId: string, optionIndex: number) {
+  const storageKey = "amfaa.command.poll-votes.v1";
+  let stored: Record<string,string> = {};
+  try { stored = JSON.parse(window.localStorage.getItem(storageKey) || "{}"); } catch { stored = {}; }
+  const candidate = pollVoteIds.get(pollId) || stored[pollId] || "";
+  const clientVoteId = /^[a-zA-Z0-9_-]{8,100}$/.test(candidate) ? candidate : `pollvote_${crypto.randomUUID()}`;
+  pollVoteIds.set(pollId,clientVoteId);
+  if (!stored[pollId]) {
+    const entries = [...Object.entries(stored), [pollId, clientVoteId] as const].slice(-100);
+    try { window.localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries))); } catch { /* server voter identity still deduplicates same-session retries */ }
+  }
+  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex, clientVoteId }) }).then((response) => response.json());
 }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
@@ -228,6 +272,7 @@ export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "r
   pendingContinuationMessageIds.set(key, clientMessageId);
   try {
     const acknowledgement = await sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], continuation);
+    if ("command" in acknowledgement) throw new ApiRequestError("The room returned a command response for a continuation request.", true);
     if (pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
     return acknowledgement;
   } catch (error) {

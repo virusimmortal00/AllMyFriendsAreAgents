@@ -43,8 +43,8 @@ function output(value: unknown) {
 
 async function main() {
   const command = process.argv[2] || "state";
-  if (!(["state", "send", "wait"].includes(command))) {
-    throw new Error("Usage: pnpm room:tool <state|send|wait> [message] [--wait] [--limit=50] [--timeout=120]");
+  if (!(["state", "send", "wait", "diagnostics"].includes(command))) {
+    throw new Error("Usage: pnpm room:tool <state|send|wait|diagnostics> [message] [--agent=id] [--search=text] [--reason=value] [--limit=50] [--timeout=120]");
   }
 
   const configuration = resolveStorageConfiguration(projectRoot);
@@ -76,6 +76,16 @@ async function main() {
   };
 
   if (command === "state") return output(await room());
+  if (command === "diagnostics") {
+    const agent = option("agent");
+    if (!agent) throw new Error("Diagnostic search requires --agent=<room-agent-id>.");
+    const query = new URLSearchParams({ agentId: agent, limit: String(limit) });
+    const search = option("search"); if (search) query.set("search", search.slice(0, 200));
+    const reason = option("reason"); if (reason) query.set("reason", reason.slice(0, 80));
+    const response = await fetch(`${baseUrl}/api/developer/diagnostics?${query}`, { headers });
+    if (!response.ok) throw new Error(`Diagnostic API returned ${response.status}: ${await response.text()}`);
+    return output(await response.json());
+  }
   if (command === "wait") {
     const current = await room();
     return output(await waitForRoom(option("after") || current.cursor, true));
