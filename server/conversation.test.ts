@@ -353,12 +353,29 @@ describe("room message policy", () => {
 describe("conversation energy", () => {
   const candidates = candidatesForAllAgents();
 
-  it("falls through silent candidates until one agent chooses to respond", async () => {
-    const performTurn = vi.fn()
-      .mockResolvedValueOnce({ visibleMessageCount: 0 })
-      .mockResolvedValueOnce({ visibleMessageCount: 1 });
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((next, fail) => {
+      resolve = next;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  }
 
-    await runEnergyConversation(candidates, "low", performTurn, () => 0);
+  it("keeps low-energy openings single-participant even with spare concurrency", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    const performTurn = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+
+    const conversation = runEnergyConversation(candidates, "low", performTurn, () => 0, { concurrencyLimit: 3 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(1));
+    first.resolve({ visibleMessageCount: 0 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    second.resolve({ visibleMessageCount: 1 });
+    await conversation;
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
@@ -385,10 +402,43 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
   });
 
+  it("overlaps independently selected openings and refills slots in completion order", async () => {
+    const completions = new Map<AgentId, ReturnType<typeof deferred<TurnResult>>>(
+      AGENT_IDS.slice(0, 3).map((agent) => [agent, deferred<TurnResult>()]),
+    );
+    const completionOrder: AgentId[] = [];
+    let active = 0;
+    let peakActive = 0;
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      return completions.get(turn.agent)!.promise.then((result) => {
+        completionOrder.push(turn.agent);
+        return result;
+      }).finally(() => {
+        active -= 1;
+      });
+    });
+
+    const conversation = runEnergyConversation(candidates, "lively", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    completions.get("claude-sonnet")!.resolve({ visibleMessageCount: 1 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    completions.get("cursor-grok")!.resolve({ visibleMessageCount: 1 });
+    await vi.waitFor(() => expect(completionOrder).toEqual(["claude-sonnet", "cursor-grok"]));
+    completions.get("codex-sol")!.resolve({ visibleMessageCount: 1 });
+    await conversation;
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS.slice(0, 3));
+    expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
+    expect(completionOrder).toEqual(["claude-sonnet", "cursor-grok", "codex-sol"]);
+    expect(peakActive).toBe(2);
+  });
+
   it("sometimes conserves balanced energy after one response", async () => {
     const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
 
-    await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99);
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0.99, { concurrencyLimit: 3 });
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol"]);
   });
@@ -423,7 +473,7 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
   });
 
-  it("synthesizes, checks objections, and reconciles an explicitly open discussion", async () => {
+  it("keeps synthesis, objections, and reconciliation ordered after concurrent openings", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
@@ -431,7 +481,7 @@ describe("conversation energy", () => {
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" });
 
-    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
 
     expect(result).toEqual({ settled: true });
     expect(performTurn).toHaveBeenCalledTimes(5);
@@ -460,6 +510,32 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
   });
 
+  it("bounds whole-room invitations by the configured concurrency limit", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let active = 0;
+    let peakActive = 0;
+    const performTurn = vi.fn(async () => {
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      await gate;
+      active -= 1;
+      return { visibleMessageCount: 1 };
+    });
+
+    const conversation = runEnergyConversation(candidates, "low", performTurn, () => 1, {
+      inviteAll: true,
+      concurrencyLimit: 3,
+    });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    expect(peakActive).toBe(3);
+    release();
+    await conversation;
+
+    expect(performTurn).toHaveBeenCalledTimes(AGENT_IDS.length);
+    expect(peakActive).toBe(3);
+  });
+
   it("still offers the whole room a turn when an invited agent stays silent", async () => {
     const performTurn = vi.fn()
       .mockResolvedValueOnce({ visibleMessageCount: 0 })
@@ -476,7 +552,10 @@ describe("conversation energy", () => {
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
       .mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
 
-    const result = await runEnergyConversation(candidates, "party", performTurn, () => 0, { stopOnSettledResponse: true });
+    const result = await runEnergyConversation(candidates, "party", performTurn, () => 0, {
+      stopOnSettledResponse: true,
+      concurrencyLimit: 3,
+    });
 
     expect(result).toEqual({ settled: true });
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
@@ -488,7 +567,10 @@ describe("conversation energy", () => {
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
       .mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
 
-    await runEnergyConversation(candidates, "party", performTurn, () => 0, { stopOnSettledResponse: true });
+    await runEnergyConversation(candidates, "party", performTurn, () => 0, {
+      stopOnSettledResponse: true,
+      concurrencyLimit: 3,
+    });
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
@@ -524,12 +606,105 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet", "cursor-grok"]);
   });
 
-  it("stops immediately when new human activity cancels the current pulse", async () => {
-    const performTurn = vi.fn().mockResolvedValue({ cancelled: true });
+  it("waits for opening prerequisites before launching mention-driven follow-ups", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    let firstCompleted = false;
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      if (turn.agent === "codex-sol") return first.promise.then((result) => {
+        firstCompleted = true;
+        return result;
+      });
+      if (turn.agent === "claude-sonnet") return second.promise;
+      return Promise.resolve({ visibleMessageCount: 0 });
+    });
 
-    await runEnergyConversation(candidates, "party", performTurn, () => 0);
+    const conversation = runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.resolve({ visibleMessageCount: 1, mentionedAgents: ["cursor-grok"] });
+    await vi.waitFor(() => expect(firstCompleted).toBe(true));
+    expect(performTurn).toHaveBeenCalledTimes(2);
+    second.resolve({ visibleMessageCount: 1 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    await conversation;
 
-    expect(performTurn).toHaveBeenCalledTimes(1);
+    expect(performTurn.mock.calls[2][0]).toMatchObject({ agent: "cursor-grok" });
+    expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
+  });
+
+  it("preserves a mention follow-up when the concurrent target completes last", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    const turnCounts = new Map<AgentId, number>();
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      const count = turnCounts.get(turn.agent) || 0;
+      turnCounts.set(turn.agent, count + 1);
+      if (turn.agent === "codex-sol") return first.promise;
+      if (turn.agent === "claude-sonnet" && count === 0) return second.promise;
+      return Promise.resolve({ visibleMessageCount: 0 });
+    });
+
+    const conversation = runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.resolve({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] });
+    second.resolve({ visibleMessageCount: 1 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    await conversation;
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual([
+      "codex-sol",
+      "claude-sonnet",
+      "claude-sonnet",
+    ]);
+    expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
+  });
+
+  it("stops launching queued openings after concurrent cancellation", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    let firstCompleted = false;
+    const performTurn = vi.fn()
+      .mockImplementationOnce(() => first.promise.then((result) => {
+        firstCompleted = true;
+        return result;
+      }))
+      .mockImplementationOnce(() => second.promise);
+
+    const conversation = runEnergyConversation(candidates, "party", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.resolve({ cancelled: true });
+    await vi.waitFor(() => expect(firstCompleted).toBe(true));
+    expect(performTurn).toHaveBeenCalledTimes(2);
+    second.resolve({ cancelled: true });
+
+    await expect(conversation).resolves.toEqual({ settled: false });
+    expect(performTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("drains concurrent failures without launching more work or leaking rejections", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    const firstError = new Error("first opening failed");
+    const secondError = new Error("second opening failed");
+    const performTurn = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+
+    const conversation = runEnergyConversation(candidates, "party", performTurn, () => 0, { concurrencyLimit: 2 });
+    const observed = conversation.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    let finished = false;
+    void observed.then(() => { finished = true; });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.reject(firstError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finished).toBe(false);
+    second.reject(secondError);
+
+    await expect(observed).resolves.toBe(firstError);
+    expect(performTurn).toHaveBeenCalledTimes(2);
   });
 
   it("prevents the same pair from recursively inviting each other", async () => {

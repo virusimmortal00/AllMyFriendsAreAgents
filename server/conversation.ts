@@ -218,7 +218,7 @@ export async function runEnergyConversation(
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
-  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean } = {},
+  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; concurrencyLimit?: number } = {},
 ): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
   const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
@@ -232,7 +232,8 @@ export async function runEnergyConversation(
     : policy.hardTurnCeiling;
   const remaining = [...candidates];
   const invited = new Set<AgentId>();
-  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean }> = [];
+  const activeTurns = new Set<AgentId>();
+  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean; targetWasRunning?: boolean }> = [];
   const pairReplies = new Map<string, number>();
   const usedContinuationSources = new Set<number>();
   let lastOutcome: EnergyOutcome | undefined;
@@ -240,17 +241,28 @@ export async function runEnergyConversation(
   let visibleMessagesDelivered = 0;
   let energySpent = 0;
   let secondaryAttempts = 0;
+  let secondaryAttemptAlreadyFailed = false;
   let nextOutcomeKey = 0;
   let cancelled = false;
   let broadcastSettled = false;
   const visibleOutcomes: EnergyOutcome[] = [];
+  const concurrencyLimit = Math.max(1, Math.floor(options.concurrencyLimit || 1));
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
     invited.add(turn.agent);
-    const result = await performTurn({
-      ...turn,
-      visibleMessageLimit: Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered),
-    });
+    activeTurns.add(turn.agent);
+    let result: TurnResult;
+    try {
+      result = await performTurn({
+        ...turn,
+        visibleMessageLimit: Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered),
+      });
+    } catch (error) {
+      activeTurns.delete(turn.agent);
+      throw error;
+    }
+    const activePeersAtCompletion = new Set(activeTurns);
+    activeTurns.delete(turn.agent);
     if (result.cancelled) cancelled = true;
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
     const responded = visibleMessageCount > 0;
@@ -261,7 +273,12 @@ export async function runEnergyConversation(
       visibleMessagesDelivered += visibleMessageCount;
       energySpent += visibleMessageCount + Math.floor((responseTurns - 1) / 2);
       for (const target of result.mentionedAgents || []) {
-        if (target !== turn.agent) pendingMentions.push({ source: turn.agent, target, includeDiff: turn.includeDiff });
+        if (target !== turn.agent) pendingMentions.push({
+          source: turn.agent,
+          target,
+          includeDiff: turn.includeDiff,
+          targetWasRunning: activePeersAtCompletion.has(target),
+        });
       }
       lastOutcome = outcome;
       visibleOutcomes.push(outcome);
@@ -270,7 +287,47 @@ export async function runEnergyConversation(
     return outcome;
   };
 
-  if (options.inviteAll) {
+  const recordConcurrent = async (turns: ConversationTurn[], messageLimit: number) => {
+    let nextTurn = 0;
+    let firstError: unknown;
+    let failed = false;
+    const workers = Array.from(
+      { length: Math.min(concurrencyLimit, turns.length) },
+      async () => {
+        while (nextTurn < turns.length && !cancelled && !broadcastSettled && !failed) {
+          const turn = turns[nextTurn];
+          nextTurn += 1;
+          try {
+            await record(turn, messageLimit);
+          } catch (error) {
+            if (!failed) firstError = error;
+            failed = true;
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+    if (failed) throw firstError;
+  };
+
+  const concurrentOpenings = concurrencyLimit > 1 && !options.stopOnSettledResponse;
+  if (concurrentOpenings && remaining.length > 0) {
+    const openingTurns = options.inviteAll ? remaining.splice(0) : [remaining.shift()!];
+    while (!options.inviteAll
+      && openingTurns.length < participantLimit
+      && remaining.length > 0) {
+      secondaryAttempts += 1;
+      if (random() > policy.secondaryChance) {
+        secondaryAttemptAlreadyFailed = true;
+        break;
+      }
+      openingTurns.push(remaining.shift()!);
+    }
+    await recordConcurrent(openingTurns, openingTurns.length > 1 ? 1 : 3);
+    while (!options.inviteAll && remaining.length > 0 && !lastOutcome && !cancelled) {
+      await record(remaining.shift()!);
+    }
+  } else if (options.inviteAll) {
     while (remaining.length > 0 && !cancelled && !broadcastSettled && visibleMessagesDelivered < hardMessageCeiling) {
       await record(remaining.shift()!, 1);
     }
@@ -290,7 +347,7 @@ export async function runEnergyConversation(
     if (mention) {
       const pair = [mention.source, mention.target].sort().join(":");
       const replyCount = pairReplies.get(pair) || 0;
-      if (replyCount >= 2 || lastOutcome?.turn.agent === mention.target) continue;
+      if (replyCount >= 2 || (!mention.targetWasRunning && lastOutcome?.turn.agent === mention.target)) continue;
       pairReplies.set(pair, replyCount + 1);
       await record({
         agent: mention.target,
@@ -301,7 +358,9 @@ export async function runEnergyConversation(
     }
 
     const nextFreshCandidate = () => remaining.findIndex(({ agent }) => !invited.has(agent));
-    if (secondaryAttempts < participantLimit - 1
+    if (secondaryAttemptAlreadyFailed) {
+      secondaryAttemptAlreadyFailed = false;
+    } else if (secondaryAttempts < participantLimit - 1
       && (policy.participantLimit === "all" || energySpent < policy.softMessageBudget)) {
       secondaryAttempts += 1;
       if (random() <= policy.secondaryChance) {

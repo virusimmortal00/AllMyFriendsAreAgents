@@ -465,7 +465,10 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
   broadcast();
   if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), broadcastPolicy);
+    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
+      ...broadcastPolicy,
+      concurrencyLimit: agentConcurrency,
+    });
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
