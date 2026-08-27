@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { AgentContextSummarizer } from "./transcript.js";
 
@@ -35,13 +36,39 @@ function summarizerEnvironment(environment: NodeJS.ProcessEnv = process.env) {
 }
 
 export class OpenCodeContextSummarizer implements AgentContextSummarizer {
+  private readonly inFlight = new Map<string, Promise<string>>();
+  private readonly completed = new Map<string, string>();
+
   constructor(
     private readonly command = OPENCODE_COMMAND,
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
     private readonly execute: SummarizerExecutor = (command, args, options) => execFileAsync(command, [...args], options),
   ) {}
 
-  async summarize(input: Parameters<AgentContextSummarizer["summarize"]>[0]) {
+  summarize(input: Parameters<AgentContextSummarizer["summarize"]>[0]) {
+    const key = createHash("sha256").update(JSON.stringify({
+      projectPath: input.projectPath,
+      transcript: input.transcript,
+      tokenTarget: input.tokenTarget,
+      promptTemplate: input.promptTemplate,
+      models: input.models,
+    })).digest("hex");
+    const completed = this.completed.get(key);
+    if (completed) return Promise.resolve(completed);
+    const existing = this.inFlight.get(key);
+    if (existing) return existing;
+    const pending = this.summarizeUncached(input).then((summary) => {
+      this.completed.set(key, summary);
+      if (this.completed.size > 32) this.completed.delete(this.completed.keys().next().value!);
+      return summary;
+    }).finally(() => {
+      if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, pending);
+    return pending;
+  }
+
+  private async summarizeUncached(input: Parameters<AgentContextSummarizer["summarize"]>[0]) {
     const prompt = input.promptTemplate
       .replaceAll("{{tokenTarget}}", String(input.tokenTarget))
       .replaceAll("{{transcript}}", input.transcript);

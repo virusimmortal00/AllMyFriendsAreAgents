@@ -8,6 +8,8 @@ import { normalizeRoomAgentRoster } from "../shared/roster.js";
 import type { AgentId } from "./types.js";
 
 export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
+export const SUMMARY_FOREGROUND_WAIT_MS = 750;
+export const MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS = 48_000;
 
 interface TranscriptEntry {
   id?: string;
@@ -120,25 +122,46 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
     return { text: `${pinned}\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent) || "(No visible room messages.)"}\n\n${historyNote}`, cursorMessageId: latestMessageId, mode: "summary" };
   }
 
+  const candidateTranscript = transcriptMessages(candidate);
   const fullFallback = () => ({
-    text: `${pinned}\n\nROOM MESSAGES (VERBATIM SUMMARY FALLBACK)\n${transcriptMessages(candidate)}\n\n${historyNote}`,
+    text: `${pinned}\n\nROOM MESSAGES (VERBATIM SUMMARY FALLBACK)\n${candidateTranscript}\n\n${historyNote}`,
     cursorMessageId: latestMessageId,
     mode: "verbatim-fallback" as const,
   });
-  if (!options.summarizer || !options.summaryStore) return fullFallback();
+  const boundedFallback = (status: "pending" | "unavailable") => ({
+    text: `${pinned}\n\nSUMMARY ${status.toUpperCase()} (${older[0].id} through ${older.at(-1)!.id}; ${older.length} older messages)\nThe configured navigational summary is ${status === "pending" ? "still being prepared without blocking this turn" : "temporarily unavailable"}. Retrieve exact older text with room_history.\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent)}\n\n${historyNote}`,
+    cursorMessageId: latestMessageId,
+    mode: "summary" as const,
+  });
+  if (!options.summarizer || !options.summaryStore) return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
   const key = { agentId: options.agentId, spanStartId: older[0].id, spanEndId: older.at(-1)!.id, configRevision };
   try {
     let summary = await options.summaryStore.getAgentContextSummary(key);
     if (!summary) {
-      summary = await options.summarizer.summarize({
+      const pending = options.summarizer.summarize({
         transcript: transcriptMessages(older),
         tokenTarget: config.summaryTokenTarget,
         promptTemplate: config.summaryPromptTemplate,
         projectPath: state.settings.projectPath,
         models: config.summarizerModels,
       });
-      summary = summary.trim().slice(0, config.summaryTokenTarget * 5);
-      if (!summary) return fullFallback();
+      const outcome = await foregroundSummary(pending);
+      if (outcome.kind === "pending") {
+        void pending.then(async (generated) => {
+          const bounded = generated.trim().slice(0, config.summaryTokenTarget * 5);
+          if (bounded) await options.summaryStore!.putAgentContextSummary(key, bounded);
+        }).catch(async () => {
+          await options.summaryStore!.putAgentContextSummary(key, unavailableSummary(key, older.length)).catch(() => undefined);
+        });
+        return boundedFallback("pending");
+      }
+      if (outcome.kind === "failed") {
+        if (candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS) return fullFallback();
+        summary = unavailableSummary(key, older.length);
+      } else {
+        summary = outcome.summary.trim().slice(0, config.summaryTokenTarget * 5);
+        if (!summary) return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
+      }
       await options.summaryStore.putAgentContextSummary(key, summary);
     }
     return {
@@ -147,8 +170,23 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
       mode: "summary",
     };
   } catch {
-    return fullFallback();
+    return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
   }
+}
+
+function unavailableSummary(key: AgentContextSummaryKey, messageCount: number) {
+  return `Summary generation was unavailable for ${messageCount} older messages (${key.spanStartId} through ${key.spanEndId}). Use room_history for exact text.`;
+}
+
+async function foregroundSummary(pending: Promise<string>): Promise<{ kind: "completed"; summary: string } | { kind: "failed" } | { kind: "pending" }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ kind: "pending" }>((resolve) => { timer = setTimeout(() => resolve({ kind: "pending" }), SUMMARY_FOREGROUND_WAIT_MS); });
+  const result = await Promise.race([
+    pending.then((summary) => ({ kind: "completed" as const, summary }), () => ({ kind: "failed" as const })),
+    timeout,
+  ]);
+  if (timer) clearTimeout(timer);
+  return result;
 }
 
 export function transcriptFor(state: RoomState, characterBudget?: number): string;

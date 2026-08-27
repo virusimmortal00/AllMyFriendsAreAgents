@@ -149,4 +149,28 @@ describe("agent transcript context", () => {
     expect(transcript.text).toContain("[YOU | delta-0]\nexact 0");
     expect(transcript.text).toContain("[YOU | delta-20]\nexact 20");
   });
+
+  it("does not block or inject an oversized transcript while a large cold-start summary is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const messages = Array.from({ length: 40 }, (_, index): RoomMessage => ({ id: `large-${index}`, speaker: "you", text: `exact ${index} ${"x".repeat(2_000)}`, timestamp: "2026-08-19T12:00:00Z" }));
+      const room: RoomState = { ...state(messages), roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", modelId: "gpt-5.6-sol", enabled: true }] } };
+      const pending = new Promise<string>(() => undefined);
+      const transcriptPromise = transcriptFor(room, {
+        agentId: "codex-sol",
+        summaryStore: { async getAgentContextSummary() { return undefined; }, async putAgentContextSummary() {} },
+        summarizer: { summarize: () => pending },
+      });
+      await vi.advanceTimersByTimeAsync(751);
+      const transcript = await transcriptPromise;
+      expect(transcript.mode).toBe("summary");
+      expect(transcript.text).toContain("SUMMARY PENDING");
+      expect(transcript.text).toContain("still being prepared without blocking this turn");
+      expect(transcript.text.length).toBeLessThan(48_000);
+      expect(transcript.text).not.toContain("exact 0");
+      expect(transcript.text).toContain("exact 39");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

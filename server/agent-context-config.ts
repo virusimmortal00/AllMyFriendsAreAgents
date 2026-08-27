@@ -4,8 +4,8 @@ export const DEFAULT_MAX_DELTA_MESSAGES = 20;
 export const DEFAULT_RECENT_CONTEXT_MESSAGES = 20;
 export const DEFAULT_SUMMARY_TOKEN_TARGET = 200;
 export const DEFAULT_CONTEXT_SUMMARIZER_MODELS: readonly ModelReference[] = Object.freeze([
-  { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" },
-  { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest", variant: "low" },
+  { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free" },
+  { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest" },
 ]);
 export const DEFAULT_CONTEXT_SUMMARY_PROMPT = `Summarize the room transcript below for a participant who will also receive the newest messages verbatim.
 Preserve concrete decisions, rulings, assignments, unresolved questions, names, and message IDs when relevant.
