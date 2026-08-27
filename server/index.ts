@@ -60,12 +60,15 @@ import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
-import { effectiveAllowedCommands, normalizeCommandPermissions, roomCommandGuide, type RoomCommandName } from "../shared/command-domain.js";
+import { effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
+import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
+import { GitHubReadStore } from "./github-read-store.js";
+import { GitHubReadService } from "./github-read-service.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -112,6 +115,12 @@ const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataD
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
+const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
+const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
+const githubReadParts=githubReadRepository?.split("/")||[];
+const fakeSha="0123456789abcdef0123456789abcdef01234567";
+const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
+const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch)),githubReadRepository!):undefined;
 const githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
@@ -302,7 +311,7 @@ function roomEventStream(humanId: string) {
 
 function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
   const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
-  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), ["task", "pov", "poll", "help"] satisfies readonly RoomCommandName[]) : [];
+  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS) : [];
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
@@ -632,6 +641,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
 
 const commandRuntime = new CommandRuntime({
   store,
+  ceiling:githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS,
   roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
   canLaunch: commandAgentAvailable,
   reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
@@ -664,8 +674,10 @@ const commandRuntime = new CommandRuntime({
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
+  githubRead:githubReadService,
+  publishGhResult:async(executionId,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",text);broadcast();},
 });
-const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime);
+const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null);
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
 await commandRuntime.initialize();
 

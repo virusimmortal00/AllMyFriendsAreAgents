@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { tool } from "@opencode-ai/plugin";
 
-const known = ["help", "task", "pov", "poll"] as const;
+const known = ["help", "task", "pov", "poll", "gh"] as const;
 type Command = typeof known[number];
 const configured = (() => {
   try {
@@ -21,6 +21,7 @@ const variants = configured.flatMap((command) => {
     ]),
   });
   if (command === "pov") return tool.schema.object({ command: tool.schema.literal("pov"), prompt: tool.schema.string().min(1).max(8_000), selection: tool.schema.discriminatedUnion("kind", [tool.schema.object({kind:tool.schema.literal("all-eligible")}),tool.schema.object({kind:tool.schema.literal("pinned"),agentId:tool.schema.string().min(1).max(100)})]) });
+  if(command==="gh")return [tool.schema.object({command:tool.schema.literal("gh"),selector:tool.schema.discriminatedUnion("kind",[tool.schema.object({kind:tool.schema.literal("recent")}),tool.schema.object({kind:tool.schema.literal("pr"),number:tool.schema.number().int().min(1)}),tool.schema.object({kind:tool.schema.literal("issue"),number:tool.schema.number().int().min(1)}),tool.schema.object({kind:tool.schema.literal("ci"),number:tool.schema.number().int().min(1).optional()})])}),tool.schema.object({command:tool.schema.literal("gh_diagnostic"),submissionId:tool.schema.string().min(1).max(100)})];
   return [
     tool.schema.object({ command: tool.schema.literal("poll"), question: tool.schema.string().min(1).max(500), options: tool.schema.array(tool.schema.string().min(1).max(500)).min(2).max(12) }),
     tool.schema.object({command:tool.schema.literal("polls")}),

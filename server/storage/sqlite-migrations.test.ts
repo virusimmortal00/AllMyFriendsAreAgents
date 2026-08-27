@@ -50,8 +50,9 @@ describe("SQLite migrations", () => {
         "command_poll_votes",
         "command_audit_identities",
         "command_diagnostics",
+        "command_gh_executions",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 22 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 23 });
       expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
@@ -84,6 +85,7 @@ describe("SQLite migrations", () => {
     expect(migration).toContain("FOR UPDATE");
     expect(migration).toContain("SET voter_id = 'human:' || voter_id");
   });
+  it("keeps the PostgreSQL GitHub command constraint, durable execution, and atomic acceptance trigger in parity",async()=>{const migration=await readFile(path.join(process.cwd(),"server/storage/migrations/postgres/0017_github_read_commands.sql"),"utf8");expect(migration).toContain("'gh'");expect(migration).toContain("command_gh_executions");expect(migration).toContain("AFTER INSERT ON command_submissions");expect(migration).toContain("status IN ('queued','completed','failed')");expect(migration).not.toMatch(/authorization|etag|header|payload/i);});
 
   it("migrates legacy poll voter identities before accepting namespaced votes", async () => {
     const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
