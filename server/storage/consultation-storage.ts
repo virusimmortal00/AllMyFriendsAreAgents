@@ -7,15 +7,20 @@ export interface JsonConsultationState {
   readonly events: readonly ConsultationEvent[];
   readonly affinities: Record<string, ConsultationAffinity>;
 }
+function isPlainRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 export function emptyJsonConsultationState(): JsonConsultationState { return { schemaVersion: 1, consultations: {}, events: [], affinities: {} }; }
 export function normalizeJsonConsultationState(value: unknown): JsonConsultationState {
-  if (!value || typeof value !== "object") throw new Error("Stored consultation state must be an object");
+  if (!isPlainRecord(value)) throw new Error("Stored consultation state must be an object");
   const stored = value as Partial<JsonConsultationState>;
   if (stored.schemaVersion !== 1) throw new Error(`Unsupported consultation storage schema version ${String(stored.schemaVersion)}`);
-  if (!stored.consultations || typeof stored.consultations !== "object" || !Array.isArray(stored.events) || !stored.affinities || typeof stored.affinities !== "object") throw new Error("Stored consultation state is incomplete");
+  if (!isPlainRecord(stored.consultations) || !Array.isArray(stored.events) || !isPlainRecord(stored.affinities)) throw new Error("Stored consultation state is incomplete");
   const consultations = Object.fromEntries(Object.entries(stored.consultations).map(([key, consultation]) => [key, normalizeStoredConsultation(consultation)]));
   const affinities = Object.fromEntries(Object.entries(stored.affinities).map(([key, affinity]) => { validateAffinity(affinity); return [key, structuredClone(affinity)]; }));
-  const events = stored.events.map((event) => ({ ...structuredClone(event), snapshot: normalizeStoredConsultation(event.snapshot) }));
+  const events = stored.events.map((event) => {
+    if (!isPlainRecord(event)) throw new Error("Stored consultation event must be an object");
+    const storedEvent = event as unknown as ConsultationEvent;
+    return { ...structuredClone(storedEvent), snapshot: normalizeStoredConsultation(storedEvent.snapshot) };
+  });
   return {
     schemaVersion: 1,
     consultations, events, affinities,

@@ -14,6 +14,12 @@ describe("consultation storage validation", () => {
     expect(() => normalizeStoredConsultation({ ...consultation(), schemaVersion: 2 } as never)).toThrow(/Unsupported stored consultation schema version 2/);
   });
 
+  it("rejects non-record state maps and malformed events", () => {
+    expect(() => normalizeJsonConsultationState({ schemaVersion: 1, consultations: [], events: [], affinities: {} })).toThrow(/state is incomplete/);
+    expect(() => normalizeJsonConsultationState({ schemaVersion: 1, consultations: {}, events: [], affinities: [] })).toThrow(/state is incomplete/);
+    expect(() => normalizeJsonConsultationState({ schemaVersion: 1, consultations: {}, events: [null], affinities: {} })).toThrow(/event must be an object/);
+  });
+
   it("rejects unknown affinity duties and empty persisted execution participants", () => {
     expect(() => validateAffinity({ roomId: "room-a", participantId: "agent-a", duties: ["oracle"], provenance, createdAt: provenance.recordedAt, updatedAt: provenance.recordedAt } as never)).toThrow(/unknown duty/);
     expect(() => normalizeStoredConsultation({ ...consultation(), execution: { dialogueEnabled: true, limits: { participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1, timeLimitMs: 1 }, participantIds: [""], turns: [], inputs: [], blockingQuestion: null, synthesisKey: "key", synthesisStarted: false, providerOperations: [] } })).toThrow(/empty participant ID/);

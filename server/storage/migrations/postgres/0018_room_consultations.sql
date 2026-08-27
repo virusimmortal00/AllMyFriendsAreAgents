@@ -25,6 +25,7 @@ CREATE TABLE consultation_events (
 -- consultation context, so an authorized operator must first redact those
 -- JSON documents (or crypto-shred the room-specific encryption key when
 -- encryption-at-rest is deployed), then use the audited maintenance runbook
+-- in docs/operations/consultation-data-erasure.md
 -- to temporarily disable consultation_events_immutable_delete and delete
 -- events before their parent consultation. ON DELETE RESTRICT prevents an
 -- accidental parent deletion from bypassing that reviewable sequence; normal
