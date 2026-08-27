@@ -602,7 +602,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
     if (await agentHealth.recordSuccess(agent)) broadcast();
     const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
-    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch };
+    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
   } catch (error) {
     if (!isAgentGenerationCancelledError(error)) await agentHealth.recordFailure(agent,error);
     throw error;
@@ -630,8 +630,7 @@ const commandRuntime = new CommandRuntime({
       });
       const availableSlots=Math.max(0,agentConcurrency-activeGenerations.size());
       if (!availableSlots) throw new Error("Shared generation capacity is unavailable for POV execution.");
-      const selected=eligible.slice(0,availableSlots);
-      if (selected.length) await performConversation(selected.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true},availableSlots);
+      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true},availableSlots);
       }, true);if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
     });
     if (!accepted) reject(new Error("The room is already working."));
@@ -639,6 +638,8 @@ const commandRuntime = new CommandRuntime({
   publishStatus: async (auditId,text) => { await store.addCommandAuditMessageOnce(auditId,text); broadcast(); },
   deliverTask: async (attemptId,agent,messages,result) => {
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
+    const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+    if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
     const burstId=randomUUID();
     for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence});
     broadcast();

@@ -226,13 +226,14 @@ export default function App() {
   useEffect(() => {
     if (!human || !connected) { setPolls([]); return; }
     let cancelled = false;
+    let timer: number | undefined;
     const refresh = async () => {
       const requestSequence = ++pollRequestSequence.current;
       try { const result = await loadPolls(); if (!cancelled && requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []); } catch { /* the room connection owns recovery */ }
+      finally { if (!cancelled) timer = window.setTimeout(() => void refresh(), 2_000); }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2_000);
-    return () => { cancelled = true; pollRequestSequence.current += 1; window.clearInterval(timer); };
+    return () => { cancelled = true; pollRequestSequence.current += 1; if (timer !== undefined) window.clearTimeout(timer); };
   }, [human?.id, connected, connectionEpoch]);
 
   useEffect(() => {

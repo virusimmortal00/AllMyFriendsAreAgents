@@ -34,6 +34,19 @@ export const MAX_COMMAND_SUBMISSIONS_PER_ROOM = 1_000;
 export const MAX_COMMAND_TOMBSTONES_PER_ROOM = 2_000;
 export const MAX_RECENT_POLLS = 100;
 
+export function commandPollCursor(poll: Pick<CommandPoll, "createdAt" | "pollId">) {
+  return `${poll.createdAt}|${encodeURIComponent(poll.pollId)}`;
+}
+
+export function parseCommandPollCursor(cursor: string | undefined) {
+  if (!cursor) return undefined;
+  const separator = cursor.indexOf("|");
+  if (separator < 0) return { createdAt: cursor, pollId: "" };
+  const createdAt = cursor.slice(0, separator);
+  try { return { createdAt, pollId: decodeURIComponent(cursor.slice(separator + 1)) }; }
+  catch { return undefined; }
+}
+
 export interface DiagnosticQuery {
   readonly agentId: ActiveAgentId;
   readonly limit?: number;
