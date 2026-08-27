@@ -12,6 +12,11 @@ describe("browser identity requests", () => {
     await expect(sendMessage("/task no", "command-denied-1")).rejects.toMatchObject({ name: "ApiRequestError", message: "Denied.", outcomeUnknown: false, status: 400, body: { error: "Denied." } } satisfies Partial<ApiRequestError>);
   });
 
+  it("returns a private command envelope from an expected HTTP 400", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ command: true, clientSubmissionId: "command-private-1", result: { kind: "private-error", message: "Only owners may run that command." } }), { status: 400, headers: { "Content-Type": "application/json" } })));
+    await expect(sendMessage("/task no", "command-private-1")).resolves.toMatchObject({ result: { kind: "private-error", message: "Only owners may run that command." } });
+  });
+
   it("reuses a continuation client message ID after an unknown outcome", async () => {
     const bodies: Array<Record<string, unknown>> = []; let attempt = 0;
     vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {

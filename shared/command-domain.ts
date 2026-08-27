@@ -21,8 +21,9 @@ const MAX_POLL_VALUE_LENGTH = 500;
 const MAX_POLL_OPTIONS = 12;
 
 export function parseCommand(text: string): CommandParseResult {
-  if (!text.startsWith("/")) return { kind: "not-command" };
-  const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const normalized = text.trim();
+  if (!normalized.startsWith("/")) return { kind: "not-command" };
+  const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(normalized);
   if (!match) return { kind: "private-error", message: "Try /help to see the available commands." };
   const command = match[1]!.toLocaleLowerCase();
   const rest = match[2]?.trim() ?? "";

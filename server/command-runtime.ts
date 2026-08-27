@@ -225,10 +225,10 @@ export class CommandRuntime {
   private async markActive(attempt: CommandAttempt,generationId:string,submission:CommandSubmission) {
     const live=this.live.get(attempt.attemptId); if (!live) return false;
     if (!this.agentCurrent(attempt.agentId)) { await this.stage1(attempt,submission,"eligibility changed at generation start"); return false; }
-    if (live.timer) this.clock.clearTimeout(live.timer);
     const active={...attempt,generationId,status:"active" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,active);
     if(claimed.kind!=="accepted") return false;
+    if (live.timer) this.clock.clearTimeout(live.timer);
     live.reservation?.release();
     live.timer=this.clock.setTimeout(()=>void this.stage2(active,submission),this.stage2Ms);
     return true;

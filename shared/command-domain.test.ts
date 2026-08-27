@@ -10,6 +10,7 @@ describe("command parser", () => {
     expect(parseCommand("/pov what do you think?")).toMatchObject({ kind: "command", invocation: { command: "pov" } });
     expect(parseCommand('/poll "Best path?" "A" "B"')).toEqual({ kind: "command", invocation: { command: "poll", question: "Best path?", options: ["A", "B"] } });
     expect(parseCommand("/help")).toEqual({ kind: "command", invocation: { command: "help" } });
+    expect(parseCommand("  /task ship it  ")).toMatchObject({ kind: "command", invocation: { command: "task", prompt: "ship it" } });
   });
 
   it("keeps malformed poll failures private and friendly", () => {

@@ -213,7 +213,7 @@ export async function sendMessage(text: string, clientMessageId: string, mention
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }, REQUEST_TIMEOUT_MS, [400]).then(async (response) => {
     const acknowledgement: unknown = await response.json().catch(() => ({}));
-    if (!response.ok) {
+    if (!response.ok && !(response.status === 400 && isCommandAcknowledgement(acknowledgement))) {
       const body = acknowledgement as { error?: string };
       throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, acknowledgement);
     }

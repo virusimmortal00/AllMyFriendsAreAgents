@@ -601,8 +601,10 @@ export default function App() {
     setPollVotePending(`${pollId}:${optionIndex}`);
     void voteOnPoll(pollId, optionIndex).then(async () => {
       const requestSequence = ++pollRequestSequence.current;
-      const result = await loadPolls();
-      if (requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []);
+      try {
+        const result = await loadPolls();
+        if (requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []);
+      } catch { /* the periodic refresh owns poll projection recovery */ }
     }).catch((error) => {
       setClientError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
     }).finally(() => setPollVotePending(null));
