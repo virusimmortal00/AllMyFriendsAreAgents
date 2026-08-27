@@ -121,7 +121,10 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION,
 );
 await assignmentLifecycle.reconcile();
-let implementationCapabilities: Partial<Record<AgentId, ImplementationCapability>> = await assignmentLifecycle.implementationCapabilities(currentEnabledAgents());
+const initialImplementationCapabilitySnapshot = await assignmentLifecycle.implementationCapabilitySnapshot(currentEnabledAgents());
+let implementationCapabilities: Partial<Record<AgentId, ImplementationCapability>> = initialImplementationCapabilitySnapshot.capabilities;
+let implementationCapabilityRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+scheduleImplementationCapabilityRefresh(initialImplementationCapabilitySnapshot.refreshAt);
 const coordinatorConfigured = coordinatorEnabled();
 const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
 const coordinatorHeartbeat = new CoordinatorHeartbeat(
@@ -190,7 +193,21 @@ function publicRoomSnapshot() {
 }
 
 async function refreshImplementationCapabilities() {
-  implementationCapabilities = await assignmentLifecycle.implementationCapabilities(currentEnabledAgents());
+  const snapshot = await assignmentLifecycle.implementationCapabilitySnapshot(currentEnabledAgents());
+  implementationCapabilities = snapshot.capabilities;
+  scheduleImplementationCapabilityRefresh(snapshot.refreshAt);
+}
+
+function scheduleImplementationCapabilityRefresh(refreshAt: string | undefined) {
+  if (implementationCapabilityRefreshTimer) clearTimeout(implementationCapabilityRefreshTimer);
+  implementationCapabilityRefreshTimer = undefined;
+  if (!refreshAt) return;
+  const delay = Math.max(0, Math.min(Date.parse(refreshAt) - Date.now() + 1, 2_147_483_647));
+  implementationCapabilityRefreshTimer = setTimeout(() => {
+    implementationCapabilityRefreshTimer = undefined;
+    void refreshImplementationCapabilitiesAndBroadcast();
+  }, delay);
+  implementationCapabilityRefreshTimer.unref();
 }
 
 async function refreshImplementationCapabilitiesAndBroadcast() {

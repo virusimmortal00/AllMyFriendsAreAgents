@@ -76,7 +76,7 @@ export class AssignmentLifecycleService {
     if (assignments.some((assignment) => assignment.assignmentId === input.assignmentId)) {
       return { kind: "conflict", reason: "Assignment ID already exists" };
     }
-    if (this.singleWriter && assignments.some(isWritableAssignment)) {
+    if (this.singleWriter && assignments.some(reservesWriterSlot)) {
       return { kind: "conflict", reason: "Trusted lifecycle prototype permits only one active writable assignment" };
     }
 
@@ -122,7 +122,13 @@ export class AssignmentLifecycleService {
 
   async list() { return this.records.listAssignments(); }
 
-  async reconcile(): Promise<readonly AssignmentRecord[]> {
+  reconcile(): Promise<readonly AssignmentRecord[]> {
+    const operation = this.mutationQueue.then(() => this.reconcileLocked());
+    this.mutationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async reconcileLocked(): Promise<readonly AssignmentRecord[]> {
     const reconciled: AssignmentRecord[] = [];
     for (const assignment of await this.records.listAssignments()) {
       if (assignment.lifecycleStatus === "CANCELLED" || assignment.lifecycleStatus === "DISPOSED") {
@@ -165,9 +171,17 @@ export class AssignmentLifecycleService {
   }
 
   async implementationCapabilities(agents: readonly AgentId[]): Promise<Partial<Record<AgentId, ImplementationCapability>>> {
+    return (await this.implementationCapabilitySnapshot(agents)).capabilities;
+  }
+
+  async implementationCapabilitySnapshot(agents: readonly AgentId[]): Promise<{
+    capabilities: Partial<Record<AgentId, ImplementationCapability>>;
+    refreshAt?: string;
+  }> {
     const assignments = await this.reconcile();
     const roster = normalizeRoomAgentRoster(this.rooms.snapshot().roster);
     const capabilities: Partial<Record<AgentId, ImplementationCapability>> = {};
+    let refreshAt: string | undefined;
     for (const agent of agents) {
       const participant = roster.entries.find((entry) => entry.agentId === agent && entry.enabled);
       if (!participant?.supportsProjectWrites) {
@@ -192,8 +206,12 @@ export class AssignmentLifecycleService {
       capabilities[agent] = await implementationWorkspaceIsConfined(this.repositoryPath, this.worktreesRoot, assignment)
         ? { eligible: true, available: true }
         : unavailable(true, "confinement-unavailable");
+      if (capabilities[agent]?.available
+        && (!refreshAt || Date.parse(governed.value.leaseExpiresAt) < Date.parse(refreshAt))) {
+        refreshAt = governed.value.leaseExpiresAt;
+      }
     }
-    return capabilities;
+    return { capabilities, ...(refreshAt ? { refreshAt } : {}) };
   }
 
   /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
@@ -205,6 +223,10 @@ export class AssignmentLifecycleService {
     if (!this.participantEligible(agent)) return { kind: "revoked", reason: "Implementation participant eligibility changed." };
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return { kind: "revoked", reason: governed.kind === "rejected" || governed.kind === "conflict" ? governed.reason : "Assignment claim authority no longer exists." };
+    if (!this.implementationConfinementAvailable
+      || !await implementationWorkspaceIsConfined(this.repositoryPath, this.worktreesRoot, assignment)) {
+      return { kind: "revoked", reason: "Assignment workspace confinement is unavailable." };
+    }
     const workspace = await this.workspaceForAgent(agent);
     if (!workspace || workspace !== assignment.workspacePath) return { kind: "revoked", reason: "Assignment workspace authority changed." };
     return { kind: "ok", assignment, workspace };
@@ -285,7 +307,7 @@ export class AssignmentLifecycleService {
 
   private async validateGovernance(memberId: string, memberRevision: number, input: {
     improvementId: string; fencingToken: number; manifestRevision: number;
-  }): Promise<AssignmentResult<{ repositoryBaseCommit: string }>> {
+  }): Promise<AssignmentResult<{ repositoryBaseCommit: string; leaseExpiresAt: string }>> {
     const member = this.developers.latest(memberId);
     if (!member || member.revision !== memberRevision || !member.capabilities.includes("ASSIGNMENT_WRITE")) {
       return { kind: "rejected", reason: "Developer-team identity or assignment capability changed" };
@@ -302,7 +324,7 @@ export class AssignmentLifecycleService {
       || manifest.effectiveToolGrants.some((grant) => PROHIBITED_GRANT.test(grant))) {
       return { kind: "rejected", reason: "The execution manifest does not authorize this trusted, non-publication lifecycle" };
     }
-    return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit } };
+    return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit, leaseExpiresAt: claim.leaseExpiresAt } };
   }
 
   private participantEligible(agent: AgentId) {
@@ -313,6 +335,10 @@ export class AssignmentLifecycleService {
 
 function isWritableAssignment(assignment: AssignmentRecord) {
   return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE";
+}
+
+function reservesWriterSlot(assignment: AssignmentRecord) {
+  return isWritableAssignment(assignment) || assignment.lifecycleStatus === "MISSING";
 }
 
 function unavailable(eligible: boolean, unavailableReason: NonNullable<ImplementationCapability["unavailableReason"]>): ImplementationCapability {
