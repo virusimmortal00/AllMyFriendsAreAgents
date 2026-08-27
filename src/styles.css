@@ -692,7 +692,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   z-index: 45;
   left: 8px;
   bottom: calc(100% - 42px);
-  width: min(520px, calc(100% - 16px));
+  width: min(520px, calc(100% - 16px), calc(100vw - 16px));
   max-height: min(280px, 45vh);
   padding: 3px;
   overflow: auto;
@@ -708,6 +708,17 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .mention-provider-mark { width: 12px; flex: 0 0 12px; font-size: 10px; text-align: center; }
 .mention-provider-mark--agent { color: #2368c4; }
 .mention-provider-mark--human { color: #5d6876; }
+.diagnostics-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.diagnostics-controls label { display: grid; gap: 3px; font-size: 12px; }
+.diagnostics-results { display: grid; gap: 4px; max-width: 720px; }
+.diagnostics-results button { display: grid; gap: 2px; padding: 7px; overflow: hidden; border: 1px solid #888; background: #fff; text-align: left; }
+.diagnostics-results span, .diagnostic-detail pre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diagnostics-error { color: #8b0000; font-weight: bold; }
+.diagnostic-detail { max-width: 720px; margin-top: 12px; padding: 10px; border: 2px inset white; background: #fff; }
+.diagnostic-detail pre { max-width: 100%; padding: 6px; background: #f4f4f4; }
+.diagnostic-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; }
+.diagnostic-detail dl div { display: contents; }
+.diagnostic-detail dd { margin: 0; overflow-wrap: anywhere; }
 
 .controls-panel { padding-bottom: 8px; background: var(--chrome); }
 .room-settings-form { display: contents; }

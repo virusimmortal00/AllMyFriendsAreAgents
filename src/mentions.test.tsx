@@ -127,4 +127,21 @@ describe("participant mention autocomplete", () => {
     expect(message.value).toBe("@Grok ");
     expect(screen.getByLabelText("Mention metadata").textContent).toContain('"end":5');
   });
+
+  it("keeps keyboard navigation and preserves following whitespace for long names", async () => {
+    const user = userEvent.setup();
+    const name = "A very long participant alias that should stay a single line";
+    function LongNameFlow() {
+      const [draft, setDraft] = useState(`@long\nnext`);
+      return <ChatComposer draft={draft} mentions={[]} mentionCandidates={[{ targetKind: "human", targetId: "human-long", label: name, description: "Complete participant name", revision: 1 }]} style={DEFAULT_PARTICIPANT_STYLES.you} onDraftChange={setDraft} onStyleChange={() => undefined} onSubmit={(event) => event.preventDefault()} />;
+    }
+    render(<LongNameFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    message.focus(); message.setSelectionRange(5, 5);
+    fireEvent.select(message);
+    await user.keyboard("{ArrowDown}{ArrowUp}{Tab}");
+    expect(message.value).toBe(`@${name}\nnext`);
+    const option = screen.queryByRole("option", { name: new RegExp(`@${name}`) });
+    expect(option).toBeNull();
+  });
 });

@@ -863,7 +863,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => chooseMention(candidate)}
             >
-              <i className={`mention-provider-mark mention-provider-mark--${candidate.targetKind}`} aria-hidden="true">{candidate.targetKind === "agent" ? "◆" : "●"}</i><strong title={`@${candidate.label}`}>@{candidate.label}</strong><span title={candidate.description}>{candidate.description}</span>
+              <i className={`mention-provider-mark mention-provider-mark--${candidate.targetKind}`} aria-hidden="true">{candidate.targetKind === "agent" ? "◆" : "●"}</i><strong title={`@${candidate.label}${candidate.description ? ` — ${candidate.description}` : ""}`}>@{candidate.label}</strong><span title={candidate.description}>{candidate.description}</span>
             </button>
           ))}
         </div>
