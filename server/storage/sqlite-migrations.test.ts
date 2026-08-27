@@ -50,8 +50,11 @@ describe("SQLite migrations", () => {
         "command_poll_votes",
         "command_audit_identities",
         "command_diagnostics",
+        "consultations",
+        "consultation_events",
+        "consultation_affinities",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 20 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 21 });
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
@@ -63,6 +66,8 @@ describe("SQLite migrations", () => {
       expect((database.prepare("PRAGMA table_info(room_agents)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("last_seen_message_id");
       expect((database.prepare("PRAGMA table_info(room_settings)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["configuration_revision", "base_prompt_revision", "base_prompt_text", "summarizer_model", "summarizer_prompt_text", "summarizer_prompt_revision", "feature_flags_json", "preflight_mode"]));
       expect((database.prepare("PRAGMA table_info(agent_context_summaries)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("config_revision");
+      const consultationIndexes = (database.prepare("PRAGMA index_list(consultations)").all() as Array<{ name: string }>).map(({ name }) => name);
+      expect(consultationIndexes).toEqual(expect.arrayContaining(["consultations_room_state_updated_idx", "sqlite_autoindex_consultations_1", "sqlite_autoindex_consultations_2"]));
     } finally {
       database.close();
     }
