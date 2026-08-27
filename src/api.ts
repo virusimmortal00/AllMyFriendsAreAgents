@@ -8,6 +8,7 @@ import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashbo
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
+import type { DiagnosticRecord } from "./diagnostics";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -223,6 +224,20 @@ function isCommandAcknowledgement(value: unknown): value is CommandMutationAckno
 
 export async function loadPolls() {
   return request("/api/polls", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: import("./types").PublicPollProjection[] }>);
+}
+
+/** Diagnostics are intentionally never fetched as part of room state or SSE. */
+export async function loadDiagnostics(token: string, agentId: string, search = ""): Promise<{ items: DiagnosticRecord[] }> {
+  const query = new URLSearchParams({ agentId, limit: "50" });
+  if (search.trim()) query.set("search", search.trim().slice(0, 200));
+  return request(`/api/developer/diagnostics?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.json() as Promise<{ items: DiagnosticRecord[] }>);
+}
+
+export async function loadDiagnostic(token: string, agentId: string, recordId: string): Promise<DiagnosticRecord> {
+  const query = new URLSearchParams({ agentId });
+  return request(`/api/developer/diagnostics/${encodeURIComponent(recordId)}?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
+    .then((response) => response.json() as Promise<DiagnosticRecord>);
 }
 
 export async function voteOnPoll(pollId: string, optionIndex: number) {
