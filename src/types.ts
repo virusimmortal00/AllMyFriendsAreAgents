@@ -33,6 +33,13 @@ export interface RoomMessage {
   clientMessageId?: string;
   mentions?: MessageMention[];
 }
+export interface PublicPollProjection {
+  pollId: string;
+  question: string;
+  options: string[];
+  tallies: number[];
+  totalVotes: number;
+}
 
 export interface HumanPresence {
   id: string;

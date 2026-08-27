@@ -9,7 +9,7 @@ import { sessionHuman, type HumanSessions } from "./human-session.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 
 function statusFor(result: CommandResponse) { return result.kind === "private-error" ? 400 : result.kind === "private-help" ? 200 : result.duplicate ? 200 : 202; }
-export function sendCommandResponse(response: express.Response, result: CommandResponse, clientSubmissionId?:string) { return response.status(statusFor(result)).set("Cache-Control","no-store").json(result.kind==="private-error"?{error:result.message,kind:result.kind}:clientSubmissionId?{command:true,clientSubmissionId,result}:result); }
+export function sendCommandResponse(response: express.Response, result: CommandResponse, clientSubmissionId?:string) { return response.status(statusFor(result)).set("Cache-Control","no-store").json(clientSubmissionId ? { command:true, clientSubmissionId, result } : result.kind === "private-error" ? { error:result.message,kind:result.kind } : result); }
 
 export async function submitHumanCommand(input:{request:express.Request;response:express.Response;runtime:CommandRuntime;humans:HumanPresenceRegistry;sessions:HumanSessions;text?:string}) {
   const human=sessionHuman(input.request,input.humans,input.sessions); if(!human)return input.response.status(401).json({error:"Join the room before running commands."});

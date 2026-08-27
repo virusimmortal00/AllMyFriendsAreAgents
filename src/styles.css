@@ -416,6 +416,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .roster-permission-toggle { font-weight: 700; }
 .roster-command-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 10px; }
 .roster-command-list label, .roster-permission-toggle { display: flex; align-items: center; gap: 5px; }
+.poll-cards { display: grid; gap: 8px; padding: 8px 0; }
+.poll-card { border: 1px solid #7d8791; background: #edf1f5; padding: 8px; }
+.poll-card h3, .poll-card p { margin: 0 0 6px; }
+.poll-card ol { margin: 0; padding-left: 24px; display: grid; gap: 4px; }
+.poll-card li { display: flex; gap: 8px; align-items: center; }
+.poll-card li span { min-width: 2ch; font-variant-numeric: tabular-nums; }
 .roster-current-model { display: grid; gap: 8px; padding: 10px; border: 1px solid #d5d9df; border-radius: 7px; background: #f8f9fb; }
 .roster-current-model > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .roster-current-model > header > span { display: grid; min-width: 0; }
