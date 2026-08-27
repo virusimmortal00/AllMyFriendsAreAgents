@@ -232,7 +232,8 @@ export async function runEnergyConversation(
     : policy.hardTurnCeiling;
   const remaining = [...candidates];
   const invited = new Set<AgentId>();
-  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean }> = [];
+  const activeTurns = new Set<AgentId>();
+  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean; targetWasRunning?: boolean }> = [];
   const pairReplies = new Map<string, number>();
   const usedContinuationSources = new Set<number>();
   let lastOutcome: EnergyOutcome | undefined;
@@ -249,10 +250,19 @@ export async function runEnergyConversation(
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
     invited.add(turn.agent);
-    const result = await performTurn({
-      ...turn,
-      visibleMessageLimit: Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered),
-    });
+    activeTurns.add(turn.agent);
+    let result: TurnResult;
+    try {
+      result = await performTurn({
+        ...turn,
+        visibleMessageLimit: Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered),
+      });
+    } catch (error) {
+      activeTurns.delete(turn.agent);
+      throw error;
+    }
+    const activePeersAtCompletion = new Set(activeTurns);
+    activeTurns.delete(turn.agent);
     if (result.cancelled) cancelled = true;
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
     const responded = visibleMessageCount > 0;
@@ -263,7 +273,12 @@ export async function runEnergyConversation(
       visibleMessagesDelivered += visibleMessageCount;
       energySpent += visibleMessageCount + Math.floor((responseTurns - 1) / 2);
       for (const target of result.mentionedAgents || []) {
-        if (target !== turn.agent) pendingMentions.push({ source: turn.agent, target, includeDiff: turn.includeDiff });
+        if (target !== turn.agent) pendingMentions.push({
+          source: turn.agent,
+          target,
+          includeDiff: turn.includeDiff,
+          targetWasRunning: activePeersAtCompletion.has(target),
+        });
       }
       lastOutcome = outcome;
       visibleOutcomes.push(outcome);
@@ -332,7 +347,7 @@ export async function runEnergyConversation(
     if (mention) {
       const pair = [mention.source, mention.target].sort().join(":");
       const replyCount = pairReplies.get(pair) || 0;
-      if (replyCount >= 2 || lastOutcome?.turn.agent === mention.target) continue;
+      if (replyCount >= 2 || (!mention.targetWasRunning && lastOutcome?.turn.agent === mention.target)) continue;
       pairReplies.set(pair, replyCount + 1);
       await record({
         agent: mention.target,

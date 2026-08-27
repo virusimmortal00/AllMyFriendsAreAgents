@@ -632,6 +632,33 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
   });
 
+  it("preserves a mention follow-up when the concurrent target completes last", async () => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    const turnCounts = new Map<AgentId, number>();
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      const count = turnCounts.get(turn.agent) || 0;
+      turnCounts.set(turn.agent, count + 1);
+      if (turn.agent === "codex-sol") return first.promise;
+      if (turn.agent === "claude-sonnet" && count === 0) return second.promise;
+      return Promise.resolve({ visibleMessageCount: 0 });
+    });
+
+    const conversation = runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.resolve({ visibleMessageCount: 1, mentionedAgents: ["claude-sonnet"] });
+    second.resolve({ visibleMessageCount: 1 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
+    await conversation;
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual([
+      "codex-sol",
+      "claude-sonnet",
+      "claude-sonnet",
+    ]);
+    expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
+  });
+
   it("stops launching queued openings after concurrent cancellation", async () => {
     const first = deferred<TurnResult>();
     const second = deferred<TurnResult>();
@@ -672,7 +699,7 @@ describe("conversation energy", () => {
     void observed.then(() => { finished = true; });
     await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
     first.reject(firstError);
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(finished).toBe(false);
     second.reject(secondError);
 
