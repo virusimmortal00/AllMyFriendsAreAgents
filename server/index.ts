@@ -12,7 +12,7 @@ import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
-import { openDeveloperTeamRegistry } from "./developer-team.js";
+import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
@@ -64,6 +64,8 @@ import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
+import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
+import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -74,6 +76,17 @@ const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCO
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
+const configuredAllowedHostnames = (process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+const roomMcpAllowedHostnames = [...new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  ...(normalizedHost && normalizedHost !== "0.0.0.0" && normalizedHost !== "::" ? [normalizedHost === "::1" ? "[::1]" : normalizedHost] : []),
+  ...configuredAllowedHostnames,
+])];
 if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE !== "true") {
   throw new Error(
     "Refusing to bind the unauthenticated room API to a non-loopback host. "
@@ -196,7 +209,8 @@ const investigationService = new InvestigationService(investigationStore, store,
 });
 await investigationService.initialize();
 
-app.use(express.json({ limit: "64kb" }));
+const jsonBodyParser = express.json({ limit: "64kb" });
+app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
 registerRoomHistoryRoutes({
   app,
   store,
@@ -296,12 +310,51 @@ function developerRoomView(limit = 50) {
   const messages = state.messages.slice(-limit);
   return {
     ...state,
+    roomId: CANONICAL_ROOM_ID,
     messages,
     busy: jobs.busy,
     cursor: state.messages.at(-1)?.id,
     developerTeam: developerTeam.roster(),
   };
 }
+
+function developerRoomDescriptor() {
+  const state = publicRoomSnapshot();
+  return {
+    roomId: CANONICAL_ROOM_ID,
+    name: state.settings.roomName,
+    topic: state.settings.topic,
+    status: "active" as const,
+    cursor: state.messages.at(-1)?.id,
+    busy: jobs.busy,
+  };
+}
+
+async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string) {
+  roomActivity.interrupt();
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
+    id: authenticated.member.memberId,
+    name: authenticated.member.displayName,
+  });
+  broadcast();
+  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
+    const conversationState = roomSnapshot();
+    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
+  }));
+  return { accepted: true, message, room: developerRoomView() };
+}
+
+const roomMcp = registerRoomMcpRoutes({
+  app,
+  developers: developerTeam,
+  allowedHostnames: roomMcpAllowedHostnames,
+  bridge: singleRoomMcpBridge({
+    roomId: CANONICAL_ROOM_ID,
+    describe: developerRoomDescriptor,
+    read: developerRoomView,
+    send: deliverDeveloperMessage,
+  }),
+});
 
 function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }, notFoundMessage = "Improvement not found.") {
   if (result.kind === "ok") return response.json(result.value);
@@ -949,17 +1002,7 @@ app.post("/api/developer/messages", async (request, response) => {
   if (!text) return response.status(400).json({ error: "Message text is required." });
   if (text.length > 16_000) return response.status(400).json({ error: "Developer messages are limited to 16,000 characters." });
 
-  roomActivity.interrupt();
-  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
-    id: authenticated.member.memberId,
-    name: authenticated.member.displayName,
-  });
-  broadcast();
-  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
-    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
-  return response.status(202).json({ accepted: true, message, room: developerRoomView() });
+  return response.status(202).json(await deliverDeveloperMessage(authenticated, text));
 });
 
 app.get("/api/developer/improvements/:id", async (request, response) => {
@@ -1096,7 +1139,7 @@ async function shutdown(signal: string) {
     resolve();
   }));
   httpServer.closeAllConnections();
-  await Promise.all([closeServer, agentProcesses.shutdown(), investigationShutdown]);
+  await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

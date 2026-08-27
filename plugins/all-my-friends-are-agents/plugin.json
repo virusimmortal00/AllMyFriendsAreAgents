@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "all-my-friends-are-agents",
+  "version": "0.1.0",
+  "description": "Discover, read, and participate in authenticated actor chat rooms over MCP.",
+  "author": {
+    "name": "All My Friends Are Agents"
+  },
+  "homepage": "https://github.com/virusimmortal00/AllMyFriendsAreAgents",
+  "repository": "https://github.com/virusimmortal00/AllMyFriendsAreAgents",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "chat",
+    "mcp",
+    "rooms"
+  ]
+}

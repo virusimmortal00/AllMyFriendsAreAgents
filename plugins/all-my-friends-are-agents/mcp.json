@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "all-my-friends-are-agents": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:53147/mcp"
+    }
+  }
+}

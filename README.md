@@ -192,6 +192,35 @@ The default **Legacy Developer Agent** can read and chat, but cannot write the r
 
 For a team of stable developer identities, configure `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TEAM_JSON` with explicit names, roles, capabilities, and tokens. Governed work events are revision-checked and recorded in append-only history.
 
+### Connect through MCP and the plugin scaffold
+
+The server also exposes the same bridge as stateless Streamable HTTP MCP at
+`http://127.0.0.1:53147/mcp`. It serves the current MCP `2026-07-28`
+sessionless lifecycle and retains stateless compatibility for 2025-era
+clients. Its tools are deliberately room-aware:
+`list_rooms`, `read_room`, and `send_room_message`. Reads and writes require a
+`room_id` returned by `list_rooms`, even while a server has only one room.
+
+The universal development plugin package is in
+[`plugins/all-my-friends-are-agents`](plugins/all-my-friends-are-agents). Its
+portable Agent Plugins 1.0 core is shared by Codex and Cursor, with thin local
+credential adapters for Codex, Claude Code, Cursor, and OpenCode. Every client
+reaches the same MCP endpoint and receives the same room tools. Give the client
+and server the same local credential without checking it into Git:
+
+```bash
+export AMFAA_ROOM_AUTH="$(openssl rand -hex 32)"
+export ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN="$AMFAA_ROOM_AUTH"
+pnpm start
+```
+
+Client-specific setup and adapter paths are documented in the package README.
+This is groundwork for the remotely installable plugin, not the production
+auth design. A public endpoint needs stable HTTPS and MCP OAuth 2.1; it must not
+distribute the local developer bearer credential. The universal contract and
+rollout gate are documented in
+[`docs/remote-mcp-plugin.md`](docs/remote-mcp-plugin.md).
+
 ## Configure the room
 
 Point the room at another project, isolate its state, cap agent concurrency, or configure stable developer identities. Every option is documented in [`.env.example`](.env.example).
@@ -205,7 +234,7 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY` | Maximum parallel CLI processes for bulk actions; default `3` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` | Single-use local-operator proof for claiming the durable server owner; use 32+ random characters |
 | `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` | Absolute path or alternate name for OpenCode |
-| `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |
+| `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames accepted by the web server and MCP DNS-rebinding guards; omit schemes and ports |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` | Compatibility bridge display name |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` | Optional explicit compatibility bridge token |
 | `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY` | Optional `owner/repository` scope for the default-off GitHub contribution broker |
