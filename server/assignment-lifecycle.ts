@@ -3,6 +3,8 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { isAgentId } from "../shared/participants.js";
+import type { ImplementationCapability } from "../shared/protocol.js";
+import { normalizeRoomAgentRoster } from "../shared/roster.js";
 import type { AssignmentRecord, AssignmentRecordStore, AssignmentRecoveryClassification } from "./assignment-record.js";
 import { ASSIGNMENT_LIFECYCLE_METADATA } from "./assignment-record.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
@@ -49,6 +51,7 @@ export class AssignmentLifecycleService {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly singleWriter = true,
     private readonly processes?: { terminateScope(scope: string): Promise<void> },
+    private readonly implementationConfinementAvailable = true,
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
@@ -64,8 +67,8 @@ export class AssignmentLifecycleService {
       || !Number.isSafeInteger(input.fencingToken) || !Number.isSafeInteger(input.manifestRevision)) {
       return { kind: "rejected", reason: "Valid assignment, improvement, agent, fencing-token, and manifest-revision fields are required" };
     }
-    if (this.rooms.snapshot().settings.writableAgent !== input.agent) {
-      return { kind: "rejected", reason: "The project-write toggle does not grant this agent writable execution" };
+    if (!this.participantEligible(input.agent)) {
+      return { kind: "rejected", reason: "The implementation assignment participant is not enabled or eligible" };
     }
     const governed = await this.validateGovernance(authenticated.member.memberId, authenticated.member.revision, input);
     if (governed.kind !== "ok") return governed;
@@ -155,10 +158,42 @@ export class AssignmentLifecycleService {
   async assignmentForAgent(agent: AgentId): Promise<AssignmentRecord | undefined> {
     const assignments = await this.reconcile();
     const assignment = assignments.find((candidate) => candidate.agent === agent && isWritableAssignment(candidate));
-    if (!assignment || this.rooms.snapshot().settings.writableAgent !== agent) return undefined;
+    if (!assignment || !this.participantEligible(agent)) return undefined;
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return undefined;
     return assignment;
+  }
+
+  async implementationCapabilities(agents: readonly AgentId[]): Promise<Partial<Record<AgentId, ImplementationCapability>>> {
+    const assignments = await this.reconcile();
+    const roster = normalizeRoomAgentRoster(this.rooms.snapshot().roster);
+    const capabilities: Partial<Record<AgentId, ImplementationCapability>> = {};
+    for (const agent of agents) {
+      const participant = roster.entries.find((entry) => entry.agentId === agent && entry.enabled);
+      if (!participant?.supportsProjectWrites) {
+        capabilities[agent] = unavailable(false, "participant-ineligible");
+        continue;
+      }
+      const current = assignments.filter((assignment) => ["ACTIVE", "RECOVERABLE", "MISSING"].includes(assignment.lifecycleStatus));
+      const assignment = current.find((candidate) => candidate.agent === agent);
+      if (!assignment) {
+        capabilities[agent] = unavailable(true, current.length ? "assignment-owner-mismatch" : "no-active-assignment");
+        continue;
+      }
+      if (assignment.lifecycleStatus === "MISSING" || !this.implementationConfinementAvailable) {
+        capabilities[agent] = unavailable(true, "confinement-unavailable");
+        continue;
+      }
+      const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
+      if (governed.kind !== "ok") {
+        capabilities[agent] = unavailable(true, "governance-invalid");
+        continue;
+      }
+      capabilities[agent] = await implementationWorkspaceIsConfined(this.repositoryPath, this.worktreesRoot, assignment)
+        ? { eligible: true, available: true }
+        : unavailable(true, "confinement-unavailable");
+    }
+    return capabilities;
   }
 
   /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
@@ -167,7 +202,7 @@ export class AssignmentLifecycleService {
     const assignment = assignments.find((candidate) => candidate.assignmentId === assignmentId && candidate.agent === agent);
     if (!assignment || assignment.agent !== agent) return { kind: "revoked", reason: "Assignment is missing or belongs to another agent." };
     if (!["ACTIVE", "RECOVERABLE"].includes(assignment.lifecycleStatus)) return { kind: "revoked", reason: `Assignment lifecycle is ${assignment.lifecycleStatus}.` };
-    if (this.rooms.snapshot().settings.writableAgent !== agent) return { kind: "revoked", reason: "Project write capability was revoked for this agent." };
+    if (!this.participantEligible(agent)) return { kind: "revoked", reason: "Implementation participant eligibility changed." };
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return { kind: "revoked", reason: governed.kind === "rejected" || governed.kind === "conflict" ? governed.reason : "Assignment claim authority no longer exists." };
     const workspace = await this.workspaceForAgent(agent);
@@ -269,10 +304,39 @@ export class AssignmentLifecycleService {
     }
     return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit } };
   }
+
+  private participantEligible(agent: AgentId) {
+    const participant = normalizeRoomAgentRoster(this.rooms.snapshot().roster).entries.find((entry) => entry.agentId === agent);
+    return Boolean(participant?.enabled && participant.supportsProjectWrites);
+  }
 }
 
 function isWritableAssignment(assignment: AssignmentRecord) {
-  return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE" || assignment.lifecycleStatus === "MISSING";
+  return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE";
+}
+
+function unavailable(eligible: boolean, unavailableReason: NonNullable<ImplementationCapability["unavailableReason"]>): ImplementationCapability {
+  return { eligible, available: false, unavailableReason };
+}
+
+async function implementationWorkspaceIsConfined(repositoryPath: string, worktreesRoot: string, assignment: AssignmentRecord) {
+  const [repository, root, workspace] = await Promise.all([
+    realpath(repositoryPath).catch(() => ""),
+    realpath(worktreesRoot).catch(() => ""),
+    realpath(assignment.workspacePath).catch(() => ""),
+  ]);
+  if (!repository || !root || !workspace || workspace !== assignment.workspacePath || workspace === repository) return false;
+  const relative = path.relative(root, workspace);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  const [branch, common, repositoryCommon, head] = await Promise.all([
+    git(workspace, ["branch", "--show-current"]).catch(() => ""),
+    git(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => ""),
+    git(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => ""),
+    git(workspace, ["rev-parse", "HEAD"]).catch(() => ""),
+  ]);
+  if (branch !== assignment.branch || !head || head !== assignment.observedHeadSha || !common || !repositoryCommon) return false;
+  const [canonicalCommon, canonicalRepositoryCommon] = await Promise.all([realpath(common).catch(() => ""), realpath(repositoryCommon).catch(() => "")]);
+  return Boolean(canonicalCommon && canonicalCommon === canonicalRepositoryCommon);
 }
 
 async function disposableWorkspace(repositoryPath: string, worktreesRoot: string, assignment: AssignmentRecord): Promise<AssignmentResult<true>> {

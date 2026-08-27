@@ -15,7 +15,6 @@ function room(messages: RoomMessage[], status: PublicRoomState["status"] = "idle
     settings: {
       roomName: "The Agent Room",
       topic: "Open conversation",
-      writableAgent: "nobody",
       conversationEnergy: "balanced",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
@@ -53,7 +52,7 @@ afterEach(() => vi.useRealTimers());
 
 describe("RoomEventStream protocol", () => {
   it("supersedes room protocol version 3", () => {
-    expect(ROOM_PROTOCOL_VERSION).toBe(5);
+    expect(ROOM_PROTOCOL_VERSION).toBe(6);
   });
 
   it("sends one initial snapshot and then strictly ordered typed deltas", () => {

@@ -87,6 +87,7 @@ describe("OpenCode runtime contract", () => {
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, matching, "read-only", deployment)).toMatchObject({ kind: "reuse", session: matching, reason: expect.stringContaining("deployment code epoch match") });
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, changed, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "deployment code epoch changed" });
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, legacy, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "persisted session predates deployment epoch binding" });
+    expect(__testing.openCodeSessionDecision(participant.agentId, participant, { ...matching, id: "legacy-writer", permission: "writable" }, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "permission changed from writable to read-only" });
   });
 
   it("rejects migrated confirmations and unavailable models before invoking OpenCode", async () => {
@@ -125,15 +126,15 @@ describe("agent permissions", () => {
     expect(__testing.resolvePermission("codex-sol", state, true, "/tmp/worktree")).toBe("read-only");
   });
 
-  it("allows only the selected assigned agent to write on ordinary turns", () => {
-    expect(__testing.resolvePermission("codex-sol", state, false, "/tmp/worktree")).toBe("writable");
+  it("keeps ordinary room turns read-only even with a legacy write selection and assignment workspace", () => {
+    expect(__testing.resolvePermission("codex-sol", state, false, "/tmp/worktree")).toBe("read-only");
     expect(__testing.resolvePermission("claude-sonnet", state, false, "/tmp/worktree")).toBe("read-only");
     expect(__testing.resolvePermission("codex-sol", state, false)).toBe("read-only");
   });
 
-  it("allows a selected Cursor agent to write while keeping review turns read-only", () => {
+  it("does not let a dynamic legacy selection change the room lane", () => {
     const cursorState = { ...state, settings: { ...state.settings, writableAgent: "cursor-grok" as const } };
-    expect(__testing.resolvePermission("cursor-grok", cursorState, false, "/tmp/worktree")).toBe("writable");
+    expect(__testing.resolvePermission("cursor-grok", cursorState, false, "/tmp/worktree")).toBe("read-only");
     expect(__testing.resolvePermission("cursor-grok", cursorState, true, "/tmp/worktree")).toBe("read-only");
   });
 });
@@ -200,6 +201,9 @@ describe("room prompt context", () => {
     expect(prompt).not.toContain("CURRENT TRACKED WORKTREE DIFF AGAINST DEPLOYED COMMIT");
     expect(prompt).not.toContain("DISPOSITION:");
     expect(prompt).toContain("Read-only research, including web search");
+    expect(prompt).toContain("Ordinary room turns are read-only against project source");
+    expect(prompt).toContain("Runtime lane selection is server-owned");
+    expect(prompt).toContain("Never tell a human to switch, toggle, enter, or exit OpenCode plan/build mode");
     expect(prompt).toContain("DEPLOYMENT SOURCE PROVENANCE");
     expect(prompt).toContain("Commit: unavailable (do not guess a revision)");
     expect(prompt).toContain("Reading a current file establishes only its current contents");

@@ -78,14 +78,12 @@ describe("RoomRoster", () => {
 });
 
 describe("AgentSettingsDialog", () => {
-  it("shows one agent's connection and project permission away from room settings", () => {
+  it("shows one agent's connection and server-derived implementation status away from room settings", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
         agent="cursor-grok"
         available
-        writableAgent="codex-sol"
-        disabled={false}
-        onWritableChange={() => undefined}
+        implementationCapability={{ eligible: true, available: false, unavailableReason: "assignment-owner-mismatch" }}
         onClose={() => undefined}
       />,
     );
@@ -93,24 +91,24 @@ describe("AgentSettingsDialog", () => {
     expect(html).toContain('role="dialog"');
     expect(html).toContain("Cursor [Grok 4.6]");
     expect(html).toContain("Connected to the room");
-    expect(html).toContain("Allow this agent to edit project files");
-    expect(html).toContain("remove edit access from Codex [gpt-5.6 Sol]");
-    expect(html).not.toMatch(/type="checkbox" checked/);
+    expect(html).toContain("Implementation handoff");
+    expect(html).toContain("current assignment belongs to a different implementation worker");
+    expect(html).toContain("Room conversation and reviews always stay read-only");
+    expect(html).not.toContain("checkbox");
   });
 
-  it("shows the selected agent's edit permission as enabled", () => {
+  it("shows a valid governed handoff as available without granting the room participant edit access", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
         agent="codex-sol"
         available
-        writableAgent="codex-sol"
-        disabled={false}
-        onWritableChange={() => undefined}
+        implementationCapability={{ eligible: true, available: true }}
         onClose={() => undefined}
       />,
     );
 
-    expect(html).toMatch(/type="checkbox" checked=""/);
+    expect(html).toContain("A governed assignment is ready for a separate implementation worker");
+    expect(html).not.toContain("Allow this agent to edit project files");
   });
 
   it("explains a participant-local provider cooldown", () => {
@@ -125,9 +123,7 @@ describe("AgentSettingsDialog", () => {
           since: "2026-08-21T17:00:00.000Z",
           retryAt: "2026-08-21T17:15:00.000Z",
         }}
-        writableAgent="nobody"
-        disabled={false}
-        onWritableChange={() => undefined}
+        implementationCapability={{ eligible: true, available: false, unavailableReason: "no-active-assignment" }}
         onClose={() => undefined}
       />,
     );
@@ -137,22 +133,20 @@ describe("AgentSettingsDialog", () => {
     expect(html).not.toContain("Connected to the room");
   });
 
-  it("allows Cursor agents to receive project write access", () => {
+  it("reports missing assignment availability without offering a write toggle", () => {
     const html = renderToStaticMarkup(
       <AgentSettingsDialog
         agent="cursor-grok"
         available
-        writableAgent="nobody"
-        disabled={false}
-        onWritableChange={() => undefined}
+        implementationCapability={{ eligible: true, available: false, unavailableReason: "no-active-assignment" }}
         onClose={() => undefined}
       />,
     );
 
     expect(html).toContain("Cursor [Grok 4.6]");
-    expect(html).toContain("Reviews always stay read-only");
-    expect(html).toMatch(/type="checkbox"/);
-    expect(html).not.toMatch(/type="checkbox" disabled=""/);
+    expect(html).toContain("No active governed assignment is available");
+    expect(html).toContain("explicit governed handoff");
+    expect(html).not.toMatch(/type="checkbox"/);
   });
 });
 

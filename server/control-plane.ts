@@ -6,7 +6,7 @@ import type express from "express";
 
 const scrypt = promisify(scryptCallback);
 export const CONTROL_SESSION_COOKIE = "amfaa_control_session";
-export const CONTROL_CAPABILITIES = ["PROVIDER_VIEW", "PROVIDER_CONFIGURE", "MODEL_SELECT", "ROSTER_MANAGE", "WRITE_GRANT"] as const;
+export const CONTROL_CAPABILITIES = ["PROVIDER_VIEW", "PROVIDER_CONFIGURE", "MODEL_SELECT", "ROSTER_MANAGE"] as const;
 export type ControlCapability = (typeof CONTROL_CAPABILITIES)[number];
 export type ControlRole = "OWNER" | "ADMIN" | "MEMBER";
 
@@ -68,7 +68,14 @@ export class ControlPlaneStore {
     await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
     const store = new ControlPlaneStore(path.join(dataDirectory, "control-plane.json"), bootstrapSecret);
     store.state = await readFile(store.statePath, "utf8").then((value) => JSON.parse(value) as ControlState).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
-    if (store.state) store.validateState(store.state);
+    if (store.state) {
+      store.validateState(store.state);
+      const hadLegacyWriteGrant = Object.values(store.state.principals).some((principal) => principal.capabilities.some((capability) => (capability as string) === "WRITE_GRANT"));
+      if (hadLegacyWriteGrant) {
+        for (const principal of Object.values(store.state.principals)) principal.capabilities = principal.capabilities.filter((capability) => (capability as string) !== "WRITE_GRANT");
+        await store.save();
+      }
+    }
     return store;
   }
 

@@ -35,7 +35,7 @@ describe("browser identity requests", () => {
     await sendMessage("Hello", "message_123");
     await updateMyStyle(style);
     await updateMyAvatar("data:image/jpeg;base64,/9j/AA==");
-    await updateSettings({ writableAgent: "codex-sol" });
+    await updateSettings({ roomName: "Architecture Room" });
     await authorizeHeartbeat(3);
     await emergencyStopHeartbeat(4);
 
@@ -45,7 +45,7 @@ describe("browser identity requests", () => {
       { text: "Hello", clientMessageId: "message_123", mentions: [] },
       { style },
       { avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
-      { writableAgent: "codex-sol" },
+      { roomName: "Architecture Room" },
       { expectedRevision: 3, reason: "Explicitly authorized from the visible heartbeat control" },
       { expectedRevision: 4, reason: "Emergency stop requested from the visible control" },
     ]);

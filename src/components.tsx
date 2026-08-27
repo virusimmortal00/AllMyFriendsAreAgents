@@ -8,10 +8,11 @@ import {
   type ChatStyle,
 } from "../shared/chat-style";
 import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
-import { AGENT_IDS, AGENT_PROFILES, agentScreenName, agentSupportsProjectWrites, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
+import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isAgentId, participantScreenName, type ActiveAgentId } from "../shared/participants";
+import type { ImplementationCapability, ImplementationUnavailableReason } from "../shared/protocol";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentHealth, AgentId, HumanPresence, RoomMessage, WritableAgent } from "./types";
+import type { AgentHealth, AgentId, HumanPresence, RoomMessage } from "./types";
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { workshopLayout } from "./workshop-dialog";
@@ -196,57 +197,22 @@ export function AgentSettingsDialog({
   agent,
   available,
   health,
-  writableAgent,
-  disabled,
-  onWritableChange,
+  implementationCapability,
   onClose,
 }: {
   agent: ActiveAgentId;
   available: boolean;
   health?: AgentHealth;
-  writableAgent: WritableAgent;
-  disabled: boolean;
-  onWritableChange: (agent: WritableAgent) => void | Promise<void>;
+  implementationCapability?: ImplementationCapability;
   onClose: () => void;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [confirmGrant, setConfirmGrant] = useState(false);
-  const permissionTrigger = useRef<HTMLInputElement>(null);
-  const permissionSubmitting = useRef(false);
-  const canEdit = writableAgent === agent;
-  const supportsProjectWrites = agentSupportsProjectWrites(agent);
-  const replacingAgent = writableAgent !== "nobody" && writableAgent !== agent
-    ? agentScreenName(writableAgent)
-    : "";
   const connectionState = !available ? "offline" : health?.status || "online";
   const retryDescription = health?.retryAt
     ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
     : "";
-  const requestClose = () => { if (!saving) onClose(); };
+  const requestClose = onClose;
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
-
-  async function changePermission(next: WritableAgent) {
-    if (permissionSubmitting.current) return false;
-    permissionSubmitting.current = true;
-    setSaveError("");
-    setSaving(true);
-    try {
-      await onWritableChange(next);
-      return true;
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      permissionSubmitting.current = false;
-      setSaving(false);
-    }
-  }
-
-  async function confirmPermissionGrant() {
-    if (permissionSubmitting.current) return;
-    if (await changePermission(agent)) setConfirmGrant(false);
-  }
+  const capability = implementationCapability || { eligible: false, available: false, unavailableReason: "participant-ineligible" as const };
 
   return (
     <div
@@ -256,7 +222,7 @@ export function AgentSettingsDialog({
       <section ref={dialogRef} className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
         <header className="agent-settings-titlebar">
           <h2 id="agent-settings-title">Agent Settings</h2>
-          <button type="button" aria-label="Close agent settings" disabled={saving} onClick={requestClose}>×</button>
+          <button type="button" aria-label="Close agent settings" onClick={requestClose}>×</button>
         </header>
         <div className="agent-settings-body">
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
@@ -265,50 +231,28 @@ export function AgentSettingsDialog({
             {!available ? "CLI unavailable" : health ? `${health.message}${retryDescription}` : "Connected to the room"}
           </div>
           <fieldset>
-            <legend>Project permissions</legend>
-            <label className="agent-permission-toggle">
-              <input
-                ref={permissionTrigger}
-                type="checkbox"
-                checked={canEdit}
-                disabled={disabled || saving || !supportsProjectWrites}
-                onChange={(event) => {
-                  if (event.target.checked) {
-                    setSaveError("");
-                    setConfirmGrant(true);
-                  } else void changePermission("nobody");
-                }}
-              />
-              Allow this agent to edit project files
-            </label>
-            <p>{supportsProjectWrites
-              ? "Applies only when you explicitly ask this agent to do project work. Reviews always stay read-only."
-              : "This provider does not support project write access."}</p>
-            {replacingAgent ? <p className="agent-settings-warning">Enabling this will remove edit access from {replacingAgent}.</p> : null}
-            {disabled ? <p className="agent-settings-warning">Project permissions can be changed after the current agent turn finishes.</p> : null}
-            {saving ? <p className="agent-settings-status" role="status">Saving project permission…</p> : null}
-            {saveError ? <p className="agent-settings-error" role="alert">Could not save this permission. {saveError}</p> : null}
+            <legend>Implementation handoff</legend>
+            <p className={capability.available ? "agent-settings-status" : "agent-settings-warning"} role="status">
+              <strong>{capability.available ? "Available" : "Unavailable"}.</strong>{" "}
+              {capability.available ? "A governed assignment is ready for a separate implementation worker." : implementationReason(capability.unavailableReason)}
+            </p>
+            <p>Room conversation and reviews always stay read-only. Source changes require an explicit governed handoff to a separate implementation worker.</p>
           </fieldset>
         </div>
         <footer className="agent-settings-actions">
-          <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Close</button>
+          <button type="button" className="classic-button" onClick={requestClose}>Close</button>
         </footer>
       </section>
-      {confirmGrant ? <ConfirmationDialog
-        title={replacingAgent ? "Transfer project write access?" : "Grant project write access?"}
-        description={replacingAgent
-          ? <p>This transfers project write access from <strong>{replacingAgent}</strong> to <strong>{agentScreenName(agent)}</strong>. Only one agent can hold write access.</p>
-          : <p>This grants <strong>{agentScreenName(agent)}</strong> permission to edit project files when explicitly asked.</p>}
-        confirmLabel={replacingAgent ? "Transfer write access" : "Grant write access"}
-        busyLabel="Saving permission…"
-        busy={saving}
-        error={saveError ? `Could not save this permission. ${saveError}` : ""}
-        returnFocusTo={permissionTrigger.current}
-        onConfirm={() => void confirmPermissionGrant()}
-        onCancel={() => setConfirmGrant(false)}
-      /> : null}
     </div>
   );
+}
+
+function implementationReason(reason: ImplementationUnavailableReason | undefined) {
+  if (reason === "no-active-assignment") return "No active governed assignment is available.";
+  if (reason === "assignment-owner-mismatch") return "The current assignment belongs to a different implementation worker.";
+  if (reason === "governance-invalid") return "The assignment governance is no longer current.";
+  if (reason === "confinement-unavailable") return "The isolated implementation workspace is unavailable.";
+  return "This participant is not eligible for implementation handoff.";
 }
 
 const TIME_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });

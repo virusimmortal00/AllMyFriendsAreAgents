@@ -8,7 +8,6 @@ const room: RoomState = {
   settings: {
     roomName: "The Agent Room",
     topic: "Open conversation",
-    writableAgent: "nobody",
     conversationEnergy: "balanced",
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },

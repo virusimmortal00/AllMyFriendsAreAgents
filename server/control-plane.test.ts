@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -46,9 +46,22 @@ describe("durable control plane", () => {
     const member = await store.createPrincipal(ownerActor, { username: "operator", password: "operator password long", role: "MEMBER", capabilities: ["PROVIDER_VIEW", "ROSTER_MANAGE"] });
     const operator = await store.authenticate("operator", "operator password long");
     expect(store.require(request(operator?.token), "ROSTER_MANAGE").principal.id).toBe(member.id);
-    expect(() => store.require(request(operator?.token), "WRITE_GRANT")).toThrowError(/WRITE_GRANT/);
+    expect(() => store.require(request(operator?.token), "PROVIDER_CONFIGURE")).toThrowError(/PROVIDER_CONFIGURE/);
     await store.updateGrants(ownerActor, member.id, { role: "MEMBER", capabilities: [], expectedRevision: member.revision });
     expect(() => store.require(request(operator?.token), "ROSTER_MANAGE")).toThrowError(/Authenticate/);
+  });
+
+  it("removes the retired ambient write grant from persisted principals", async () => {
+    const { directory, store, secret } = await fixture();
+    await store.bootstrap(secret, "owner", "correct horse battery staple");
+    const file = path.join(directory, "control-plane.json");
+    const state = JSON.parse(await readFile(file, "utf8"));
+    state.principals[state.ownerId].capabilities = ["WRITE_GRANT"];
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`);
+    const reopened = await ControlPlaneStore.open(directory, secret);
+    const owner = await reopened.authenticate("owner", "correct horse battery staple");
+    expect(owner?.principal.capabilities).not.toContain("WRITE_GRANT");
+    expect(await readFile(file, "utf8")).not.toContain("WRITE_GRANT");
   });
 
   it("never writes bootstrap proofs, passwords, or arbitrary secret metadata to durable audit", async () => {

@@ -307,8 +307,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .agent-connection-light--unavailable { border-color: #700; background: #c72a2a; }
 .agent-settings-body fieldset { margin: 0; padding: 13px; border: 2px groove white; }
 .agent-settings-body legend { padding: 0 6px; color: var(--blue); font-size: 16px; font-weight: 800; }
-.agent-permission-toggle { display: grid; grid-template-columns: 22px 1fr; align-items: start; gap: 8px; font-weight: 700; line-height: 1.35; }
-.agent-permission-toggle input { width: 18px; height: 18px; margin: 0; accent-color: var(--blue); }
 .agent-settings-body fieldset p { margin: 10px 0 0 30px; color: #555; font: 12px/1.4 Tahoma, Arial, sans-serif; }
 .agent-settings-body fieldset .agent-settings-warning { color: #7b3100; font-weight: 700; }
 .agent-settings-body fieldset .agent-settings-status { color: #333; font-weight: 700; }

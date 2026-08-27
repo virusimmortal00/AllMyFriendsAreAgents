@@ -64,6 +64,7 @@ describe("room state responses", () => {
     expect(resolved).not.toHaveProperty("sessions");
     expect(resolved).not.toHaveProperty("error");
     expect(resolved.settings).not.toHaveProperty("projectPath");
+    expect(resolved.settings).not.toHaveProperty("writableAgent");
   });
 
   it("exposes bounded deployment evidence without exposing provider sessions or the project path", () => {
@@ -73,9 +74,16 @@ describe("room state responses", () => {
       status: "idle",
       deployment: { schemaVersion: 1, commitSha: "b".repeat(40), reference: { kind: "detached" }, worktree: "clean", epoch: `deployment-v1:${"c".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" },
     };
-    const publicState = publicRoomState(snapshot);
+    const publicState = publicRoomState(snapshot, {
+      "codex-sol": { eligible: true, available: false, unavailableReason: "confinement-unavailable" },
+    });
     expect(publicState.deployment).toEqual(snapshot.deployment);
     expect(publicState).not.toHaveProperty("sessions");
     expect(publicState.settings).not.toHaveProperty("projectPath");
+    expect(publicState.settings).not.toHaveProperty("writableAgent");
+    expect(publicState.implementationCapabilities).toEqual({
+      "codex-sol": { eligible: true, available: false, unavailableReason: "confinement-unavailable" },
+    });
+    expect(JSON.stringify(publicState)).not.toMatch(/secret|project|session|workspace|broker/i);
   });
 });

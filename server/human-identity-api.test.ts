@@ -129,7 +129,8 @@ describe("adversarial human identity API", () => {
       method: "PATCH",
       body: JSON.stringify({ actorId: victim.id, humanId: victim.id, writableAgent: "codex-sol" }),
     }, attackerCookie);
-    expect(permissionAttack.status).toBe(401);
+    expect(permissionAttack.status).toBe(400);
+    expect(await permissionAttack.json()).toEqual({ error: "Room participants are read-only. Source changes require an explicit governed implementation handoff." });
     const room = await (await jsonCall(base, "/api/state")).json() as { messages: Array<{ humanId?: string; kind?: string }> };
     expect(room.messages.findLast(({ kind }) => kind === "status")?.humanId).not.toBe(attacker.id);
 
