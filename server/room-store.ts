@@ -375,6 +375,14 @@ export class RoomStore implements RoomRepository {
     this.state.messages.push(message); await this.save(); return structuredClone(message);
   }
 
+  async addPrivateCommandResponseOnce(submissionId: string, humanId: string, text: string) {
+    const id = `command-private:${submissionId}`;
+    const existing = this.state.messages.find((message) => message.id === id);
+    if (existing) return structuredClone(existing);
+    const message: RoomMessage = { id, speaker: "system", text: text.trim(), timestamp: new Date().toISOString(), kind: "status", recipientHumanId: humanId };
+    this.state.messages.push(message); await this.save(); return structuredClone(message);
+  }
+
   async updateSettings(update: Partial<RoomSettings>) {
     this.state.settings = { ...this.state.settings, ...update };
     this.clearAgentContextSummaries();

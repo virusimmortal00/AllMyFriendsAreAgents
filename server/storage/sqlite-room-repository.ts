@@ -109,6 +109,7 @@ interface MessageRow {
   created_at: string;
   mentions_json: string | null;
   continuation_request_json: string | null;
+  recipient_human_id: string | null;
 }
 
 interface SessionRow {
@@ -211,6 +212,7 @@ function messageFromRow(row: MessageRow, participantStyles: RoomSettings["partic
     ...(row.client_message_id ? { clientMessageId: row.client_message_id } : {}),
     ...(mentions.length ? { mentions } : {}),
     ...(continuationRequest ? { continuationRequest } : {}),
+    ...(row.recipient_human_id ? { recipientHumanId: row.recipient_human_id } : {}),
   };
 }
 
@@ -419,6 +421,11 @@ export class SqliteRoomRepository implements RoomRepository {
   async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number }) {
     const id=`command-delivery:${attemptId}:${sequence}`; const existing=this.state?.messages.find((message)=>message.id===id); if(existing)return structuredClone(existing);
     const state=this.snapshot(); const message={...messageFor(state,speaker,text,"chat",style,burst),id}; this.insertMessage(message); state.messages.push(message); this.state=state; return structuredClone(message);
+  }
+
+  async addPrivateCommandResponseOnce(submissionId: string, humanId: string, text: string) {
+    const id=`command-private:${submissionId}`; const existing=this.state?.messages.find((message)=>message.id===id); if(existing)return structuredClone(existing);
+    const state=this.snapshot(); const message:RoomMessage={...messageFor(state,"system",text,"status"),id,recipientHumanId:humanId}; this.insertMessage(message); state.messages.push(message); this.state=state; return structuredClone(message);
   }
 
   async updateSettings(update: Partial<RoomSettings>) {
@@ -1443,8 +1450,8 @@ export class SqliteRoomRepository implements RoomRepository {
     this.database.prepare(`
       INSERT INTO messages(
         id, room_id, speaker, speaker_name, human_id, text, kind, style_json,
-        burst_id, burst_sequence, client_message_id, created_at, mentions_json, continuation_request_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        burst_id, burst_sequence, client_message_id, created_at, mentions_json, continuation_request_json, recipient_human_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       message.id,
       DEFAULT_ROOM_ID,
@@ -1460,6 +1467,7 @@ export class SqliteRoomRepository implements RoomRepository {
       message.timestamp,
       message.mentions?.length ? JSON.stringify(message.mentions) : null,
       message.continuationRequest ? JSON.stringify(message.continuationRequest) : null,
+      message.recipientHumanId || null,
     );
   }
 

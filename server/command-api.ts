@@ -1,6 +1,6 @@
 import type express from "express";
 import { isActiveAgentId } from "../shared/participants.js";
-import type { CommandInput } from "../shared/command-domain.js";
+import { commandHelpText, type CommandInput } from "../shared/command-domain.js";
 import { commandPollCursor, publicPollProjection, type CommandRecordStore } from "./command-record.js";
 import type { CommandRuntime, CommandResponse } from "./command-runtime.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
@@ -11,16 +11,18 @@ import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 function statusFor(result: CommandResponse) { return result.kind === "private-error" ? 400 : result.kind === "private-help" ? 200 : result.duplicate ? 200 : 202; }
 export function sendCommandResponse(response: express.Response, result: CommandResponse, clientSubmissionId?:string) { return response.status(statusFor(result)).set("Cache-Control","no-store").json(clientSubmissionId ? { command:true, clientSubmissionId, result } : result.kind === "private-error" ? { error:result.message,kind:result.kind } : result); }
 
-export async function submitHumanCommand(input:{request:express.Request;response:express.Response;runtime:CommandRuntime;humans:HumanPresenceRegistry;sessions:HumanSessions;text?:string}) {
+export async function submitHumanCommand(input:{request:express.Request;response:express.Response;runtime:CommandRuntime;store:CommandRecordStore & Pick<import("./storage/room-repository.js").RoomRepository,"addPrivateCommandResponseOnce">;humans:HumanPresenceRegistry;sessions:HumanSessions;text?:string;broadcast?:()=>void}) {
   const human=sessionHuman(input.request,input.humans,input.sessions); if(!human)return input.response.status(401).json({error:"Join the room before running commands."});
   const command=(input.text??input.request.body?.text) as CommandInput; const suppliedId=input.request.body?.clientSubmissionId??input.request.body?.clientMessageId;const clientSubmissionId=typeof suppliedId==="string"?suppliedId.trim():"";
-  return sendCommandResponse(input.response,await input.runtime.submit(command,{kind:"human",id:human.id,displayName:human.name},clientSubmissionId),clientSubmissionId);
+  const result=await input.runtime.submit(command,{kind:"human",id:human.id,displayName:human.name},clientSubmissionId);
+  if(result.kind==="private-help") { await input.store.addPrivateCommandResponseOnce(result.submissionId,human.id,commandHelpText(result.commands)); input.broadcast?.(); }
+  return sendCommandResponse(input.response,result,clientSubmissionId);
 }
 
-export function registerCommandRoutes(input:{app:express.Express;runtime:CommandRuntime;store:CommandRecordStore;humans:HumanPresenceRegistry;sessions:HumanSessions;developers:DeveloperTeamRegistry}) {
+export function registerCommandRoutes(input:{app:express.Express;runtime:CommandRuntime;store:CommandRecordStore & Pick<import("./storage/room-repository.js").RoomRepository,"addPrivateCommandResponseOnce">;humans:HumanPresenceRegistry;sessions:HumanSessions;developers:DeveloperTeamRegistry;broadcast?:()=>void}) {
   const {app,runtime,store,humans,sessions,developers}=input;
   const canReadDiagnostics=(authorization:string|undefined)=>developers.authenticate(authorization,"DIAGNOSTIC_READ");
-  app.post("/api/commands",(request,response)=>submitHumanCommand({request,response,runtime,humans,sessions}));
+  app.post("/api/commands",(request,response)=>submitHumanCommand({request,response,runtime,store,humans,sessions,broadcast:input.broadcast}));
   app.post("/api/developer/commands",async(request,response)=>{const authenticated=developers.authenticate(request.header("authorization"),"COMMAND_RUN");if(!authenticated)return response.status(404).json({error:"Not found."});if(!isActiveAgentId(authenticated.member.memberId))return response.status(403).json({error:"The authenticated member is not a room agent."});const clientSubmissionId=typeof request.body?.clientSubmissionId==="string"?request.body.clientSubmissionId.trim():"";return sendCommandResponse(response,await runtime.submit(request.body?.invocation as CommandInput,{kind:"agent",id:authenticated.member.memberId,displayName:authenticated.member.displayName},clientSubmissionId),clientSubmissionId);});
   app.post("/api/polls/:pollId/votes",async(request,response)=>{const human=sessionHuman(request,humans,sessions);if(!human)return response.status(401).json({error:"Join the room before voting."});const result=await runtime.vote(String(request.params.pollId),human.id,String(request.body?.clientVoteId||""),request.body?.optionIndex);return response.status(result.kind==="accepted"?result.duplicate?200:201:400).set("Cache-Control","no-store").json(result);});
   app.get("/api/polls",async(request,response)=>{if(!sessionHuman(request,humans,sessions))return response.status(401).json({error:"Join the room before viewing polls."});const requestedLimit=Number(request.query.limit||20);const limit=Number.isFinite(requestedLimit)?Math.max(1,Math.min(50,Math.floor(requestedLimit))):20;const before=typeof request.query.before==="string"?request.query.before:undefined;const polls=await store.listCommandPolls(CANONICAL_ROOM_ID,{limit:limit+1,before});const page=polls.slice(0,limit);const items=await Promise.all(page.map(async(poll)=>publicPollProjection(poll,await store.listCommandVotes(CANONICAL_ROOM_ID,poll.pollId))));const boundary=page.at(-1);return response.set("Cache-Control","no-store").json({items,nextCursor:polls.length>limit&&boundary?commandPollCursor(boundary):null});});

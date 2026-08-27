@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, parseCommandInput, resolveRoundRobin } from "./command-domain.js";
+import { commandHelpText, effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, parseCommandInput, resolveRoundRobin, roomCommandGuide } from "./command-domain.js";
 
 describe("command parser", () => {
   it("parses all commands into one typed invocation model", () => {
@@ -43,4 +43,16 @@ describe("command permissions", () => {
     expect(normalizeCommandPermissions({ allowAll: true })).toEqual({ allowAll: true, allowed: ["task", "pov", "poll", "help"] });
   });
   it("applies a server/room ceiling that an agent cannot expand", () => expect(effectiveAllowedCommands({ allowAll: true, allowed: ["task", "pov", "poll", "help"] }, ["help", "poll"])).toEqual(["poll", "help"]));
+  it("filters discovery, examples, and guidance to the effective catalog", () => {
+    const guide = roomCommandGuide(["poll", "help"]);
+    expect(guide).toContain("room_command");
+    expect(guide).toContain("Never emit raw slash-command text");
+    expect(guide).toContain("soft @mention");
+    expect(guide).toContain("poll:");
+    expect(guide).toContain("help:");
+    expect(guide).not.toContain("task:");
+    expect(guide).not.toContain("pov:");
+    expect(commandHelpText(["help"])).toContain("Syntax: /help");
+    expect(commandHelpText(["help"])).not.toContain("/task");
+  });
 });

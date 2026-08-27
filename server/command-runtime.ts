@@ -60,7 +60,7 @@ export interface CommandRuntimeDependencies {
 
 export type CommandResponse =
   | { readonly kind: "private-error"; readonly message: string }
-  | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[] }
+  | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[]; readonly submissionId: string; readonly duplicate: boolean }
   | { readonly kind: "accepted"; readonly submissionId: string; readonly duplicate: boolean; readonly poll?: PublicPollProjection };
 
 interface LiveAttempt { readonly controller: AbortController; readonly reservation?: { release(): unknown; activate?(generationId:string):unknown }; partial: string; timer?: unknown }
@@ -134,7 +134,6 @@ export class CommandRuntime {
     if (parsed.kind !== "command") return parsed.kind === "private-error" ? parsed : { kind: "private-error", message: "No command was provided." };
     const allowed = this.allowed(invoker);
     if (!allowed.includes(parsed.invocation.command)) return { kind: "private-error", message: "That command is not available to this participant." };
-    if (parsed.invocation.command === "help") return { kind: "private-help", commands: allowed };
     const createdAt = timestamp(this.clock);
     const submission: CommandSubmission = { submissionId: stableId(this.roomId, invoker.kind, invoker.id, clientSubmissionId), roomId: this.roomId, clientSubmissionId, command: parsed.invocation.command, invocation: parsed.invocation, invoker, createdAt };
     return this.dispatch(submission);
@@ -163,6 +162,7 @@ export class CommandRuntime {
 
   private async replay(submission: CommandSubmission): Promise<CommandResponse> {
     const audit=await this.dependencies.store.getCommandAuditIdentity(this.roomId,submission.submissionId);if(!audit)return{kind:"private-error",message:"The original command was not accepted."};await this.resumeAcceptedWork(submission);await this.publishAuditObserved(submission,audit);
+    if (submission.command === "help") return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: submission.submissionId, duplicate: true };
     if (submission.command === "poll") {
       const poll = await this.dependencies.store.getCommandPoll(this.roomId, stableId(submission.submissionId,"poll"));
       if (poll) return { kind: "accepted", submissionId: submission.submissionId, duplicate: true, poll: publicPollProjection(poll, await this.dependencies.store.listCommandVotes(this.roomId,poll.pollId)) };
@@ -172,6 +172,15 @@ export class CommandRuntime {
 
   private async dispatch(submission: CommandSubmission): Promise<CommandResponse> {
     const invocation = submission.invocation;
+    if (invocation.command === "help") {
+      if (!this.authorized(submission)) return { kind: "private-error", message: "Command permission changed before dispatch." };
+      const audit = this.auditRecord(submission, []);
+      const accepted = await this.dependencies.store.acceptCommand({ submission, audit });
+      if (accepted.kind === "duplicate") return this.replay(accepted.submission);
+      if (accepted.kind === "compacted-duplicate") return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: accepted.tombstone.submissionId, duplicate: true };
+      if (accepted.kind === "conflict") throw new Error("Unexpected help acceptance conflict.");
+      return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: submission.submissionId, duplicate: false };
+    }
     if (invocation.command === "poll") {
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
       const poll={ pollId: stableId(submission.submissionId,"poll"), roomId: this.roomId, submissionId: submission.submissionId, question: invocation.question, options: invocation.options, createdAt: submission.createdAt };
@@ -198,7 +207,7 @@ export class CommandRuntime {
   private authorized(submission:CommandSubmission){return this.allowed(submission.invoker).includes(submission.command);}
   private auditRecord(submission:CommandSubmission,targets:readonly ActiveAgentId[]){return{auditId:stableId(submission.submissionId,"audit"),roomId:this.roomId,submissionId:submission.submissionId,command:submission.command,invokerKind:submission.invoker.kind,invokerId:submission.invoker.id,targetAgentIds:targets,createdAt:timestamp(this.clock)} as const;}
   private async publishAudit(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){let text=this.auditText(submission,audit.targetAgentIds);if(submission.command==="poll"){const invocation=submission.invocation as Extract<CommandInvocation,{command:"poll"}>;text=`— ${safeLabel(submission.invoker.displayName)} ran /poll — Options: ${invocation.options.map((option,index)=>`${index+1}. ${safeLabel(option)}`).join(" · ")}`;}await this.dependencies.publishStatus(audit.auditId,text);}
-  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){try{await this.publishAudit(submission,audit);}catch(error){console.error("Command audit publication failed; durable recovery will retry it.",error);}}
+  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){console.error("Command audit publication failed; durable recovery will retry it.",error);}}
 
   private async resumeAcceptedWork(submission: CommandSubmission) {
     if (submission.command === "pov") {

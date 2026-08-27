@@ -60,6 +60,8 @@ import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
+import { effectiveAllowedCommands, normalizeCommandPermissions, roomCommandGuide, type RoomCommandName } from "../shared/command-domain.js";
+import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
@@ -86,7 +88,7 @@ const store = await openRoomRepository(projectRoot, storageConfiguration);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
-const roomEvents = new RoomEventStream(serverIdentity.instanceId);
+const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
@@ -201,7 +203,8 @@ registerRoomHistoryRoutes({
   app,
   store,
   authorize: (request) => {
-    if (sessionHuman(request, humans, humanSessions)) return true;
+    const human = sessionHuman(request, humans, humanSessions);
+    if (human) return { humanId: human.id };
     if (developerTeam.authenticate(request.header("authorization"), "ROOM_READ")) return true;
     const authorization = request.header("authorization") || "";
     const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -221,8 +224,8 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-function publicRoomSnapshot() {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
+function publicRoomSnapshot(viewerHumanId?: string) {
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -288,7 +291,25 @@ async function refreshImplementationCapabilitiesAndBroadcast() {
 }
 
 function broadcast() {
-  roomEvents.broadcast(publicRoomSnapshot());
+  for (const [viewerHumanId, stream] of roomEvents) stream.broadcast(publicRoomSnapshot(viewerHumanId));
+}
+
+function roomEventStream(humanId: string) {
+  let stream = roomEvents.get(humanId);
+  if (!stream) { stream = new RoomEventStream(`${serverIdentity.instanceId}:${humanId}`); roomEvents.set(humanId, stream); }
+  return stream;
+}
+
+function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
+  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), ["task", "pov", "poll", "help"] satisfies readonly RoomCommandName[]) : [];
+  if (!entry || !allowedCommands.length) return undefined;
+  return {
+    url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
+    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands }),
+    allowedCommands,
+    guide: roomCommandGuide(allowedCommands),
+  };
 }
 
 function developerRoomView(limit = 50) {
@@ -348,6 +369,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         summarizer: contextSummarizer,
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
+        commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
@@ -404,7 +426,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   }
 
   if (parsed.investigationRequest) {
-    const recentMessages = before.messages.slice(-8);
+    const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
     const evidenceRefs = [
       ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
       ...parsed.investigationRequest.evidenceRefs,
@@ -595,7 +617,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      undefined,
+      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
     if (await agentHealth.recordSuccess(agent)) broadcast();
@@ -643,6 +665,8 @@ const commandRuntime = new CommandRuntime({
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
 });
+const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime);
+registerRoomCommandToolRoute(app, roomCommandToolBroker);
 await commandRuntime.initialize();
 
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
@@ -671,12 +695,13 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 
 const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresence);
 
-app.get("/api/state", async (_request, response) => {
+app.get("/api/state", async (request, response) => {
+  const viewerHumanId = sessionHuman(request, humans, humanSessions)?.id;
   response.json({
     ...(await roomStateWithAvailability(roomSnapshot, () => cliAvailability(currentEnabledAgents()), async () => {
       await refreshImplementationCapabilities();
       return implementationCapabilities;
-    })),
+    }, viewerHumanId)),
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
     server: serverIdentity,
@@ -767,7 +792,7 @@ app.get("/api/events", async (request, response) => {
   const connection = humans.connect(human.id);
   if (!connection) return response.status(401).json({ error: "Join the room before connecting." });
   await refreshImplementationCapabilities();
-  roomEvents.connect(request, response, publicRoomSnapshot(), () => {
+  roomEventStream(human.id).connect(request, response, publicRoomSnapshot(human.id), () => {
     const departure = humans.disconnect(human.id);
     broadcast();
     if (departure) presenceAnnouncements.departure(departure.human, departure.becameAbsent);
@@ -813,7 +838,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -872,7 +897,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, humans, sessions:humanSessions, text });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });

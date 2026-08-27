@@ -13,6 +13,11 @@ afterEach(async () => {
 });
 
 describe("SQLite room repository", () => {
+  it("persists exactly one private command projection across restart", async () => {
+    const projectRoot=await mkdtemp(path.join(os.tmpdir(),"amfaa-private-command-"));temporaryDirectories.push(projectRoot);const databasePath=path.join(projectRoot,"amfaa.sqlite");
+    const store=await SqliteRoomRepository.open(projectRoot,databasePath);const first=await store.addPrivateCommandResponseOnce("submission-1","human-a","sanitized help");const duplicate=await store.addPrivateCommandResponseOnce("submission-1","human-a","changed");expect(duplicate).toEqual(first);store.close();
+    const reopened=await SqliteRoomRepository.open(projectRoot,databasePath);expect(reopened.snapshot().messages.filter(({id})=>id===first.id)).toEqual([first]);reopened.close();
+  });
   it("clears command-domain records during an explicit state overwrite",async()=>{const projectRoot=await mkdtemp(path.join(os.tmpdir(),"amfaa-sqlite-overwrite-"));temporaryDirectories.push(projectRoot);const store=await SqliteRoomRepository.open(projectRoot,path.join(projectRoot,"amfaa.sqlite"));const createdAt=new Date().toISOString();await store.createCommandSubmission({submissionId:"overwrite-command",roomId:DEFAULT_ROOM_ID,clientSubmissionId:"overwrite-client",command:"help",invocation:{command:"help"},invoker:{kind:"human",id:"human-1",displayName:"Ada"},createdAt});await store.appendDiagnostic({recordId:"overwrite-diagnostic",roomId:DEFAULT_ROOM_ID,agentId:"codex-sol",attemptId:"attempt-1",generationId:null,correlationId:"overwrite-correlation",promptHead:null,promptFingerprint:"sha256:prompt",reason:"test",metadata:{},diagnosticText:"safe",createdAt});store.replaceState(store.snapshot(),{overwrite:true});expect(await store.getCommandSubmission(DEFAULT_ROOM_ID,"overwrite-command")).toBeUndefined();expect(await store.listDiagnostics(DEFAULT_ROOM_ID,"codex-sol")).toEqual([]);store.close();});
 
   it("persists per-agent cursors and summary cache across restart while keeping cursors server-owned", async () => {

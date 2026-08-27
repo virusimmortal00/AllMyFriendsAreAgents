@@ -50,7 +50,7 @@ describe("durable command runtime",()=>{
     await eventually(()=>expect(tool.deliveries).toEqual([{agent:"codex-sol",messages:["reply-codex-sol"]}]));
     const denied=await fixture({roster:()=>roster("help")});
     expect(await denied.runtime.submit({command:"task",prompt:"no",selection:{kind:"round-robin"}},{kind:"agent",id:"codex-sol",displayName:"Sol"},"agent-cmd-0002")).toMatchObject({kind:"private-error"});
-    expect(await denied.runtime.submit("/help",{kind:"agent",id:"codex-sol",displayName:"Sol"},"agent-cmd-0003")).toEqual({kind:"private-help",commands:["help"]});
+    expect(await denied.runtime.submit("/help",{kind:"agent",id:"codex-sol",displayName:"Sol"},"agent-cmd-0003")).toMatchObject({kind:"private-help",commands:["help"],duplicate:false,submissionId:expect.any(String)});
     expect(denied.statuses).toEqual([]);
   });
 

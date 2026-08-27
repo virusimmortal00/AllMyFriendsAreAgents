@@ -235,6 +235,9 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByText("/help")).toBeNull();
     act(() => resolveCommand({ command: true, clientSubmissionId: api.sendMessage.mock.calls[0][1], result: { kind: "private-help", commands: ["help"] } }));
     expect(screen.queryByText("/help")).toBeNull();
+    expect(screen.queryByText("Commands: /help")).toBeNull();
+    act(() => ControlledEventSource.instances[0].emitEvent({kind:"messages-appended",streamId:"stream-1",fromVersion:0,version:1,messages:[{id:"private-help",speaker:"system",kind:"status",text:"Room commands available to you:\n/help — List commands",timestamp:"2026-08-27T12:00:00Z"}]}));
+    expect(await screen.findByText(/Room commands available to you/)).toBeTruthy();
   });
 
   it("keeps command errors private to the invoker instead of projecting raw slash text", async () => {
