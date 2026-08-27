@@ -1306,6 +1306,10 @@ export class SqliteRoomRepository implements RoomRepository {
     validateContinuationDurableState(policies[0], jobs as ContinuationRecord[], inbox as ContinuationInboxEntry[], events as ContinuationAuditEvent[], DEFAULT_ROOM_ID);
   }
   private clearGovernedStateForOverwrite() {
+    this.database.prepare("DELETE FROM command_diagnostics WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM command_submission_tombstones WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM command_round_robin WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+    this.database.prepare("DELETE FROM command_submissions WHERE room_id = ?").run(DEFAULT_ROOM_ID);
     this.database.prepare("DELETE FROM continuation_job_events WHERE room_id = ?").run(DEFAULT_ROOM_ID);
     this.database.prepare("DELETE FROM continuation_inbox WHERE room_id = ?").run(DEFAULT_ROOM_ID);
     this.database.prepare("DELETE FROM continuation_jobs WHERE room_id = ?").run(DEFAULT_ROOM_ID);

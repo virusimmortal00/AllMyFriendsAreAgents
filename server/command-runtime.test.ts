@@ -34,9 +34,9 @@ async function fixture(options:{clock?:FakeClock; roster?:()=>RoomAgentRoster; e
 describe("durable command runtime",()=>{
   it("keeps production watchdog defaults inside the required safety windows",()=>{expect(DEFAULT_COMMAND_STAGE_1_MS).toBeGreaterThanOrEqual(10_000);expect(DEFAULT_COMMAND_STAGE_1_MS).toBeLessThanOrEqual(15_000);expect(DEFAULT_COMMAND_STAGE_2_MS).toBeGreaterThanOrEqual(60_000);expect(DEFAULT_COMMAND_STAGE_2_MS).toBeLessThanOrEqual(90_000);});
   it("redacts structured JSON, env assignments, headers, and complete bearer/basic credentials",()=>{
-    const raw='{"password":"json-secret","authorization":"Bearer json-token"}\nAPI_KEY=env-secret\nAuthorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l\nloose Bearer loose-token and Basic dXNlcjpwYXNz';
+    const raw='{"password":"json-secret","authorization":"Bearer json-token"}\nAPI_KEY=env-secret\nAuthorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l\nCookie: session=cookie-one; refresh=cookie-two\nSet-Cookie: sid=set-one; HttpOnly\nloose Bearer loose-token and Basic dXNlcjpwYXNz';
     const redacted=sanitizeDiagnosticText(raw)!;
-    for(const secret of ["json-secret","json-token","env-secret","YWxhZGRpbjpvcGVuc2VzYW1l","loose-token","dXNlcjpwYXNz"])expect(redacted).not.toContain(secret);
+    for(const secret of ["json-secret","json-token","env-secret","YWxhZGRpbjpvcGVuc2VzYW1l","cookie-one","cookie-two","set-one","loose-token","dXNlcjpwYXNz"])expect(redacted).not.toContain(secret);
     expect(redacted).toContain("[REDACTED");
   });
   it("routes human text and structured agent tools through identical parsing, authorization, audit, and dispatch",async()=>{
@@ -63,6 +63,8 @@ describe("durable command runtime",()=>{
     const first=await api.runtime.submit('/poll "Choose" "B" "A"',{kind:"human",id:"h1",displayName:"Ada"},"human-poll-001");
     expect(first).toMatchObject({kind:"accepted",duplicate:false,poll:{options:["B","A"],tallies:[0,0]}});
     const pollId=(first as Extract<typeof first,{kind:"accepted"}>).poll!.pollId;
+    expect(await api.runtime.vote(pollId,"human-1","vote-invalid-negative",-1)).toMatchObject({kind:"private-error"});
+    expect(await api.runtime.vote(pollId,"human-1","vote-invalid-fraction",0.5)).toMatchObject({kind:"private-error"});
     expect(await api.runtime.vote(pollId,"h1","vote-recovery-01",1)).toMatchObject({kind:"accepted",duplicate:false,poll:{tallies:[0,1]}});
     expect(await api.runtime.vote(pollId,"replacement-human","vote-recovery-01",0)).toMatchObject({kind:"accepted",duplicate:true,poll:{tallies:[0,1]}});
     expect(await api.runtime.submit('/poll "Choose" "B" "A"',{kind:"human",id:"h1",displayName:"Ada"},"human-poll-001")).toMatchObject({kind:"accepted",duplicate:true,poll:{tallies:[0,1]}});
@@ -95,10 +97,11 @@ describe("durable command runtime",()=>{
   });
 
   it("recovers persisted pending ownership after restart without duplicate reassignment",async()=>{
-    const clock=new FakeClock();const api=await fixture({clock,execute:async()=>new Promise(()=>undefined)});const accepted=await api.runtime.submit("/task recover",{kind:"human",id:"h1",displayName:"Ada"},"restart-watch-01");api.runtime.close();
+    const clock=new FakeClock();const api=await fixture({clock,execute:async()=>new Promise(()=>undefined)});const accepted=await api.runtime.submit("/task recover",{kind:"human",id:"h1",displayName:"Ada"},"restart-watch-01");await api.runtime.close();
     const restarted=new CommandRuntime({store:api.store,clock,stage1Ms:10,stage2Ms:20,roster:()=>roster(),canLaunch:()=>true,executeTask:async(agent,_prompt,hooks)=>{await hooks.active("recovered");return{generationId:"recovered",visibleMessages:[agent]};},executePov:async()=>undefined,publishStatus:async(_id,text)=>{if(!api.statuses.includes(text))api.statuses.push(text);},deliverTask:async(_attemptId,agent,messages)=>{api.deliveries.push({agent,messages});}});await restarted.initialize();await clock.tick(10);
     await eventually(()=>expect(api.deliveries).toEqual([{agent:"claude-sonnet",messages:["claude-sonnet"]}]));expect(api.statuses.filter((line)=>line.includes("reassigned"))).toHaveLength(1);const attempts=await api.store.listCommandAttempts("00000000-0000-4000-8000-000000000001",(accepted as Extract<typeof accepted,{kind:"accepted"}>).submissionId);expect(attempts).toHaveLength(2);
   });
 
   it("recovers a durable delivery outbox without rerunning the provider",async()=>{let executions=0;const api=await fixture({execute:async(agent,_prompt,hooks)=>{executions++;await hooks.active("delivery-generation");return{generationId:"delivery-generation",visibleMessages:[`durable-${agent}`]};},deliver:async()=>{throw new Error("storage unavailable");}});const accepted=await api.runtime.submit("/task durable",{kind:"human",id:"h1",displayName:"Ada"},"delivery-recovery-01");const submissionId=(accepted as Extract<typeof accepted,{kind:"accepted"}>).submissionId;await eventually(async()=>expect((await api.store.listCommandAttempts("00000000-0000-4000-8000-000000000001",submissionId))[0]?.status).toBe("delivery-pending"));await api.runtime.close();const delivered:string[][]=[];const restarted=new CommandRuntime({store:api.store,clock:api.clock,roster:()=>roster(),canLaunch:()=>true,executeTask:async()=>{executions++;throw new Error("must not rerun");},executePov:async()=>undefined,publishStatus:async()=>undefined,deliverTask:async(_id,_agent,messages)=>{delivered.push([...messages]);}});await restarted.initialize();expect(executions).toBe(1);expect(delivered).toEqual([["durable-codex-sol"]]);expect((await api.store.listCommandAttempts("00000000-0000-4000-8000-000000000001",submissionId))[0]?.status).toBe("completed");});
+  it("bounds provider output before persisting the delivery outbox",async()=>{const api=await fixture({execute:async(agent,_prompt,hooks)=>{await hooks.active("oversized-generation");return{generationId:"oversized-generation",visibleMessages:["x".repeat(5_000),`ok-${agent}`]};}});await api.runtime.submit("/task bounded",{kind:"human",id:"h1",displayName:"Ada"},"delivery-bounds-01");await eventually(()=>expect(api.deliveries).toHaveLength(1));expect(api.deliveries[0]!.messages[0]).toHaveLength(4_000);});
 });

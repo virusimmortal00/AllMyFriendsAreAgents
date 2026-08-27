@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style.js";
-import { SqliteRoomRepository } from "./sqlite-room-repository.js";
+import { DEFAULT_ROOM_ID, SqliteRoomRepository } from "./sqlite-room-repository.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -13,6 +13,8 @@ afterEach(async () => {
 });
 
 describe("SQLite room repository", () => {
+  it("clears command-domain records during an explicit state overwrite",async()=>{const projectRoot=await mkdtemp(path.join(os.tmpdir(),"amfaa-sqlite-overwrite-"));temporaryDirectories.push(projectRoot);const store=await SqliteRoomRepository.open(projectRoot,path.join(projectRoot,"amfaa.sqlite"));const createdAt=new Date().toISOString();await store.createCommandSubmission({submissionId:"overwrite-command",roomId:DEFAULT_ROOM_ID,clientSubmissionId:"overwrite-client",command:"help",invocation:{command:"help"},invoker:{kind:"human",id:"human-1",displayName:"Ada"},createdAt});await store.appendDiagnostic({recordId:"overwrite-diagnostic",roomId:DEFAULT_ROOM_ID,agentId:"codex-sol",attemptId:"attempt-1",generationId:null,correlationId:"overwrite-correlation",promptHead:null,promptFingerprint:"sha256:prompt",reason:"test",metadata:{},diagnosticText:"safe",createdAt});store.replaceState(store.snapshot(),{overwrite:true});expect(await store.getCommandSubmission(DEFAULT_ROOM_ID,"overwrite-command")).toBeUndefined();expect(await store.listDiagnostics(DEFAULT_ROOM_ID,"codex-sol")).toEqual([]);store.close();});
+
   it("persists per-agent cursors and summary cache across restart while keeping cursors server-owned", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-context-cursor-"));
     temporaryDirectories.push(projectRoot);

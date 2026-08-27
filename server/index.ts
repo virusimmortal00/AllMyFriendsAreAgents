@@ -508,7 +508,7 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
     return;
   }
   const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-  await runAgentConversation(turns, followUpAllowance, performTurn, agentConcurrency);
+  await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
 }
 
 async function runJob(job: () => Promise<void>, propagateFailure = false) {

@@ -118,7 +118,7 @@ export function normalizeCommandPermissions(input: unknown): CommandPermissions 
   const value = input as { allowAll?: unknown; allowed?: unknown };
   if (value.allowAll) return ALLOW_ALL_COMMANDS;
   if (!Array.isArray(value.allowed)) return { allowAll: false, allowed: [] };
-  const allowed = [...new Set(value.allowed.filter((candidate): candidate is RoomCommandName => typeof candidate === "string" && ROOM_COMMANDS.includes(candidate as RoomCommandName)))];
+  const allowed = [...new Set(value.allowed.filter((candidate): candidate is RoomCommandName => typeof candidate === "string" && ROOM_COMMANDS.includes(candidate as RoomCommandName)))].sort((left,right)=>ROOM_COMMANDS.indexOf(left)-ROOM_COMMANDS.indexOf(right));
   return { allowAll: false, allowed };
 }
 

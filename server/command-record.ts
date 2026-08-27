@@ -18,11 +18,12 @@ export interface PrivateCommandProjection { readonly submission: CommandSubmissi
 export interface PublicPollProjection { readonly pollId: string; readonly question: string; readonly options: readonly string[]; readonly tallies: readonly number[]; readonly totalVotes: number }
 
 export function publicPollProjection(poll: CommandPoll, votes: readonly CommandVote[]): PublicPollProjection {
-  const scoped = votes.filter((vote) => vote.roomId === poll.roomId && vote.pollId === poll.pollId && vote.optionIndex < poll.options.length);
+  const scoped = votes.filter((vote) => vote.roomId === poll.roomId && vote.pollId === poll.pollId && Number.isSafeInteger(vote.optionIndex) && vote.optionIndex >= 0 && vote.optionIndex < poll.options.length);
   return { pollId: poll.pollId, question: poll.question, options: [...poll.options], tallies: poll.options.map((_, index) => scoped.filter((vote) => vote.optionIndex === index).length), totalVotes: scoped.length };
 }
 
 export const MAX_DIAGNOSTIC_TEXT = 2_000;
+export const MAX_COMMAND_DELIVERY_MESSAGE = 4_000;
 export const MAX_DIAGNOSTIC_PROMPT_HEAD = 300;
 export const MAX_DIAGNOSTICS_PER_ROOM_AGENT = 200;
 export const MAX_DIAGNOSTIC_QUERY_LIMIT = 200;

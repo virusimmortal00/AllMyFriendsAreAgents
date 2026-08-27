@@ -768,6 +768,8 @@ export default function App() {
       items: [
         { label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps },
         { type: "separator" },
+        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
+        { type: "separator" },
         { label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) },
         { label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) },
         { label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification },

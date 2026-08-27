@@ -4,7 +4,7 @@ import { isActiveAgentId, type ActiveAgentId } from "../shared/participants.js";
 import { normalizeRoomAgentRoster, roomAgentEntry, type RoomAgentRoster } from "../shared/roster.js";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
-import { MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandInvoker, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type PublicPollProjection } from "./command-record.js";
+import { MAX_COMMAND_DELIVERY_MESSAGE, MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandInvoker, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type PublicPollProjection } from "./command-record.js";
 
 export const DEFAULT_COMMAND_STAGE_1_MS = 12_000;
 export const DEFAULT_COMMAND_STAGE_2_MS = 75_000;
@@ -133,7 +133,7 @@ export class CommandRuntime {
   }
 
   async vote(pollId: string, voterId: string, mutationId: string, optionIndex: number) {
-    if (!voterId || !/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId) || !Number.isSafeInteger(optionIndex)) return { kind: "private-error" as const, message: "A valid poll choice and request ID are required." };
+    if (!voterId || !/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId) || !Number.isSafeInteger(optionIndex) || optionIndex < 0) return { kind: "private-error" as const, message: "A valid poll choice and request ID are required." };
     const vote = await this.dependencies.store.createCommandVote({ roomId: this.roomId, pollId, voterId, mutationId, optionIndex, createdAt: timestamp(this.clock) });
     if (vote.kind === "rejected") return { kind: "private-error" as const, message: vote.reason };
     const poll = await this.dependencies.store.getCommandPoll(this.roomId, pollId);
@@ -238,7 +238,7 @@ export class CommandRuntime {
   private async complete(attempt:CommandAttempt,submission:CommandSubmission,result:CommandExecutionResult) {
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;
     if(!this.attemptCurrent(current))return this.failAndReassign(current,submission,"room or roster authority changed before command completion");
-    const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3);
+    const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3).map((message)=>message.slice(0,MAX_COMMAND_DELIVERY_MESSAGE));
     if(!visible.length){const completed={...current,generationId:result.generationId||current.generationId,status:"completed" as const,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,completed);if(claimed.kind!=="accepted")return;this.clearLive(attempt.attemptId);await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});return;}
     const pending={...current,generationId:result.generationId||current.generationId,status:"delivery-pending" as const,deliveryMessages:visible,updatedAt:timestamp(this.clock,current.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,pending);if(claimed.kind!=="accepted")return;this.clearLive(attempt.attemptId);await this.resumeDelivery(pending,submission,result);
