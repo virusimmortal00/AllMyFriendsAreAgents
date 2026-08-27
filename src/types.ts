@@ -40,6 +40,11 @@ export interface PublicPollProjection {
   options: string[];
   tallies: number[];
   totalVotes: number;
+  state: "OPEN" | "CLOSED";
+  revision: number;
+  closedAt: string | null;
+  ownVote: number | null;
+  canClose: boolean;
 }
 
 export interface HumanPresence {

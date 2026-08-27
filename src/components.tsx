@@ -499,13 +499,23 @@ export const Transcript = memo(function Transcript({
   );
 });
 
-export function PollCards({ polls, disabled = false, onVote }: { polls: readonly PublicPollProjection[]; disabled?: boolean; onVote: (pollId: string, optionIndex: number) => void }) {
-  if (!polls.length) return null;
+export function PollCards({ polls, disabled = false, pending = null, error = "", onVote, onClose }: {
+  polls: readonly PublicPollProjection[];
+  disabled?: boolean;
+  pending?: string | null;
+  error?: string;
+  onVote: (pollId: string, optionIndex: number) => void;
+  onClose: (pollId: string, expectedRevision: number) => void;
+}) {
+  const open = polls.filter((poll) => poll.state === "OPEN");
+  if (!open.length) return null;
   return <section className="poll-cards" aria-label="Room polls" aria-live="polite">
-    {polls.map((poll) => <article className="poll-card" key={poll.pollId}>
-      <h3>{poll.question}</h3>
+    {error ? <p role="alert" className="poll-card__error">{error}</p> : null}
+    {open.map((poll) => <article className="poll-card" key={poll.pollId}>
+      <header><h3>{poll.question}</h3><span className="poll-card__state">Open</span></header>
       <p>{poll.totalVotes} {poll.totalVotes === 1 ? "vote" : "votes"}</p>
-      <ol>{poll.options.map((option, index) => <li key={`${poll.pollId}:${index}`}><button type="button" disabled={disabled} onClick={() => onVote(poll.pollId, index)} aria-label={`Vote for ${option}`}>{option}</button><span aria-label={`${poll.tallies[index] || 0} votes`}>{poll.tallies[index] || 0}</span></li>)}</ol>
+      <ol>{poll.options.map((option, index) => <li key={`${poll.pollId}:${index}`}><button type="button" disabled={disabled||poll.ownVote!==null} aria-pressed={poll.ownVote===index} onClick={() => onVote(poll.pollId, index)} aria-label={`${poll.ownVote===index?"Recorded choice: ":"Vote for "}${option}`}>{option}{poll.ownVote===index?" — your choice":""}</button><span aria-label={`${poll.tallies[index] || 0} votes`}>{poll.tallies[index] || 0}</span></li>)}</ol>
+      {poll.canClose?<button type="button" className="classic-button poll-card__close" disabled={disabled||pending===`close:${poll.pollId}`} onClick={()=>{if(window.confirm("End this poll now? Other participants will no longer be able to vote."))onClose(poll.pollId,poll.revision);}}>End poll</button>:null}
     </article>)}
   </section>;
 }

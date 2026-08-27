@@ -252,7 +252,7 @@ describe("rendered reconnect recovery", () => {
   });
 
   it("renders ordered authoritative poll tallies and replaces them after a vote without optimistic duplication", async () => {
-    const initial = { pollId: "poll-1", question: "Choose a path", options: ["B", "A"], tallies: [2, 1], totalVotes: 3 };
+    const initial = { pollId: "poll-1", question: "Choose a path", options: ["B", "A"], tallies: [2, 1], totalVotes: 3,state:"OPEN" as const,revision:1,closedAt:null,ownVote:null,canClose:true };
     const projected = { ...initial, tallies: [2, 2], totalVotes: 4 };
     api.loadPolls.mockResolvedValueOnce({ items: [initial] }).mockResolvedValueOnce({ items: [projected] });
     const user = userEvent.setup();

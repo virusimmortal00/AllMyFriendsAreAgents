@@ -6,7 +6,16 @@ export interface CommandSubmission { readonly submissionId: string; readonly roo
 export interface RoundRobinState { readonly roomId: string; readonly lastAssignedAgentId: ActiveAgentId | null; readonly revision: number; readonly updatedAt: string }
 export interface CommandDeliveryResult { readonly sessionId?: string; readonly permission?: "read-only" | "writable"; readonly codeEpoch?: string; readonly cursorMessageId?: string }
 export interface CommandAttempt { readonly attemptId: string; readonly roomId: string; readonly submissionId: string; readonly attempt: number; readonly agentId: ActiveAgentId; readonly generationId: string | null; readonly status: "queued" | "active" | "delivery-pending" | "completed" | "failed" | "superseded"; readonly reason: string | null; readonly deliveryMessages?: readonly string[]; readonly deliveryResult?: CommandDeliveryResult; readonly roomEpoch?: string; readonly rosterRevision?: number; readonly agentConfigurationRevision?: number; readonly createdAt: string; readonly updatedAt: string }
-export interface CommandPoll { readonly pollId: string; readonly roomId: string; readonly submissionId: string; readonly question: string; readonly options: readonly [string, string, ...string[]]; readonly createdAt: string }
+export interface CommandPoll {
+  readonly pollId: string; readonly roomId: string; readonly submissionId: string;
+  readonly question: string; readonly options: readonly [string, string, ...string[]];
+  readonly creatorKind: CommandInvoker["kind"]; readonly creatorId: string;
+  readonly state: "OPEN" | "CLOSED"; readonly revision: number;
+  readonly closedAt: string | null; readonly closerKind: CommandInvoker["kind"] | "controller" | null;
+  readonly closerId: string | null; readonly closeMutationId: string | null;
+  readonly finalTallies: readonly number[] | null; readonly finalTotalVotes: number | null;
+  readonly createdAt: string;
+}
 export interface CommandVote { readonly roomId: string; readonly pollId: string; readonly voterId: string; readonly mutationId: string; readonly optionIndex: number; readonly createdAt: string }
 export interface CommandAuditIdentity { readonly auditId: string; readonly roomId: string; readonly submissionId: string; readonly command: RoomCommandName; readonly invokerKind: CommandInvoker["kind"]; readonly invokerId: string; readonly targetAgentIds: readonly ActiveAgentId[]; readonly createdAt: string }
 export interface CommandPovExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly targetAgentIds: readonly ActiveAgentId[]; readonly processedTargetAgentIds: readonly ActiveAgentId[]; readonly currentTargetAgentId?: ActiveAgentId | null; readonly generationId?: string | null; readonly deliveryMessages?: readonly string[]; readonly deliveryResult?: CommandDeliveryResult; readonly roomEpoch?: string; readonly rosterRevision?: number; readonly agentConfigurationRevision?: number; readonly status: "queued" | "active" | "completed" | "failed" | "cancelled"; readonly reason: string | null; readonly createdAt: string; readonly updatedAt: string }
@@ -16,11 +25,14 @@ export interface DiagnosticRecord { readonly recordId: string; readonly roomId: 
 /** Deliberately returned only from authenticated command/diagnostic endpoints. */
 export interface PrivateCommandProjection { readonly submission: CommandSubmission; readonly attempts: readonly CommandAttempt[]; readonly audit: CommandAuditIdentity | null; readonly diagnostics: readonly DiagnosticRecord[] }
 /** Safe poll card projection; invocation text, audit identity, and diagnostics are excluded. */
-export interface PublicPollProjection { readonly pollId: string; readonly question: string; readonly options: readonly string[]; readonly tallies: readonly number[]; readonly totalVotes: number }
+export interface PublicPollProjection { readonly pollId: string; readonly question: string; readonly options: readonly string[]; readonly tallies: readonly number[]; readonly totalVotes: number; readonly state: CommandPoll["state"]; readonly revision: number; readonly closedAt: string | null; readonly ownVote: number | null; readonly canClose: boolean }
 
-export function publicPollProjection(poll: CommandPoll, votes: readonly CommandVote[]): PublicPollProjection {
+export function publicPollProjection(poll: CommandPoll, votes: readonly CommandVote[], viewer?: { readonly kind: CommandInvoker["kind"] | "controller"; readonly id: string; readonly canControl?: boolean }): PublicPollProjection {
   const scoped = votes.filter((vote) => vote.roomId === poll.roomId && vote.pollId === poll.pollId && Number.isSafeInteger(vote.optionIndex) && vote.optionIndex >= 0 && vote.optionIndex < poll.options.length);
-  return { pollId: poll.pollId, question: poll.question, options: [...poll.options], tallies: poll.options.map((_, index) => scoped.filter((vote) => vote.optionIndex === index).length), totalVotes: scoped.length };
+  const liveTallies = poll.options.map((_, index) => scoped.filter((vote) => vote.optionIndex === index).length);
+  const tallies = poll.state === "CLOSED" && poll.finalTallies ? [...poll.finalTallies] : liveTallies;
+  const ownVote = viewer ? scoped.find((vote) => vote.voterId === `${viewer.kind}:${viewer.id}`)?.optionIndex ?? null : null;
+  return { pollId: poll.pollId, question: poll.question, options: [...poll.options], tallies, totalVotes: poll.state === "CLOSED" && poll.finalTotalVotes !== null ? poll.finalTotalVotes : scoped.length, state: poll.state, revision: poll.revision, closedAt: poll.closedAt, ownVote, canClose: Boolean(viewer && poll.state === "OPEN" && (viewer.canControl || viewer.kind === poll.creatorKind && viewer.id === poll.creatorId)) };
 }
 
 export const MAX_DIAGNOSTIC_TEXT = 2_000;
@@ -31,6 +43,7 @@ export const MAX_DIAGNOSTIC_QUERY_LIMIT = 200;
 export const MAX_DIAGNOSTIC_SEARCH_LENGTH = 200;
 export const DIAGNOSTIC_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const COMMAND_RECORD_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
+export const MAX_OPEN_POLLS_PER_ROOM = 20;
 export const MAX_COMMAND_SUBMISSIONS_PER_ROOM = 1_000;
 export const MAX_COMMAND_TOMBSTONES_PER_ROOM = 2_000;
 export const MAX_RECENT_POLLS = 100;
@@ -57,6 +70,7 @@ export interface DiagnosticQuery {
 
 export type CreateCommandSubmissionResult = { readonly kind: "created"; readonly submission: CommandSubmission } | { readonly kind: "duplicate"; readonly submission: CommandSubmission };
 export type CreateCommandVoteResult = { readonly kind: "created"; readonly vote: CommandVote } | { readonly kind: "duplicate"; readonly vote: CommandVote } | { readonly kind: "rejected"; readonly reason: string };
+export type CloseCommandPollResult = { readonly kind: "closed" | "duplicate"; readonly poll: CommandPoll } | { readonly kind: "conflict"; readonly poll: CommandPoll } | { readonly kind: "rejected" | "not-found"; readonly reason: string };
 export interface CommandAcceptance {
   readonly submission: CommandSubmission;
   readonly audit: CommandAuditIdentity;
@@ -69,6 +83,7 @@ export type AcceptCommandResult =
   | { readonly kind: "accepted"; readonly acceptance: CommandAcceptance }
   | { readonly kind: "duplicate"; readonly submission: CommandSubmission }
   | { readonly kind: "compacted-duplicate"; readonly tombstone:CommandTombstone }
+  | { readonly kind: "rejected"; readonly reason: string }
   | { readonly kind: "conflict"; readonly actualRevision: number };
 export interface CommandReassignment { readonly expectedUpdatedAt:string; readonly current:CommandAttempt; readonly next:CommandAttempt; readonly roundRobin:{readonly expectedRevision:number;readonly state:RoundRobinState} }
 
@@ -84,9 +99,10 @@ export interface CommandRecordStore {
   listPendingCommandAttempts(roomId: string): Promise<readonly CommandAttempt[]>;
   compareAndSetCommandAttempt(expectedUpdatedAt: string, attempt: CommandAttempt): Promise<{ readonly kind: "accepted"; readonly attempt: CommandAttempt } | { readonly kind: "conflict" | "not-found" }>;
   createCommandPoll(poll: CommandPoll): Promise<{ readonly kind: "created" | "duplicate"; readonly poll: CommandPoll }>;
-  listCommandPolls(roomId: string, query?:{readonly limit?:number;readonly before?:string}): Promise<readonly CommandPoll[]>;
+  listCommandPolls(roomId: string, query?:{readonly limit?:number;readonly before?:string;readonly state?:CommandPoll["state"]}): Promise<readonly CommandPoll[]>;
   getCommandPoll(roomId: string, pollId: string): Promise<CommandPoll | undefined>;
   createCommandVote(vote: CommandVote): Promise<CreateCommandVoteResult>;
+  closeCommandPoll(input: { readonly roomId: string; readonly pollId: string; readonly expectedRevision: number; readonly mutationId: string; readonly closerKind: CommandInvoker["kind"] | "controller"; readonly closerId: string; readonly closedAt: string }): Promise<CloseCommandPollResult>;
   listCommandVotes(roomId: string, pollId: string): Promise<readonly CommandVote[]>;
   createCommandAuditIdentity(audit: CommandAuditIdentity): Promise<{ readonly kind: "created" | "duplicate"; readonly audit: CommandAuditIdentity }>;
   getCommandAuditIdentity(roomId: string, submissionId: string): Promise<CommandAuditIdentity | undefined>;
