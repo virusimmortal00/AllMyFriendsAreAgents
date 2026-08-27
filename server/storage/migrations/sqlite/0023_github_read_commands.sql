@@ -11,7 +11,7 @@ INSERT INTO command_submissions SELECT * FROM command_submissions_pre_gh;
 DROP TABLE command_submissions_pre_gh;
 PRAGMA legacy_alter_table = OFF;
 CREATE TABLE command_gh_executions (
-  execution_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','completed','failed')),
+  execution_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','completed','failed')), delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK(delivery_status IN ('pending','delivered')),
   projection_json TEXT, rendered_text TEXT CHECK(rendered_text IS NULL OR length(rendered_text) <= 4000), failure_kind TEXT, diagnostics_json TEXT NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(room_id,execution_id), UNIQUE(room_id,submission_id),
   FOREIGN KEY(room_id,submission_id) REFERENCES command_submissions(room_id,submission_id) ON DELETE CASCADE

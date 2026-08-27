@@ -28,7 +28,7 @@ export type GhProjection =
   | { readonly kind: "issue"; readonly repository: string; readonly issue: GhIssue }
   | { readonly kind: "ci"; readonly repository: string; readonly pullNumber: number | null; readonly checks: readonly GhCheck[]; readonly truncated: boolean };
 export interface GhExecutionDiagnostic { readonly endpointFamily: import("./github-read-adapter.js").GitHubEndpointFamily; readonly cacheOutcome: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
-export interface CommandGhExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly status: "queued" | "completed" | "failed"; readonly projection: GhProjection | null; readonly renderedText: string | null; readonly failureKind: GitHubFailureKind | null; readonly diagnostics: readonly GhExecutionDiagnostic[]; readonly createdAt: string; readonly updatedAt: string }
+export interface CommandGhExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly status: "queued" | "completed" | "failed"; readonly deliveryStatus: "pending" | "delivered"; readonly projection: GhProjection | null; readonly renderedText: string | null; readonly failureKind: GitHubFailureKind | null; readonly diagnostics: readonly GhExecutionDiagnostic[]; readonly createdAt: string; readonly updatedAt: string }
 
 /** Deliberately returned only from authenticated command/diagnostic endpoints. */
 export interface PrivateCommandProjection { readonly submission: CommandSubmission; readonly attempts: readonly CommandAttempt[]; readonly audit: CommandAuditIdentity | null; readonly diagnostics: readonly DiagnosticRecord[] }
@@ -123,6 +123,7 @@ export interface CommandRecordStore {
   createGhExecution(execution: CommandGhExecution): Promise<{ readonly kind: "created" | "duplicate"; readonly execution: CommandGhExecution }>;
   listPendingGhExecutions(roomId: string): Promise<readonly CommandGhExecution[]>;
   compareAndSetGhExecution(expectedUpdatedAt: string, execution: CommandGhExecution): Promise<{ readonly kind: "accepted"; readonly execution: CommandGhExecution } | { readonly kind: "conflict" | "not-found" }>;
+  markGhExecutionDelivered(roomId: string, executionId: string, expectedUpdatedAt: string, updatedAt: string): Promise<{ readonly kind: "accepted"; readonly execution: CommandGhExecution } | { readonly kind: "conflict" | "not-found" }>;
   appendDiagnostic(record: DiagnosticRecord): Promise<{ readonly kind: "created" | "duplicate"; readonly record: DiagnosticRecord }>;
   getDiagnostic(roomId: string, agentId: ActiveAgentId, recordId: string): Promise<DiagnosticRecord | undefined>;
   listDiagnostics(roomId: string, query: ActiveAgentId | DiagnosticQuery, limit?: number): Promise<readonly DiagnosticRecord[]>;

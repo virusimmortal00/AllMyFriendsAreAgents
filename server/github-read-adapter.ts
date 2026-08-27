@@ -32,7 +32,7 @@ export type GitHubSanitizedValue =
 
 export type GitHubFailureKind = "forbidden" | "not-found" | "rate-limited" | "timeout" | "invalid-response" | "upstream" | "saturated" | "configuration";
 export class GitHubReadFailure extends Error {
-  constructor(readonly kind: GitHubFailureKind, readonly statusClass: "none" | "4xx" | "5xx", readonly retryAfterMs: number | null = null) { super(`GitHub read failed (${kind}).`); this.name = "GitHubReadFailure"; }
+  constructor(readonly kind: GitHubFailureKind, readonly statusClass: "none" | "4xx" | "5xx", readonly retryAfterMs: number | null = null, readonly endpointFamily: GitHubEndpointFamily | null = null) { super(`GitHub read failed (${kind}).`); this.name = "GitHubReadFailure"; }
 }
 
 export interface GitHubReadBinding { readonly owner: string; readonly repository: string; readonly defaultBranch: string; readonly token: string }
@@ -80,12 +80,12 @@ export class GitHubReadAdapter {
 
   private endpoint(query: GitHubReadQuery) {
     const root = `/repos/${encodeURIComponent(this.binding.owner)}/${encodeURIComponent(this.binding.repository)}`;
-    if (query.family === "recent-pulls") return `${root}/pulls?state=all&sort=updated&direction=desc&per_page=8`;
-    if (query.family === "recent-issues") return `${root}/issues?state=all&sort=updated&direction=desc&per_page=8`;
-    if (query.family === "recent-runs") return `${root}/actions/runs?branch=${encodeURIComponent(this.binding.defaultBranch)}&per_page=8`;
+    if (query.family === "recent-pulls") return `${root}/pulls?state=all&sort=updated&direction=desc&per_page=9`;
+    if (query.family === "recent-issues") return `${root}/issues?state=all&sort=updated&direction=desc&per_page=100`;
+    if (query.family === "recent-runs") return `${root}/actions/runs?branch=${encodeURIComponent(this.binding.defaultBranch)}&per_page=9`;
     if (query.family === "pull-request") return `${root}/pulls/${query.number}`;
     if (query.family === "issue") return `${root}/issues/${query.number}`;
-    return `${root}/commits/${query.sha.toLowerCase()}/check-runs?per_page=20`;
+    return `${root}/commits/${query.sha.toLowerCase()}/check-runs?per_page=21`;
   }
 
   async read(query: GitHubReadQuery): Promise<GitHubSanitizedValue> {
@@ -108,7 +108,7 @@ export class GitHubReadAdapter {
     try { payload = await response.json(); } catch { throw new GitHubReadFailure("invalid-response", "none"); }
     try{payload=JSON.parse(JSON.stringify(payload).replaceAll(this.binding.token,"[REDACTED]"));}catch{throw new GitHubReadFailure("invalid-response","none");}
     if (query.family === "recent-pulls") { const source=array(payload);const items=source.map(pull).filter((item):item is GhPullRequest=>Boolean(item)).slice(0,8);return {family:query.family,items,truncated:source.length>items.length}; }
-    if (query.family === "recent-issues") { const source=array(payload);const valid=source.map(issue).filter((item):item is GhIssue=>Boolean(item));return {family:query.family,items:valid.slice(0,8),truncated:source.length>valid.slice(0,8).length}; }
+    if (query.family === "recent-issues") { const source=array(payload);const valid=source.map(issue).filter((item):item is GhIssue=>Boolean(item));return {family:query.family,items:valid.slice(0,8),truncated:valid.length>8||source.length>=100}; }
     if (query.family === "recent-runs") { const source=array(object(payload).workflow_runs);return {family:query.family,items:source.slice(0,8).map(run),truncated:source.length>8}; }
     if (query.family === "pull-request") { const item=pull(payload);if(!item)throw new GitHubReadFailure("invalid-response","none");return {family:query.family,item}; }
     if (query.family === "issue") { const item=issue(payload);if(!item)throw new GitHubReadFailure("invalid-response","none");return {family:query.family,item}; }

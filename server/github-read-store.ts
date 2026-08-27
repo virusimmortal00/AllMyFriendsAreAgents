@@ -45,4 +45,3 @@ export class GitHubReadStore {
   putSanitized(query:GitHubReadQuery,value:GitHubSanitizedValue){if(query.family!==value.family)throw new GitHubReadFailure("configuration","none");const key=this.key(query);this.entries.set(key,{value:structuredClone(value),expiresAt:this.clock.now()+this.ttlMs,touched:++this.touches});this.evict();}
   inspect(){return{entries:this.entries.size,active:this.active,queued:this.queue.length,pending:this.pending.size};}
 }
-
