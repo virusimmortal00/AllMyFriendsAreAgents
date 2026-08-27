@@ -19,6 +19,12 @@ function menus(onSelect = vi.fn()): ClassicMenuDefinition[] {
       { label: "Chat", accessKey: "C", checked: true, onSelect },
       { label: "Tasks", accessKey: "T", checked: false, onSelect },
     ] },
+    { id: "window", label: "Window", accessKey: "W", disabled: true, items: [
+      { label: "Chat", accessKey: "C", onSelect },
+    ] },
+    { id: "help", label: "Help", accessKey: "H", items: [
+      { label: "Help topics", accessKey: "H", onSelect },
+    ] },
   ];
 }
 
@@ -61,6 +67,21 @@ describe("Windows-style application menu", () => {
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Timestamps" }));
 
     expect(document.activeElement).toBe(viewTitle);
+  });
+
+  it("grays out a disabled top-level category and skips it during keyboard traversal", async () => {
+    const user = userEvent.setup();
+    render(<ClassicMenuBar menus={menus()} />);
+    const windowTitle = screen.getByRole("menuitem", { name: "Window" });
+    expect((windowTitle as HTMLButtonElement).disabled).toBe(true);
+
+    const viewTitle = screen.getByRole("menuitem", { name: "View" });
+    viewTitle.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Help" }));
+
+    await user.keyboard("{Alt>}w{/Alt}");
+    expect(screen.queryByRole("menu", { name: "Window" })).toBeNull();
   });
 
   it("leaves application shortcuts to the active modal", async () => {

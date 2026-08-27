@@ -47,7 +47,7 @@ describe("RoomRoster", () => {
     expect(html).not.toContain("Configure You");
     expect(html).toContain('aria-label="Alice&#x27;s profile photo"');
     expect(html).toContain('aria-label="Bob&#x27;s initials"');
-    expect(html).toContain('aria-label="Change your profile photo"');
+    expect(html).toContain('aria-label="Edit your profile"');
   });
 
   it("identifies only agents with an active server generation", () => {

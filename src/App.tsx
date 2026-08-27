@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyAvatar, updateMyStyle, updateSettings } from "./api";
-import { ConfirmationDialog, HelpDialog, PeopleDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings } from "./api";
+import { HelpDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -24,7 +24,7 @@ import { RosterManagerDialog } from "./roster-manager";
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
 import { ClassicMenuBar, type ClassicMenuDefinition } from "./classic-menu";
 import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agent-list-sort";
-import { HumanAvatarDialog } from "./human-avatar";
+import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 
@@ -130,13 +130,9 @@ export default function App() {
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [resendingPending, setResendingPending] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [changeNameOpen, setChangeNameOpen] = useState(false);
-  const [changeNameBusy, setChangeNameBusy] = useState(false);
-  const [changeNameConsequences, setChangeNameConsequences] = useState({ hasDraft: false, hasPending: false });
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
-  const [peopleOpen, setPeopleOpen] = useState(false);
-  const [humanAvatarOpen, setHumanAvatarOpen] = useState(false);
-  const [humanAvatarSaving, setHumanAvatarSaving] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [rosterTrigger, setRosterTrigger] = useState<HTMLElement | null>(null);
   const [rosterSelectedAgentId, setRosterSelectedAgentId] = useState<ActiveAgentId | null>(null);
@@ -169,11 +165,8 @@ export default function App() {
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
-  const changeNameTrigger = useRef<HTMLButtonElement | null>(null);
   const roomSettingsTrigger = useRef<HTMLButtonElement | null>(null);
-  const peopleTrigger = useRef<HTMLButtonElement | null>(null);
-  const humanAvatarTrigger = useRef<HTMLButtonElement | null>(null);
-  const changeNameSubmitting = useRef(false);
+  const profileTrigger = useRef<HTMLElement | null>(null);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
   const roomPosition = useRef<RoomProtocolPosition | undefined>(undefined);
@@ -480,17 +473,17 @@ export default function App() {
     });
   }
 
-  async function changeMyAvatar(avatarUrl?: string) {
-    if (!human) throw new Error("Join the room before changing your profile photo.");
+  async function changeMyProfile(profile: { name: string; avatarUrl?: string }) {
+    if (!human) throw new Error("Join the room before changing your profile.");
     const previousHuman = human;
-    const nextHuman = { ...human, avatarUrl };
-    setHumanAvatarSaving(true);
+    const nextHuman = { ...human, ...profile };
+    setProfileSaving(true);
     setHuman(nextHuman);
     setSavedHuman(nextHuman);
     saveHumanProfile(nextHuman);
     setClientError("");
     try {
-      const saved = await updateMyAvatar(avatarUrl);
+      const saved = await updateMyProfile(profile);
       setHuman(saved);
       setSavedHuman(saved);
       saveHumanProfile(saved);
@@ -501,7 +494,7 @@ export default function App() {
       setClientError(error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
-      setHumanAvatarSaving(false);
+      setProfileSaving(false);
     }
   }
 
@@ -615,9 +608,6 @@ export default function App() {
 
   function joinWithName(name: string) {
     setJoinError("");
-    changeNameSubmitting.current = false;
-    setChangeNameBusy(false);
-    setChangeNameOpen(false);
     const profile = { id: crypto.randomUUID(), name, style: DEFAULT_PARTICIPANT_STYLES.you };
     setSavedHuman(profile);
   }
@@ -633,27 +623,6 @@ export default function App() {
     setJoinError("");
     setSavedHuman(null);
     saveHumanProfile(null);
-  }
-
-  function changeName() {
-    if (!human || changeNameSubmitting.current) return;
-    changeNameSubmitting.current = true;
-    setChangeNameBusy(true);
-    styleSaveRevision.current += 1;
-    actionRequestId.current += 1;
-    actionInFlight.current = false;
-    setActionPending(null);
-    setActionFailure(null);
-    setWorkshopId(null);
-    composer.current?.discardDraft();
-    saveDraftSnapshot(window.localStorage, human.id, { text: "", mentions: [] });
-    savePendingSend(window.localStorage, human.id, null);
-    setPendingSend(null);
-    setHuman(null);
-    setSavedHuman(null);
-    saveHumanProfile(null);
-    setRoom(EMPTY_ROOM);
-    setHasInitialState(false);
   }
 
   function navigateImprovements(next: ImprovementsRoute | null, options: { focusHeading?: boolean } = {}) {
@@ -695,9 +664,9 @@ export default function App() {
     setRosterSelectedAgentId(selectedAgentId || null);
     setRosterOpen(true);
   }, []);
-  const openHumanAvatar = useCallback((trigger: HTMLButtonElement) => {
-    humanAvatarTrigger.current = trigger;
-    setHumanAvatarOpen(true);
+  const openProfile = useCallback((trigger: HTMLElement) => {
+    profileTrigger.current = trigger;
+    setProfileOpen(true);
   }, []);
   const changeAgentListSort = useCallback((sort: AgentListSort) => {
     setAgentListSort(sort);
@@ -705,7 +674,6 @@ export default function App() {
   }, []);
   const openRoomSettings = useCallback((trigger: HTMLButtonElement) => {
     roomSettingsTrigger.current = trigger;
-    setPeopleOpen(false);
     setRoomSettingsOpen(true);
   }, []);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
@@ -716,27 +684,24 @@ export default function App() {
 
   const menus: ClassicMenuDefinition[] = [
     {
+      id: "you",
+      label: "You",
+      accessKey: "Y",
+      items: [
+        { label: "Profile...", accessKey: "P", onSelect: openProfile },
+      ],
+    },
+    {
       id: "room",
       label: "Room",
       accessKey: "R",
       items: [
         { label: "Room properties...", accessKey: "P", onSelect: openRoomSettings },
-        { label: "People...", accessKey: "e", onSelect: (trigger) => { peopleTrigger.current = trigger; setRoomSettingsOpen(false); setPeopleOpen(true); } },
+        { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
-        { label: "Continue discussion", accessKey: "d", disabled: working || !connected || Boolean(actionPending), onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("continue", "all"); } },
-        { label: "Start roundtable", accessKey: "S", disabled: working || !connected || Boolean(actionPending), onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("roundtable", "all"); } },
-        { label: "Review with all agents", accessKey: "R", disabled: working || !connected || Boolean(actionPending), onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("review", "all"); } },
-        { type: "separator" },
-        { label: "Change name...", accessKey: "n", onSelect: (trigger) => {
-          changeNameTrigger.current = trigger;
-          showChat();
-          composer.current?.flush();
-          setChangeNameConsequences({
-            hasDraft: Boolean(loadDraftSnapshot(window.localStorage, human?.id).text),
-            hasPending: Boolean(pendingSend),
-          });
-          setChangeNameOpen(true);
-        } },
+        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("continue", "all"); } },
+        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("roundtable", "all"); } },
+        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("review", "all"); } },
       ],
     },
     {
@@ -755,6 +720,7 @@ export default function App() {
       id: "window",
       label: "Window",
       accessKey: "W",
+      disabled: true,
       items: [
         { label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } },
         { label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); navigateImprovements({ view: "list", scope: "active" }); } },
@@ -769,7 +735,7 @@ export default function App() {
       label: "Help",
       accessKey: "H",
       items: [
-        { label: "Help topics", accessKey: "H", shortcut: "F1", onSelect: () => { setRoomSettingsOpen(false); setPeopleOpen(false); setHelpOpen(true); } },
+        { label: "Help topics", accessKey: "H", shortcut: "F1", onSelect: () => { setRoomSettingsOpen(false); setHelpOpen(true); } },
       ],
     },
   ];
@@ -797,7 +763,7 @@ export default function App() {
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1><span className="title-long">AllMyFriendsAreAgents — </span>{room.settings.roomName}</h1>
         </header>
-        <ClassicMenuBar menus={menus} onHelp={() => { setRoomSettingsOpen(false); setPeopleOpen(false); setHelpOpen(true); }} />
+        <ClassicMenuBar menus={menus} onHelp={() => { setRoomSettingsOpen(false); setHelpOpen(true); }} />
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
@@ -806,7 +772,7 @@ export default function App() {
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openHumanAvatar} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -831,8 +797,7 @@ export default function App() {
         </div>
 
         {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
-        {peopleOpen ? <PeopleDialog roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureHumanAvatar={openHumanAvatar} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
-        {humanAvatarOpen ? <HumanAvatarDialog human={human} busy={humanAvatarSaving} returnFocusTo={humanAvatarTrigger.current} onAvatarChange={changeMyAvatar} onClose={() => setHumanAvatarOpen(false)} /> : null}
+        {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {rosterOpen ? <RosterManagerDialog
           initialRoster={roster}
@@ -845,20 +810,6 @@ export default function App() {
         /> : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
-        {changeNameOpen && human ? <ConfirmationDialog
-          title="Change your name?"
-          description={<>
-            <p>Changing your name resets your room identity and clears the current room state on this device.</p>
-            {changeNameConsequences.hasPending ? <p><strong>Your unsent message will be deleted.</strong></p> : null}
-            {changeNameConsequences.hasDraft ? <p><strong>Your saved draft will be deleted.</strong></p> : null}
-          </>}
-          confirmLabel="Reset identity and change name"
-          busyLabel="Resetting identity…"
-          busy={changeNameBusy}
-          returnFocusTo={changeNameTrigger.current}
-          onConfirm={() => { changeName(); navigateImprovements(null); }}
-          onCancel={() => setChangeNameOpen(false)}
-        /> : null}
 
         {actionPending ? <div className="error-strip error-strip--pending" role="status"><span>{roomActionLabel(actionPending.action, actionPending.target)} is being requested. Other room actions are unavailable until it finishes.</span></div> : null}
         {actionFailure ? <div className="error-strip" role="alert">

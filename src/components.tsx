@@ -187,7 +187,7 @@ export function RoomRoster({
             <span className="presence-status" aria-hidden="true" />
             <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} compact />
             <strong className="speaker speaker--you presence-human-name">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
-            {human.id === currentHumanId && onConfigureHumanAvatar ? <button type="button" className="agent-settings-button human-avatar-settings-button" aria-label="Change your profile photo" title="Profile photo" onClick={(event) => onConfigureHumanAvatar(event.currentTarget)}>📷</button> : <span className="presence-row-spacer" aria-hidden="true" />}
+            {human.id === currentHumanId && onConfigureHumanAvatar ? <button type="button" className="agent-settings-button human-avatar-settings-button" aria-label="Edit your profile" title="Your profile" onClick={(event) => onConfigureHumanAvatar(event.currentTarget)}>📷</button> : <span className="presence-row-spacer" aria-hidden="true" />}
           </div>
         ))}
       </div>
@@ -1013,30 +1013,6 @@ export function RoomSettingsDialog({
           <button type="button" aria-label="Close Room Properties" onClick={onClose}>×</button>
         </header>
         <RoomControls {...controls} showTitle={false} propertySheet onCancel={onClose} onSaved={onClose} />
-      </section>
-    </div>
-  );
-}
-
-export function PeopleDialog({
-  returnFocusTo,
-  onClose,
-  ...roster
-}: React.ComponentProps<typeof RoomRoster> & { returnFocusTo: HTMLElement | null; onClose: () => void }) {
-  const titleId = useId();
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
-
-  return (
-    <div className="modal-backdrop people-backdrop" onMouseDown={onBackdropMouseDown}>
-      <section ref={dialogRef} className="agent-settings-window people-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar">
-          <h2 id={titleId}>People in this room</h2>
-          <button type="button" aria-label="Close people" onClick={onClose}>×</button>
-        </header>
-        <RoomRoster {...roster} />
-        <footer className="agent-settings-actions">
-          <button type="button" className="classic-button" onClick={onClose}>Close</button>
-        </footer>
       </section>
     </div>
   );

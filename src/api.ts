@@ -175,6 +175,13 @@ export async function updateMyAvatar(avatarUrl?: string): Promise<HumanPresence>
   }).then((response) => response.json());
 }
 
+export async function updateMyProfile(profile: { name: string; avatarUrl?: string }): Promise<HumanPresence> {
+  return request("/api/humans", {
+    method: "POST",
+    body: JSON.stringify({ name: profile.name, avatarUrl: profile.avatarUrl || null }),
+  }).then((response) => response.json());
+}
+
 export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",

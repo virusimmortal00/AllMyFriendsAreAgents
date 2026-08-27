@@ -32,7 +32,7 @@ describe("mobile layout contract", () => {
   it("uses dialogs for secondary room controls and removes the desktop rail on mobile", () => {
     expect(mobileStyles).toMatch(/\.right-rail \{[^}]*display: none;/s);
     expect(mobileStyles).toMatch(/\.room-settings-window \.controls-panel \{[^}]*max-height:/s);
-    expect(mobileStyles).toMatch(/\.people-window \.presence-panel \{[^}]*max-height:/s);
+    expect(styles).toMatch(/\.human-avatar-window \{[^}]*width:/s);
   });
 
   it("uses horizontally scrollable formatting controls instead of wrapping", () => {

@@ -177,7 +177,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   color: #111;
   font-size: 12px;
 }
-.menu-bar > .menu-wrap > button:hover, .menu-bar > .menu-wrap > button[aria-expanded="true"] { background: var(--blue); color: white; }
+.menu-bar > .menu-wrap > button:hover:not(:disabled), .menu-bar > .menu-wrap > button[aria-expanded="true"] { background: var(--blue); color: white; }
+.menu-bar > .menu-wrap > button:disabled { color: #808080; text-shadow: 1px 1px white; }
 .menu-wrap { position: relative; }
 .dropdown-menu {
   position: absolute;
@@ -294,8 +295,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .room-settings-window { width: min(480px, calc(100vw - 28px)); overflow: hidden; }
 .room-settings-window .controls-panel { max-height: calc(100vh - 96px); overflow: auto; border: 0; }
 .room-settings-window .room-settings-form { padding: 8px 16px 18px; }
-.people-window { width: min(560px, calc(100vw - 28px)); overflow: hidden; }
-.people-window .presence-panel { max-height: calc(100vh - 132px); margin: 8px; overflow: auto; }
 .help-window { width: min(520px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100vh - 28px); overflow: auto; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 2px outset white; box-shadow: 2px 2px 0 #000; }
 .help-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.45 Tahoma, Arial, sans-serif; }
 .help-body h3 { margin: 14px 0 4px; color: var(--blue); font-size: 15px; }
@@ -330,15 +329,16 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .human-avatar-backdrop { z-index: 55; }
 .human-avatar-window { width: min(480px, calc(100vw - 28px)); overflow: hidden; }
 .human-avatar-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 12px 16px; margin: 8px; padding: 18px; border: 2px inset white; background: #f5f5f5; font: 13px/1.4 Tahoma, Arial, sans-serif; }
-.human-avatar-body > div:nth-of-type(1) { display: grid; gap: 2px; min-width: 0; }
-.human-avatar-body > div:nth-of-type(1) strong { overflow: hidden; color: #13264b; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
-.human-avatar-body > div:nth-of-type(1) span, .human-avatar-body small { color: #5b6471; }
+.human-profile-name { display: grid; gap: 3px; min-width: 0; color: #13264b; font-weight: 700; }
+.human-profile-name input { width: 100%; min-width: 0; }
+.human-avatar-body small { color: #5b6471; }
 .human-avatar-actions, .human-avatar-body > small, .human-avatar-body > p { grid-column: 1 / -1; }
 .human-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .human-avatar-actions .classic-button { min-height: 34px; padding: 5px 11px; }
 .human-avatar-remove { color: #7a0000; }
 .human-avatar-body > small { display: block; }
 .human-avatar-body > p { margin: 0; color: #8b0000; font-weight: 700; }
+.human-profile-footer { gap: 8px; }
 .roster-backdrop { z-index: 45; padding: clamp(6px, 1.5vw, 18px); }
 .roster-window { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(1440px, calc(100vw - 24px)); height: min(940px, calc(100dvh - 24px)); max-height: calc(100dvh - 24px); overflow: hidden; }
 .roster-body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; margin: 8px; padding: 10px; border: 2px inset white; background: #f5f5f5; font: 14px/1.4 Tahoma, Arial, sans-serif; }
@@ -825,7 +825,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .model-offer { grid-template-columns: 28px minmax(0, 1fr); }
   .model-offer > span:last-of-type, .model-offer > em { grid-column: 2; }
   .room-settings-window .controls-panel { max-height: calc(100dvh - 58px); }
-  .people-window .presence-panel { max-height: calc(100dvh - 116px); }
   .human-avatar-body { grid-template-columns: 54px minmax(0, 1fr); padding: 14px; }
   .human-avatar-body > .human-avatar { width: 54px; height: 54px; border-radius: 12px; }
   .human-avatar-actions .classic-button { min-height: 42px; }

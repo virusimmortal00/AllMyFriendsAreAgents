@@ -46,6 +46,8 @@ describe("HumanPresenceRegistry", () => {
 
     expect(alice.avatarUrl).toBe(avatarUrl);
     expect(humans.join({ name: "Alice" }, alice.id).avatarUrl).toBe(avatarUrl);
+    expect(humans.join({ name: "Grace Hopper", avatarUrl: null }, alice.id)).toMatchObject({ id: alice.id, name: "Grace Hopper" });
+    expect(humans.get(alice.id)).not.toHaveProperty("avatarUrl");
     expect(humans.updateAvatar(alice.id, undefined)).not.toHaveProperty("avatarUrl");
     expect(humans.join({ name: "Alice", avatarUrl: "https://example.com/tracker.png" }, alice.id)).not.toHaveProperty("avatarUrl");
   });
