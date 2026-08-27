@@ -4,29 +4,57 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, runSqliteMigrations } from "./sqlite-migrations.js";
 
+async function prepareLegacyConsultationDatabase(database: DatabaseSync) {
+  const timestamp = "2026-08-27T00:00:00.000Z";
+  const files = (await readdir(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY)).filter((filename) => Number(filename.slice(0, 4)) <= 20).sort();
+  for (const filename of files) {
+    database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, filename), "utf8"));
+    database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)").run(Number(filename.slice(0, 4)), timestamp);
+  }
+  const current = await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, "0024_room_consultations.sql"), "utf8");
+  const legacy = current
+    .replace("  idempotency_scope TEXT NOT NULL CHECK (length(idempotency_scope) > 0),\n", "")
+    .replace("UNIQUE (room_id, idempotency_scope, idempotency_key)", "UNIQUE (room_id, idempotency_key)")
+    .replace("ON DELETE RESTRICT", "ON DELETE CASCADE");
+  database.exec(legacy);
+  database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (21,?)").run(timestamp);
+  const projection = { schemaVersion: 1, roomId: "room", consultationId: "legacy", revision: 1, state: "queued", idempotencyKey: "same", requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "legacy" }, affinitySnapshot: [], duties: [], provenance: [{ kind: "human", actorId: "member-a", recordedAt: timestamp }], execution: null, finalArtifact: null, transitions: [{ revision: 1, from: null, to: "queued", at: timestamp, actorId: "member-a", reason: "created" }], createdAt: timestamp, updatedAt: timestamp };
+  database.prepare("INSERT INTO consultations VALUES (?,?,?,?,?,?,?,?,?)").run("room", "legacy", 1, "queued", "same", projection.requestDigest, JSON.stringify(projection), timestamp, timestamp);
+  return projection;
+}
+
 describe("SQLite migrations", () => {
   it("repairs databases that recorded the legacy consultation migration as 0021", async () => {
     const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
     try {
-      const files = (await readdir(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY)).filter((filename) => Number(filename.slice(0, 4)) <= 20).sort();
-      for (const filename of files) {
-        database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, filename), "utf8"));
-        database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)").run(Number(filename.slice(0, 4)), "2026-08-27T00:00:00.000Z");
-      }
-      const current = await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, "0024_room_consultations.sql"), "utf8");
-      const legacy = current
-        .replace("  idempotency_scope TEXT NOT NULL CHECK (length(idempotency_scope) > 0),\n", "")
-        .replace("UNIQUE (room_id, idempotency_scope, idempotency_key)", "UNIQUE (room_id, idempotency_key)")
-        .replace("ON DELETE RESTRICT", "ON DELETE CASCADE");
-      database.exec(legacy);
-      database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (21,?)").run("2026-08-27T00:00:00.000Z");
-      const projection = { schemaVersion: 1, roomId: "room", consultationId: "legacy", revision: 1, state: "queued", idempotencyKey: "same", requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "legacy" }, affinitySnapshot: [], duties: [], provenance: [{ kind: "human", actorId: "member-a", recordedAt: "2026-08-27T00:00:00.000Z" }], execution: null, finalArtifact: null, transitions: [{ revision: 1, from: null, to: "queued", at: "2026-08-27T00:00:00.000Z", actorId: "member-a", reason: "created" }], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z" };
-      database.prepare("INSERT INTO consultations VALUES (?,?,?,?,?,?,?,?,?)").run("room", "legacy", 1, "queued", "same", projection.requestDigest, JSON.stringify(projection), projection.createdAt, projection.updatedAt);
+      const projection = await prepareLegacyConsultationDatabase(database);
       await runSqliteMigrations(database);
       expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       expect((database.prepare("PRAGMA table_info(consultations)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("idempotency_scope");
       expect(JSON.parse((database.prepare("SELECT projection_json FROM consultations WHERE consultation_id='legacy'").get() as { projection_json: string }).projection_json)).toMatchObject({ idempotencyScope: "member-a" });
       database.prepare("INSERT INTO consultations(room_id,consultation_id,revision,lifecycle_state,idempotency_scope,idempotency_key,request_digest,projection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("room", "other", 1, "queued", "member-b", "same", projection.requestDigest, JSON.stringify({ ...projection, consultationId: "other", idempotencyScope: "member-b" }), projection.createdAt, projection.updatedAt);
+    } finally { database.close(); }
+  });
+
+  it("resumes migration 0024 after an interruption during legacy table renames", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
+    try {
+      await prepareLegacyConsultationDatabase(database);
+      database.exec(`
+        DROP TRIGGER IF EXISTS consultation_events_immutable_update;
+        DROP TRIGGER IF EXISTS consultation_events_immutable_delete;
+        DROP INDEX IF EXISTS consultations_room_state_updated_idx;
+        DROP INDEX IF EXISTS consultation_events_room_occurred_idx;
+        DROP INDEX IF EXISTS consultation_affinities_room_idx;
+        ALTER TABLE consultations RENAME TO consultations_legacy_0021;
+      `);
+
+      await runSqliteMigrations(database);
+
+      expect(database.prepare("SELECT consultation_id, idempotency_scope FROM consultations").get()).toEqual({ consultation_id: "legacy", idempotency_scope: "member-a" });
+      expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
+      expect(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_legacy_0021'").all()).toEqual([]);
+      expect(database.prepare("SELECT version FROM schema_migrations WHERE version=24").get()).toEqual({ version: 24 });
     } finally { database.close(); }
   });
 

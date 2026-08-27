@@ -18,4 +18,13 @@ describe("consultation storage validation", () => {
     expect(() => validateAffinity({ roomId: "room-a", participantId: "agent-a", duties: ["oracle"], provenance, createdAt: provenance.recordedAt, updatedAt: provenance.recordedAt } as never)).toThrow(/unknown duty/);
     expect(() => normalizeStoredConsultation({ ...consultation(), execution: { dialogueEnabled: true, limits: { participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1, timeLimitMs: 1 }, participantIds: [""], turns: [], inputs: [], blockingQuestion: null, synthesisKey: "key", synthesisStarted: false, providerOperations: [] } })).toThrow(/empty participant ID/);
   });
+
+  it("rejects malformed stored collections with domain errors", () => {
+    expect(() => normalizeStoredConsultation({ ...consultation(), affinitySnapshot: null } as never)).toThrow(/required collections/);
+    expect(() => normalizeStoredConsultation({ ...consultation(), duties: {} } as never)).toThrow(/required collections/);
+    expect(() => normalizeStoredConsultation({ ...consultation(), provenance: "invalid" } as never)).toThrow(/required collections/);
+    expect(() => normalizeStoredConsultation({ ...consultation(), affinitySnapshot: [{ roomId: "room-a", participantId: "agent-a", duties: null, provenance, createdAt: provenance.recordedAt, updatedAt: provenance.recordedAt }] } as never)).toThrow(/affinity duties/);
+    expect(() => normalizeStoredConsultation({ ...consultation(), execution: { dialogueEnabled: true, limits: { participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1, timeLimitMs: 1 }, participantIds: null, turns: [], inputs: [], blockingQuestion: null, synthesisKey: "key", synthesisStarted: false, providerOperations: [] } } as never)).toThrow(/execution is missing required collections/);
+    expect(() => normalizeStoredConsultation({ ...consultation(), execution: { dialogueEnabled: true, limits: { participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1, timeLimitMs: 1 }, participantIds: ["agent-a"], turns: null, inputs: [], blockingQuestion: null, synthesisKey: "key", synthesisStarted: false, providerOperations: [] } } as never)).toThrow(/execution is missing required collections/);
+  });
 });

@@ -19,6 +19,16 @@ CREATE TABLE consultation_events (
   PRIMARY KEY (room_id, consultation_id, revision),
   FOREIGN KEY (room_id, consultation_id) REFERENCES consultations(room_id, consultation_id) ON DELETE RESTRICT
 );
+
+-- Privacy and room-erasure operations are intentionally outside ordinary
+-- application writes. projection_json and snapshot_json may contain supplied
+-- consultation context, so an authorized operator must first redact those
+-- JSON documents (or crypto-shred the room-specific encryption key when
+-- encryption-at-rest is deployed), then use the audited maintenance runbook
+-- to temporarily disable consultation_events_immutable_delete and delete
+-- events before their parent consultation. ON DELETE RESTRICT prevents an
+-- accidental parent deletion from bypassing that reviewable sequence; normal
+-- application roles must never receive trigger-bypass or table-owner rights.
 CREATE TABLE consultation_affinities (
   room_id TEXT NOT NULL, participant_id TEXT NOT NULL, duties_json JSONB NOT NULL,
   provenance_json JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,

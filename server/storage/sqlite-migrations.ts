@@ -31,10 +31,13 @@ export async function runSqliteMigrations(
   // Consultation originally shipped as 0021 on its feature branch. Main later
   // assigned 0021 to private-message recipients. Repair that exact collision
   // before normal version processing so neither schema can be silently skipped.
-  if (applied.has(21) && tableExists("consultations") && !columnExists("messages", "recipient_human_id")) {
+  if (applied.has(21) && (tableExists("consultations") || tableExists("consultations_legacy_0021")) && !columnExists("messages", "recipient_human_id")) {
     database.exec(await readFile(path.join(migrationsDirectory, "0021_private_message_recipients.sql"), "utf8"));
   }
-  const legacyConsultations = tableExists("consultations") && !columnExists("consultations", "idempotency_scope") && !applied.has(24);
+  const legacyConsultations = !applied.has(24) && (
+    tableExists("consultations_legacy_0021")
+    || (tableExists("consultations") && !columnExists("consultations", "idempotency_scope"))
+  );
   if (legacyConsultations) {
     database.exec("PRAGMA foreign_keys = OFF;");
     database.exec(`
@@ -43,10 +46,10 @@ export async function runSqliteMigrations(
       DROP INDEX IF EXISTS consultations_room_state_updated_idx;
       DROP INDEX IF EXISTS consultation_events_room_occurred_idx;
       DROP INDEX IF EXISTS consultation_affinities_room_idx;
-      ALTER TABLE consultations RENAME TO consultations_legacy_0021;
-      ALTER TABLE consultation_events RENAME TO consultation_events_legacy_0021;
-      ALTER TABLE consultation_affinities RENAME TO consultation_affinities_legacy_0021;
     `);
+    if (tableExists("consultations")) database.exec("ALTER TABLE consultations RENAME TO consultations_legacy_0021;");
+    if (tableExists("consultation_events")) database.exec("ALTER TABLE consultation_events RENAME TO consultation_events_legacy_0021;");
+    if (tableExists("consultation_affinities")) database.exec("ALTER TABLE consultation_affinities RENAME TO consultation_affinities_legacy_0021;");
   }
   const migrations = (await readdir(migrationsDirectory))
     .map((filename) => ({ filename, version: migrationVersion(filename) }))
