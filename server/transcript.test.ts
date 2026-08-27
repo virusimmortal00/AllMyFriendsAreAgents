@@ -77,6 +77,18 @@ describe("agent transcript context", () => {
     expect(transcript).toContain("Let's talk normally.");
   });
 
+  it("excludes invoker-only server projections from all agent transcript modes", async () => {
+    const messages: RoomMessage[] = [
+      { id: "topic", speaker: "system", kind: "topic", text: "Room topic: Test", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "private-help", speaker: "system", kind: "status", text: "private help marker", timestamp: "2026-08-19T12:00:01Z", recipientHumanId: "human-a" },
+      { id: "public", speaker: "you", text: "public marker", timestamp: "2026-08-19T12:00:02Z" },
+    ];
+    expect(transcriptFor(state(messages))).not.toContain("private help marker");
+    const scoped = await transcriptFor({ ...state(messages), roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "topic" }] } }, { agentId: "codex-sol" });
+    expect(scoped.text).toContain("public marker");
+    expect(scoped.text).not.toContain("private help marker");
+  });
+
   it("keeps an up-to-date agent prompt independent of transcript length", async () => {
     const scoped = (messages: RoomMessage[], cursor: string): RoomState => ({
       ...state(messages),

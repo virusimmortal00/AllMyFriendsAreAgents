@@ -59,7 +59,7 @@ export interface MessageMutationAcknowledgement {
 export interface CommandMutationAcknowledgement {
   command: true;
   clientSubmissionId: string;
-  /** This response is deliberately client-private; it is never a transcript record. */
+  /** Private command envelope; /help also has a durable server-authored invoker-only transcript projection. */
   result: { kind: "accepted" | "private-help" | "private-error"; commands?: string[]; message?: string; submissionId?: string; duplicate?: boolean; poll?: unknown };
 }
 

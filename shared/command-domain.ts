@@ -3,6 +3,48 @@ import { isActiveAgentId, type ActiveAgentId } from "./participants.js";
 export const ROOM_COMMANDS = ["task", "pov", "poll", "help"] as const;
 export type RoomCommandName = typeof ROOM_COMMANDS[number];
 
+export interface RoomCommandCatalogEntry {
+  readonly command: RoomCommandName;
+  readonly summary: string;
+  readonly syntax: string;
+  readonly example: string;
+}
+
+const COMMAND_CATALOG: Readonly<Record<RoomCommandName, RoomCommandCatalogEntry>> = {
+  help: { command: "help", summary: "List the room commands currently available to you.", syntax: "/help", example: "/help" },
+  task: { command: "task", summary: "Delegate bounded work to one eligible agent.", syntax: "/task [@agent] <bounded work>", example: "/task @Sol check the error path" },
+  pov: { command: "pov", summary: "Request bounded perspectives from eligible agents.", syntax: "/pov <question>", example: "/pov What tradeoff are we missing?" },
+  poll: { command: "poll", summary: "Create a server-authoritative poll with quoted options.", syntax: '/poll "Question" "Option A" "Option B"', example: '/poll "Ship today?" "Yes" "No"' },
+};
+
+export function commandCatalog(commands: readonly RoomCommandName[]) {
+  const allowed = new Set(commands);
+  return ROOM_COMMANDS.filter((command) => allowed.has(command)).map((command) => COMMAND_CATALOG[command]);
+}
+
+export function commandHelpText(commands: readonly RoomCommandName[]) {
+  const entries = commandCatalog(commands);
+  if (!entries.length) return "No room commands are currently available.";
+  return ["Room commands available to you:", ...entries.map((entry) => `/${entry.command} — ${entry.summary}\n  Syntax: ${entry.syntax}\n  Example: ${entry.example}`)].join("\n");
+}
+
+export function roomCommandGuide(commands: readonly RoomCommandName[]) {
+  const entries = commandCatalog(commands);
+  if (!entries.length) return "";
+  return `ROOM COMMANDS (server-owned; only your currently permitted operations are listed)
+- Use the structured room_command tool when you intend to create room work, request bounded perspectives, create a poll, or inspect your current command catalog. Respond conversationally when you only need to answer or discuss something.
+- Never emit raw slash-command text as a visible chat response. The tool is the command transport; slash syntax below is explanatory human syntax only.
+- A soft @mention in ordinary conversation is only a conversational hint. It is not hard routing, authorization, or delegation. Use room_command task with pinned selection for hard routing.
+${entries.map((entry) => `- ${entry.command}: ${entry.summary} Structured example: ${structuredExample(entry.command)} Human syntax example (never emit it): ${entry.example}`).join("\n")}`;
+}
+
+function structuredExample(command: RoomCommandName) {
+  if (command === "help") return '{"command":"help"}';
+  if (command === "task") return '{"command":"task","prompt":"Check the error path","selection":{"kind":"pinned","agentId":"codex-sol"}}';
+  if (command === "pov") return '{"command":"pov","prompt":"What tradeoff are we missing?"}';
+  return '{"command":"poll","question":"Ship today?","options":["Yes","No"]}';
+}
+
 export type CommandInvocation =
   | { readonly command: "task"; readonly prompt: string; readonly selection: { readonly kind: "round-robin" } | { readonly kind: "pinned"; readonly agentId: ActiveAgentId } }
   | { readonly command: "pov"; readonly prompt: string }

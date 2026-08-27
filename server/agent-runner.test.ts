@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
+import { roomCommandGuide } from "../shared/command-domain.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
 
@@ -60,7 +61,7 @@ describe("OpenCode runtime contract", () => {
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow",
+        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny",
       }),
     });
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
@@ -208,6 +209,11 @@ describe("room prompt context", () => {
     expect(prompt).toContain("Commit: unavailable (do not guess a revision)");
     expect(prompt).toContain("Reading a current file establishes only its current contents");
     expect(prompt).toContain("Claim a commit-to-commit or worktree diff only when explicit diff evidence is present");
+  });
+
+  it("injects only the current permission-filtered room command guide without credentials", async () => {
+    const secret="opaque-command-capability-secret";const guide=roomCommandGuide(["poll","help"]);const prompt=await __testing.buildPrompt("codex-sol",state,"Join if useful.",false,"read-only",{commandTool:{url:"http://127.0.0.1/internal",token:secret,allowedCommands:["poll","help"],guide}});
+    expect(prompt).toContain("ROOM COMMANDS (server-owned");expect(prompt).toContain("poll:");expect(prompt).toContain("help:");expect(prompt).not.toContain("task:");expect(prompt).not.toContain("pov:");expect(prompt).not.toContain(secret);expect(JSON.parse(__testing.opencodeEnvironment({},"read-only",true).OPENCODE_PERMISSION!)).toHaveProperty("room_command","allow");
   });
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {

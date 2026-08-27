@@ -26,6 +26,8 @@ export interface RoomMessage {
   clientMessageId?: string;
   mentions?: MessageMention[];
   continuationRequest?: RoomContinuationWorkRequest;
+  /** Server-only recipient boundary. This field is stripped from every client projection. */
+  recipientHumanId?: string;
 }
 
 export interface HumanPresence {

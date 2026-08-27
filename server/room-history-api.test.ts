@@ -36,4 +36,11 @@ describe("room history API", () => {
       store.close();
     }
   });
+
+  it("keeps private projections out of agent and other-human history while preserving cursor replay", async () => {
+    const projectRoot=await mkdtemp(path.join(os.tmpdir(),"amfaa-private-history-"));temporaryDirectories.push(projectRoot);const store=await SqliteRoomRepository.open(projectRoot,path.join(projectRoot,"amfaa.sqlite"));
+    const privateMessage=await store.addPrivateCommandResponseOnce("private-history-submission","human-a","private history marker");const publicMessage=await store.addMessage("system","public after private");
+    const app=express();registerRoomHistoryRoutes({app,store,authorize:(request)=>request.header("authorization")==="Human A"?{humanId:"human-a"}:request.header("authorization")==="Human B"?{humanId:"human-b"}:request.header("authorization")==="Agent"});const server=app.listen(0,"127.0.0.1");await new Promise<void>((resolve)=>server.once("listening",resolve));const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try{const own=await fetch(`${base}/api/room/history?after=${store.snapshot().messages.at(-3)!.id}&limit=10`,{headers:{authorization:"Human A"}});expect(JSON.stringify(await own.json())).toContain("private history marker");for(const authorization of ["Human B","Agent"]){const hidden=await fetch(`${base}/api/room/history?after=${privateMessage.id}&limit=10`,{headers:{authorization}});expect(hidden.status).toBe(200);expect(await hidden.json()).toEqual({messages:[expect.objectContaining({id:publicMessage.id})],nextAfter:publicMessage.id});}}finally{await new Promise<void>((resolve,reject)=>server.close((error)=>error?reject(error):resolve()));store.close();}
+  });
 });

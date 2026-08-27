@@ -573,11 +573,7 @@ export default function App() {
       const acknowledgement = await sendMessage(message, clientMessageId, mentions);
       if ("command" in acknowledgement) {
         if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
-        if (acknowledgement.result.kind === "private-help") {
-          const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
-          setConnectionNotice(notice);
-          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
-        } else if (acknowledgement.result.kind === "private-error") {
+        if (acknowledgement.result.kind === "private-error") {
           const notice = acknowledgement.result.message || "The command was rejected.";
           setConnectionNotice(notice);
           window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
