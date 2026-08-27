@@ -44,11 +44,11 @@ describe.each(factories)("%s command repository", (_backend, makeFixture) => {
     try {
       await fixture.repository.createCommandSubmission(submission());
       await fixture.repository.createCommandPoll({ pollId: "poll-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", question: "Choose", options: ["A", "B"], ...openPollLifecycle,createdAt: submission().createdAt });
-      const vote = { roomId: DEFAULT_ROOM_ID, pollId: "poll-1", voterId: "human-1", mutationId:"vote-mutation-1", optionIndex: 1, createdAt: "2026-08-27T12:02:00.000Z" };
+      const vote = { roomId: DEFAULT_ROOM_ID, pollId: "poll-1", voterId: "human:human-1", mutationId:"vote-mutation-1", optionIndex: 1, createdAt: "2026-08-27T12:02:00.000Z" };
       expect((await fixture.repository.createCommandVote(vote)).kind).toBe("created");
       expect((await fixture.repository.createCommandVote({ ...vote, optionIndex: 0 })).kind).toBe("duplicate");
-      expect((await fixture.repository.createCommandVote({ ...vote, voterId:"replacement-human" })).kind).toBe("duplicate");
-      expect((await fixture.repository.createCommandVote({ ...vote, roomId: "other-room", voterId: "other" })).kind).toBe("rejected");
+      expect((await fixture.repository.createCommandVote({ ...vote, voterId:"human:replacement-human" })).kind).toBe("duplicate");
+      expect((await fixture.repository.createCommandVote({ ...vote, roomId: "other-room", voterId: "human:other" })).kind).toBe("rejected");
       expect(await fixture.repository.listCommandVotes(DEFAULT_ROOM_ID, "poll-1")).toEqual([vote]);
       expect(await fixture.repository.listCommandVotes("other-room", "poll-1")).toEqual([]);
       expect(JSON.stringify(fixture.repository.snapshot())).not.toMatch(/submission-1|poll-1|client-1/);

@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { ApiRequestError, authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings, voteOnPoll } from "./api";
+import { ApiRequestError, authorizeHeartbeat, closePoll, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings, voteOnPoll } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -73,6 +73,14 @@ describe("browser identity requests", () => {
       expect(body).not.toHaveProperty("humanId");
       expect(body).not.toHaveProperty("actorId");
     }
+  });
+
+  it("recovers a controller CSRF token after refresh before retrying closure",async()=>{
+    const calls:Array<[string,RequestInit|undefined]>=[];let closeAttempts=0;
+    vi.stubGlobal("fetch",vi.fn(async(path:string,init?:RequestInit)=>{calls.push([path,init]);if(path.includes("/close")){closeAttempts++;return closeAttempts===1?new Response(JSON.stringify({error:"CSRF token is required."}),{status:403,headers:{"Content-Type":"application/json"}}):new Response(JSON.stringify({kind:"accepted",poll:{pollId:"controller-poll",state:"CLOSED"}}),{headers:{"Content-Type":"application/json"}});}return new Response(JSON.stringify({principal:{id:"owner",username:"owner",role:"OWNER",capabilities:["ROSTER_MANAGE"],revision:1},csrfToken:"restored-csrf"}),{headers:{"Content-Type":"application/json"}});}));
+    await expect(closePoll("controller-poll",1)).resolves.toMatchObject({kind:"accepted"});
+    expect(calls.map(([path])=>path)).toEqual(["/api/polls/controller-poll/close","/api/control/me","/api/polls/controller-poll/close"]);
+    expect(new Headers(calls[2]![1]?.headers).get("X-AMFAA-CSRF")).toBe("restored-csrf");
   });
 
   it("preserves JSON content type when a control-plane CSRF header is present", async () => {

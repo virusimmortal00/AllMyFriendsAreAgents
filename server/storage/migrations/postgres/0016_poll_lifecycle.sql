@@ -13,6 +13,9 @@ SET creator_kind = command_submissions.invoker_kind,
     creator_id = command_submissions.invoker_id
 FROM command_submissions
 WHERE command_submissions.room_id = command_polls.room_id AND command_submissions.submission_id = command_polls.submission_id;
+UPDATE command_poll_votes
+SET voter_id = 'human:' || voter_id
+WHERE voter_id NOT LIKE 'human:%' AND voter_id NOT LIKE 'agent:%';
 CREATE UNIQUE INDEX command_polls_close_mutation ON command_polls(room_id, close_mutation_id) WHERE close_mutation_id IS NOT NULL;
 CREATE INDEX command_polls_open_room_created ON command_polls(room_id, state, created_at DESC, poll_id DESC);
 ALTER TABLE command_polls ADD CONSTRAINT command_polls_lifecycle_consistent CHECK (

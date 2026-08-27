@@ -82,6 +82,20 @@ describe("SQLite migrations", () => {
     expect(migration).toContain("command_poll_votes_require_open_poll");
     expect(migration).toContain("command_polls_monotonic_close");
     expect(migration).toContain("FOR UPDATE");
+    expect(migration).toContain("SET voter_id = 'human:' || voter_id");
+  });
+
+  it("migrates legacy poll voter identities before accepting namespaced votes", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
+    try {
+      database.exec("CREATE TABLE command_submissions(submission_id TEXT,room_id TEXT,invoker_kind TEXT,invoker_id TEXT); CREATE TABLE command_polls(poll_id TEXT,room_id TEXT,submission_id TEXT,question TEXT,options_json TEXT,created_at TEXT); CREATE TABLE command_poll_votes(room_id TEXT,poll_id TEXT,voter_id TEXT,mutation_id TEXT,option_index INTEGER,created_at TEXT,PRIMARY KEY(room_id,poll_id,voter_id),UNIQUE(room_id,poll_id,mutation_id));");
+      database.prepare("INSERT INTO command_submissions VALUES (?,?,?,?)").run("submission","room","human","legacy-human");
+      database.prepare("INSERT INTO command_polls VALUES (?,?,?,?,?,?)").run("poll","room","submission","Choose",'["A","B"]',"2026-08-27T12:00:00.000Z");
+      database.prepare("INSERT INTO command_poll_votes VALUES (?,?,?,?,?,?)").run("room","poll","legacy-human","legacy-vote",1,"2026-08-27T12:01:00.000Z");
+      database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY,"0022_poll_lifecycle.sql"),"utf8"));
+      expect(database.prepare("SELECT voter_id FROM command_poll_votes").get()).toEqual({voter_id:"human:legacy-human"});
+      expect(()=>database.prepare("INSERT INTO command_poll_votes VALUES (?,?,?,?,?,?)").run("room","poll","human:legacy-human","new-vote",0,"2026-08-27T12:02:00.000Z")).toThrow(/UNIQUE/);
+    } finally { database.close(); }
   });
 
   it("adds empty improvement storage without modifying existing room data", async () => {

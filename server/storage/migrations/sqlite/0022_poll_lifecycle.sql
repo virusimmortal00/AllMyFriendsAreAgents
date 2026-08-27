@@ -11,6 +11,9 @@ ALTER TABLE command_polls ADD COLUMN final_total_votes INTEGER CHECK(final_total
 UPDATE command_polls
 SET creator_kind = (SELECT invoker_kind FROM command_submissions WHERE command_submissions.room_id = command_polls.room_id AND command_submissions.submission_id = command_polls.submission_id),
     creator_id = (SELECT invoker_id FROM command_submissions WHERE command_submissions.room_id = command_polls.room_id AND command_submissions.submission_id = command_polls.submission_id);
+UPDATE command_poll_votes
+SET voter_id = 'human:' || voter_id
+WHERE voter_id NOT LIKE 'human:%' AND voter_id NOT LIKE 'agent:%';
 CREATE UNIQUE INDEX command_polls_close_mutation ON command_polls(room_id, close_mutation_id) WHERE close_mutation_id IS NOT NULL;
 CREATE INDEX command_polls_open_room_created ON command_polls(room_id, state, created_at DESC, poll_id DESC);
 CREATE TRIGGER command_polls_open_limit

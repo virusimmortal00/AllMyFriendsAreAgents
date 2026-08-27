@@ -274,7 +274,12 @@ export async function closePoll(pollId:string,expectedRevision:number){
   const clientCloseId=/^[a-zA-Z0-9_-]{8,100}$/.test(candidate)?candidate:`pollclose_${crypto.randomUUID()}`;
   pollCloseIds.set(pollId,clientCloseId);
   if(!stored[pollId]){const entries=[...Object.entries(stored),[pollId,clientCloseId] as const].slice(-100);try{window.localStorage.setItem(storageKey,JSON.stringify(Object.fromEntries(entries)));}catch{/* The durable server mutation still protects in-process retries. */}}
-  return request(`/api/polls/${encodeURIComponent(pollId)}/close`,{method:"POST",headers:controlCsrfToken?{"X-AMFAA-CSRF":controlCsrfToken}:{},body:JSON.stringify({clientCloseId,expectedRevision})}).then((response)=>response.json() as Promise<{kind:"accepted";poll:import("./types").PublicPollProjection}>);
+  const send=()=>request(`/api/polls/${encodeURIComponent(pollId)}/close`,{method:"POST",headers:controlCsrfToken?{"X-AMFAA-CSRF":controlCsrfToken}:{},body:JSON.stringify({clientCloseId,expectedRevision})}).then((response)=>response.json() as Promise<{kind:"accepted";poll:import("./types").PublicPollProjection}>);
+  try{return await send();}catch(error){
+    if(controlCsrfToken||!(error instanceof ApiRequestError)||error.status!==403)throw error;
+    try{await loadControlMe();}catch{throw error;}
+    return send();
+  }
 }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {

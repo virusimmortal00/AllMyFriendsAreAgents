@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validCommandReassignment, validPoll, validSubmission } from "./command-storage.js";
+import { normalizeJsonCommandState, validCommandReassignment, validPoll, validSubmission } from "./command-storage.js";
 
 describe("command storage validation", () => {
   const createdAt = "2026-08-27T12:00:00.000Z";
@@ -11,6 +11,13 @@ describe("command storage validation", () => {
     expect(validSubmission({ ...submission, invoker: { ...submission.invoker, displayName: "" } })).toBe(false);
     expect(validPoll(poll)).toBe(true);
     expect(validPoll({ ...poll, createdAt: "" })).toBe(false);
+  });
+
+  it("namespaces legacy human voter IDs during JSON normalization", () => {
+    const vote={roomId:"room",pollId:"poll",voterId:"legacy-human",mutationId:"legacy-vote",optionIndex:1,createdAt};
+    expect(normalizeJsonCommandState({votes:[vote]}).votes).toEqual([{...vote,voterId:"human:legacy-human"}]);
+    expect(normalizeJsonCommandState({votes:[{...vote,voterId:"agent:codex-sol"}]}).votes[0]?.voterId).toBe("agent:codex-sol");
+    expect(normalizeJsonCommandState({votes:[vote,{...vote,voterId:"human:legacy-human",mutationId:"new-vote"}]}).votes).toHaveLength(1);
   });
 
   it("rejects a malformed reassignment without dereferencing a missing pointer", () => {

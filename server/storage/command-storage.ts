@@ -31,5 +31,9 @@ export function normalizeJsonCommandState(input: unknown): JsonCommandState {
     }
     return validPoll(poll as CommandPoll) ? [poll as CommandPoll] : [];
   });
-  return { schemaVersion: 1, submissions, tombstones:take(value.tombstones,validTombstone), roundRobin: take(value.roundRobin, validRoundRobin), attempts: take(value.attempts, validAttempt), povExecutions: take(value.povExecutions, validPovExecution), polls, votes: take(value.votes, validVote), audits: take(value.audits, validAudit), diagnostics: take(value.diagnostics, validDiagnostic) };
+  const voterKeys = new Set<string>();
+  const mutationKeys = new Set<string>();
+  const votes = take(value.votes, validVote).map((vote) => /^(?:human|agent):/.test(vote.voterId) ? vote : { ...vote, voterId: `human:${vote.voterId}` })
+    .filter((vote) => { const voterKey = `${vote.roomId}\0${vote.pollId}\0${vote.voterId}`; const mutationKey = `${vote.roomId}\0${vote.pollId}\0${vote.mutationId}`; if (voterKeys.has(voterKey) || mutationKeys.has(mutationKey)) return false; voterKeys.add(voterKey); mutationKeys.add(mutationKey); return true; });
+  return { schemaVersion: 1, submissions, tombstones:take(value.tombstones,validTombstone), roundRobin: take(value.roundRobin, validRoundRobin), attempts: take(value.attempts, validAttempt), povExecutions: take(value.povExecutions, validPovExecution), polls, votes, audits: take(value.audits, validAudit), diagnostics: take(value.diagnostics, validDiagnostic) };
 }
