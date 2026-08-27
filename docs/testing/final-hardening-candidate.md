@@ -49,7 +49,7 @@ are intentionally supplied by users outside the package.
 ## Verification
 
 - `pnpm exec vitest run shared/consultation-domain.test.ts server/storage/consultation-storage.test.ts server/storage/consultation-repository.contract.test.ts server/storage/sqlite-migrations.test.ts server/consultation-service.test.ts server/consultation-mcp.test.ts server/consultation-e2e.test.ts server/room-mcp.test.ts server/universal-plugin-package.test.ts` — 9 files, 57 tests passed.
-- `pnpm test` — 125 files passed; 840 tests passed and 1 intentional platform skip.
+- `pnpm test` — 125 files passed; 843 tests passed and 1 intentional platform skip.
 - `pnpm build` — TypeScript project build and Vite production build passed.
 - `pnpm check:planning-docs` — planning documents are synchronized.
 - `python validate_plugin.py plugins/all-my-friends-are-agents` under the bundled validator virtualenv — passed.

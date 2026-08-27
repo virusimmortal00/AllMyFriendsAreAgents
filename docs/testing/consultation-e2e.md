@@ -69,7 +69,7 @@ The integrated candidate was checked on 2026-08-27 with these commands:
 | --- | --- | --- |
 | Focused E2E | `pnpm exec vitest run server/consultation-e2e.test.ts` | passed: 1 file, 3 tests |
 | Consultation/restart regression | `pnpm exec vitest run shared/consultation-domain.test.ts server/storage/consultation-storage.test.ts server/storage/consultation-repository.contract.test.ts server/storage/sqlite-migrations.test.ts server/consultation-service.test.ts server/consultation-mcp.test.ts server/consultation-e2e.test.ts server/room-mcp.test.ts server/universal-plugin-package.test.ts` | passed: 9 files, 57 tests |
-| Full suite | `pnpm test` | passed: 125 files, 840 tests; 1 intentional skip |
+| Full suite | `pnpm test` | passed: 125 files, 843 tests; 1 intentional skip |
 | Typecheck | `pnpm exec tsc -b --force` | passed |
 | Production build | `pnpm build` | passed |
 | Plugin package contract | `pnpm exec vitest run server/universal-plugin-package.test.ts` | passed |
