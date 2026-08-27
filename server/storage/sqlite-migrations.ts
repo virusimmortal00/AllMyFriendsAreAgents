@@ -34,14 +34,17 @@ export async function runSqliteMigrations(
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
     const sql = await readFile(path.join(migrationsDirectory, migration.filename), "utf8");
+    if(migration.version===23)database.exec("PRAGMA foreign_keys = OFF;");
     database.exec("BEGIN IMMEDIATE");
     try {
       database.exec(sql);
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
         .run(migration.version, new Date().toISOString());
       database.exec("COMMIT");
+      if(migration.version===23)database.exec("PRAGMA foreign_keys = ON;");
     } catch (error) {
       database.exec("ROLLBACK");
+      if(migration.version===23)database.exec("PRAGMA foreign_keys = ON;");
       throw new Error(`SQLite migration ${migration.filename} failed.`, { cause: error });
     }
   }

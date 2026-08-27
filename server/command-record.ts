@@ -1,5 +1,6 @@
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { CommandInvocation, RoomCommandName } from "../shared/command-domain.js";
+import type { GhCheck, GhIssue, GhPullRequest, GhRun, GitHubFailureKind } from "./github-read-adapter.js";
 
 export type CommandInvoker = { readonly kind: "human" | "agent"; readonly id: string; readonly displayName: string };
 export interface CommandSubmission { readonly submissionId: string; readonly roomId: string; readonly clientSubmissionId: string; readonly command: RoomCommandName; readonly invocation: CommandInvocation; readonly invoker: CommandInvoker; readonly createdAt: string }
@@ -21,6 +22,13 @@ export interface CommandAuditIdentity { readonly auditId: string; readonly roomI
 export interface CommandPovExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly targetAgentIds: readonly ActiveAgentId[]; readonly processedTargetAgentIds: readonly ActiveAgentId[]; readonly currentTargetAgentId?: ActiveAgentId | null; readonly generationId?: string | null; readonly deliveryMessages?: readonly string[]; readonly deliveryResult?: CommandDeliveryResult; readonly roomEpoch?: string; readonly rosterRevision?: number; readonly agentConfigurationRevision?: number; readonly status: "queued" | "active" | "completed" | "failed" | "cancelled"; readonly reason: string | null; readonly createdAt: string; readonly updatedAt: string }
 export interface CommandTombstone { readonly roomId:string; readonly submissionId:string; readonly clientSubmissionId:string; readonly command:RoomCommandName; readonly compactedAt:string }
 export interface DiagnosticRecord { readonly recordId: string; readonly roomId: string; readonly agentId: ActiveAgentId; readonly attemptId: string; readonly generationId: string | null; readonly correlationId: string; readonly promptHead: string | null; readonly promptFingerprint: string; readonly reason: string; readonly metadata: Readonly<Record<string, string | number | boolean | null>>; readonly diagnosticText: string | null; readonly createdAt: string }
+export type GhProjection =
+  | { readonly kind: "recent"; readonly repository: string; readonly pulls: readonly GhPullRequest[]; readonly issues: readonly GhIssue[]; readonly runs: readonly GhRun[]; readonly truncated: boolean }
+  | { readonly kind: "pr"; readonly repository: string; readonly pull: GhPullRequest }
+  | { readonly kind: "issue"; readonly repository: string; readonly issue: GhIssue }
+  | { readonly kind: "ci"; readonly repository: string; readonly pullNumber: number | null; readonly checks: readonly GhCheck[]; readonly truncated: boolean };
+export interface GhExecutionDiagnostic { readonly endpointFamily: import("./github-read-adapter.js").GitHubEndpointFamily; readonly cacheOutcome: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
+export interface CommandGhExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly status: "queued" | "completed" | "failed"; readonly deliveryStatus: "pending" | "delivered"; readonly projection: GhProjection | null; readonly renderedText: string | null; readonly failureKind: GitHubFailureKind | null; readonly diagnostics: readonly GhExecutionDiagnostic[]; readonly createdAt: string; readonly updatedAt: string }
 
 /** Deliberately returned only from authenticated command/diagnostic endpoints. */
 export interface PrivateCommandProjection { readonly submission: CommandSubmission; readonly attempts: readonly CommandAttempt[]; readonly audit: CommandAuditIdentity | null; readonly diagnostics: readonly DiagnosticRecord[] }
@@ -77,6 +85,7 @@ export interface CommandAcceptance {
   readonly poll?: CommandPoll;
   readonly attempt?: CommandAttempt;
   readonly povExecution?: CommandPovExecution;
+  readonly ghExecution?: CommandGhExecution;
   readonly roundRobin?: { readonly expectedRevision: number; readonly state: RoundRobinState };
 }
 export type AcceptCommandResult =
@@ -110,6 +119,11 @@ export interface CommandRecordStore {
   listPendingPovExecutions(roomId: string): Promise<readonly CommandPovExecution[]>;
   getPovExecution(roomId: string, submissionId: string): Promise<CommandPovExecution | undefined>;
   compareAndSetPovExecution(expectedUpdatedAt: string, execution: CommandPovExecution): Promise<{ readonly kind: "accepted"; readonly execution: CommandPovExecution } | { readonly kind: "conflict" | "not-found" }>;
+  getGhExecution(roomId: string, submissionId: string): Promise<CommandGhExecution | undefined>;
+  createGhExecution(execution: CommandGhExecution): Promise<{ readonly kind: "created" | "duplicate"; readonly execution: CommandGhExecution }>;
+  listPendingGhExecutions(roomId: string): Promise<readonly CommandGhExecution[]>;
+  compareAndSetGhExecution(expectedUpdatedAt: string, execution: CommandGhExecution): Promise<{ readonly kind: "accepted"; readonly execution: CommandGhExecution } | { readonly kind: "conflict" | "not-found" }>;
+  markGhExecutionDelivered(roomId: string, executionId: string, expectedUpdatedAt: string, updatedAt: string): Promise<{ readonly kind: "accepted"; readonly execution: CommandGhExecution } | { readonly kind: "conflict" | "not-found" }>;
   appendDiagnostic(record: DiagnosticRecord): Promise<{ readonly kind: "created" | "duplicate"; readonly record: DiagnosticRecord }>;
   getDiagnostic(roomId: string, agentId: ActiveAgentId, recordId: string): Promise<DiagnosticRecord | undefined>;
   listDiagnostics(roomId: string, query: ActiveAgentId | DiagnosticQuery, limit?: number): Promise<readonly DiagnosticRecord[]>;

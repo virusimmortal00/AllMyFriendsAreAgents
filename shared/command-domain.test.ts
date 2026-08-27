@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandHelpText, effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, parseCommandInput, resolveRoundRobin, roomCommandGuide } from "./command-domain.js";
+import { COMMAND_CATALOG_REVISION, commandHelpText, effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, parseCommandInput, resolveRoundRobin, roomCommandGuide, ROOM_COMMANDS } from "./command-domain.js";
 
 describe("command parser", () => {
   it("parses all commands into one typed invocation model", () => {
@@ -22,6 +22,7 @@ describe("command parser", () => {
   it("preserves explicit structured round-robin selection for mention-prefixed prompts", () => {
     expect(parseCommandInput({ command: "task", prompt: "@claude-sonnet compare this", selection: { kind: "round-robin" } })).toEqual({ kind: "command", invocation: { command: "task", prompt: "@claude-sonnet compare this", selection: { kind: "round-robin" } } });
   });
+  it("parses only the five closed GitHub selector forms with canonical positive decimals",()=>{expect(parseCommand("/gh recent")).toEqual({kind:"command",invocation:{command:"gh",selector:{kind:"recent"}}});expect(parseCommand("/gh pr 98")).toMatchObject({kind:"command",invocation:{selector:{kind:"pr",number:98}}});expect(parseCommand("/gh issue 105")).toMatchObject({kind:"command",invocation:{selector:{kind:"issue",number:105}}});expect(parseCommand("/gh ci")).toMatchObject({kind:"command",invocation:{selector:{kind:"ci"}}});expect(parseCommandInput({command:"gh",selector:{kind:"ci",number:98}})).toMatchObject({kind:"command",invocation:{selector:{kind:"ci",number:98}}});for(const unsafe of ["/gh","/gh recent extra","/gh pr","/gh pr 0","/gh pr -1","/gh pr +1","/gh pr 1.0","/gh pr 1e2","/gh pr https://github.com/x/y/pull/1","/gh ci --ref=main","/gh nope 1"])expect(parseCommand(unsafe)).toMatchObject({kind:"private-error"});expect(parseCommandInput({command:"gh",selector:{kind:"pr",number:1,owner:"attacker"} as never})).toMatchObject({kind:"private-error"});});
 });
 
 describe("round-robin resolution", () => {
@@ -43,6 +44,7 @@ describe("command permissions", () => {
     expect(normalizeCommandPermissions({ allowAll: true })).toEqual({ allowAll: true, allowed: ["task", "pov", "poll", "help"] });
   });
   it("applies a server/room ceiling that an agent cannot expand", () => expect(effectiveAllowedCommands({ allowAll: true, allowed: ["task", "pov", "poll", "help"] }, ["help", "poll"])).toEqual(["poll", "help"]));
+  it("does not expand legacy allowAll records until an explicit catalog-v2 grant",()=>{const legacy=normalizeCommandPermissions({allowAll:true,allowed:["task","pov","poll","help"]});expect(effectiveAllowedCommands(legacy,ROOM_COMMANDS)).not.toContain("gh");expect(effectiveAllowedCommands({allowAll:true,allowed:ROOM_COMMANDS,catalogRevision:COMMAND_CATALOG_REVISION},ROOM_COMMANDS)).toContain("gh");});
   it("filters discovery, examples, and guidance to the effective catalog", () => {
     const guide = roomCommandGuide(["poll", "help"]);
     expect(guide).toContain("room_command");
