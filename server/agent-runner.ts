@@ -6,7 +6,8 @@ import { CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, historicalAgentProvider, type ActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprintMatches, roomAgentEntry, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { GenerationJournal } from "./generation-journal.js";
-import { transcriptFor } from "./transcript.js";
+import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
+import { roomBasePrompt } from "./room-configuration.js";
 import type { AgentId, RoomState } from "./types.js";
 import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
@@ -30,6 +31,14 @@ interface RunResult {
   durationMs: number;
   permission: "read-only" | "writable";
   codeEpoch?: string;
+  cursorMessageId?: string;
+}
+
+export interface AgentContextRuntime {
+  readonly summaryStore?: AgentContextSummaryStore;
+  readonly summarizer?: AgentContextSummarizer;
+  readonly activeAssignment?: string;
+  readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
 }
 
 interface ProcessResult {
@@ -212,12 +221,13 @@ async function currentDiff(projectPath: string, deployedCommit: string | null | 
   }
 }
 
-async function buildPrompt(
+async function buildPromptBundle(
   agent: AgentId,
   state: RoomState,
   instruction: string,
   includeDiff: boolean,
   permission: "read-only" | "writable",
+  context?: AgentContextRuntime,
 ) {
   const profile = AGENT_PROFILES[agent];
   const rosterAgents = enabledRoomAgentIds(normalizeRoomAgentRoster(state.roster));
@@ -238,7 +248,11 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
     ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
     : "";
   const deploymentContext = `\nDEPLOYMENT SOURCE PROVENANCE (server-derived, read-only snapshot)\n${deploymentPromptContext(state.deployment)}\n- Reading a current file establishes only its current contents. It is not evidence of what another commit contained.\n- Claim a commit-to-commit or worktree diff only when explicit diff evidence is present in this prompt.\n`;
-  return `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
+  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment });
+  const basePrompt = roomBasePrompt(state.roomConfiguration);
+  const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
+  const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
+${basePromptSection}
 
 ROOM NAME
 ${state.settings.roomName}
@@ -273,13 +287,25 @@ ROOM RULES
 - Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit hex values supported by the AIM 5.x palette. Unsupported values are ignored. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.
 
 CURRENT ROOM CONVERSATION
-${transcriptFor(state)}
+${roomContext.text}
 ${deploymentContext}
 ${reviewContext}
 ${developmentContext}
 
 YOUR TURN
 ${instruction}`;
+  return { prompt, cursorMessageId: roomContext.cursorMessageId };
+}
+
+async function buildPrompt(
+  agent: AgentId,
+  state: RoomState,
+  instruction: string,
+  includeDiff: boolean,
+  permission: "read-only" | "writable",
+  context?: AgentContextRuntime,
+) {
+  return (await buildPromptBundle(agent, state, instruction, includeDiff, permission, context)).prompt;
 }
 
 interface RunProcessOptions {
@@ -538,6 +564,7 @@ function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-o
     OPENCODE_PERMISSION: JSON.stringify({
       "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
       webfetch: "allow", websearch: "allow", lsp: "allow",
+      room_history: "allow",
     }),
   } : environment;
 }
@@ -577,6 +604,7 @@ export async function runAgent(
   assignmentId?: string,
   writerGrant?: ConfinedWriterGrant,
   discoveryService?: ModelDiscoveryService,
+  context?: AgentContextRuntime,
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -600,7 +628,7 @@ export async function runAgent(
   if (sessionDecision.kind === "invalidate" && storedSession) {
     await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
   }
-  const prompt = await buildPrompt(agent, state, instruction, includeDiff, permission);
+  const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, context);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
   if (secureWriterRequested && !writerGrant) throw new Error("Writable startup failed: verified Git broker grant is unavailable");
@@ -642,8 +670,14 @@ export async function runAgent(
     const invoke = async (sessionId?: string) => {
       const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
       const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
+      const environment = context?.historyTool ? {
+        ...invocation.env,
+        OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
+        AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
+        AMFAA_ROOM_HISTORY_TOKEN: context.historyTool.token,
+      } : invocation.env;
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(invocation.env, permission),
+        environment: opencodeEnvironment(environment, permission),
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
@@ -672,7 +706,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}) };
+    return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
       const parsed = parseOpenCodeOutput(error.process.stdout);

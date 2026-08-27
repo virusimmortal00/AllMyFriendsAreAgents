@@ -38,8 +38,11 @@ describe("SQLite migrations", () => {
         "continuation_jobs",
         "continuation_inbox",
         "continuation_job_events",
+        "room_settings",
+        "room_settings_history",
+        "agent_context_summaries",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 17 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 18 });
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
@@ -48,6 +51,9 @@ describe("SQLite migrations", () => {
       expect(messageColumns).toContain("continuation_request_json");
       expect((database.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["roster_revision", "roster_schema_version", "deployment_provenance_json"]));
       expect((database.prepare("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("code_epoch");
+      expect((database.prepare("PRAGMA table_info(room_agents)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("last_seen_message_id");
+      expect((database.prepare("PRAGMA table_info(room_settings)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["base_prompt_revision", "base_prompt_text", "summarizer_model", "summarizer_prompt_text", "summarizer_prompt_revision", "feature_flags_json"]));
+      expect((database.prepare("PRAGMA table_info(agent_context_summaries)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("config_revision");
     } finally {
       database.close();
     }

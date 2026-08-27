@@ -7,7 +7,7 @@ import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
-import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails } from "../shared/model-discovery";
+import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -132,6 +132,30 @@ export async function loadRoster(): Promise<RosterResponse> {
 
 export async function updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterResponse> {
   return request("/api/roster", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
+}
+
+export interface RoomConfiguration {
+  basePromptRevision: number;
+  basePromptText: string | null;
+  summarizerModel: ModelReference | null;
+  summarizerPromptText: string;
+  summarizerPromptRevision: number;
+  featureFlags: Record<string, boolean>;
+  updatedAt: string | null;
+}
+
+export interface RoomConfigurationResponse {
+  settings: RoomConfiguration;
+  defaults?: { basePromptText: string };
+  modelDiscovery?: ModelDiscoveryResult;
+}
+
+export async function loadRoomConfiguration(): Promise<RoomConfigurationResponse> {
+  return request("/api/room/settings", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean> }>): Promise<{ settings: RoomConfiguration }> {
+  return request("/api/room/settings", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(update) }).then((response) => response.json());
 }
 
 export interface ControlPrincipal { id: string; username: string; role: "OWNER" | "ADMIN" | "MEMBER"; capabilities: string[]; revision: number; }

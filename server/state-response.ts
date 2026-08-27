@@ -4,9 +4,10 @@ import type { PublicRoomState, RoomState } from "./types.js";
 import { isVisibleRoomMessage } from "./message-visibility.js";
 
 export function publicRoomState(state: RoomState, implementationCapabilities?: Partial<Record<AgentId, ImplementationCapability>>): PublicRoomState {
-  const { sessions: _sessions, error: _error, settings, ...room } = state;
+  const { sessions: _sessions, error: _error, agentContextSummaries: _summaries, roomConfigurationAudit: _configurationAudit, settings, ...room } = state;
   const { projectPath: _projectPath, writableAgent: _writableAgent, ...publicSettings } = settings;
-  return { ...room, messages: room.messages.filter(isVisibleRoomMessage), settings: publicSettings, ...(implementationCapabilities ? { implementationCapabilities } : {}) };
+  const roster = room.roster ? { ...room.roster, entries: room.roster.entries.map(({ lastSeenMessageId: _cursor, ...entry }) => entry) } : undefined;
+  return { ...room, ...(roster ? { roster } : {}), messages: room.messages.filter(isVisibleRoomMessage), settings: publicSettings, ...(implementationCapabilities ? { implementationCapabilities } : {}) };
 }
 
 export async function roomStateWithAvailability(

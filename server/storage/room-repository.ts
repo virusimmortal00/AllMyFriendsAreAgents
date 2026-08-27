@@ -28,6 +28,8 @@ import type {
 } from "../../shared/task-domain.js";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../../shared/roster.js";
 import type { DeploymentProvenance } from "../deployment-provenance.js";
+import type { AgentContextSummaryKey } from "../transcript.js";
+import type { RoomConfiguration, RoomConfigurationUpdate } from "../room-configuration.js";
 
 export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -126,7 +128,12 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
   ): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
+  getRoomConfiguration(): Promise<RoomConfiguration>;
+  updateRoomConfiguration(update: RoomConfigurationUpdate, actorId: string): Promise<RoomConfiguration>;
   updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult>;
+  setLastSeenMessageId(agent: AgentId, messageId: string | null): Promise<void>;
+  getAgentContextSummary(key: AgentContextSummaryKey): Promise<string | undefined>;
+  putAgentContextSummary(key: AgentContextSummaryKey, summary: string): Promise<void>;
   changeTopic(topic: string): Promise<void>;
   updateParticipantStyle(participant: StyledParticipant, style: ChatStyle): Promise<void>;
   setDeployment(provenance: DeploymentProvenance): Promise<void>;

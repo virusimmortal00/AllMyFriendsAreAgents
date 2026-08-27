@@ -9,5 +9,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "server/**/*.ts", "shared/**/*.ts"]
+  "include": ["vite.config.ts", "server/**/*.ts", "shared/**/*.ts"],
+  "exclude": ["server/agent-tools/**/*.ts"]
 }

@@ -17,6 +17,8 @@ export interface RoomAgentRosterEntry {
   readonly configurationRevision?: number;
   readonly sessionInvalidationReason?: string;
   readonly selectionConfirmationRequired?: boolean;
+  /** Server-owned prompt cursor. Roster mutation input cannot set this field. */
+  readonly lastSeenMessageId?: string | null;
 }
 
 export type NormalizedRoomAgentRosterEntry = Omit<RoomAgentRosterEntry, "harness" | "reasoningEffort"> & Required<Pick<RoomAgentRosterEntry, "conversationalName" | "modelId" | "supportsProjectWrites" | "configurationRevision">>;
@@ -53,7 +55,7 @@ export function defaultRoomAgentRoster(): RoomAgentRoster {
   return { schemaVersion: 3, revision: 1, entries: AGENT_IDS.flatMap((agentId) => legacyRosterEntry(agentId, true) || []) };
 }
 
-function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boolean; rejectVariantConflict?: boolean } = {}): NormalizedRoomAgentRosterEntry | undefined {
+function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boolean; rejectVariantConflict?: boolean; preserveServerPointers?: boolean } = {}): NormalizedRoomAgentRosterEntry | undefined {
   if (!input || typeof input !== "object") return undefined;
   const value = input as Partial<RoomAgentRosterEntry> & { agentId?: unknown; enabled?: unknown };
   if (typeof value.agentId !== "string" || typeof value.enabled !== "boolean") return undefined;
@@ -71,7 +73,10 @@ function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boo
   const migratedFromLegacyHarness = typeof value.harness === "string" && value.harness !== "opencode";
   const selectionConfirmationRequired = value.selectionConfirmationRequired === true || migratedFromLegacyHarness || options.migrateLegacySelection && Boolean(legacy?.sessionInvalidationReason) || variantSelection.conflict;
   const conflictReason = variantSelection.conflict ? "Conflicting legacy variant and reasoning-effort selections were found. Confirm one OpenCode variant before this participant can run." : undefined;
-  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(variantSelection.variant ? { variant: variantSelection.variant } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, ...(conflictReason ? { sessionInvalidationReason: conflictReason } : typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}) });
+  const lastSeenMessageId = options.preserveServerPointers && (value.lastSeenMessageId === null || typeof value.lastSeenMessageId === "string" && value.lastSeenMessageId.length <= 200)
+    ? value.lastSeenMessageId
+    : undefined;
+  return register({ agentId: value.agentId, conversationalName, ...(migratedProviderId ? { providerId: migratedProviderId } : {}), modelId, ...(variantSelection.variant ? { variant: variantSelection.variant } : {}), enabled: value.enabled, supportsProjectWrites: typeof value.supportsProjectWrites === "boolean" ? value.supportsProjectWrites : legacy?.supportsProjectWrites ?? true, configurationRevision, ...(conflictReason ? { sessionInvalidationReason: conflictReason } : typeof value.sessionInvalidationReason === "string" && value.sessionInvalidationReason.length <= 300 ? { sessionInvalidationReason: value.sessionInvalidationReason } : selectionConfirmationRequired ? { sessionInvalidationReason: "Migrated from a legacy harness. Choose an available OpenCode provider/model before this participant can run." } : {}), ...(selectionConfirmationRequired ? { selectionConfirmationRequired: true } : {}), ...(lastSeenMessageId !== undefined ? { lastSeenMessageId } : {}) });
 }
 
 export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
@@ -79,7 +84,7 @@ export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
   const value = input as Partial<RoomAgentRoster>;
   const revision = Number.isSafeInteger(value.revision) && Number(value.revision) > 0 ? Number(value.revision) : 1;
   if (!Array.isArray(value.entries) || value.entries.length > MAX_ROOM_AGENTS) return defaultRoomAgentRoster();
-  const entries = value.entries.map((entry) => normalizedEntry(entry, { migrateLegacySelection: value.schemaVersion !== 3 }));
+  const entries = value.entries.map((entry) => normalizedEntry(entry, { migrateLegacySelection: value.schemaVersion !== 3, preserveServerPointers: true }));
   if (entries.some((entry) => !entry)) return defaultRoomAgentRoster();
   const resolved = entries as NormalizedRoomAgentRosterEntry[];
   const ids = new Set(resolved.map(({ agentId }) => agentId));

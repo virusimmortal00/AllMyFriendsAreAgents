@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { transcriptFor } from "./transcript.js";
 import type { RoomMessage, RoomState } from "./types.js";
@@ -75,5 +75,78 @@ describe("agent transcript context", () => {
     expect(transcript).not.toContain("Use Actions");
     expect(transcript).not.toContain("Provider usage limit");
     expect(transcript).toContain("Let's talk normally.");
+  });
+
+  it("keeps an up-to-date agent prompt independent of transcript length", async () => {
+    const scoped = (messages: RoomMessage[], cursor: string): RoomState => ({
+      ...state(messages),
+      roster: { schemaVersion: 3, revision: 4, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: cursor }] },
+    });
+    const shortMessages = [{ id: "short", speaker: "you" as const, text: "latest", timestamp: "2026-08-19T12:00:00Z" }];
+    const longMessages = Array.from({ length: 500 }, (_, index): RoomMessage => ({ id: `long-${index}`, speaker: "you", text: `history ${index}`, timestamp: "2026-08-19T12:00:00Z" }));
+    const short = await transcriptFor(scoped(shortMessages, "short"), { agentId: "codex-sol" });
+    const long = await transcriptFor(scoped(longMessages, "long-499"), { agentId: "codex-sol" });
+    expect(short.mode).toBe("delta");
+    expect(long.mode).toBe("delta");
+    expect(long.text.length).toBe(short.text.length);
+    expect(long.text).not.toContain("history 0");
+  });
+
+  it("uses summaries only above the delta threshold and caches cold-start spans", async () => {
+    const messages = [
+      { id: "topic", speaker: "system" as const, kind: "topic" as const, text: "Room topic: Test", timestamp: "2026-08-19T12:00:00Z" },
+      ...Array.from({ length: 21 }, (_, index): RoomMessage => ({ id: `message-${index}`, speaker: "you", text: `verbatim ${index}`, timestamp: "2026-08-19T12:00:00Z" })),
+    ];
+    const room: RoomState = {
+      ...state(messages),
+      roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "topic" }] },
+    };
+    const cache = new Map<string, string>();
+    const summaryStore = {
+      async getAgentContextSummary(key: { agentId: string; spanStartId: string; spanEndId: string }) { return cache.get(JSON.stringify(key)); },
+      async putAgentContextSummary(key: { agentId: string; spanStartId: string; spanEndId: string }, summary: string) { cache.set(JSON.stringify(key), summary); },
+    };
+    const summarize = vi.fn(async () => "A cached bounded summary.");
+    const first = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
+    const second = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
+    expect(first.mode).toBe("summary");
+    expect(first.text).toContain("A cached bounded summary.");
+    expect(first.text).toContain("verbatim 20");
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(second.text).toBe(first.text);
+  });
+
+  it("regenerates a cold-start summary when the summarizer configuration revision changes", async () => {
+    const messages = Array.from({ length: 24 }, (_, index): RoomMessage => ({ id: `revision-${index}`, speaker: "you", text: `message ${index}`, timestamp: "2026-08-19T12:00:00Z" }));
+    const room: RoomState = { ...state(messages), roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", modelId: "gpt-5.6-sol", enabled: true }] } };
+    const cache = new Map<string, string>();
+    const summaryStore = {
+      async getAgentContextSummary(key: object) { return cache.get(JSON.stringify(key)); },
+      async putAgentContextSummary(key: object, summary: string) { cache.set(JSON.stringify(key), summary); },
+    };
+    const summarize = vi.fn(async () => "Revision-sensitive summary.");
+    const configuration = { basePromptRevision: 0, basePromptText: "default", summarizerModel: null, summarizerPromptText: "{{transcript}}", featureFlags: {}, updatedAt: null };
+    await transcriptFor({ ...room, roomConfiguration: { ...configuration, summarizerPromptRevision: 1 } }, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
+    await transcriptFor({ ...room, roomConfiguration: { ...configuration, summarizerPromptRevision: 2 } }, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
+    expect(summarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the full verbatim delta when summarization fails", async () => {
+    const messages = [
+      { id: "cursor", speaker: "you" as const, text: "seen", timestamp: "2026-08-19T12:00:00Z" },
+      ...Array.from({ length: 21 }, (_, index): RoomMessage => ({ id: `delta-${index}`, speaker: "you", text: `exact ${index}`, timestamp: "2026-08-19T12:00:00Z" })),
+    ];
+    const room: RoomState = {
+      ...state(messages),
+      roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "cursor" }] },
+    };
+    const transcript = await transcriptFor(room, {
+      agentId: "codex-sol",
+      summaryStore: { async getAgentContextSummary() { return undefined; }, async putAgentContextSummary() {} },
+      summarizer: { async summarize() { throw new Error("provider unavailable"); } },
+    });
+    expect(transcript.mode).toBe("verbatim-fallback");
+    expect(transcript.text).toContain("[YOU | delta-0]\nexact 0");
+    expect(transcript.text).toContain("[YOU | delta-20]\nexact 20");
   });
 });

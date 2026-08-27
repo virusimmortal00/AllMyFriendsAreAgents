@@ -75,11 +75,15 @@ export function RichModelPicker({
   providerId,
   modelId,
   onChange,
+  title = "Choose the agent’s model",
+  description = "The model shapes what your agent is good at. A provider is the service that gives you access to it.",
 }: {
   models: readonly DiscoveredModel[];
   providerId: string;
   modelId: string;
   onChange: (model: DiscoveredModel) => void;
+  title?: string;
+  description?: string;
 }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
@@ -120,7 +124,7 @@ export function RichModelPicker({
   return (
     <section className="model-picker" aria-labelledby="model-picker-title">
       <div className="model-picker__intro">
-        <div><strong id="model-picker-title">Choose the agent’s model</strong><span>The model shapes what your agent is good at. A provider is the service that gives you access to it.</span></div>
+        <div><strong id="model-picker-title">{title}</strong><span>{description}</span></div>
         <span className="model-picker__count">{models.length} available</span>
       </div>
       <div className="model-picker__toolbar">

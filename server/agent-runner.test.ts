@@ -60,7 +60,7 @@ describe("OpenCode runtime contract", () => {
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow",
+        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow",
       }),
     });
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
@@ -208,6 +208,14 @@ describe("room prompt context", () => {
     expect(prompt).toContain("Commit: unavailable (do not guess a revision)");
     expect(prompt).toContain("Reading a current file establishes only its current contents");
     expect(prompt).toContain("Claim a commit-to-commit or worktree diff only when explicit diff evidence is present");
+  });
+
+  it("adds the room base prompt without displacing per-agent identity rules", async () => {
+    const prompt = await __testing.buildPrompt("codex-sol", { ...state, roomConfiguration: { basePromptRevision: 1, basePromptText: "Treat evidence as primary.", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: { preflightInvocationGating: false }, updatedAt: "2026-08-27T00:00:00.000Z" } }, "Join if useful.", false, "read-only");
+    expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
+    expect(prompt).toContain("ROOM BASE PROMPT\nTreat evidence as primary.");
+    expect(prompt.indexOf("You are OpenCode")).toBeLessThan(prompt.indexOf("ROOM BASE PROMPT"));
+    expect(prompt).toContain("only messages labeled [SOL] are your own history");
   });
 
   it("gives read-only agents the exact server-derived commit without granting shell permission", async () => {

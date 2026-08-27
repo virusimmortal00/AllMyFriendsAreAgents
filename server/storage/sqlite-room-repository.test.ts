@@ -13,6 +13,27 @@ afterEach(async () => {
 });
 
 describe("SQLite room repository", () => {
+  it("persists per-agent cursors and summary cache across restart while keeping cursors server-owned", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-context-cursor-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const message = await store.addMessage("you", "Cursor checkpoint");
+    await store.setLastSeenMessageId("codex-sol", message.id);
+    await store.putAgentContextSummary({ agentId: "codex-sol", spanStartId: store.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 }, "cached summary");
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBe("cached summary");
+    const suppliedCursor = reopened.snapshot().roster!.entries.map((entry) => ({ ...entry, lastSeenMessageId: "forged" }));
+    expect(await reopened.updateRoster(1, suppliedCursor)).toMatchObject({ kind: "accepted" });
+    expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
+    await reopened.updateRoomConfiguration({ summarizerPromptText: "Changed config {{transcript}}" }, "owner");
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
+    reopened.close();
+  });
+
   it("atomically persists ordering, disabled entries, empty rosters, and revision conflicts", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-roster-"));
     temporaryDirectories.push(projectRoot);
