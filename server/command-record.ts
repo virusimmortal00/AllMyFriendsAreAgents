@@ -61,6 +61,7 @@ export interface CommandRecordStore {
   listPendingCommandAttempts(roomId: string): Promise<readonly CommandAttempt[]>;
   compareAndSetCommandAttempt(expectedUpdatedAt: string, attempt: CommandAttempt): Promise<{ readonly kind: "accepted"; readonly attempt: CommandAttempt } | { readonly kind: "conflict" | "not-found" }>;
   createCommandPoll(poll: CommandPoll): Promise<{ readonly kind: "created" | "duplicate"; readonly poll: CommandPoll }>;
+  listCommandPolls(roomId: string): Promise<readonly CommandPoll[]>;
   getCommandPoll(roomId: string, pollId: string): Promise<CommandPoll | undefined>;
   createCommandVote(vote: CommandVote): Promise<CreateCommandVoteResult>;
   listCommandVotes(roomId: string, pollId: string): Promise<readonly CommandVote[]>;
