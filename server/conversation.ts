@@ -15,6 +15,7 @@ export interface ConversationTurn {
     decisionId: string;
     shadowSuppressed: boolean;
   };
+  deliveryId?: string;
 }
 
 export interface TurnResult {

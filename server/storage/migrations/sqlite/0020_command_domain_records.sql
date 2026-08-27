@@ -26,7 +26,7 @@ CREATE TABLE command_polls (
   FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE
 );
 CREATE TABLE command_pov_executions (
-  execution_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, target_agent_ids_json TEXT NOT NULL,
+  execution_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, target_agent_ids_json TEXT NOT NULL, processed_target_agent_ids_json TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('queued','active','completed','failed','cancelled')), reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY(room_id, execution_id), UNIQUE(room_id, submission_id),
   FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE

@@ -62,7 +62,15 @@ export class ActiveGenerationTracker {
     const reservationId = `command:${randomUUID()}`;
     this.reservations.set(reservationId, agent);
     let released = false;
-    return { release: () => { if (released) return false; released = true; return this.reservations.delete(reservationId); } };
+    const release = () => { if (released) return false; released = true; return this.reservations.delete(reservationId); };
+    return {
+      release,
+      activate: (generationId: string) => {
+        if (released || !this.reservations.delete(reservationId)) return false;
+        released = true;
+        return this.start(generationId, agent);
+      },
+    };
   }
 
   private emit() {

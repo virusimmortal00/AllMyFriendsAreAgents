@@ -311,7 +311,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
@@ -319,6 +319,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     return { cancelled: true };
   }
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
+  const sharedReservation = activeAgent ? activeGenerations.reserve(activeAgent, agentConcurrency) : undefined;
+  if (activeAgent && !sharedReservation) return { failed: true };
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
@@ -347,6 +349,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
       },
+      sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -360,6 +363,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     broadcast();
     return { failed: true };
   } finally {
+    sharedReservation?.release();
     generationCancellation.dispose();
   }
   if (!agentStillEnabled()) {
@@ -436,13 +440,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         burstStarted = true;
       }
       if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-      await store.addMessage(
-        agent,
-        visibleMessage,
-        includeDiff ? "review" : "chat",
-        parsed.styleUpdate || currentStyle,
-        { burstId, sequence },
-      );
+      if(deliveryId)await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence});
+      else await store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence});
       deliveredMessageCount += 1;
       broadcast();
     },
@@ -619,7 +618,7 @@ const commandRuntime = new CommandRuntime({
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
   stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
   executeTask: performCommandTask,
-  executePov: async (agents, prompt, signal) => new Promise<void>((resolve,reject) => {
+  executePov: async (agents, prompt, signal, deliveryId) => new Promise<void>((resolve,reject) => {
     const accepted = jobs.enqueue(`command:pov:${randomUUID()}`, async () => {
       if(signal.aborted){reject(new Error("POV execution was cancelled before launch."));return;}
       try{await runJob(async () => {
@@ -630,7 +629,7 @@ const commandRuntime = new CommandRuntime({
       });
       const availableSlots=Math.max(0,agentConcurrency-activeGenerations.size());
       if (!availableSlots) throw new Error("Shared generation capacity is unavailable for POV execution.");
-      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true},availableSlots);
+      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt,deliveryId})),true,{inviteAll:true},availableSlots);
       }, true);if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
     });
     if (!accepted) reject(new Error("The room is already working."));

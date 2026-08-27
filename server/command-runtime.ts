@@ -43,11 +43,11 @@ export interface CommandRuntimeDependencies {
   readonly store: CommandRecordStore;
   readonly roster: () => RoomAgentRoster;
   readonly canLaunch: (agentId: ActiveAgentId) => boolean | Promise<boolean>;
-  readonly reserveLaunch?: (agentId: ActiveAgentId) => { release(): unknown } | undefined;
+  readonly reserveLaunch?: (agentId: ActiveAgentId) => { release(): unknown; activate?(generationId:string):unknown } | undefined;
   readonly roomEpoch?: () => string;
   readonly roomEpochCurrent?: (epoch: string) => boolean;
   readonly executeTask: (agentId: ActiveAgentId, prompt: string, hooks: CommandLaunchHooks) => Promise<CommandExecutionResult>;
-  readonly executePov: (agentIds: readonly ActiveAgentId[], prompt: string, signal: AbortSignal) => Promise<void>;
+  readonly executePov: (agentIds: readonly ActiveAgentId[], prompt: string, signal: AbortSignal, deliveryId?:string) => Promise<void>;
   readonly publishStatus: (auditId: string, text: string) => Promise<void>;
   readonly deliverTask: (attemptId: string, agentId: ActiveAgentId, messages: readonly string[], result: CommandExecutionResult) => Promise<void>;
   readonly ceiling?: readonly RoomCommandName[];
@@ -62,7 +62,7 @@ export type CommandResponse =
   | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[] }
   | { readonly kind: "accepted"; readonly submissionId: string; readonly duplicate: boolean; readonly poll?: PublicPollProjection };
 
-interface LiveAttempt { readonly controller: AbortController; readonly reservation?: { release(): unknown }; partial: string; timer?: unknown }
+interface LiveAttempt { readonly controller: AbortController; readonly reservation?: { release(): unknown; activate?(generationId:string):unknown }; partial: string; timer?: unknown }
 
 function boundedDelay(value: number | undefined, fallback: number, minimum: number, maximum: number) { return value === undefined ? fallback : Math.max(minimum, Math.min(maximum, Math.floor(value))); }
 function stableId(...parts: string[]) { return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32); }
@@ -96,7 +96,7 @@ export class CommandRuntime {
 
   async initialize() {
     for (const audit of await this.dependencies.store.listCommandAuditIdentities(this.roomId)) {
-      const submission=await this.dependencies.store.getCommandSubmission(this.roomId,audit.submissionId); if(submission)await this.publishAudit(submission,audit);
+      const submission=await this.dependencies.store.getCommandSubmission(this.roomId,audit.submissionId); if(submission)await this.publishAuditObserved(submission,audit);
     }
     for (const attempt of await this.dependencies.store.listPendingCommandAttempts(this.roomId)) {
       const submission = await this.dependencies.store.getCommandSubmission(this.roomId, attempt.submissionId);
@@ -170,14 +170,14 @@ export class CommandRuntime {
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
       const poll={ pollId: stableId(submission.submissionId,"poll"), roomId: this.roomId, submissionId: submission.submissionId, question: invocation.question, options: invocation.options, createdAt: submission.createdAt };
       const audit=this.auditRecord(submission,[]); const accepted=await this.dependencies.store.acceptCommand({submission,audit,poll});
-      if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAudit(submission,audit);
+      if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAuditObserved(submission,audit);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false, poll: publicPollProjection(poll,[]) };
     }
     if (invocation.command === "pov") {
       const targets = await this.eligibleAgents("pov");
       if (!targets.length) return { kind: "private-error", message: "No eligible participants are available." };
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
-      const now=timestamp(this.clock);const povExecution:CommandPovExecution={executionId:stableId(submission.submissionId,"pov-execution"),roomId:this.roomId,submissionId:submission.submissionId,targetAgentIds:targets,status:"queued",reason:null,createdAt:now,updatedAt:now};
+      const now=timestamp(this.clock);const povExecution:CommandPovExecution={executionId:stableId(submission.submissionId,"pov-execution"),roomId:this.roomId,submissionId:submission.submissionId,targetAgentIds:targets,processedTargetAgentIds:[],status:"queued",reason:null,createdAt:now,updatedAt:now};
       const audit=this.auditRecord(submission,targets); const accepted=await this.dependencies.store.acceptCommand({submission,audit,povExecution}); if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected POV acceptance conflict."); this.startPov(povExecution,submission);await this.publishAuditObserved(submission,audit);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false };
     }
@@ -245,7 +245,7 @@ export class CommandRuntime {
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,active);
     if(claimed.kind!=="accepted") return false;
     if (live.timer) this.clock.clearTimeout(live.timer);
-    live.reservation?.release();
+    if(live.reservation?.activate)live.reservation.activate(generationId);else live.reservation?.release();
     live.timer=this.clock.setTimeout(()=>void this.stage2(active,submission),this.stage2Ms);
     return true;
   }
@@ -276,7 +276,8 @@ export class CommandRuntime {
   }
 
   private agentCurrent(agentId:ActiveAgentId){const entry=roomAgentEntry(this.dependencies.roster(),agentId);return Boolean(entry?.enabled&&!entry.selectionConfirmationRequired);}
-  private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);void this.dependencies.executePov(active.targetAgentIds,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal).then(()=>this.finishPov(active.executionId,"completed",null)).catch((error)=>this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error)));}
+  private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);void this.runPovTargets(active,submission,controller).then(()=>this.finishPov(active.executionId,"completed",null)).catch((error)=>this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error)));}
+  private async runPovTargets(execution:CommandPovExecution,submission:CommandSubmission,controller:AbortController){for(const agentId of execution.targetAgentIds){if(controller.signal.aborted)throw new Error("POV execution was cancelled.");const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||current.status!=="active")return;if(current.processedTargetAgentIds.includes(agentId))continue;const claimedTarget={...current,processedTargetAgentIds:[...current.processedTargetAgentIds,agentId],updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,claimedTarget);if(claimed.kind!=="accepted")throw new Error("POV target ownership changed before execution.");await this.dependencies.executePov([agentId],(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal,stableId(execution.executionId,agentId));}}
   private async finishPov(executionId:string,status:"completed"|"failed"|"cancelled",reason:string|null){const current=(await this.dependencies.store.listPendingPovExecutions(this.roomId)).find((item)=>item.executionId===executionId);if(!current)return;const terminal={...current,status,reason:reason?safeLabel(reason).slice(0,200):null,updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,terminal);this.livePov.delete(executionId);}
   private captureEpoch(agentId:ActiveAgentId){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,agentId);return{roomEpoch:this.dependencies.roomEpoch?.()||"0",rosterRevision:roster.revision,agentConfigurationRevision:entry?.configurationRevision||0};}
   private attemptCurrent(attempt:CommandAttempt){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,attempt.agentId);return this.agentCurrent(attempt.agentId)&&(!attempt.roomEpoch||!this.dependencies.roomEpochCurrent||this.dependencies.roomEpochCurrent(attempt.roomEpoch))&&(attempt.rosterRevision===undefined||attempt.rosterRevision===roster.revision)&&(attempt.agentConfigurationRevision===undefined||attempt.agentConfigurationRevision===(entry?.configurationRevision||0));}
