@@ -541,12 +541,15 @@ export default function App() {
     if (!message || !human || !connected) return { restoreOnFailure: false };
     const clientMessageId = `message_${crypto.randomUUID()}`;
     const optimisticId = `pending-${clientMessageId}`;
-    setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
+    // Slash commands are private control requests until the server projects an
+    // authoritative public outcome. Never flash the raw invocation in chat.
+    const isCommand = message.trimStart().startsWith("/");
+    if (!isCommand) setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
     try {
       setClientError("");
       const acknowledgement = await sendMessage(message, clientMessageId, mentions);
       if ("command" in acknowledgement) {
-        setRoom((current) => discardOptimisticMessage(current, optimisticId));
+        if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
         if (acknowledgement.result.kind === "private-help") {
           const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
           setConnectionNotice(notice);
@@ -558,7 +561,7 @@ export default function App() {
       const delivered = roomRef.current.messages.some(({ clientMessageId: deliveredId, id }) =>
         deliveredId === clientMessageId && !id.startsWith("pending-")
       );
-      setRoom((current) => discardOptimisticMessage(current, optimisticId));
+      if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
       if (error instanceof ApiRequestError && error.outcomeUnknown && !delivered) {
         setPendingSend({ clientMessageId, text: message, mentions });
       }

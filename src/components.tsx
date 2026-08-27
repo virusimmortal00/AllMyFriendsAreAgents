@@ -629,7 +629,9 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   function chooseMention(candidate: MentionCandidate) {
     if (!mentionQuery) return;
     const token = `@${candidate.label}`;
-    const nextDraft = `${draft.slice(0, mentionQuery.start)}${token}${draft.slice(mentionQuery.end)}`;
+    const following = draft.slice(mentionQuery.end);
+    const trailingSpace = following && /^\s/.test(following) ? "" : " ";
+    const nextDraft = `${draft.slice(0, mentionQuery.start)}${token}${trailingSpace}${following}`;
     const nextMention: MessageMention = {
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
@@ -646,7 +648,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       .sort((left, right) => left.start - right.start));
     setMentionQuery(null);
     requestAnimationFrame(() => {
-      const cursor = mentionQuery.start + token.length;
+      const cursor = mentionQuery.start + token.length + trailingSpace.length;
       textarea.current?.focus();
       textarea.current?.setSelectionRange(cursor, cursor);
     });
@@ -850,7 +852,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => chooseMention(candidate)}
             >
-              <strong>@{candidate.label}</strong><span>{candidate.description}</span>
+              <i className={`mention-provider-mark mention-provider-mark--${candidate.targetKind}`} aria-hidden="true">{candidate.targetKind === "agent" ? "◆" : "●"}</i><strong title={`@${candidate.label}`}>@{candidate.label}</strong><span title={candidate.description}>{candidate.description}</span>
             </button>
           ))}
         </div>

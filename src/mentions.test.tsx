@@ -72,7 +72,7 @@ describe("participant mention autocomplete", () => {
     await user.type(message, "hello @gr");
     expect(screen.getByRole("listbox", { name: "Mention a participant" })).toBeTruthy();
     await user.keyboard("{Enter}");
-    expect((message as HTMLTextAreaElement).value).toBe("hello @Grok");
+    expect((message as HTMLTextAreaElement).value).toBe("hello @Grok ");
     await user.type(message, " please review");
     expect(screen.getByLabelText("Mention metadata").textContent).toContain('"targetId":"cursor-grok"');
   });
@@ -116,5 +116,15 @@ describe("participant mention autocomplete", () => {
     fireEvent.paste(message, { clipboardData: { getData: () => "@Alice " } });
     fireEvent.change(message, { target: { value: "@Alice @Alice" } });
     expect(screen.getByLabelText("Paste mention metadata").textContent).toContain('"start":7,"end":13');
+  });
+
+  it("adds one trailing space without replacing following whitespace or mention ranges", async () => {
+    const user = userEvent.setup();
+    render(<MentionFlow />);
+    const message = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await user.type(message, "@gr");
+    await user.keyboard("{Enter}");
+    expect(message.value).toBe("@Grok ");
+    expect(screen.getByLabelText("Mention metadata").textContent).toContain('"end":5');
   });
 });

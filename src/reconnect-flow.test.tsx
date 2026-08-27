@@ -220,6 +220,19 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
   });
 
+  it("never inserts a slash command optimistically before its private response arrives", async () => {
+    let resolveCommand!: (value: unknown) => void;
+    api.sendMessage.mockImplementationOnce(() => new Promise((resolve) => { resolveCommand = resolve; }));
+    const user = userEvent.setup();
+    const composer = await renderConnected();
+    await user.type(composer, "/help");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
+    expect(screen.queryByText("/help")).toBeNull();
+    act(() => resolveCommand({ command: true, clientSubmissionId: api.sendMessage.mock.calls[0][1], result: { kind: "private-help", commands: ["help"] } }));
+    expect(screen.queryByText("/help")).toBeNull();
+  });
+
   it("does not offer a duplicate retry when the authoritative delta beats an ambiguous POST failure", async () => {
     let rejectSend!: (error: Error) => void;
     api.sendMessage.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSend = reject; }));
