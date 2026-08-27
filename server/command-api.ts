@@ -13,7 +13,7 @@ export function sendCommandResponse(response: express.Response, result: CommandR
 
 export async function submitHumanCommand(input:{request:express.Request;response:express.Response;runtime:CommandRuntime;humans:HumanPresenceRegistry;sessions:HumanSessions;text?:string}) {
   const human=sessionHuman(input.request,input.humans,input.sessions); if(!human)return input.response.status(401).json({error:"Join the room before running commands."});
-  const command=(input.text??input.request.body?.text) as CommandInput; const clientSubmissionId=typeof input.request.body?.clientSubmissionId==="string"?input.request.body.clientSubmissionId.trim():"";
+  const command=(input.text??input.request.body?.text) as CommandInput; const suppliedId=input.request.body?.clientSubmissionId??input.request.body?.clientMessageId;const clientSubmissionId=typeof suppliedId==="string"?suppliedId.trim():"";
   return sendCommandResponse(input.response,await input.runtime.submit(command,{kind:"human",id:human.id,displayName:human.name},clientSubmissionId),clientSubmissionId);
 }
 
