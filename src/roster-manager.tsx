@@ -21,8 +21,9 @@ import { RichModelPicker } from "./model-picker";
 import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 
-export function RosterManagerDialog({ initialRoster, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
+export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
   initialRoster: RoomAgentRoster;
+  initialSelectedAgentId?: string;
   agentListSort?: AgentListSort;
   onAgentListSortChange?: (sort: AgentListSort) => void;
   returnFocusTo: HTMLElement | null;
@@ -35,7 +36,7 @@ export function RosterManagerDialog({ initialRoster, agentListSort = "room", onA
   const [savedEntries, setSavedEntries] = useState<RoomAgentRosterEntry[]>(() => [...initialRoster.entries]);
   const [catalog, setCatalog] = useState<readonly RosterCatalogEntry[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<ModelDiscoveryResult>();
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => initialRoster.entries[0]?.agentId || null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => initialSelectedAgentId || initialRoster.entries[0]?.agentId || null);
   const [changingModelForAgentId, setChangingModelForAgentId] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<{ agentId: string; returnFocusTo: HTMLButtonElement } | null>(null);
   const [discardRequest, setDiscardRequest] = useState(false);

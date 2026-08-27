@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyAvatar, updateMyStyle, updateSettings } from "./api";
-import { AgentSettingsDialog, ConfirmationDialog, HelpDialog, PeopleDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { ConfirmationDialog, HelpDialog, PeopleDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -137,9 +137,9 @@ export default function App() {
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [humanAvatarOpen, setHumanAvatarOpen] = useState(false);
   const [humanAvatarSaving, setHumanAvatarSaving] = useState(false);
-  const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
   const [rosterOpen, setRosterOpen] = useState(false);
-  const [rosterTrigger, setRosterTrigger] = useState<HTMLButtonElement | null>(null);
+  const [rosterTrigger, setRosterTrigger] = useState<HTMLElement | null>(null);
+  const [rosterSelectedAgentId, setRosterSelectedAgentId] = useState<ActiveAgentId | null>(null);
   const [agentListSort, setAgentListSort] = useState<AgentListSort>(() => loadAgentListSort(typeof window === "undefined" ? undefined : window.localStorage));
   const [workshopId, setWorkshopId] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<WorkshopResponse | null>(null);
@@ -690,7 +690,11 @@ export default function App() {
   const enabledAgents = enabledRoomAgentIds(roster);
   const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
-  const openRoster = useCallback((trigger: HTMLButtonElement) => { setRosterTrigger(trigger); setRosterOpen(true); }, []);
+  const openRoster = useCallback((trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => {
+    setRosterTrigger(trigger);
+    setRosterSelectedAgentId(selectedAgentId || null);
+    setRosterOpen(true);
+  }, []);
   const openHumanAvatar = useCallback((trigger: HTMLButtonElement) => {
     humanAvatarTrigger.current = trigger;
     setHumanAvatarOpen(true);
@@ -802,7 +806,7 @@ export default function App() {
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openHumanAvatar} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openHumanAvatar} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -827,20 +831,12 @@ export default function App() {
         </div>
 
         {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
-        {peopleOpen ? <PeopleDialog roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openHumanAvatar} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
+        {peopleOpen ? <PeopleDialog roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} returnFocusTo={peopleTrigger.current} onConfigureHumanAvatar={openHumanAvatar} onManageRoster={openRoster} onClose={() => setPeopleOpen(false)} /> : null}
         {humanAvatarOpen ? <HumanAvatarDialog human={human} busy={humanAvatarSaving} returnFocusTo={humanAvatarTrigger.current} onAvatarChange={changeMyAvatar} onClose={() => setHumanAvatarOpen(false)} /> : null}
 
-        {configuredAgent ? (
-          <AgentSettingsDialog
-            agent={configuredAgent}
-            available={room.availability?.[configuredAgent] !== false}
-            health={room.agentHealth?.[configuredAgent]}
-            implementationCapability={room.implementationCapabilities?.[configuredAgent]}
-            onClose={() => setConfiguredAgent(null)}
-          />
-        ) : null}
         {rosterOpen ? <RosterManagerDialog
           initialRoster={roster}
+          initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}
           onAgentListSortChange={changeAgentListSort}
           returnFocusTo={rosterTrigger}

@@ -340,6 +340,35 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getByRole("status", { name: "Claude is generating a response" })).toBeTruthy();
   });
 
+  it("opens Manage Agents on the exact activated roster row and restores focus to that row", async () => {
+    const roster = {
+      schemaVersion: 3 as const,
+      revision: 4,
+      entries: [
+        { agentId: "codex-sol" as const, conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true },
+        { agentId: "claude-opus" as const, conversationalName: "Opus", providerId: "anthropic", modelId: "claude-opus-5", enabled: true },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      roster,
+      catalog: [
+        { agentId: "codex-sol", provider: "openai", modelId: "gpt-5.6-sol", conversationalName: "Sol" },
+        { agentId: "claude-opus", provider: "anthropic", modelId: "claude-opus-5", conversationalName: "Opus" },
+      ],
+    }), { status: 200 })));
+    const user = userEvent.setup();
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], { roster })));
+    const row = screen.getByRole("button", { name: /Configure Opus:/ });
+
+    await user.dblClick(row);
+
+    expect((await screen.findByRole("button", { name: "View Opus configuration" })).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "View Sol configuration" }).getAttribute("aria-pressed")).toBe("false");
+    await user.click(screen.getByRole("button", { name: "Close roster manager" }));
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  });
+
   it("warns before resetting identity and preserves room state and draft when canceled", async () => {
     const user = userEvent.setup();
     const composer = await renderConnected([{ id: "history", speaker: "codex-sol", text: "Keep the room", timestamp: "2026-08-21T12:00:00.000Z" }]);

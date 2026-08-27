@@ -97,7 +97,6 @@ export function RoomRoster({
   activeAgents,
   humans,
   currentHumanId,
-  onConfigureAgent,
   agents = AGENT_IDS,
   roster,
   agentListSort = "room",
@@ -110,12 +109,11 @@ export function RoomRoster({
   activeAgents?: ReadonlySet<AgentId>;
   humans: HumanPresence[];
   currentHumanId: string;
-  onConfigureAgent: (agent: ActiveAgentId) => void;
   agents?: readonly ActiveAgentId[];
   roster?: RoomAgentRoster;
   agentListSort?: AgentListSort;
   onOpenRoomProperties?: (trigger: HTMLButtonElement) => void;
-  onManageRoster?: (trigger: HTMLButtonElement) => void;
+  onManageRoster?: (trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => void;
   onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
 }) {
   const healthText = (health: AgentHealth) => health.status === "cooldown"
@@ -139,12 +137,27 @@ export function RoomRoster({
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
           const availableLabel = `${alias}: ${modelName} via ${routeName}`;
+          const configurable = Boolean(onManageRoster);
           const groupLabel = agentListGroupLabel(item, agentListSort);
           const previousGroupLabel = index > 0 ? agentListGroupLabel(presentAgents[index - 1], agentListSort) : undefined;
           return (
             <Fragment key={agent}>
             {groupLabel && groupLabel !== previousGroupLabel ? <div className="presence-group-label" role="presentation">{groupLabel}</div> : null}
-            <div className={`presence-row${active ? " presence-row--active" : ""}`} role="listitem">
+            <div
+              className={`presence-row${active ? " presence-row--active" : ""}${configurable ? " presence-row--configurable" : ""}`}
+              role={configurable ? "button" : "listitem"}
+              tabIndex={configurable ? 0 : undefined}
+              aria-label={configurable ? `Configure ${availableLabel}` : undefined}
+              onDoubleClick={configurable ? (event) => {
+                event.currentTarget.focus({ preventScroll: true });
+                onManageRoster?.(event.currentTarget, agent);
+              } : undefined}
+              onKeyDown={configurable ? (event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                onManageRoster?.(event.currentTarget, agent);
+              } : undefined}
+            >
               <span
                 className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
                 aria-label={agentHealth?.[agent] ? `${availableLabel}: ${agentHealth[agent].message}` : `${availableLabel}: available`}
@@ -153,10 +166,10 @@ export function RoomRoster({
               <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
               <span className="presence-identity">
                 <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
-                <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
-                {active
-                  ? <small className="presence-activity-label">Generating a response…</small>
-                  : agentHealth?.[agent] ? <small className="presence-health">{healthText(agentHealth[agent])}</small> : null}
+                <span className="presence-meta">
+                  <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
+                  {agentHealth?.[agent] ? <small className="presence-health" title={healthText(agentHealth[agent])}>{healthText(agentHealth[agent])}</small> : null}
+                </span>
               </span>
               <span className="presence-agent-actions">
                 {active ? (
@@ -164,20 +177,13 @@ export function RoomRoster({
                     <i /><i /><i />
                   </span>
                 ) : null}
-                <button
-                  type="button"
-                  className="agent-settings-button"
-                  aria-label={`Configure ${alias}`}
-                  title={`Settings for ${alias}`}
-                  onClick={() => onConfigureAgent(agent)}
-                >⚙</button>
               </span>
             </div>
             </Fragment>
           );
         })}
         {humans.map((human) => (
-          <div className="presence-row" role="listitem" key={human.id}>
+          <div className="presence-row presence-row--human" role="listitem" key={human.id}>
             <span className="presence-status" aria-hidden="true" />
             <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} compact />
             <strong className="speaker speaker--you presence-human-name">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
