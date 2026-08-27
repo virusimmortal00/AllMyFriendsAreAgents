@@ -12,6 +12,10 @@ function json(relativePath: string): Record<string, any> {
   return JSON.parse(readFileSync(join(pluginRoot, relativePath), "utf8"));
 }
 
+function text(relativePath: string): string {
+  return readFileSync(join(pluginRoot, relativePath), "utf8");
+}
+
 describe("universal plugin package", () => {
   it("keeps one identity and version across portable and client manifests", () => {
     const manifests = [
@@ -59,5 +63,42 @@ describe("universal plugin package", () => {
 
     const serializedAdapters = JSON.stringify({ codex, cursor, claude, opencode });
     expect(serializedAdapters).not.toMatch(/Bearer [A-Za-z0-9_-]{24,}/);
+  });
+
+  it("ships one canonical consultation contract through four discovery adapters", () => {
+    const canonicalPath = "skills/room-consultation/SKILL.md";
+    const canonical = text(canonicalPath);
+    const adapters = [
+      "adapters/codex/skills/room-consultation/SKILL.md",
+      "adapters/claude-code/skills/room-consultation/SKILL.md",
+      "adapters/cursor/skills/room-consultation/SKILL.md",
+      "adapters/opencode/skills/room-consultation/SKILL.md",
+    ];
+
+    expect(canonical).toMatch(/^---\nname: room-consultation\n/m);
+    for (const tool of ["list_rooms", "start_room_consultation", "get_room_consultation", "respond_to_room_consultation", "cancel_room_consultation"]) {
+      expect(canonical).toContain(`\`${tool}\``);
+    }
+    for (const requirement of ["handoff", "active participation", "room_id", "consultation_id", "idempotency_key", "input_required", "final_artifact", "dissent", "uncertainty"]) {
+      expect(canonical).toContain(requirement);
+    }
+
+    for (const path of adapters) {
+      const adapter = text(path);
+      expect(adapter).toContain("../../../../skills/room-consultation/SKILL.md");
+      expect(adapter).not.toContain("## Procedure");
+      expect(adapter).not.toContain("start_room_consultation");
+    }
+  });
+
+  it("documents portable consultation limits without leaking credential material", () => {
+    const readme = text("README.md");
+    expect(readme).toContain("multi-room");
+    expect(readme).toContain("handoff");
+    expect(readme).toContain("not a credential-transfer mechanism");
+    expect(readme).toContain("Remote releases");
+    expect(readme).toContain("AMFAA_ROOM_AUTH");
+    expect(readme).not.toMatch(/Bearer [A-Za-z0-9_-]{24,}/);
+    expect(readme).not.toMatch(/AMFAA_ROOM_AUTH=[A-Za-z0-9_-]{24,}/);
   });
 });

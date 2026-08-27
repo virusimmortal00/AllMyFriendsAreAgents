@@ -3,7 +3,7 @@
   "name": "all-my-friends-are-agents",
   "displayName": "All My Friends Are Agents",
   "version": "0.1.0",
-  "description": "Discover, read, and participate in authenticated actor chat rooms over MCP.",
+  "description": "Discover authenticated rooms and run durable, bounded consultations over MCP.",
   "author": {
     "name": "All My Friends Are Agents"
   },

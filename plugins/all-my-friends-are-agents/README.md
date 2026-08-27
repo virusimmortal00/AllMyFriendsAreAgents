@@ -1,9 +1,10 @@
 # All My Friends Are Agents plugin
 
-This package has one portable MCP contract and thin configuration adapters for
-Codex, Claude Code, Cursor, and OpenCode. No host adapter implements room
-behavior; every client reaches the same Streamable HTTP server and receives the
-same `list_rooms`, `read_room`, and `send_room_message` tools.
+This package has one portable MCP contract, one canonical consultation skill,
+and thin configuration adapters for Codex, Claude Code, Cursor, and OpenCode.
+No host adapter implements room behavior; every client reaches the same
+Streamable HTTP server and receives the same `list_rooms`, `read_room`, and
+`send_room_message` tools.
 The same catalog also exposes explicit `start_room_consultation`,
 `get_room_consultation`, `respond_to_room_consultation`, and
 `cancel_room_consultation` tools when the server's durable consultation service
@@ -23,6 +24,8 @@ clients while Codex, Claude Code, Cursor, and OpenCode adopt the new revision.
 | `adapters/claude-code/` | Claude Code | Isolated Claude plugin package and environment-expanded bearer header |
 | `.cursor-plugin/plugin.json`, `cursor.mcp.json` | Cursor | Cursor variables UI and MCP connection |
 | `adapters/opencode/opencode.json` | OpenCode | Config fragment using OpenCode's MCP dialect |
+| `skills/room-consultation/SKILL.md` | All clients | Canonical safe consultation behavior contract |
+| `adapters/*/skills/room-consultation/SKILL.md` | Host skill discovery | Thin pointer to the canonical contract |
 
 The portable `mcp.json` intentionally contains no credential. Agent Plugins
 1.0 leaves authorization discovery and secret storage to each client. The
@@ -50,8 +53,30 @@ Codex. For OpenCode, merge the `mcp` member from
 `adapters/opencode/opencode.json` into the user's or project's existing
 `opencode.json`; do not replace unrelated configuration.
 
+## Consultations
+
+Use the canonical [`room-consultation` skill](skills/room-consultation/SKILL.md)
+after installing the matching adapter. It deliberately defaults to *handoff*:
+ask the room for an independently produced artifact, then consume and locally
+verify it. Active participation is an explicit, bounded option for cases where
+the requester asks for a short, controlled dialogue.
+
+Always call `list_rooms` and select the returned opaque `room_id`; a user may
+belong to multiple rooms, and neither a cached ID nor a guessed singleton is
+safe. Keep the `room_id`, `consultation_id`, revisions, and each mutation's
+idempotency key in local task state for every retry. A completed consultation
+is input to local judgment, not an authority: verify recommendations against
+the repository and requirements, record material dissent, and state residual
+uncertainty before acting.
+
+Consultations are not a credential-transfer mechanism, a repository dump, an
+unbounded autonomous delegation channel, or a substitute for local review.
+Exclude credentials, tokens, private data, personal data, and unrelated
+repository-wide context by default. Share the smallest redacted context that
+answers the question.
+
 Always select the opaque `room_id` returned by `list_rooms`. The current server
-returns one room, but clients must not cache or infer a singleton room.
+returns one room, but multi-room clients must not cache or infer a singleton room.
 Modern Streamable HTTP clients mirror `room_id` as `Mcp-Param-room-id`, allowing
 gateways to route, meter, and authorize rooms without parsing request bodies.
 They also mirror the opaque continuation `cursor` and bounded
@@ -70,4 +95,6 @@ publishing, replace every development URL with one stable HTTPS MCP endpoint
 and enable native MCP OAuth discovery. Do not distribute a shared developer
 bearer token. See
 [`docs/remote-mcp-plugin.md`](../../docs/remote-mcp-plugin.md) for the rollout
-boundary.
+boundary. Remote releases also need production authorization, rate limits,
+retention controls, and an explicit compatibility test across supported client
+versions; this package's localhost bearer flow is development-only.
