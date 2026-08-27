@@ -1,4 +1,5 @@
 import type express from "express";
+import { createHash } from "node:crypto";
 import { hostHeaderValidation, originValidation, toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
@@ -17,31 +18,49 @@ export interface McpRoomDescriptor {
 }
 
 export interface RoomMcpBridge {
-  listRooms(): readonly McpRoomDescriptor[];
-  readRoom(roomId: string, limit: number): Record<string, unknown> | undefined;
+  listRooms(developer: AuthenticatedDeveloper): readonly McpRoomDescriptor[];
+  authorizeRoom(roomId: string, developer: AuthenticatedDeveloper, capability: "read" | "chat"): boolean;
+  readRoom(roomId: string, limit: number, afterMessageId?: string | null): RoomMcpReadResult;
   sendMessage(
     roomId: string,
     developer: AuthenticatedDeveloper,
     text: string,
-  ): Promise<Record<string, unknown> | undefined>;
+    idempotency: RoomMcpIdempotency,
+  ): Promise<RoomMcpSendResult>;
 }
 
 interface SingleRoomMcpBridgeOptions {
   readonly roomId: string;
   readonly describe: () => McpRoomDescriptor;
-  readonly read: (limit: number) => Record<string, unknown>;
-  readonly send: (developer: AuthenticatedDeveloper, text: string) => Promise<Record<string, unknown>>;
+  readonly read: (limit: number, afterMessageId?: string | null) => RoomMcpReadResult;
+  readonly send: (developer: AuthenticatedDeveloper, text: string, idempotency: RoomMcpIdempotency) => Promise<RoomMcpSendResult>;
 }
 
 interface ReadRoomInput {
   readonly room_id: string;
   readonly limit?: number;
+  readonly cursor?: string;
 }
 
 interface SendRoomMessageInput {
   readonly room_id: string;
   readonly text: string;
+  readonly idempotency_key: string;
 }
+
+export type RoomMcpReadResult =
+  | { readonly kind: "ok"; readonly value: Record<string, unknown>; readonly continuationMessageId: string | null }
+  | { readonly kind: "stale_cursor" };
+
+export interface RoomMcpIdempotency {
+  readonly key: string;
+  readonly requestDigest: string;
+}
+
+export type RoomMcpSendResult =
+  | { readonly kind: "ok"; readonly value: Record<string, unknown> }
+  | { readonly kind: "idempotency_conflict" }
+  | { readonly kind: "not_found" };
 
 const roomDescriptorSchema = z.object({
   roomId: z.string(),
@@ -72,6 +91,13 @@ const readRoomInputSchema = fromJsonSchema<ReadRoomInput>({
       maximum: 200,
       description: "Maximum recent messages to return; defaults to 50.",
     },
+    cursor: {
+      type: "string",
+      minLength: 1,
+      maxLength: 2048,
+      description: "Opaque room-scoped continuation cursor returned by an earlier read_room call.",
+      "x-mcp-header": "cursor",
+    },
   },
   required: ["room_id"],
   additionalProperties: false,
@@ -93,8 +119,16 @@ const sendRoomMessageInputSchema = fromJsonSchema<SendRoomMessageInput>({
       maxLength: 16_000,
       description: "Message to send to the selected room.",
     },
+    idempotency_key: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      description: "Caller-generated retry key. Exact reuse replays the original acknowledgement; reuse with different input is rejected.",
+      "x-mcp-header": "idempotency-key",
+    },
   },
-  required: ["room_id", "text"],
+  required: ["room_id", "text", "idempotency_key"],
   additionalProperties: false,
 } as unknown as JsonSchemaType);
 
@@ -107,9 +141,47 @@ export function singleRoomMcpBridge(options: SingleRoomMcpBridgeOptions): RoomMc
   const matches = (roomId: string) => roomId === options.roomId;
   return {
     listRooms: () => [options.describe()],
-    readRoom: (roomId, limit) => matches(roomId) ? options.read(limit) : undefined,
-    sendMessage: (roomId, developer, text) => matches(roomId) ? options.send(developer, text) : Promise.resolve(undefined),
+    authorizeRoom: (roomId) => matches(roomId),
+    readRoom: (roomId, limit, afterMessageId) => matches(roomId) ? options.read(limit, afterMessageId) : { kind: "stale_cursor" },
+    sendMessage: (roomId, developer, text, idempotency) => matches(roomId) ? options.send(developer, text, idempotency) : Promise.resolve({ kind: "not_found" }),
   };
+}
+
+interface CursorPayload {
+  readonly version: 1;
+  readonly roomId: string;
+  readonly afterMessageId: string | null;
+}
+
+function cursorDigest(encodedPayload: string) {
+  return createHash("sha256").update(`amfaa-room-cursor-v1\0${encodedPayload}`).digest("base64url").slice(0, 22);
+}
+
+function encodeCursor(roomId: string, afterMessageId: string | null) {
+  const payload: CursorPayload = { version: 1, roomId, afterMessageId };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `amfaa1.${encoded}.${cursorDigest(encoded)}`;
+}
+
+function decodeCursor(cursor: string, roomId: string): string | null | undefined {
+  const [prefix, encoded, digest, extra] = cursor.split(".");
+  if (prefix !== "amfaa1" || !encoded || !digest || extra || digest !== cursorDigest(encoded)) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Partial<CursorPayload>;
+    if (parsed.version !== 1 || parsed.roomId !== roomId || (parsed.afterMessageId !== null && typeof parsed.afterMessageId !== "string")) return undefined;
+    return parsed.afterMessageId;
+  } catch {
+    return undefined;
+  }
+}
+
+interface IdempotencyEntry {
+  readonly digest: string;
+  readonly acknowledgement: Promise<RoomMcpSendResult>;
+}
+
+function requestDigest(roomId: string, developer: AuthenticatedDeveloper, text: string) {
+  return createHash("sha256").update(JSON.stringify([roomId, developer.member.memberId, text])).digest("base64url");
 }
 
 function textContent(value: unknown) {
@@ -129,6 +201,7 @@ function createRoomMcpServer(
   bridge: RoomMcpBridge,
   developers: DeveloperTeamRegistry,
   authorization: string | undefined,
+  idempotency: Map<string, IdempotencyEntry>,
 ) {
   const server = new McpServer(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
@@ -148,34 +221,70 @@ function createRoomMcpServer(
     inputSchema: z.object({}),
     outputSchema: listRoomsOutputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, async () => success({
-    rooms: [...bridge.listRooms()].sort((left, right) => left.roomId.localeCompare(right.roomId)),
-  }));
+  }, async () => {
+    const developer = developers.authenticate(authorization, "ROOM_READ");
+    if (!developer) return toolError("FORBIDDEN", "This developer identity cannot read rooms.");
+    const rooms = [...bridge.listRooms(developer)]
+      .sort((left, right) => left.roomId.localeCompare(right.roomId))
+      .map((room) => ({ ...room, cursor: encodeCursor(room.roomId, room.cursor ?? null) }));
+    return success({ rooms });
+  });
 
   server.registerTool("read_room", {
     title: "Read an actor chat room",
-    description: "Read recent state and messages from one room. Pass a room_id returned by list_rooms; do not invent or infer it.",
+    description: "Read recent state and messages from one room. Pass a room_id returned by list_rooms; pass the returned opaque cursor to continue, and omit it to refresh.",
     inputSchema: readRoomInputSchema,
     outputSchema: readRoomOutputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, async ({ room_id: roomId, limit = 50 }) => {
-    const room = bridge.readRoom(roomId, limit);
-    return room ? success({ ...room, roomId }) : toolError("ROOM_NOT_FOUND", `Room ${roomId} is not available. Call list_rooms to refresh the room directory.`);
+  }, async ({ room_id: roomId, limit = 50, cursor }) => {
+    const developer = developers.authenticate(authorization, "ROOM_READ");
+    if (!developer || !bridge.authorizeRoom(roomId, developer, "read")) {
+      return toolError("ROOM_NOT_FOUND", "That room is not available. Call list_rooms to refresh the room directory.");
+    }
+    const afterMessageId = cursor === undefined ? undefined : decodeCursor(cursor, roomId);
+    if (cursor !== undefined && afterMessageId === undefined) {
+      return toolError("CURSOR_REFRESH_REQUIRED", "The continuation cursor cannot be used. Call read_room again without a cursor.");
+    }
+    const room = bridge.readRoom(roomId, limit, afterMessageId);
+    return room.kind === "ok"
+      ? success({ ...room.value, roomId, cursor: encodeCursor(roomId, room.continuationMessageId) })
+      : toolError("CURSOR_REFRESH_REQUIRED", "The continuation cursor cannot be used. Call read_room again without a cursor.");
   });
 
   server.registerTool("send_room_message", {
     title: "Send a message to an actor chat room",
-    description: "Send a developer-authored chat message to one room and start its normal actor conversation. Pass a room_id returned by list_rooms.",
+    description: "Send a developer-authored chat message to one room and start its normal actor conversation. Pass a room_id returned by list_rooms and a stable idempotency_key for safe retries.",
     inputSchema: sendRoomMessageInputSchema,
     outputSchema: sendRoomMessageOutputSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  }, async ({ room_id: roomId, text }) => {
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async ({ room_id: roomId, text, idempotency_key: idempotencyKey }) => {
     const developer = developers.authenticate(authorization, "ROOM_CHAT");
     if (!developer) return toolError("FORBIDDEN", "This developer identity cannot send room messages.");
-    const result = await bridge.sendMessage(roomId, developer, text.trim());
-    return result
-      ? success({ ...result, roomId })
-      : toolError("ROOM_NOT_FOUND", `Room ${roomId} is not available. Call list_rooms to refresh the room directory.`);
+    if (!bridge.authorizeRoom(roomId, developer, "chat")) {
+      return toolError("ROOM_NOT_FOUND", "That room is not available. Call list_rooms to refresh the room directory.");
+    }
+    const normalizedText = text.trim();
+    const lookupKey = JSON.stringify([roomId, developer.member.memberId, idempotencyKey]);
+    const digest = requestDigest(roomId, developer, normalizedText);
+    const replay = idempotency.get(lookupKey);
+    if (replay && replay.digest !== digest) {
+      return toolError("IDEMPOTENCY_CONFLICT", "That idempotency key was already used for a different request.");
+    }
+    let acknowledgement = replay?.acknowledgement;
+    if (!acknowledgement) {
+      acknowledgement = bridge.sendMessage(roomId, developer, normalizedText, { key: idempotencyKey, requestDigest: digest });
+      idempotency.set(lookupKey, { digest, acknowledgement });
+      acknowledgement.catch(() => {
+        if (idempotency.get(lookupKey)?.acknowledgement === acknowledgement) idempotency.delete(lookupKey);
+      });
+    }
+    const result = await acknowledgement;
+    if (result.kind === "idempotency_conflict") {
+      return toolError("IDEMPOTENCY_CONFLICT", "That idempotency key was already used for a different request.");
+    }
+    return result.kind === "ok"
+      ? success({ ...result.value, roomId })
+      : toolError("ROOM_NOT_FOUND", "That room is not available. Call list_rooms to refresh the room directory.");
   });
 
   return server;
@@ -192,10 +301,12 @@ export function registerRoomMcpRoutes(options: {
   readonly bridge: RoomMcpBridge;
   readonly allowedHostnames?: readonly string[];
 }) {
+  const idempotency = new Map<string, IdempotencyEntry>();
   const handler = createMcpHandler(({ requestInfo }) => createRoomMcpServer(
     options.bridge,
     options.developers,
     requestInfo?.headers.get("authorization") ?? undefined,
+    idempotency,
   ), {
     legacy: "stateless",
     responseMode: "auto",

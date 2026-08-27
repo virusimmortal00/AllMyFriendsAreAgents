@@ -22,18 +22,29 @@ function developers(capabilities: readonly DeveloperCapability[]) {
 }
 
 function bridge(sendMessage = vi.fn<RoomMcpBridge["sendMessage"]>()) {
-  sendMessage.mockResolvedValue({ accepted: true });
+  sendMessage.mockResolvedValue({ kind: "ok", value: { accepted: true } });
+  const messages = [{ id: "m-1" }, { id: "m-2" }];
   return {
     bridge: singleRoomMcpBridge({
       roomId: ROOM_ID,
       describe: () => ({ roomId: ROOM_ID, name: "The Room", topic: "Testing", status: "active", cursor: "m-2", busy: false }),
-      read: (limit) => ({ roomId: ROOM_ID, messages: [{ id: "m-2" }].slice(-limit), cursor: "m-2" }),
-      send: async (developer, text) => {
-        const result = await sendMessage(ROOM_ID, developer, text);
-        return result ?? { accepted: true };
+      read: (limit, afterMessageId) => {
+        const afterIndex = afterMessageId == null ? -1 : messages.findIndex(({ id }) => id === afterMessageId);
+        if (afterMessageId != null && afterIndex < 0) return { kind: "stale_cursor" };
+        const page = afterMessageId === undefined ? messages.slice(-limit) : messages.slice(afterIndex + 1, afterIndex + 1 + limit);
+        return {
+          kind: "ok",
+          value: { messages: page },
+          continuationMessageId: page.at(-1)?.id ?? afterMessageId ?? null,
+        };
+      },
+      send: async (developer, text, idempotency) => {
+        const result = await sendMessage(ROOM_ID, developer, text, idempotency);
+        return result ?? { kind: "ok", value: { accepted: true } };
       },
     }),
     sendMessage,
+    messages,
   };
 }
 
@@ -50,6 +61,8 @@ async function withMcp(
       method: request.header("mcp-method"),
       name: request.header("mcp-name"),
       roomId: request.header("mcp-param-room-id"),
+      cursor: request.header("mcp-param-cursor"),
+      idempotencyKey: request.header("mcp-param-idempotency-key"),
       protocolVersion: request.header("mcp-protocol-version"),
     });
     next();
@@ -171,16 +184,22 @@ describe("room MCP bridge", () => {
         expect(tools.map(({ name }) => name)).toEqual(["list_rooms", "read_room", "send_room_message"]);
         expect(tools.find(({ name }) => name === "read_room")?.inputSchema.required).toContain("room_id");
         expect(tools.find(({ name }) => name === "send_room_message")?.inputSchema.required).toContain("room_id");
+        expect(tools.find(({ name }) => name === "send_room_message")?.inputSchema.required).toContain("idempotency_key");
         expect(tools.find(({ name }) => name === "read_room")?.inputSchema.properties?.room_id).toMatchObject({ "x-mcp-header": "room-id" });
+        expect(tools.find(({ name }) => name === "read_room")?.inputSchema.properties?.cursor).toMatchObject({ "x-mcp-header": "cursor" });
+        expect(tools.find(({ name }) => name === "send_room_message")?.inputSchema.properties?.idempotency_key).toMatchObject({
+          maxLength: 128,
+          "x-mcp-header": "idempotency-key",
+        });
         expect(tools.find(({ name }) => name === "read_room")?.outputSchema).toBeDefined();
         expect(tools.find(({ name }) => name === "send_room_message")?.outputSchema).toBeDefined();
 
         const listed = await client.callTool({ name: "list_rooms", arguments: {} });
-        expect(listed.structuredContent).toEqual({ rooms: [{ roomId: ROOM_ID, name: "The Room", topic: "Testing", status: "active", cursor: "m-2", busy: false }] });
+        expect(listed.structuredContent).toEqual({ rooms: [{ roomId: ROOM_ID, name: "The Room", topic: "Testing", status: "active", cursor: expect.stringMatching(/^amfaa1\./), busy: false }] });
 
         const read = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, limit: 1 } });
         expect(read.isError).not.toBe(true);
-        expect(read.structuredContent).toMatchObject({ roomId: ROOM_ID, cursor: "m-2" });
+        expect(read.structuredContent).toMatchObject({ roomId: ROOM_ID, cursor: expect.stringMatching(/^amfaa1\./) });
         expect(requests).toContainEqual(expect.objectContaining({
           method: "tools/call",
           name: "read_room",
@@ -195,19 +214,127 @@ describe("room MCP bridge", () => {
     });
   });
 
+  it("returns deterministic opaque room cursors and continues after the bound message", async () => {
+    const readable = bridge();
+    await withMcp(developers(["ROOM_READ"]), readable.bridge, async (baseUrl) => {
+      await withClient(baseUrl, async (client) => {
+        const first = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, limit: 1 } });
+        const repeated = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, limit: 1 } });
+        const cursor = (first.structuredContent as { cursor: string }).cursor;
+        expect(cursor).toMatch(/^amfaa1\./);
+        expect((repeated.structuredContent as { cursor: string }).cursor).toBe(cursor);
+
+        readable.messages.push({ id: "m-3" });
+        const continued = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, cursor, limit: 1 } });
+        expect(continued.structuredContent).toMatchObject({ roomId: ROOM_ID, messages: [{ id: "m-3" }] });
+        expect((continued.structuredContent as { cursor: string }).cursor).not.toBe(cursor);
+      });
+    });
+  });
+
+  it("returns the same typed refresh error for malformed, stale, and cross-room cursors", async () => {
+    const secondRoom = "00000000-0000-4000-8000-000000000002";
+    const pages = new Map([
+      [ROOM_ID, [{ id: "room-one-message" }]],
+      [secondRoom, [{ id: "room-two-message" }]],
+    ]);
+    const roomBridge: RoomMcpBridge = {
+      listRooms: () => [ROOM_ID, secondRoom].map((roomId) => ({ roomId, name: roomId, topic: "Testing", status: "active", cursor: pages.get(roomId)!.at(-1)?.id, busy: false })),
+      authorizeRoom: (roomId) => pages.has(roomId),
+      readRoom: (roomId, limit, afterMessageId) => {
+        const messages = pages.get(roomId)!;
+        const afterIndex = afterMessageId == null ? -1 : messages.findIndex(({ id }) => id === afterMessageId);
+        if (afterMessageId != null && afterIndex < 0) return { kind: "stale_cursor" };
+        const page = afterMessageId === undefined ? messages.slice(-limit) : messages.slice(afterIndex + 1, afterIndex + 1 + limit);
+        return { kind: "ok", value: { messages: page }, continuationMessageId: page.at(-1)?.id ?? afterMessageId ?? null };
+      },
+      sendMessage: async () => ({ kind: "ok", value: { accepted: true } }),
+    };
+    await withMcp(developers(["ROOM_READ"]), roomBridge, async (baseUrl) => {
+      await withClient(baseUrl, async (client) => {
+        const first = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID } });
+        const cursor = (first.structuredContent as { cursor: string }).cursor;
+        pages.set(ROOM_ID, []);
+        const stale = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, cursor } });
+        const malformed = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, cursor: "not-a-cursor" } });
+
+        pages.set(ROOM_ID, [{ id: "room-one-message" }]);
+        const roomOne = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID } });
+        const crossRoom = await client.callTool({
+          name: "read_room",
+          arguments: { room_id: secondRoom, cursor: (roomOne.structuredContent as { cursor: string }).cursor },
+        });
+        for (const result of [stale, malformed, crossRoom]) {
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toEqual({ error: {
+            code: "CURSOR_REFRESH_REQUIRED",
+            message: "The continuation cursor cannot be used. Call read_room again without a cursor.",
+          } });
+        }
+
+        const unauthorized = await client.callTool({
+          name: "read_room",
+          arguments: { room_id: "unavailable-room", cursor: "not-a-cursor" },
+        });
+        expect(unauthorized.structuredContent).toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
+      });
+    });
+  });
+
+  it("replays exact sends, rejects conflicting reuse, and scopes retry keys to authorized rooms", async () => {
+    const secondRoom = "00000000-0000-4000-8000-000000000002";
+    const authorizedRooms = new Set([ROOM_ID, secondRoom]);
+    const sendMessage = vi.fn<RoomMcpBridge["sendMessage"]>(async (roomId, _developer, text) => ({ kind: "ok", value: { accepted: true, acknowledgementId: `${roomId}:${text}` } }));
+    const roomBridge: RoomMcpBridge = {
+      listRooms: () => [],
+      authorizeRoom: (roomId) => authorizedRooms.has(roomId),
+      readRoom: () => ({ kind: "ok", value: { messages: [] }, continuationMessageId: null }),
+      sendMessage,
+    };
+    await withMcp(developers(["ROOM_READ", "ROOM_CHAT"]), roomBridge, async (baseUrl) => {
+      await withClient(baseUrl, async (client) => {
+        const input = { room_id: ROOM_ID, text: "Retry me", idempotency_key: "stable-send-key" };
+        const first = await client.callTool({ name: "send_room_message", arguments: input });
+        const replay = await client.callTool({ name: "send_room_message", arguments: input });
+        expect(replay.structuredContent).toEqual(first.structuredContent);
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+
+        const conflict = await client.callTool({ name: "send_room_message", arguments: { ...input, text: "Different" } });
+        expect(conflict.structuredContent).toMatchObject({ error: { code: "IDEMPOTENCY_CONFLICT" } });
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+
+        const otherRoom = await client.callTool({ name: "send_room_message", arguments: { ...input, room_id: secondRoom, text: "Other room" } });
+        expect(otherRoom.structuredContent).toMatchObject({ accepted: true, roomId: secondRoom });
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+
+        authorizedRooms.delete(secondRoom);
+        const hidden = await client.callTool({ name: "send_room_message", arguments: { ...input, room_id: secondRoom, text: "Conflict probe" } });
+        expect(hidden.structuredContent).toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+
   it("attributes messages and uses HTTP scope step-up for modern write authorization", async () => {
     const writable = bridge();
-    await withMcp(developers(["ROOM_READ", "ROOM_CHAT"]), writable.bridge, async (baseUrl) => {
+    await withMcp(developers(["ROOM_READ", "ROOM_CHAT"]), writable.bridge, async (baseUrl, requests) => {
       await withClient(baseUrl, async (client) => {
-        const sent = await client.callTool({ name: "send_room_message", arguments: { room_id: ROOM_ID, text: "Hello, actors." } });
+        const sent = await client.callTool({ name: "send_room_message", arguments: { room_id: ROOM_ID, text: "Hello, actors.", idempotency_key: "send-modern-1" } });
         expect(sent.isError).not.toBe(true);
         expect(sent.structuredContent).toMatchObject({ accepted: true, roomId: ROOM_ID });
+        expect(requests).toContainEqual(expect.objectContaining({
+          method: "tools/call",
+          name: "send_room_message",
+          roomId: ROOM_ID,
+          idempotencyKey: "send-modern-1",
+        }));
       });
     });
     expect(writable.sendMessage).toHaveBeenCalledWith(
       ROOM_ID,
       expect.objectContaining({ member: expect.objectContaining({ memberId: "remote-developer" }) }),
       "Hello, actors.",
+      expect.objectContaining({ key: "send-modern-1", requestDigest: expect.any(String) }),
     );
 
     const readOnly = bridge();
@@ -216,7 +343,7 @@ describe("room MCP bridge", () => {
         await client.listTools();
         await expect(client.callTool({
           name: "send_room_message",
-          arguments: { room_id: ROOM_ID, text: "No authority." },
+          arguments: { room_id: ROOM_ID, text: "No authority.", idempotency_key: "send-denied-1" },
         })).rejects.toBeInstanceOf(InsufficientScopeError);
       });
     });
@@ -233,12 +360,25 @@ describe("room MCP bridge", () => {
 
         const denied = await client.callTool({
           name: "send_room_message",
-          arguments: { room_id: ROOM_ID, text: "No authority." },
+          arguments: { room_id: ROOM_ID, text: "No authority.", idempotency_key: "send-legacy-denied-1" },
         });
         expect(denied.isError).toBe(true);
         expect(denied.structuredContent).toMatchObject({ error: { code: "FORBIDDEN" } });
       }, "legacy");
     });
     expect(legacy.sendMessage).not.toHaveBeenCalled();
+
+    const writable = bridge();
+    await withMcp(developers(["ROOM_READ", "ROOM_CHAT"]), writable.bridge, async (baseUrl) => {
+      await withClient(baseUrl, async (client) => {
+        const read = await client.callTool({ name: "read_room", arguments: { room_id: ROOM_ID, limit: 1 } });
+        expect((read.structuredContent as { cursor: string }).cursor).toMatch(/^amfaa1\./);
+        const input = { room_id: ROOM_ID, text: "Legacy retry.", idempotency_key: "send-legacy-1" };
+        const first = await client.callTool({ name: "send_room_message", arguments: input });
+        const replay = await client.callTool({ name: "send_room_message", arguments: input });
+        expect(replay.structuredContent).toEqual(first.structuredContent);
+      }, "legacy");
+    });
+    expect(writable.sendMessage).toHaveBeenCalledTimes(1);
   });
 });

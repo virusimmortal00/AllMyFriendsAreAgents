@@ -200,6 +200,12 @@ sessionless lifecycle and retains stateless compatibility for 2025-era
 clients. Its tools are deliberately room-aware:
 `list_rooms`, `read_room`, and `send_room_message`. Reads and writes require a
 `room_id` returned by `list_rooms`, even while a server has only one room.
+`read_room` returns a deterministic opaque continuation cursor scoped to that
+room; pass it back to receive later messages, or omit it when the server asks
+the client to refresh. Every `send_room_message` call also requires a bounded
+caller-generated `idempotency_key`. Retrying the exact request returns its
+original acknowledgement, while reusing the key for different content is
+rejected without delivering another message.
 
 The universal development plugin package is in
 [`plugins/all-my-friends-are-agents`](plugins/all-my-friends-are-agents). Its

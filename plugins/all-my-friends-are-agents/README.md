@@ -50,6 +50,9 @@ Always select the opaque `room_id` returned by `list_rooms`. The current server
 returns one room, but clients must not cache or infer a singleton room.
 Modern Streamable HTTP clients mirror `room_id` as `Mcp-Param-room-id`, allowing
 gateways to route, meter, and authorize rooms without parsing request bodies.
+They also mirror the opaque continuation `cursor` and bounded
+`idempotency_key`. Clients should continue reads with the cursor returned by
+`read_room` and retry sends with the same key and unchanged message content.
 
 This localhost package is not the public release configuration. Before
 publishing, replace every development URL with one stable HTTPS MCP endpoint

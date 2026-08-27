@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
@@ -307,14 +307,33 @@ function broadcast() {
 
 function developerRoomView(limit = 50) {
   const state = publicRoomSnapshot();
-  const messages = state.messages.slice(-limit);
   return {
     ...state,
     roomId: CANONICAL_ROOM_ID,
-    messages,
+    messages: state.messages.slice(-limit),
     busy: jobs.busy,
     cursor: state.messages.at(-1)?.id,
     developerTeam: developerTeam.roster(),
+  };
+}
+
+function developerMcpRoomView(limit = 50, afterMessageId?: string | null) {
+  const state = publicRoomSnapshot();
+  const afterIndex = afterMessageId == null ? -1 : state.messages.findIndex(({ id }) => id === afterMessageId);
+  if (afterMessageId != null && afterIndex < 0) return { kind: "stale_cursor" as const };
+  const messages = afterMessageId === undefined
+    ? state.messages.slice(-limit)
+    : state.messages.slice(afterIndex + 1, afterIndex + 1 + limit);
+  return {
+    kind: "ok" as const,
+    value: {
+      ...state,
+      roomId: CANONICAL_ROOM_ID,
+      messages,
+      busy: jobs.busy,
+      developerTeam: developerTeam.roster(),
+    },
+    continuationMessageId: messages.at(-1)?.id ?? afterMessageId ?? null,
   };
 }
 
@@ -330,17 +349,46 @@ function developerRoomDescriptor() {
   };
 }
 
+function enqueueDeveloperConversation() {
+  broadcast();
+  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
+    const conversationState = roomSnapshot();
+    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
+  }));
+}
+
+async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string, idempotency: { key: string; requestDigest: string }) {
+  const clientMessageId = `mcp_${createHash("sha256")
+    .update(JSON.stringify([CANONICAL_ROOM_ID, authenticated.member.memberId, idempotency.key]))
+    .digest("base64url")}`;
+  const duplicate = store.snapshot().messages.find((message) =>
+    message.humanId === authenticated.member.memberId && message.clientMessageId === clientMessageId
+  );
+  if (duplicate) {
+    const duplicateDigest = createHash("sha256")
+      .update(JSON.stringify([CANONICAL_ROOM_ID, authenticated.member.memberId, duplicate.text]))
+      .digest("base64url");
+    return duplicateDigest === idempotency.requestDigest
+      ? { kind: "ok" as const, value: { accepted: true, message: duplicate } }
+      : { kind: "idempotency_conflict" as const };
+  }
+  roomActivity.interrupt();
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
+    id: authenticated.member.memberId,
+    name: authenticated.member.displayName,
+    clientMessageId,
+  });
+  enqueueDeveloperConversation();
+  return { kind: "ok" as const, value: { accepted: true, message } };
+}
+
 async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string) {
   roomActivity.interrupt();
   const message = await store.addMessage("you", text, "chat", undefined, undefined, {
     id: authenticated.member.memberId,
     name: authenticated.member.displayName,
   });
-  broadcast();
-  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
-    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
+  enqueueDeveloperConversation();
   return { accepted: true, message, room: developerRoomView() };
 }
 
@@ -351,8 +399,8 @@ const roomMcp = registerRoomMcpRoutes({
   bridge: singleRoomMcpBridge({
     roomId: CANONICAL_ROOM_ID,
     describe: developerRoomDescriptor,
-    read: developerRoomView,
-    send: deliverDeveloperMessage,
+    read: developerMcpRoomView,
+    send: deliverMcpDeveloperMessage,
   }),
 });
 

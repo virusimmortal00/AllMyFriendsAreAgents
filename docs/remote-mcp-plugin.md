@@ -55,6 +55,9 @@ The bridge uses the stable split TypeScript SDK v2 packages and the
   mirrored parameter headers against the JSON-RPC body.
 - `room_id` is a non-sensitive routing key annotated with `x-mcp-header`, so
   modern HTTP clients send `Mcp-Param-room-id` for room-specific calls.
+- The room continuation cursor and send idempotency key are also bounded,
+  non-sensitive mirrored parameters (`Mcp-Param-cursor` and
+  `Mcp-Param-idempotency-key`) for independently routable modern calls.
 - Tool input and output schemas use JSON Schema 2020-12. Structured results
   also include equivalent serialized text for older clients.
 - Tool catalogs are deterministic and advertise private five-minute cache
@@ -85,6 +88,17 @@ Room identity is explicit at every boundary:
 - Room IDs are opaque; clients must not infer a default from array position.
 - An unavailable ID returns `ROOM_NOT_FOUND` and directs the client to refresh
   the directory.
+- `read_room` returns a deterministic opaque cursor bound to both the room and
+  its last delivered message. Passing it back continues after that message.
+  Malformed, stale, and cross-room cursors all return the same
+  `CURSOR_REFRESH_REQUIRED` result without exposing cursor internals.
+- `send_room_message` requires a 1–128 character `idempotency_key`. The server
+  scopes it to the authenticated developer and requested room, computes the
+  request digest itself, replays the original acknowledgement for an exact
+  retry, and returns `IDEMPOTENCY_CONFLICT` for different content without a
+  second delivery. The single-room adapter projects the scoped key into the
+  persisted message identity so exact retries remain duplicate-free after a
+  server restart.
 
 `RoomMcpBridge` is the server-side seam for the upcoming migration. The current
 `singleRoomMcpBridge` adapter maps the canonical room into that interface. A
@@ -93,7 +107,8 @@ changing their input schemas.
 
 When storage becomes multi-room, keep these invariants:
 
-1. Resolve authorization against the requested room, not just the server.
+1. Resolve authorization against the requested room before cursor decoding or
+   idempotency lookup, not just against the server.
 2. Include `room_id` in message, cursor, job, task, and event lookup keys.
 3. Derive every descriptor from the room repository rather than a process-wide
    snapshot.
