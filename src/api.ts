@@ -241,7 +241,7 @@ export async function loadDiagnostic(token: string, agentId: string, recordId: s
 }
 
 export async function voteOnPoll(pollId: string, optionIndex: number) {
-  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex }) }).then((response) => response.json());
+  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex, clientVoteId: `pollvote:${pollId}:${optionIndex}`.slice(0,100) }) }).then((response) => response.json());
 }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {

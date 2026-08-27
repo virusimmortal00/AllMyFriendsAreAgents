@@ -6,6 +6,7 @@ afterEach(() => {
 });
 
 describe("authoritative active generations", () => {
+  it("atomically reserves shared capacity until the lease is released",()=>{const tracker=new ActiveGenerationTracker();const lease=tracker.reserve("codex-sol",1);expect(lease).toBeTruthy();expect(tracker.size()).toBe(1);expect(tracker.reserve("claude-sonnet",1)).toBeUndefined();lease!.release();expect(tracker.size()).toBe(0);expect(tracker.reserve("claude-sonnet",1)).toBeTruthy();tracker.clear();});
   it("keeps overlapping generations active until each identifier reaches a terminal state", () => {
     const snapshots: Array<Record<string, string>> = [];
     const tracker = new ActiveGenerationTracker((snapshot) => snapshots.push(snapshot));

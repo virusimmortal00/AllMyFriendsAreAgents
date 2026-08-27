@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { effectiveAllowedCommands, normalizeCommandPermissions, parseCommandInput, resolveRoundRobin, ROOM_COMMANDS, type CommandInput, type CommandInvocation, type RoomCommandName } from "../shared/command-domain.js";
 import { isActiveAgentId, type ActiveAgentId } from "../shared/participants.js";
 import { normalizeRoomAgentRoster, roomAgentEntry, type RoomAgentRoster } from "../shared/roster.js";
+import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
-import { MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandInvoker, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type PublicPollProjection } from "./command-record.js";
+import { MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandInvoker, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type PublicPollProjection } from "./command-record.js";
 
 export const DEFAULT_COMMAND_STAGE_1_MS = 12_000;
 export const DEFAULT_COMMAND_STAGE_2_MS = 75_000;
@@ -41,10 +42,13 @@ export interface CommandRuntimeDependencies {
   readonly store: CommandRecordStore;
   readonly roster: () => RoomAgentRoster;
   readonly canLaunch: (agentId: ActiveAgentId) => boolean | Promise<boolean>;
+  readonly reserveLaunch?: (agentId: ActiveAgentId) => { release(): unknown } | undefined;
+  readonly roomEpoch?: () => string;
+  readonly roomEpochCurrent?: (epoch: string) => boolean;
   readonly executeTask: (agentId: ActiveAgentId, prompt: string, hooks: CommandLaunchHooks) => Promise<CommandExecutionResult>;
-  readonly executePov: (agentIds: readonly ActiveAgentId[], prompt: string) => Promise<void>;
+  readonly executePov: (agentIds: readonly ActiveAgentId[], prompt: string, signal: AbortSignal) => Promise<void>;
   readonly publishStatus: (auditId: string, text: string) => Promise<void>;
-  readonly deliverTask: (agentId: ActiveAgentId, messages: readonly string[], result: CommandExecutionResult) => Promise<void>;
+  readonly deliverTask: (attemptId: string, agentId: ActiveAgentId, messages: readonly string[], result: CommandExecutionResult) => Promise<void>;
   readonly ceiling?: readonly RoomCommandName[];
   readonly roomId?: string;
   readonly clock?: CommandClock;
@@ -57,7 +61,7 @@ export type CommandResponse =
   | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[] }
   | { readonly kind: "accepted"; readonly submissionId: string; readonly duplicate: boolean; readonly poll?: PublicPollProjection };
 
-interface LiveAttempt { readonly controller: AbortController; partial: string; timer?: unknown }
+interface LiveAttempt { readonly controller: AbortController; readonly reservation?: { release(): unknown }; partial: string; timer?: unknown }
 
 function boundedDelay(value: number | undefined, fallback: number, minimum: number, maximum: number) { return value === undefined ? fallback : Math.max(minimum, Math.min(maximum, Math.floor(value))); }
 function stableId(...parts: string[]) { return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32); }
@@ -66,9 +70,7 @@ function safeLabel(value: string) { return value.replace(/[\r\n\t]+/g, " ").repl
 function promptFingerprint(prompt: string) { return `sha256:${createHash("sha256").update(prompt).digest("hex")}`; }
 export function sanitizeDiagnosticText(input: string | undefined) {
   if (!input) return null;
-  const secret = /(?:authorization|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|cookie|set-cookie)\s*[:=]\s*\S+/gi;
-  const reasoning = /(?:chain of thought|internal reasoning|hidden reasoning)\s*[:=][^\n]*/gi;
-  const sanitized = input.replace(secret, "[REDACTED]").replace(reasoning, "[REDACTED INTERNAL CONTENT]").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+  const sanitized = redactDiagnosticSecrets(input).trim();
   return sanitized ? sanitized.slice(0, MAX_DIAGNOSTIC_TEXT) : null;
 }
 
@@ -79,6 +81,8 @@ export class CommandRuntime {
   private readonly stage2Ms: number;
   private readonly ceiling: readonly RoomCommandName[];
   private readonly live = new Map<string, LiveAttempt>();
+  private readonly livePov = new Map<string, AbortController>();
+  private closing=false;
 
   constructor(private readonly dependencies: CommandRuntimeDependencies) {
     this.roomId = dependencies.roomId || CANONICAL_ROOM_ID;
@@ -97,18 +101,26 @@ export class CommandRuntime {
       if (!submission || submission.invocation.command !== "task") continue;
       this.armRecovered(attempt, submission);
     }
+    for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="pov")this.startPov(execution,submission);}
   }
 
-  close() {
+  async close() {
+    this.closing=true;
     for (const [attemptId, live] of this.live) {
       if (live.timer) this.clock.clearTimeout(live.timer);
       live.controller.abort();
+      live.reservation?.release();
       this.live.delete(attemptId);
     }
+    const terminal:Promise<unknown>[]=[];
+    for(const [executionId,controller] of this.livePov){controller.abort();this.livePov.delete(executionId);terminal.push(this.finishPov(executionId,"cancelled","server shutdown cancelled POV execution"));}
+    for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId))terminal.push(this.finishPov(execution.executionId,"cancelled","server shutdown cancelled POV execution"));
+    await Promise.all(terminal);
   }
 
   async submit(input: CommandInput, invoker: CommandInvoker, clientSubmissionId: string): Promise<CommandResponse> {
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientSubmissionId)) return { kind: "private-error", message: "A valid command request ID is required." };
+    await this.dependencies.store.compactCommandRecords(this.roomId,timestamp(this.clock));
     const parsed = parseCommandInput(input);
     if (parsed.kind !== "command") return parsed.kind === "private-error" ? parsed : { kind: "private-error", message: "No command was provided." };
     const allowed = this.allowed(invoker);
@@ -119,9 +131,9 @@ export class CommandRuntime {
     return this.dispatch(submission);
   }
 
-  async vote(pollId: string, voterId: string, optionIndex: number) {
-    if (!voterId || !Number.isSafeInteger(optionIndex)) return { kind: "private-error" as const, message: "A valid poll choice is required." };
-    const vote = await this.dependencies.store.createCommandVote({ roomId: this.roomId, pollId, voterId, optionIndex, createdAt: timestamp(this.clock) });
+  async vote(pollId: string, voterId: string, mutationId: string, optionIndex: number) {
+    if (!voterId || !/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId) || !Number.isSafeInteger(optionIndex)) return { kind: "private-error" as const, message: "A valid poll choice and request ID are required." };
+    const vote = await this.dependencies.store.createCommandVote({ roomId: this.roomId, pollId, voterId, mutationId, optionIndex, createdAt: timestamp(this.clock) });
     if (vote.kind === "rejected") return { kind: "private-error" as const, message: vote.reason };
     const poll = await this.dependencies.store.getCommandPoll(this.roomId, pollId);
     if (!poll) return { kind: "private-error" as const, message: "Poll not found." };
@@ -155,21 +167,22 @@ export class CommandRuntime {
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
       const poll={ pollId: stableId(submission.submissionId,"poll"), roomId: this.roomId, submissionId: submission.submissionId, question: invocation.question, options: invocation.options, createdAt: submission.createdAt };
       const audit=this.auditRecord(submission,[]); const accepted=await this.dependencies.store.acceptCommand({submission,audit,poll});
-      if(accepted.kind==="duplicate")return this.replay(accepted.submission); if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAudit(submission,audit);
+      if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAudit(submission,audit);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false, poll: publicPollProjection(poll,[]) };
     }
     if (invocation.command === "pov") {
       const targets = await this.eligibleAgents("pov");
       if (!targets.length) return { kind: "private-error", message: "No eligible participants are available." };
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
-      const audit=this.auditRecord(submission,targets); const accepted=await this.dependencies.store.acceptCommand({submission,audit}); if(accepted.kind==="duplicate")return this.replay(accepted.submission); if(accepted.kind==="conflict")throw new Error("Unexpected POV acceptance conflict."); await this.publishAudit(submission,audit);
-      void this.dependencies.executePov(targets, invocation.prompt);
+      const now=timestamp(this.clock);const povExecution:CommandPovExecution={executionId:stableId(submission.submissionId,"pov-execution"),roomId:this.roomId,submissionId:submission.submissionId,targetAgentIds:targets,status:"queued",reason:null,createdAt:now,updatedAt:now};
+      const audit=this.auditRecord(submission,targets); const accepted=await this.dependencies.store.acceptCommand({submission,audit,povExecution}); if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected POV acceptance conflict."); await this.publishAudit(submission,audit);
+      this.startPov(povExecution,submission);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false };
     }
     if (invocation.command !== "task") return { kind: "private-error", message: "Unsupported command." };
     for(let conflicts=0;conflicts<MAX_COMMAND_ATTEMPTS;conflicts++){
       const roster=normalizeRoomAgentRoster(this.dependencies.roster()); const candidates=await Promise.all(roster.entries.map(async(entry)=>({agentId:entry.agentId,eligible:entry.enabled&&await this.dependencies.canLaunch(entry.agentId)}))); const pointer=await this.dependencies.store.getRoundRobinState(this.roomId); const resolution=resolveRoundRobin(candidates,pointer.lastAssignedAgentId,invocation.selection.kind==="pinned"?invocation.selection.agentId:undefined); if(resolution.kind!=="selected")return{kind:"private-error",message:"No eligible participants are available."}; if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
-      const now=timestamp(this.clock); const attempt:CommandAttempt={attemptId:stableId(submission.submissionId,"attempt","1"),roomId:this.roomId,submissionId:submission.submissionId,attempt:1,agentId:resolution.agentId,generationId:null,status:"queued",reason:null,createdAt:now,updatedAt:now}; const audit=this.auditRecord(submission,[resolution.agentId]); const roundRobin=resolution.advancePointer?{expectedRevision:pointer.revision,state:{roomId:this.roomId,lastAssignedAgentId:resolution.nextLastAssignedAgentId,revision:pointer.revision+1,updatedAt:timestamp(this.clock,pointer.updatedAt)}}:undefined; const accepted=await this.dependencies.store.acceptCommand({submission,audit,attempt,...(roundRobin?{roundRobin}:{})}); if(accepted.kind==="conflict")continue; if(accepted.kind==="duplicate")return this.replay(accepted.submission); await this.publishAudit(submission,audit); await this.launch(submission,resolution.agentId,1,attempt); return{kind:"accepted",submissionId:submission.submissionId,duplicate:false};
+      const now=timestamp(this.clock); const attempt:CommandAttempt={attemptId:stableId(submission.submissionId,"attempt","1"),roomId:this.roomId,submissionId:submission.submissionId,attempt:1,agentId:resolution.agentId,generationId:null,status:"queued",reason:null,...this.captureEpoch(resolution.agentId),createdAt:now,updatedAt:now}; const audit=this.auditRecord(submission,[resolution.agentId]); const roundRobin=resolution.advancePointer?{expectedRevision:pointer.revision,state:{roomId:this.roomId,lastAssignedAgentId:resolution.nextLastAssignedAgentId,revision:pointer.revision+1,updatedAt:timestamp(this.clock,pointer.updatedAt)}}:undefined; const accepted=await this.dependencies.store.acceptCommand({submission,audit,attempt,...(roundRobin?{roundRobin}:{})}); if(accepted.kind==="conflict")continue; if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; await this.publishAudit(submission,audit); await this.launch(submission,resolution.agentId,1,attempt); return{kind:"accepted",submissionId:submission.submissionId,duplicate:false};
     }
     return{kind:"private-error",message:"Command assignment changed too many times; try again."};
   }
@@ -194,9 +207,11 @@ export class CommandRuntime {
   private async launch(submission: CommandSubmission, agentId: ActiveAgentId, attemptNumber: number, acceptedAttempt?:CommandAttempt) {
     if (attemptNumber > MAX_COMMAND_ATTEMPTS) return;
     let attempt=acceptedAttempt;
-    if(!attempt){const now=timestamp(this.clock);const created=await this.dependencies.store.createCommandAttempt({ attemptId: stableId(submission.submissionId,"attempt",String(attemptNumber)), roomId:this.roomId,submissionId:submission.submissionId,attempt:attemptNumber,agentId,generationId:null,status:"queued",reason:null,createdAt:now,updatedAt:now });if(created.kind==="duplicate"&&created.attempt.status!=="queued")return;attempt=created.attempt;}
+    if(!attempt){const now=timestamp(this.clock);const created=await this.dependencies.store.createCommandAttempt({ attemptId: stableId(submission.submissionId,"attempt",String(attemptNumber)), roomId:this.roomId,submissionId:submission.submissionId,attempt:attemptNumber,agentId,generationId:null,status:"queued",reason:null,...this.captureEpoch(agentId),createdAt:now,updatedAt:now });if(created.kind==="duplicate"&&created.attempt.status!=="queued")return;attempt=created.attempt;}
     if (!await this.launchEligible(submission,agentId)) return this.failAndReassign(attempt,submission,"eligibility changed before launch");
-    const live: LiveAttempt = { controller:new AbortController(),partial:"" };
+    const reservation=this.dependencies.reserveLaunch?.(agentId);
+    if(this.dependencies.reserveLaunch&&!reservation)return this.failAndReassign(attempt,submission,"shared generation capacity changed before launch");
+    const live: LiveAttempt = { controller:new AbortController(),partial:"",...(reservation?{reservation}:{}) };
     this.live.set(attempt.attemptId,live);
     live.timer = this.clock.setTimeout(()=>void this.stage1(attempt,submission),this.stage1Ms);
     void this.dependencies.executeTask(agentId,(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,{ signal:live.controller.signal, partial:(text)=>{ live.partial=sanitizeDiagnosticText(text)||""; void this.captureLateStallPartial(attempt,submission,live.partial); }, active:async (generationId)=>this.markActive(attempt,generationId,submission) }).then((result)=>this.complete(attempt,submission,result)).catch((error)=>this.fail(attempt,submission,error));
@@ -209,7 +224,7 @@ export class CommandRuntime {
 
   private async markActive(attempt: CommandAttempt,generationId:string,submission:CommandSubmission) {
     const live=this.live.get(attempt.attemptId); if (!live) return false;
-    if (!await this.launchEligible(submission,attempt.agentId)) { await this.stage1(attempt,submission,"eligibility changed at generation start"); return false; }
+    if (!this.agentCurrent(attempt.agentId)) { await this.stage1(attempt,submission,"eligibility changed at generation start"); return false; }
     if (live.timer) this.clock.clearTimeout(live.timer);
     const active={...attempt,generationId,status:"active" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,active);
@@ -220,12 +235,13 @@ export class CommandRuntime {
 
   private async complete(attempt:CommandAttempt,submission:CommandSubmission,result:CommandExecutionResult) {
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;
+    if(!this.attemptCurrent(current))return this.failAndReassign(current,submission,"room or roster authority changed before command completion");
     const completed={...current,generationId:result.generationId||current.generationId,status:"completed" as const,updatedAt:timestamp(this.clock,current.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,completed); if(claimed.kind!=="accepted") return;
     this.clearLive(attempt.attemptId);
     const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3);
     if(!visible.length) await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});
-    else await this.dependencies.deliverTask(current.agentId,visible,result);
+    else if(this.attemptCurrent(completed)) await this.dependencies.deliverTask(current.attemptId,current.agentId,visible,result);
   }
 
   private async fail(attempt:CommandAttempt,submission:CommandSubmission,error:unknown) { const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return; await this.failAndReassign(current,submission,error instanceof Error?error.message:String(error)); }
@@ -236,12 +252,18 @@ export class CommandRuntime {
   private async failAndReassign(attempt:CommandAttempt,submission:CommandSubmission,reason:string) {
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;
     const superseded={...current,status:"superseded" as const,reason:safeLabel(reason).slice(0,200),updatedAt:timestamp(this.clock,current.updatedAt)};
+    this.clearLive(current.attemptId,true);
     const invocation=submission.invocation as Extract<CommandInvocation,{command:"task"}>;
     if(invocation.selection.kind==="pinned") { const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,superseded);if(claimed.kind!=="accepted")return;this.clearLive(current.attemptId,true);await this.dependencies.publishStatus(`watchdog:${current.attemptId}`,`— /task could not start for ${safeLabel(current.agentId)} —`);return; }
     const excluded=new Set(attempts.map((item)=>item.agentId));
-    for(let conflicts=0;conflicts<MAX_COMMAND_ATTEMPTS;conflicts++){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const candidates=await Promise.all(roster.entries.map(async(entry)=>({agentId:entry.agentId,eligible:entry.enabled&&!excluded.has(entry.agentId)&&await this.dependencies.canLaunch(entry.agentId)})));const pointer=await this.dependencies.store.getRoundRobinState(this.roomId);const resolution=resolveRoundRobin(candidates,pointer.lastAssignedAgentId);if(resolution.kind!=="selected"){const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,superseded);if(claimed.kind!=="accepted")return;this.clearLive(current.attemptId,true);await this.dependencies.publishStatus(`watchdog:${current.attemptId}`,"— /task stopped: no other eligible participant is available —");return;}const now=timestamp(this.clock);const next:CommandAttempt={attemptId:stableId(submission.submissionId,"attempt",String(current.attempt+1)),roomId:this.roomId,submissionId:submission.submissionId,attempt:current.attempt+1,agentId:resolution.agentId,generationId:null,status:"queued",reason:null,createdAt:now,updatedAt:now};const reassigned=await this.dependencies.store.reassignCommandAttempt({expectedUpdatedAt:current.updatedAt,current:superseded,next,roundRobin:{expectedRevision:pointer.revision,state:{roomId:this.roomId,lastAssignedAgentId:resolution.nextLastAssignedAgentId,revision:pointer.revision+1,updatedAt:timestamp(this.clock,pointer.updatedAt)}}});if(reassigned.kind==="conflict")continue;if(reassigned.kind!=="accepted")return;this.clearLive(current.attemptId,true);await this.dependencies.publishStatus(`watchdog:${current.attemptId}`,`— /task reassigned from ${safeLabel(current.agentId)} to ${safeLabel(next.agentId)} —`);await this.launch(submission,next.agentId,next.attempt,next);return;}
+    for(let conflicts=0;conflicts<MAX_COMMAND_ATTEMPTS;conflicts++){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const candidates=await Promise.all(roster.entries.map(async(entry)=>({agentId:entry.agentId,eligible:entry.enabled&&!excluded.has(entry.agentId)&&await this.dependencies.canLaunch(entry.agentId)})));const pointer=await this.dependencies.store.getRoundRobinState(this.roomId);const resolution=resolveRoundRobin(candidates,pointer.lastAssignedAgentId);if(resolution.kind!=="selected"){const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,superseded);if(claimed.kind!=="accepted")return;this.clearLive(current.attemptId,true);await this.dependencies.publishStatus(`watchdog:${current.attemptId}`,"— /task stopped: no other eligible participant is available —");return;}const now=timestamp(this.clock);const next:CommandAttempt={attemptId:stableId(submission.submissionId,"attempt",String(current.attempt+1)),roomId:this.roomId,submissionId:submission.submissionId,attempt:current.attempt+1,agentId:resolution.agentId,generationId:null,status:"queued",reason:null,...this.captureEpoch(resolution.agentId),createdAt:now,updatedAt:now};const reassigned=await this.dependencies.store.reassignCommandAttempt({expectedUpdatedAt:current.updatedAt,current:superseded,next,roundRobin:{expectedRevision:pointer.revision,state:{roomId:this.roomId,lastAssignedAgentId:resolution.nextLastAssignedAgentId,revision:pointer.revision+1,updatedAt:timestamp(this.clock,pointer.updatedAt)}}});if(reassigned.kind==="conflict")continue;if(reassigned.kind!=="accepted")return;this.clearLive(current.attemptId,true);await this.dependencies.publishStatus(`watchdog:${current.attemptId}`,`— /task reassigned from ${safeLabel(current.agentId)} to ${safeLabel(next.agentId)} —`);await this.launch(submission,next.agentId,next.attempt,next);return;}
   }
 
-  private clearLive(attemptId:string,abort=false) { const live=this.live.get(attemptId); if(!live)return; if(live.timer)this.clock.clearTimeout(live.timer); if(abort)live.controller.abort(); this.live.delete(attemptId); }
+  private agentCurrent(agentId:ActiveAgentId){const entry=roomAgentEntry(this.dependencies.roster(),agentId);return Boolean(entry?.enabled&&!entry.selectionConfirmationRequired);}
+  private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);void this.dependencies.executePov(active.targetAgentIds,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal).then(()=>this.finishPov(active.executionId,"completed",null)).catch((error)=>this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error)));}
+  private async finishPov(executionId:string,status:"completed"|"failed"|"cancelled",reason:string|null){const current=(await this.dependencies.store.listPendingPovExecutions(this.roomId)).find((item)=>item.executionId===executionId);if(!current)return;const terminal={...current,status,reason:reason?safeLabel(reason).slice(0,200):null,updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,terminal);this.livePov.delete(executionId);}
+  private captureEpoch(agentId:ActiveAgentId){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,agentId);return{roomEpoch:this.dependencies.roomEpoch?.()||"0",rosterRevision:roster.revision,agentConfigurationRevision:entry?.configurationRevision||0};}
+  private attemptCurrent(attempt:CommandAttempt){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,attempt.agentId);return this.agentCurrent(attempt.agentId)&&(!attempt.roomEpoch||!this.dependencies.roomEpochCurrent||this.dependencies.roomEpochCurrent(attempt.roomEpoch))&&(attempt.rosterRevision===undefined||attempt.rosterRevision===roster.revision)&&(attempt.agentConfigurationRevision===undefined||attempt.agentConfigurationRevision===(entry?.configurationRevision||0));}
+  private clearLive(attemptId:string,abort=false) { const live=this.live.get(attemptId); if(!live)return; if(live.timer)this.clock.clearTimeout(live.timer); if(abort)live.controller.abort(); live.reservation?.release(); this.live.delete(attemptId); }
   private armRecovered(attempt:CommandAttempt,submission:CommandSubmission) { const live:LiveAttempt={controller:new AbortController(),partial:""}; this.live.set(attempt.attemptId,live); const timeout=attempt.status==="queued"?this.stage1Ms:this.stage2Ms; const elapsed=Math.max(0,this.clock.now()-Date.parse(attempt.updatedAt)); live.timer=this.clock.setTimeout(()=>void (attempt.status==="queued"?this.stage1(attempt,submission,"server restarted before generation launch"):this.stage2(attempt,submission)),Math.max(0,timeout-elapsed)); }
 }

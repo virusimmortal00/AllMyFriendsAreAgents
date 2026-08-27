@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiRequestError, loadDiagnostic, loadDiagnostics } from "./api";
 import type { ActiveAgentId } from "../shared/participants";
+import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction";
 
 export interface DiagnosticRecord {
   readonly recordId: string;
@@ -20,7 +21,7 @@ function safeFailure(error: unknown) {
 }
 
 function redact(value: string) {
-  return value.replace(/(?:authorization|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|cookie|set-cookie)\s*[:=]\s*\S+/gi, "[REDACTED]");
+  return redactDiagnosticSecrets(value);
 }
 
 export function Diagnostics({ agents }: { agents: readonly ActiveAgentId[] }) {

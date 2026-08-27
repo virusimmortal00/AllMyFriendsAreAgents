@@ -43,15 +43,18 @@ describe("authorized diagnostic dashboard", () => {
   });
 
   it("redacts a secret-shaped detail value before rendering it", async () => {
-    const sensitive = { ...record, diagnosticText: "authorization: bearer-secret", metadata: { password: "password=unsafe" } };
+    const sensitive = { ...record, diagnosticText: '{"password":"json-secret","authorization":"Bearer bearer-secret"}\nAPI_KEY=env-secret\nBasic dXNlcjpwYXNz', metadata: { password: "password=unsafe" } };
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).includes("diag-1") ? response(sensitive) : response({ items: [sensitive] }));
     render(<Diagnostics agents={["codex-sol"]} />);
     fireEvent.change(screen.getByLabelText("Diagnostic-read token"), { target: { value: "read-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Search / Refresh" }));
     await screen.findByRole("button", { name: /stalled/ });
     fireEvent.click(screen.getByRole("button", { name: /stalled/ }));
-    await waitFor(() => expect(screen.getAllByText("[REDACTED]")).toHaveLength(2));
+    await waitFor(() => expect(document.body.textContent).toContain("[REDACTED]"));
     expect(document.body.textContent).not.toContain("bearer-secret");
     expect(document.body.textContent).not.toContain("unsafe");
+    expect(document.body.textContent).not.toContain("json-secret");
+    expect(document.body.textContent).not.toContain("env-secret");
+    expect(document.body.textContent).not.toContain("dXNlcjpwYXNz");
   });
 });

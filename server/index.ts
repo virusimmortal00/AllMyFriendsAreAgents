@@ -529,7 +529,7 @@ function commandAgentAvailable(agent: import("../shared/participants.js").Active
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
   const active = activeGenerations.snapshot();
   return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
-    && !Object.values(active).includes(agent) && Object.keys(active).length < agentConcurrency && !jobs.busy);
+    && !Object.values(active).includes(agent) && activeGenerations.size() < agentConcurrency && !jobs.busy);
 }
 
 async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
@@ -560,25 +560,31 @@ const commandRuntime = new CommandRuntime({
   store,
   roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
   canLaunch: commandAgentAvailable,
+  reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
+  roomEpoch: () => String(roomActivity.current()),
+  roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
   stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
   executeTask: performCommandTask,
-  executePov: async (agents, prompt) => {
-    const accepted = jobs.enqueue(`command:pov:${randomUUID()}`, () => runJob(async () => {
+  executePov: async (agents, prompt, signal) => new Promise<void>((resolve,reject) => {
+    const accepted = jobs.enqueue(`command:pov:${randomUUID()}`, async () => {
+      if(signal.aborted){reject(new Error("POV execution was cancelled before launch."));return;}
+      try{await runJob(async () => {
       const current = normalizeRoomAgentRoster(store.snapshot().roster);
       const eligible = agents.filter((agent) => {
         const entry = roomAgentEntry(current,agent);
         return Boolean(entry?.enabled && agentHealth.canAttempt(agent));
       });
       if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true});
-    }));
-    if (!accepted) throw new Error("The room is already working.");
-  },
+      });if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
+    });
+    if (!accepted) reject(new Error("The room is already working."));
+  }),
   publishStatus: async (auditId,text) => { await store.addCommandAuditMessageOnce(auditId,text); broadcast(); },
-  deliverTask: async (agent,messages,result) => {
+  deliverTask: async (attemptId,agent,messages,result) => {
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
     const burstId=randomUUID();
-    for (const [sequence,message] of messages.entries()) await store.addMessage(agent,message,"chat",store.snapshot().settings.participantStyles[agent],{burstId,sequence});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence});
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1003,7 +1009,7 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   jobs.close();
-  commandRuntime.close();
+  await commandRuntime.close();
   roomActivity.interrupt();
   activeGenerations.clear();
   presenceAnnouncements.shutdown();

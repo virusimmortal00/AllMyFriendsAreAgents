@@ -10,6 +10,7 @@ import type { RoomRepository } from "./storage/room-repository.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, type ControlPlaneStore } from "./control-plane.js";
+import { normalizeCommandPermissions } from "../shared/command-domain.js";
 
 export function registerRosterRoutes(input: {
   app: express.Express;
@@ -93,7 +94,8 @@ export function registerRosterRoutes(input: {
     const before = normalizeRoomAgentRoster(store.snapshot().roster);
     const structuralChanged = entries.length !== before.entries.length || entries.some((entry, index) => {
       const previous = before.entries[index];
-      return !previous || previous.agentId !== entry.agentId || previous.enabled !== entry.enabled || previous.conversationalName !== entry.conversationalName;
+      return !previous || previous.agentId !== entry.agentId || previous.enabled !== entry.enabled || previous.conversationalName !== entry.conversationalName
+        || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions));
     });
     const selectionChanged = entries.some((entry) => {
       const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
@@ -124,6 +126,7 @@ export function registerRosterRoutes(input: {
       for (const entry of result.roster.entries) {
         const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
         if (!previous || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry)) await control.recordAudit(authenticated.principal.id, "MODEL_SELECTION_CHANGED", entry.agentId, { previousRevision: previous?.configurationRevision || 0, nextRevision: entry.configurationRevision || 1 });
+        if (!previous || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions))) await control.recordAudit(authenticated.principal.id, "COMMAND_PERMISSIONS_CHANGED", entry.agentId, { allowAll: normalizeCommandPermissions(entry.commandPermissions).allowAll, allowed: normalizeCommandPermissions(entry.commandPermissions).allowed });
       }
     }
     broadcast();
