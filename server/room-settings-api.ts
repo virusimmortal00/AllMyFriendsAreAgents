@@ -3,6 +3,7 @@ import { validDiscoveryId, validModelDiscoveryId, type ModelReference } from "..
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import { DEFAULT_ROOM_BASE_PROMPT, type RoomConfigurationUpdate } from "./room-configuration.js";
 import type { RoomRepository } from "./storage/room-repository.js";
+import { isPreflightMode, type PreflightEvidence } from "../shared/preflight.js";
 
 function modelReference(input: unknown): ModelReference | null | undefined {
   if (input === null) return null;
@@ -26,8 +27,9 @@ export function registerRoomSettingsRoutes(input: {
   authorizeView: (request: express.Request, response: express.Response) => boolean;
   authorizeEdit: (request: express.Request, response: express.Response, modelSelection: boolean) => string | undefined;
   broadcast: () => void;
+  routingEvidence?: () => Promise<PreflightEvidence>;
 }) {
-  const { app, store, discovery, authorizeView, authorizeEdit, broadcast } = input;
+  const { app, store, discovery, authorizeView, authorizeEdit, broadcast, routingEvidence } = input;
 
   app.get("/api/room/settings", async (request, response) => {
     if (!authorizeView(request, response)) return;
@@ -35,6 +37,7 @@ export function registerRoomSettingsRoutes(input: {
       settings: await store.getRoomConfiguration(),
       defaults: { basePromptText: DEFAULT_ROOM_BASE_PROMPT },
       modelDiscovery: await discovery.discover(),
+      ...(routingEvidence ? { routingEvidence: await routingEvidence() } : {}),
     });
   });
 
@@ -44,7 +47,8 @@ export function registerRoomSettingsRoutes(input: {
     const hasModel = Object.prototype.hasOwnProperty.call(body, "summarizerModel");
     const hasSummaryPrompt = Object.prototype.hasOwnProperty.call(body, "summarizerPromptText");
     const hasFlags = Object.prototype.hasOwnProperty.call(body, "featureFlags");
-    if (!hasBase && !hasModel && !hasSummaryPrompt && !hasFlags) return response.status(400).json({ error: "At least one room setting is required." });
+    const hasPreflightMode = Object.prototype.hasOwnProperty.call(body, "preflightMode");
+    if (!hasBase && !hasModel && !hasSummaryPrompt && !hasFlags && !hasPreflightMode) return response.status(400).json({ error: "At least one room setting is required." });
     if (hasBase && body.basePromptText !== null && typeof body.basePromptText !== "string") return response.status(400).json({ error: "basePromptText must be text or null." });
     if (typeof body.basePromptText === "string" && body.basePromptText.length > 4_000) return response.status(400).json({ error: "The room base prompt must be at most 4,000 characters." });
     const model = hasModel ? modelReference(body.summarizerModel) : undefined;
@@ -54,6 +58,7 @@ export function registerRoomSettingsRoutes(input: {
     }
     const featureFlags = hasFlags ? flags(body.featureFlags) : undefined;
     if (hasFlags && !featureFlags) return response.status(400).json({ error: "Feature flags must be a bounded object of boolean values." });
+    if (hasPreflightMode && !isPreflightMode(body.preflightMode)) return response.status(400).json({ error: "Choose a valid pre-flight routing mode." });
     const actorId = authorizeEdit(request, response, hasModel);
     if (!actorId) return;
     if (model) {
@@ -61,11 +66,16 @@ export function registerRoomSettingsRoutes(input: {
       const known = discovered.models.find((candidate) => candidate.modelId === model.modelId && (candidate.providerId || "") === (model.providerId || ""));
       if (!known || model.variant && !known.variants?.some(({ id }) => id === model.variant)) return response.status(400).json({ error: "The selected summarizer model is not in the current model catalog." });
     }
+    if (body.preflightMode === "enforce" && (await store.getRoomConfiguration()).preflightMode !== "enforce") {
+      const evidence = await routingEvidence?.();
+      if (!evidence?.promotionEligible) return response.status(409).json({ error: "This room has not met the recorded shadow-evidence threshold for enforcement.", evidence });
+    }
     const update: RoomConfigurationUpdate = {
       ...(hasBase ? { basePromptText: body.basePromptText as string | null } : {}),
       ...(hasModel ? { summarizerModel: model! } : {}),
       ...(hasSummaryPrompt ? { summarizerPromptText: body.summarizerPromptText as string } : {}),
       ...(hasFlags ? { featureFlags: featureFlags! } : {}),
+      ...(hasPreflightMode ? { preflightMode: body.preflightMode } : {}),
     };
     const settings = await store.updateRoomConfiguration(update, actorId);
     broadcast();

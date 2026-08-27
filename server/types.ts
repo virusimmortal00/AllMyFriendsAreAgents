@@ -7,6 +7,7 @@ import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
 import type { DeploymentProvenance } from "./deployment-provenance.js";
+import type { PreflightEvidence } from "../shared/preflight.js";
 import type { RoomConfiguration, RoomConfigurationAuditEvent } from "./room-configuration.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
@@ -77,4 +78,5 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
+  preflightEvidence?: PreflightEvidence;
 }

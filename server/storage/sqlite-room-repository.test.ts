@@ -31,8 +31,11 @@ describe("SQLite room repository", () => {
     const suppliedCursor = reopened.snapshot().roster!.entries.map((entry) => ({ ...entry, lastSeenMessageId: "forged" }));
     expect(await reopened.updateRoster(1, suppliedCursor)).toMatchObject({ kind: "accepted" });
     expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
-    await reopened.updateRoomConfiguration({ summarizerPromptText: "Changed config {{transcript}}" }, "owner");
+    await reopened.updateRoomConfiguration({ preflightMode: "shadow" }, "owner");
     expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
+    await reopened.putAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 }, "late stale summary");
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, preflightMode: "shadow" });
     reopened.close();
   });
 

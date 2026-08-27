@@ -2,7 +2,7 @@ import type { AgentId, RoomState } from "./types.js";
 import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
-import { isNoResponseNeeded, visibleAgentChatText } from "../shared/message-format.js";
+import { isNoResponseNeeded, parseTurnDisposition, visibleAgentChatText, type YieldReason } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
 
@@ -11,6 +11,10 @@ export interface ConversationTurn {
   instruction: string;
   includeDiff?: boolean;
   visibleMessageLimit?: number;
+  preflight?: {
+    decisionId: string;
+    shadowSuppressed: boolean;
+  };
 }
 
 export interface TurnResult {
@@ -25,6 +29,20 @@ export interface TurnResult {
 }
 
 export interface InvestigationRequest { objective: string; trigger: string; evidenceRefs: Array<{ kind: "project_artifact" | "observability"; ref: string; label?: string }> }
+
+export interface ParsedAgentTurn {
+  visibleMessages: string[];
+  replyCandidates: AgentId[];
+  mentionedAgents: AgentId[];
+  visibleMessageCount: number;
+  continuationWorthy: boolean;
+  conversationState?: ConversationState;
+  styleUpdate?: ChatStyle;
+  investigationRequest?: InvestigationRequest;
+  disposition?: "speak";
+  yieldReason?: YieldReason;
+  dispositionMalformed?: boolean;
+}
 
 export type ConversationState = "settled" | "open" | "blocked";
 
@@ -44,10 +62,23 @@ const YES_NO_AUXILIARY = "(?:can|could|do|does|did|are|is|was|were|have|has|had|
 const SHORT_YES_NO_BROADCAST = new RegExp(`^(?:(?:hey|hi)[,\\s]+)?(?:${YES_NO_AUXILIARY}\\s+${BROADCAST_AUDIENCE}\\b|${BROADCAST_AUDIENCE}\\s+(?:all\\s+)?${YES_NO_AUXILIARY}\\b)`, "i");
 const ANYONE_CAPABILITY_BROADCAST = /\b(?:(?:can|could|would|will)\s+any(?:one|body)|any(?:one|body)\s+(?:can|could|would|will|is (?:able|available) to))\b/i;
 const DISTINCT_RESPONSE_REQUEST = /\b(?:each|separately|individually|every one|your own (?:take|view|opinion|answer|experience)|from (?:everyone|everybody|all of you|each of you|every one of you|you all|you guys|y[’']?all))\b/i;
+const TASK_SHAPED_MESSAGE = /\b(?:add|analy[sz]e|build|change|check|commit|compare|complete|configure|create|debug|deploy|design|document|draft|file|fix|grab|handle|implement|investigate|merge|plan|proceed|refactor|remove|research|review|run|share|ship|summarize|take|test|update|write)\b/i;
+const SETTLED_CLOSER = /^\s*(?:(?:thanks|thank you)\b.*|sounds good|got it|perfect|all set|that(?:'s| is) all|we(?:'re| are) done)[.!\s]*$/i;
 
 export interface BroadcastPolicy {
   inviteAll: boolean;
   stopOnSettledResponse: boolean;
+  conversationalFloor: boolean;
+}
+
+function isConversationalHumanMessage(text: string) {
+  const normalized = text.trim();
+  return normalized.length > 0
+    && normalized.length <= 280
+    && normalized.split(/\s+/).length <= 40
+    && !normalized.includes("?")
+    && !TASK_SHAPED_MESSAGE.test(normalized)
+    && !SETTLED_CLOSER.test(normalized);
 }
 
 function hashUnit(value: string) {
@@ -109,10 +140,11 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
 
 export function latestHumanBroadcastPolicy(state: RoomState): BroadcastPolicy {
   const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
-  if (!latestHumanMessage || WHOLE_ROOM_EXCLUSION.test(latestHumanMessage.text)) {
-    return { inviteAll: false, stopOnSettledResponse: false };
+  if (!latestHumanMessage) {
+    return { inviteAll: false, stopOnSettledResponse: false, conversationalFloor: false };
   }
   const text = latestHumanMessage.text.trim();
+  const excludesWholeRoom = WHOLE_ROOM_EXCLUSION.test(text);
   const asksForDistinctResponses = DISTINCT_RESPONSE_REQUEST.test(text);
   const shortYesNoBroadcast = text.endsWith("?")
     && text.split(/\s+/).length <= 18
@@ -120,8 +152,9 @@ export function latestHumanBroadcastPolicy(state: RoomState): BroadcastPolicy {
   const singleAnswerBroadcast = !asksForDistinctResponses
     && (shortYesNoBroadcast || ANYONE_CAPABILITY_BROADCAST.test(text));
   return {
-    inviteAll: WHOLE_ROOM_INVITATION.test(text) && !singleAnswerBroadcast,
-    stopOnSettledResponse: singleAnswerBroadcast,
+    inviteAll: !excludesWholeRoom && WHOLE_ROOM_INVITATION.test(text) && !singleAnswerBroadcast,
+    stopOnSettledResponse: !excludesWholeRoom && singleAnswerBroadcast,
+    conversationalFloor: !asksForDistinctResponses && !singleAnswerBroadcast && isConversationalHumanMessage(text),
   };
 }
 
@@ -132,6 +165,7 @@ export function latestHumanInvitesWholeRoom(state: RoomState) {
 export function roomMessageTurns(state: RoomState): ConversationTurn[] {
   const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
   const wholeRoomInvitation = latestHumanInvitesWholeRoom(state);
+  const conversational = Boolean(latestHumanMessage && isConversationalHumanMessage(latestHumanMessage.text));
   return rankRoomAgents(state).map((agent) => {
     const isDirectlyMentioned = latestHumanMessage?.mentions?.some(
       (mention) => mention.targetKind === "agent" && mention.targetId === agent
@@ -139,18 +173,27 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
     return {
       agent,
       instruction: isDirectlyMentioned
-        ? "You were explicitly mentioned in the latest human message. Read the current room discussion and give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
+        ? "You were explicitly mentioned in the latest human message. Reply by default with a concise, natural answer or acknowledgment. Silence is exceptional: yield with the appropriate TURN_DISPOSITION reason only when replying would be inappropriate, unsafe, impossible, or genuinely add nothing."
         : wholeRoomInvitation
-        ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer if you have one. Do not merely echo another participant; use NO_RESPONSE_NEEDED if silence is still more natural."
-        : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether a side reaction from you would be natural and useful. Respond only if so; otherwise use NO_RESPONSE_NEEDED.",
+        ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer. A brief reaction with your own flavor is valid even if someone else has already reacted; do not manufacture a question merely to keep the room moving. Yield with the appropriate TURN_DISPOSITION reason only when silence is still more natural."
+        : conversational
+        ? "The latest human message is conversational. A one-line social reaction is a valid response: offer a distinct take, brief agreement, or text smiley if natural. Another participant's reaction does not bar your own distinct-flavored reaction. Do not manufacture a question merely to keep the room moving; yield with the appropriate TURN_DISPOSITION reason only if even a brief reaction would feel forced."
+        : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether you have a distinct, useful contribution, real answer, or useful disagreement. Respond only if so; otherwise yield with the appropriate TURN_DISPOSITION reason.",
     };
   });
 }
 
-export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS) {
+export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS): ParsedAgentTurn {
   const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
   const investigationRequest = parseInvestigationRequest(text);
-  if (isNoResponseNeeded(text)) return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, ...(investigationRequest ? { investigationRequest } : {}) };
+  const disposition = parseTurnDisposition(text);
+  if (disposition.status === "malformed" || disposition.status === "valid" && disposition.action === "yield" || isNoResponseNeeded(text)) {
+    return {
+      visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false,
+      ...(disposition.status === "valid" && disposition.action === "yield" ? { yieldReason: disposition.reason } : {}),
+      ...(disposition.status === "malformed" ? { dispositionMalformed: true } : {}),
+    };
+  }
   const visibleMessages = visibleAgentChatText(text)
     .split(NEXT_MESSAGE)
     .map(stripUnsupportedEmoji)
@@ -173,6 +216,7 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     ...(declaredState ? { conversationState: declaredState } : {}),
     ...(styleUpdate ? { styleUpdate } : {}),
     ...(investigationRequest ? { investigationRequest } : {}),
+    ...(disposition.status === "valid" ? { disposition: disposition.action } : {}),
   };
 }
 
@@ -186,10 +230,21 @@ function parseInvestigationRequest(text: string): InvestigationRequest | undefin
   } catch { return undefined; }
 }
 
-function followUpInstruction(sourceAgent: AgentId, directlyMentioned: boolean) {
+type FollowUpKind = "direct" | "ambient" | "substantive";
+
+function followUpInstruction(sourceAgent: AgentId, kind: FollowUpKind) {
   const sourceName = agentScreenName(sourceAgent);
-  const mentionContext = directlyMentioned ? " They addressed you directly." : "";
-  return `${sourceName} just added a message to the room.${mentionContext} This is an optional chance to join after seeing the updated transcript. Respond only if you have a distinct, natural contribution, a real answer, or a useful disagreement. Do not echo reactions already given or ask a question merely to keep the room moving. Otherwise reply exactly NO_RESPONSE_NEEDED.`;
+  if (kind === "direct") {
+    return `${sourceName} just added a message to the room and addressed you directly. Reply by default with a concise, natural answer or acknowledgment. Silence is exceptional; yield with the appropriate TURN_DISPOSITION reason only when replying would be inappropriate, unsafe, impossible, or genuinely add nothing.`;
+  }
+  if (kind === "ambient") {
+    return `${sourceName} just added to a conversational thread. A one-line reaction is welcome: offer a distinct take, brief agreement, or text smiley if natural. A reaction already given does not bar your own distinct-flavored reaction. Do not manufacture a question merely to keep the room moving; yield with the appropriate TURN_DISPOSITION reason only if even a brief reaction would feel forced.`;
+  }
+  return `${sourceName} just added a message to the room. This is an optional chance to join after seeing the updated transcript. Respond only if you have a distinct, natural contribution, a real answer, or a useful disagreement. Do not ask a question merely to keep the room moving. Otherwise yield with the appropriate TURN_DISPOSITION reason.`;
+}
+
+function conversationalFloorInstruction() {
+  return "Nobody has reacted yet. Take one final conversational-floor turn: give a natural one-line reaction with your own flavor if possible. Do not manufacture a question or expand this into a substantive thread; yield with the appropriate TURN_DISPOSITION reason if a reaction would still feel forced.";
 }
 
 interface EnergyOutcome {
@@ -202,11 +257,11 @@ interface EnergyOutcome {
 const MAX_OBJECTION_TURNS = 4;
 
 function synthesisInstruction() {
-  return "Act as the discussion synthesizer. Summarize the positions that are actually present, identify any material disagreement, and propose the smallest concrete resolution. Do not invent consensus. If this is casual conversation or there is nothing meaningful to resolve, use NO_RESPONSE_NEEDED. End a visible response with CONVERSATION_STATE: SETTLED when the room has a usable conclusion, OPEN when a specific unresolved point still merits agent discussion, or BLOCKED when human input is required.";
+  return "Act as the discussion synthesizer. Summarize the positions that are actually present, identify any material disagreement, and propose the smallest concrete resolution. Do not invent consensus. If this is casual conversation or there is nothing meaningful to resolve, yield with the appropriate TURN_DISPOSITION reason. End a visible response with CONVERSATION_STATE: SETTLED when the room has a usable conclusion, OPEN when a specific unresolved point still merits agent discussion, or BLOCKED when human input is required.";
 }
 
 function objectionInstruction(synthesizer: AgentId) {
-  return `${agentScreenName(synthesizer)} just synthesized the discussion. Reply only if there is a material omission, factual error, or unresolved objection that would change the conclusion; otherwise use NO_RESPONSE_NEEDED. Be concise and propose a correction. End a visible response with CONVERSATION_STATE: OPEN if another reconciliation turn is needed or BLOCKED if human input is required.`;
+  return `${agentScreenName(synthesizer)} just synthesized the discussion. Reply only if there is a material omission, factual error, or unresolved objection that would change the conclusion; otherwise yield with the appropriate TURN_DISPOSITION reason. Be concise and propose a correction. End a visible response with CONVERSATION_STATE: OPEN if another reconciliation turn is needed or BLOCKED if human input is required.`;
 }
 
 function reconciliationInstruction() {
@@ -218,7 +273,7 @@ export async function runEnergyConversation(
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
-  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; concurrencyLimit?: number } = {},
+  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; conversationalFloor?: boolean; concurrencyLimit?: number } = {},
 ): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
   const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
@@ -245,6 +300,7 @@ export async function runEnergyConversation(
   let nextOutcomeKey = 0;
   let cancelled = false;
   let broadcastSettled = false;
+  let completedDeclines = 0;
   const visibleOutcomes: EnergyOutcome[] = [];
   const concurrencyLimit = Math.max(1, Math.floor(options.concurrencyLimit || 1));
 
@@ -266,6 +322,7 @@ export async function runEnergyConversation(
     if (result.cancelled) cancelled = true;
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
     const responded = visibleMessageCount > 0;
+    if (!responded && !result.cancelled && !result.failed) completedDeclines += 1;
     const outcome = { turn, result, responded, key: nextOutcomeKey };
     nextOutcomeKey += 1;
     if (responded) {
@@ -336,6 +393,13 @@ export async function runEnergyConversation(
       await record(remaining.shift()!);
     }
   }
+  if (!lastOutcome && !cancelled && options.conversationalFloor && completedDeclines === invited.size && invited.size > 0) {
+    await record({
+      ...candidates[0],
+      instruction: conversationalFloorInstruction(),
+    }, 1);
+    return { settled: !cancelled };
+  }
   if (!lastOutcome || cancelled) return { settled: !cancelled };
   if (broadcastSettled) return { settled: true };
 
@@ -351,7 +415,7 @@ export async function runEnergyConversation(
       pairReplies.set(pair, replyCount + 1);
       await record({
         agent: mention.target,
-        instruction: followUpInstruction(mention.source, true),
+        instruction: followUpInstruction(mention.source, "direct"),
         includeDiff: mention.includeDiff,
       });
       continue;
@@ -369,7 +433,7 @@ export async function runEnergyConversation(
           const [candidate] = remaining.splice(index, 1);
           await record({
             ...candidate,
-            instruction: followUpInstruction(lastOutcome.turn.agent, false),
+            instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
           });
           continue;
         }
@@ -387,7 +451,7 @@ export async function runEnergyConversation(
         const [candidate] = remaining.splice(index, 1);
         const continuation = await record({
           ...candidate,
-          instruction: followUpInstruction(lastOutcome.turn.agent, false),
+          instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
         });
         if (explicitlyOpen && !continuation.responded) usedContinuationSources.delete(lastOutcome.key);
         continue;
@@ -508,7 +572,7 @@ export async function runAgentConversation(
       deferredMentions.delete(completed.turn.agent);
       queued.unshift({
         agent: completed.turn.agent,
-        instruction: followUpInstruction(deferredMention.agent, true),
+        instruction: followUpInstruction(deferredMention.agent, "direct"),
         includeDiff: deferredMention.includeDiff,
       });
       followUps += 1;
@@ -523,7 +587,7 @@ export async function runAgentConversation(
       }
       queued.push({
         agent: mentionedAgent,
-        instruction: followUpInstruction(completed.turn.agent, true),
+        instruction: followUpInstruction(completed.turn.agent, "direct"),
         includeDiff: completed.turn.includeDiff,
       });
       followUps += 1;
@@ -537,7 +601,7 @@ export async function runAgentConversation(
     if (!replyCandidate) continue;
     queued.push({
       agent: replyCandidate,
-      instruction: followUpInstruction(completed.turn.agent, false),
+      instruction: followUpInstruction(completed.turn.agent, "substantive"),
       includeDiff: completed.turn.includeDiff,
     });
     followUps += 1;

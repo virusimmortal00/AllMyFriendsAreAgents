@@ -137,12 +137,14 @@ export async function updateRoster(expectedRevision: number, entries: readonly R
 }
 
 export interface RoomConfiguration {
+  configurationRevision: number;
   basePromptRevision: number;
   basePromptText: string | null;
   summarizerModel: ModelReference | null;
   summarizerPromptText: string;
   summarizerPromptRevision: number;
   featureFlags: Record<string, boolean>;
+  preflightMode: import("../shared/preflight").PreflightMode;
   updatedAt: string | null;
 }
 
@@ -150,13 +152,14 @@ export interface RoomConfigurationResponse {
   settings: RoomConfiguration;
   defaults?: { basePromptText: string };
   modelDiscovery?: ModelDiscoveryResult;
+  routingEvidence?: import("../shared/preflight").PreflightEvidence;
 }
 
 export async function loadRoomConfiguration(): Promise<RoomConfigurationResponse> {
   return request("/api/room/settings", { method: "GET", cache: "no-store" }).then((response) => response.json());
 }
 
-export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean> }>): Promise<{ settings: RoomConfiguration }> {
+export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean>; preflightMode: import("../shared/preflight").PreflightMode }>): Promise<{ settings: RoomConfiguration }> {
   return request("/api/room/settings", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(update) }).then((response) => response.json());
 }
 

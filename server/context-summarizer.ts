@@ -52,6 +52,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
       tokenTarget: input.tokenTarget,
       promptTemplate: input.promptTemplate,
       models: input.models,
+      configRevision: input.configRevision ?? 0,
     })).digest("hex");
     const completed = this.completed.get(key);
     if (completed) return Promise.resolve(completed);

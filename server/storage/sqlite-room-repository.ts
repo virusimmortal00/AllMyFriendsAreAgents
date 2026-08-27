@@ -84,12 +84,14 @@ interface RoomRow {
 }
 
 interface RoomSettingsRow {
+  configuration_revision: number;
   base_prompt_revision: number;
   base_prompt_text: string | null;
   summarizer_model: string | null;
   summarizer_prompt_text: string;
   summarizer_prompt_revision: number;
   feature_flags_json: string;
+  preflight_mode: string;
   updated_at: string;
 }
 
@@ -436,6 +438,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
     const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
     const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
+    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode");
     const now = new Date().toISOString();
     const next = normalizeRoomConfiguration({
       ...current,
@@ -443,15 +446,16 @@ export class SqliteRoomRepository implements RoomRepository {
       basePromptText: update.basePromptText === "" ? undefined : update.basePromptText ?? (baseChanged ? null : current.basePromptText),
       basePromptRevision: current.basePromptRevision + (baseChanged ? 1 : 0),
       summarizerPromptRevision: current.summarizerPromptRevision + (summarizerChanged ? 1 : 0),
+      configurationRevision: current.configurationRevision + 1,
       updatedAt: now,
     });
-    const changeKind = [baseChanged, summarizerChanged, flagsChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
+    const changeKind = [baseChanged, summarizerChanged, flagsChanged || routingChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.persistRoomConfiguration(next);
       this.database.prepare(`INSERT INTO room_settings_history(event_id, room_id, actor_id, change_kind, base_prompt_revision, summarizer_prompt_revision, snapshot_json, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(randomUUID(), DEFAULT_ROOM_ID, actorId, changeKind, next.basePromptRevision, next.summarizerPromptRevision, JSON.stringify(next), now);
-      if (summarizerChanged) this.invalidateAgentContextSummaries();
+      this.invalidateAgentContextSummaries();
       this.database.exec("COMMIT");
       const state = this.snapshot();
       state.roomConfiguration = next;
@@ -583,6 +587,7 @@ export class SqliteRoomRepository implements RoomRepository {
   }
 
   async putAgentContextSummary(key: AgentContextSummaryKey, summary: string) {
+    if (key.configRevision !== (await this.getRoomConfiguration()).configurationRevision) return;
     this.database.prepare(`
       INSERT INTO agent_context_summaries(room_id, agent_id, span_start_message_id, span_end_message_id, config_revision, summary, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1479,29 +1484,33 @@ export class SqliteRoomRepository implements RoomRepository {
     const row = this.database.prepare("SELECT * FROM room_settings WHERE room_id = ?").get(DEFAULT_ROOM_ID) as unknown as RoomSettingsRow | undefined;
     if (!row) return undefined;
     return normalizeRoomConfiguration({
+      configurationRevision: row.configuration_revision,
       basePromptRevision: row.base_prompt_revision,
       basePromptText: row.base_prompt_text,
       summarizerModel: parseJson(row.summarizer_model, null),
       summarizerPromptText: row.summarizer_prompt_text,
       summarizerPromptRevision: row.summarizer_prompt_revision,
       featureFlags: parseJson(row.feature_flags_json, {}),
+      preflightMode: row.preflight_mode,
       updatedAt: row.updated_at,
     });
   }
 
   private persistRoomConfiguration(configuration: RoomConfiguration) {
     this.database.prepare(`
-      INSERT INTO room_settings(room_id, base_prompt_revision, base_prompt_text, summarizer_model, summarizer_prompt_text, summarizer_prompt_revision, feature_flags_json, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO room_settings(room_id, configuration_revision, base_prompt_revision, base_prompt_text, summarizer_model, summarizer_prompt_text, summarizer_prompt_revision, feature_flags_json, preflight_mode, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(room_id) DO UPDATE SET
+        configuration_revision = excluded.configuration_revision,
         base_prompt_revision = excluded.base_prompt_revision,
         base_prompt_text = excluded.base_prompt_text,
         summarizer_model = excluded.summarizer_model,
         summarizer_prompt_text = excluded.summarizer_prompt_text,
         summarizer_prompt_revision = excluded.summarizer_prompt_revision,
         feature_flags_json = excluded.feature_flags_json,
+        preflight_mode = excluded.preflight_mode,
         updated_at = excluded.updated_at
-    `).run(DEFAULT_ROOM_ID, configuration.basePromptRevision, configuration.basePromptText, configuration.summarizerModel ? JSON.stringify(configuration.summarizerModel) : null, configuration.summarizerPromptText, configuration.summarizerPromptRevision, JSON.stringify(configuration.featureFlags), configuration.updatedAt || new Date().toISOString());
+    `).run(DEFAULT_ROOM_ID, configuration.configurationRevision, configuration.basePromptRevision, configuration.basePromptText, configuration.summarizerModel ? JSON.stringify(configuration.summarizerModel) : null, configuration.summarizerPromptText, configuration.summarizerPromptRevision, JSON.stringify(configuration.featureFlags), configuration.preflightMode, configuration.updatedAt || new Date().toISOString());
   }
 
   private upsertSession(agent: AgentId, id: string, permission: "read-only" | "writable", fingerprint?: string, configurationRevision?: number, codeEpoch?: string) {

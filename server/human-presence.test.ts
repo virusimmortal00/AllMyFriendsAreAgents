@@ -61,7 +61,7 @@ describe("HumanPresenceRegistry", () => {
     expect(humanPresenceAnnouncement("Alice", "joined")).toBe("Alice has joined the chat");
     expect(humanPresenceAnnouncement("Alice", "left")).toBe("Alice has left the chat");
     expect(humanPresenceInstruction("Alice", "joined")).toContain("optional chance to greet");
-    expect(humanPresenceInstruction("Alice", "joined")).toContain("NO_RESPONSE_NEEDED");
+    expect(humanPresenceInstruction("Alice", "joined")).toContain("TURN_DISPOSITION");
     expect(humanPresenceInstruction("Alice", "left")).toContain("Do not address them as if they are still present");
   });
 

@@ -3,6 +3,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
+import type { PreflightEvidence } from "../shared/preflight.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
@@ -60,6 +61,9 @@ import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
 import { roomAgentEntry } from "../shared/roster.js";
+import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
+import { PreflightStore } from "./preflight-store.js";
+import { normalizeRoomConfiguration } from "./room-configuration.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -88,6 +92,8 @@ const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
+const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
+let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
 const modelDiscovery = new ModelDiscoveryService();
 const openRouterCatalog = new OpenRouterCatalogService();
 const contextSummarizer = new OpenCodeContextSummarizer();
@@ -216,7 +222,42 @@ function currentEnabledAgents() {
 }
 
 function publicRoomSnapshot() {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
+}
+
+async function refreshPreflightEvidence() {
+  preflightEvidence = await preflightStore.evidence();
+}
+
+async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
+  const turns = roomMessageTurns(state);
+  const mode = normalizeRoomConfiguration(state.roomConfiguration).preflightMode;
+  // This is intentionally a literal bypass. Do not calculate, persist, annotate,
+  // clone, reorder, or filter turns in off mode.
+  if (mode === "off") return turns;
+  const trigger = state.messages.findLast(({ speaker }) => speaker === "you");
+  if (!trigger) return turns;
+  const continuationTargets = trigger.continuationRequest
+    ? (await store.listContinuations()).filter(({ roomOrigin }) => roomOrigin?.messageId === trigger.id).map(({ owner }) => owner)
+    : [];
+  const decision = decidePreflight({
+    trigger,
+    room: state,
+    rankedAgents: turns.map(({ agent }) => agent),
+    health: agentHealth.snapshot(),
+    routing: await preflightStore.routingState(),
+    energy: state.settings.conversationEnergy,
+    wholeRoomInvitation: latestHumanBroadcastPolicy(state).inviteAll,
+    structuredTargets: continuationTargets,
+  });
+  const record = await preflightStore.recordDecision({
+    triggerMessageId: trigger.id,
+    mode,
+    energy: state.settings.conversationEnergy,
+    decision,
+  });
+  await refreshPreflightEvidence();
+  return routePreflightTurns(turns, mode, decision, record.decisionId);
 }
 
 async function refreshImplementationCapabilities() {
@@ -270,7 +311,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3 }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
@@ -325,7 +366,6 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     await store.clearSession(agent);
     return { cancelled: true };
   }
-  if (activeAgent && rosterEpoch) await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
   if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
@@ -477,6 +517,18 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     firstDelayMs: firstDelay,
     generationDurationMs: result.durationMs,
   });
+  if (!parsed.dispositionMalformed && activeAgent && rosterEpoch) {
+    await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
+  }
+  if (!parsed.dispositionMalformed && preflight) {
+    const existing = new Set(before.messages
+      .filter(({ kind }) => kind === undefined || kind === "chat" || kind === "review")
+      .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+    const spoke = parsed.visibleMessages.length > 0;
+    const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+    await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
+    await refreshPreflightEvidence();
+  }
   return {
     replyCandidates: parsed.replyCandidates,
     mentionedAgents: parsed.mentionedAgents,
@@ -760,6 +812,7 @@ registerRoomSettingsRoutes({
       return undefined;
     }
   },
+  routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
 registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam });
@@ -860,7 +913,7 @@ app.post("/api/messages", async (request, response) => {
 
   jobs.enqueue("message-conversation", () => runJob(async () => {
     const conversationState = roomSnapshot();
-    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
+    await performConversation(await preflightTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
   }));
   return response.status(202).json(messageMutationAcknowledgement(accepted, continuation));
 });
@@ -871,6 +924,25 @@ app.get("/api/developer/room", (request, response) => {
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 50;
   response.json(developerRoomView(limit));
 });
+
+app.get("/api/preflight/evidence", async (request, response) => {
+  if (!sessionHuman(request, humans, humanSessions)) return response.status(401).json({ error: "Join the room before viewing routing evidence." });
+  response.set("Cache-Control", "no-store").json(await preflightStore.evidence());
+});
+
+app.get("/api/control/preflight/decisions", async (request, response) => {
+  try {
+    const principal = controlPlane.require(request).principal;
+    if (principal.role !== "OWNER" && principal.role !== "ADMIN") return response.status(403).json({ error: "Administrative access is required." });
+    const requested = Number(request.query.limit || 200);
+    const limit = Number.isFinite(requested) ? requested : 200;
+    response.set("Cache-Control", "no-store").json({ decisions: await preflightStore.rawDecisions(limit) });
+  } catch (error) {
+    if (error instanceof ControlError) return response.status(error.status).json({ error: error.message });
+    throw error;
+  }
+});
+
 
 app.post("/api/developer/messages", async (request, response) => {
   const authenticated = developerTeam.authenticate(request.header("authorization"), "ROOM_CHAT");
@@ -976,7 +1048,7 @@ app.post("/api/actions", async (request, response) => {
     const turns = agents.map((agent) => ({
       agent,
       instruction: action === "continue"
-        ? "Continue the latest unresolved room discussion. Focus on the specific open point, contribute only new substance, and help the group reach a usable conclusion. Use NO_RESPONSE_NEEDED if the matter is already settled."
+        ? "Continue the latest unresolved room discussion. Focus on the specific open point, contribute only new substance, and help the group reach a usable conclusion. Yield with the appropriate TURN_DISPOSITION reason if the matter is already settled."
         : action === "roundtable"
         ? "Join the discussion with the most useful opening thought. React to the room naturally and stop escalating once further replies would add noise."
         : action === "review"

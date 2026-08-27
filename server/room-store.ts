@@ -52,7 +52,7 @@ import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, 
 import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
-import { normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
+import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
 import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
 import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_RECENT_POLLS, type AcceptCommandResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
 
@@ -143,6 +143,7 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
     roster: defaultRoomAgentRoster(),
+    roomConfiguration: defaultRoomConfiguration(),
     status: "idle",
   };
 }
@@ -270,6 +271,9 @@ export class RoomStore implements RoomRepository {
       for (const agent of Object.keys(sessions) as AgentId[]) if (!enabledAgents.has(agent as never)) delete sessions[agent];
       const writableAgent = normalizeWritableAgent(migrateLegacyAgentId(stored.settings.writableAgent) || stored.settings.writableAgent);
       const deployment = normalizeDeploymentProvenance(stored.deployment);
+      const configurationRevisionWasMissing = !Number.isSafeInteger(
+        (stored.roomConfiguration as { configurationRevision?: unknown } | undefined)?.configurationRevision,
+      );
       const state: RoomState = {
         ...stored,
         messages,
@@ -290,6 +294,7 @@ export class RoomStore implements RoomRepository {
         error: undefined,
         ...(deployment ? { deployment } : {}),
         ...(stored.roomConfiguration ? { roomConfiguration: normalizeRoomConfiguration(stored.roomConfiguration) } : {}),
+        ...(configurationRevisionWasMissing ? { agentContextSummaries: [] } : {}),
       };
       const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState, commandState);
       if (topicWasMissing
@@ -301,6 +306,7 @@ export class RoomStore implements RoomRepository {
         || storedSettings.conversationEnergy !== conversationEnergy
         || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
         || state.settings.writableAgent !== stored.settings.writableAgent
+        || configurationRevisionWasMissing && Boolean(stored.agentContextSummaries?.length)
         || JSON.stringify(roster) !== JSON.stringify(stored.roster)
         || messages.some((message, index) => message !== stored.messages[index])) {
         await store.save();
@@ -384,6 +390,7 @@ export class RoomStore implements RoomRepository {
     const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
     const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
     const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
+    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode");
     const now = new Date().toISOString();
     const next = normalizeRoomConfiguration({
       ...current,
@@ -391,13 +398,14 @@ export class RoomStore implements RoomRepository {
       basePromptText: update.basePromptText === "" ? undefined : update.basePromptText ?? (baseChanged ? null : current.basePromptText),
       basePromptRevision: current.basePromptRevision + (baseChanged ? 1 : 0),
       summarizerPromptRevision: current.summarizerPromptRevision + (summarizerChanged ? 1 : 0),
+      configurationRevision: current.configurationRevision + 1,
       updatedAt: now,
     });
-    const changeKind = [baseChanged, summarizerChanged, flagsChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
+    const changeKind = [baseChanged, summarizerChanged, flagsChanged || routingChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
     this.state.roomConfiguration = next;
     this.state.roomConfigurationAudit ||= [];
     this.state.roomConfigurationAudit.push({ id: randomUUID(), actorId, changeKind, basePromptRevision: next.basePromptRevision, summarizerPromptRevision: next.summarizerPromptRevision, at: now, snapshot: structuredClone(next) });
-    if (summarizerChanged) this.clearAgentContextSummaries();
+    this.clearAgentContextSummaries();
     await this.save();
     return structuredClone(next);
   }
@@ -475,6 +483,7 @@ export class RoomStore implements RoomRepository {
   }
 
   async putAgentContextSummary(key: AgentContextSummaryKey, summary: string) {
+    if (key.configRevision !== normalizeRoomConfiguration(this.state.roomConfiguration).configurationRevision) return;
     this.contextSummaries.set(this.contextSummaryKey(key), summary);
     this.state.agentContextSummaries = [...this.contextSummaries.entries()].map(([encoded, value]) => {
       const [agentId, spanStartId, spanEndId, configRevision] = encoded.split("\u0000");
