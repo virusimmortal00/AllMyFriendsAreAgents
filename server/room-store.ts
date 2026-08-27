@@ -53,8 +53,8 @@ import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
 import { normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
-import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validDiagnostic, validPoll, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
-import { DIAGNOSTIC_RETENTION_MS, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, type CommandAttempt, type CommandAuditIdentity, type CommandPoll, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
+import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validPoll, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
+import { DIAGNOSTIC_RETENTION_MS, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, type AcceptCommandResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandPoll, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -346,6 +346,16 @@ export class RoomStore implements RoomRepository {
     this.state.messages.push(message);
     await this.save();
     return message;
+  }
+
+  async addCommandAuditMessageOnce(auditId: string, text: string) {
+    const id = `command-audit:${auditId}`;
+    const existing = this.state.messages.find((message) => message.id === id);
+    if (existing) return structuredClone(existing);
+    const message: RoomMessage = { id, speaker: "system", text: text.trim(), timestamp: new Date().toISOString(), kind: "status" };
+    this.state.messages.push(message);
+    await this.save();
+    return structuredClone(message);
   }
 
   async updateSettings(update: Partial<RoomSettings>) {
@@ -873,6 +883,41 @@ export class RoomStore implements RoomRepository {
     if (!validSubmission(submission)) throw new Error("Invalid command submission");
     return this.mutateCommands<CreateCommandSubmissionResult>((state) => { const duplicate = state.submissions.find((item) => item.roomId === submission.roomId && (item.submissionId === submission.submissionId || item.clientSubmissionId === submission.clientSubmissionId)); return duplicate ? { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } } : { next: { ...state, submissions: [...state.submissions, structuredClone(submission)] }, result: { kind: "created" as const, submission: structuredClone(submission) } }; });
   }
+  async acceptCommand(acceptance: CommandAcceptance): Promise<AcceptCommandResult> {
+    if (!validCommandAcceptance(acceptance)) throw new Error("Invalid command acceptance");
+    return this.mutateCommands<AcceptCommandResult>((state) => {
+      const duplicate = state.submissions.find((item) => item.roomId === acceptance.submission.roomId && (item.submissionId === acceptance.submission.submissionId || item.clientSubmissionId === acceptance.submission.clientSubmissionId));
+      if (duplicate) return { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } };
+      const actualRevision = state.roundRobin.find((item) => item.roomId === acceptance.submission.roomId)?.revision ?? 0;
+      if (acceptance.roundRobin && actualRevision !== acceptance.roundRobin.expectedRevision) return { result: { kind: "conflict" as const, actualRevision } };
+      return { next: { ...state, submissions: [...state.submissions, structuredClone(acceptance.submission)], audits: [...state.audits, structuredClone(acceptance.audit)], polls: acceptance.poll ? [...state.polls, structuredClone(acceptance.poll)] : state.polls, attempts: acceptance.attempt ? [...state.attempts, structuredClone(acceptance.attempt)] : state.attempts, roundRobin: acceptance.roundRobin ? [...state.roundRobin.filter((item) => item.roomId !== acceptance.submission.roomId), structuredClone(acceptance.roundRobin.state)] : state.roundRobin }, result: { kind: "accepted" as const, acceptance: structuredClone(acceptance) } };
+    });
+  }
+  async reassignCommandAttempt(value: CommandReassignment) {
+    if (!validCommandReassignment(value)) throw new Error("Invalid command reassignment");
+    return this.mutateCommands<{ kind: "accepted"; current: CommandAttempt; next: CommandAttempt } | { kind: "conflict" | "not-found" }>((state) => {
+      const current = state.attempts.find((item) => item.roomId === value.current.roomId && item.attemptId === value.current.attemptId);
+      if (!current) return { result: { kind: "not-found" as const } };
+      const pointer = state.roundRobin.find((item) => item.roomId === value.current.roomId);
+      const conflicts = current.updatedAt !== value.expectedUpdatedAt
+        || current.submissionId !== value.current.submissionId
+        || current.attempt !== value.current.attempt
+        || current.agentId !== value.current.agentId
+        || current.createdAt !== value.current.createdAt
+        || !validAttemptTransition(current.status, value.current.status)
+        || (pointer?.revision ?? 0) !== value.roundRobin.expectedRevision
+        || state.attempts.some((item) => item.roomId === value.next.roomId && (item.attemptId === value.next.attemptId || item.submissionId === value.next.submissionId && item.attempt === value.next.attempt));
+      if (conflicts) return { result: { kind: "conflict" as const } };
+      return {
+        next: {
+          ...state,
+          attempts: [...state.attempts.map((item) => item === current ? structuredClone(value.current) : item), structuredClone(value.next)],
+          roundRobin: [...state.roundRobin.filter((item) => item.roomId !== value.current.roomId), structuredClone(value.roundRobin.state)],
+        },
+        result: { kind: "accepted" as const, current: structuredClone(value.current), next: structuredClone(value.next) },
+      };
+    });
+  }
   async getCommandSubmission(roomId: string, submissionId: string) { await this.commandQueue; const value = this.commandState.submissions.find((item) => item.roomId === roomId && item.submissionId === submissionId); return value ? structuredClone(value) : undefined; }
   async getRoundRobinState(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.roundRobin.find((item) => item.roomId === roomId) || { roomId, lastAssignedAgentId: null, revision: 0, updatedAt: new Date(0).toISOString() }); }
   async compareAndSetRoundRobinState(expectedRevision: number, value: RoundRobinState) { if (!validRoundRobin(value) || value.revision !== expectedRevision + 1) throw new Error("Invalid round-robin state"); return this.mutateCommands<{ kind: "accepted"; state: RoundRobinState } | { kind: "conflict"; actualRevision: number }>((state) => { const actualRevision = state.roundRobin.find((item) => item.roomId === value.roomId)?.revision ?? 0; return actualRevision !== expectedRevision ? { result: { kind: "conflict" as const, actualRevision } } : { next: { ...state, roundRobin: [...state.roundRobin.filter((item) => item.roomId !== value.roomId), structuredClone(value)] }, result: { kind: "accepted" as const, state: structuredClone(value) } }; }); }
@@ -886,6 +931,7 @@ export class RoomStore implements RoomRepository {
   async listCommandVotes(roomId: string, pollId: string) { await this.commandQueue; return structuredClone(this.commandState.votes.filter((item) => item.roomId === roomId && item.pollId === pollId)); }
   async createCommandAuditIdentity(audit: CommandAuditIdentity) { if (!validAudit(audit)) throw new Error("Invalid command audit"); return this.mutateCommands<{ kind: "created" | "duplicate"; audit: CommandAuditIdentity }>((state) => { const duplicate = state.audits.find((item) => item.roomId === audit.roomId && (item.auditId === audit.auditId || item.submissionId === audit.submissionId)); return duplicate ? { result: { kind: "duplicate" as const, audit: structuredClone(duplicate) } } : { next: { ...state, audits: [...state.audits, structuredClone(audit)] }, result: { kind: "created" as const, audit: structuredClone(audit) } }; }); }
   async getCommandAuditIdentity(roomId: string, submissionId: string) { await this.commandQueue; const audit = this.commandState.audits.find((item) => item.roomId === roomId && item.submissionId === submissionId); return audit ? structuredClone(audit) : undefined; }
+  async listCommandAuditIdentities(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.audits.filter((item) => item.roomId === roomId).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.auditId.localeCompare(b.auditId))); }
   async appendDiagnostic(record: DiagnosticRecord) { if (!validDiagnostic(record)) throw new Error("Invalid diagnostic record"); return this.mutateCommands<{ kind: "created" | "duplicate"; record: DiagnosticRecord }>((state) => { const duplicate = state.diagnostics.find((item) => item.roomId === record.roomId && (item.recordId === record.recordId || item.correlationId === record.correlationId)); if (duplicate) return { result: { kind: "duplicate" as const, record: structuredClone(duplicate) } }; const cutoff = Date.parse(record.createdAt) - DIAGNOSTIC_RETENTION_MS; const retained = state.diagnostics.filter((item) => !Number.isFinite(cutoff) || Date.parse(item.createdAt) >= cutoff); const peers = retained.filter((item) => item.roomId === record.roomId && item.agentId === record.agentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); const remove = new Set(peers.slice(0, Math.max(0, peers.length - MAX_DIAGNOSTICS_PER_ROOM_AGENT + 1)).map(({ recordId }) => recordId)); return { next: { ...state, diagnostics: [...retained.filter((item) => !remove.has(item.recordId)), structuredClone(record)] }, result: { kind: "created" as const, record: structuredClone(record) } }; }); }
   async getDiagnostic(roomId: string, agentId: AgentId, recordId: string) { await this.commandQueue; const record = this.commandState.diagnostics.find((item) => item.roomId === roomId && item.agentId === agentId && item.recordId === recordId); return record ? structuredClone(record) : undefined; }
   async listDiagnostics(roomId: string, input: AgentId | DiagnosticQuery, legacyLimit = 50) { await this.commandQueue; const query = typeof input === "string" ? { agentId: input, limit: legacyLimit } : input; const limit = Math.max(1, Math.min(MAX_DIAGNOSTIC_QUERY_LIMIT, query.limit || 50)); const search = query.search?.trim().toLocaleLowerCase().slice(0, MAX_DIAGNOSTIC_SEARCH_LENGTH); return structuredClone(this.commandState.diagnostics.filter((item) => item.roomId === roomId && item.agentId === query.agentId && (!query.reason || item.reason === query.reason) && (!search || `${item.reason}\n${item.promptHead || ""}\n${item.diagnosticText || ""}`.toLocaleLowerCase().includes(search))).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.recordId.localeCompare(a.recordId)).slice(0, limit)); }

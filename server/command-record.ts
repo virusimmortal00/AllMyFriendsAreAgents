@@ -36,8 +36,22 @@ export interface DiagnosticQuery {
 
 export type CreateCommandSubmissionResult = { readonly kind: "created"; readonly submission: CommandSubmission } | { readonly kind: "duplicate"; readonly submission: CommandSubmission };
 export type CreateCommandVoteResult = { readonly kind: "created"; readonly vote: CommandVote } | { readonly kind: "duplicate"; readonly vote: CommandVote } | { readonly kind: "rejected"; readonly reason: string };
+export interface CommandAcceptance {
+  readonly submission: CommandSubmission;
+  readonly audit: CommandAuditIdentity;
+  readonly poll?: CommandPoll;
+  readonly attempt?: CommandAttempt;
+  readonly roundRobin?: { readonly expectedRevision: number; readonly state: RoundRobinState };
+}
+export type AcceptCommandResult =
+  | { readonly kind: "accepted"; readonly acceptance: CommandAcceptance }
+  | { readonly kind: "duplicate"; readonly submission: CommandSubmission }
+  | { readonly kind: "conflict"; readonly actualRevision: number };
+export interface CommandReassignment { readonly expectedUpdatedAt:string; readonly current:CommandAttempt; readonly next:CommandAttempt; readonly roundRobin:{readonly expectedRevision:number;readonly state:RoundRobinState} }
 
 export interface CommandRecordStore {
+  acceptCommand(acceptance: CommandAcceptance): Promise<AcceptCommandResult>;
+  reassignCommandAttempt(reassignment:CommandReassignment): Promise<{readonly kind:"accepted";readonly current:CommandAttempt;readonly next:CommandAttempt}|{readonly kind:"conflict"|"not-found"}>;
   createCommandSubmission(submission: CommandSubmission): Promise<CreateCommandSubmissionResult>;
   getCommandSubmission(roomId: string, submissionId: string): Promise<CommandSubmission | undefined>;
   getRoundRobinState(roomId: string): Promise<RoundRobinState>;
@@ -52,6 +66,7 @@ export interface CommandRecordStore {
   listCommandVotes(roomId: string, pollId: string): Promise<readonly CommandVote[]>;
   createCommandAuditIdentity(audit: CommandAuditIdentity): Promise<{ readonly kind: "created" | "duplicate"; readonly audit: CommandAuditIdentity }>;
   getCommandAuditIdentity(roomId: string, submissionId: string): Promise<CommandAuditIdentity | undefined>;
+  listCommandAuditIdentities(roomId: string): Promise<readonly CommandAuditIdentity[]>;
   appendDiagnostic(record: DiagnosticRecord): Promise<{ readonly kind: "created" | "duplicate"; readonly record: DiagnosticRecord }>;
   getDiagnostic(roomId: string, agentId: ActiveAgentId, recordId: string): Promise<DiagnosticRecord | undefined>;
   listDiagnostics(roomId: string, query: ActiveAgentId | DiagnosticQuery, limit?: number): Promise<readonly DiagnosticRecord[]>;
