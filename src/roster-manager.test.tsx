@@ -12,6 +12,22 @@ const catalog = [
 ] as const;
 
 describe("roster manager", () => {
+  it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
+
+    render(<RosterManagerDialog
+      initialRoster={{ revision: 3, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }}
+      initialSelectedAgentId="claude-opus"
+      returnFocusTo={null}
+      onSaved={() => undefined}
+      onClose={() => undefined}
+    />);
+
+    expect((await screen.findByRole("button", { name: "View Opus configuration" })).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "View Sol configuration" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("switch", { name: "Active in room for Opus" })).toBeTruthy();
+  });
+
   it("submits administrator sign-in when Enter is pressed in the password field", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "authentication required" }), { status: 401 }))

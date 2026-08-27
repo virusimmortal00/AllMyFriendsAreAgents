@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyStyle, updateRoster, updateSettings } from "./api";
+import { authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,6 +35,7 @@ describe("browser identity requests", () => {
     await sendMessage("Hello", "message_123");
     await updateMyStyle(style);
     await updateMyAvatar("data:image/jpeg;base64,/9j/AA==");
+    await updateMyProfile({ name: "Grace", avatarUrl: undefined });
     await updateSettings({ roomName: "Architecture Room" });
     await authorizeHeartbeat(3);
     await emergencyStopHeartbeat(4);
@@ -45,6 +46,7 @@ describe("browser identity requests", () => {
       { text: "Hello", clientMessageId: "message_123", mentions: [] },
       { style },
       { avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
+      { name: "Grace", avatarUrl: null },
       { roomName: "Architecture Room" },
       { expectedRevision: 3, reason: "Explicitly authorized from the visible heartbeat control" },
       { expectedRevision: 4, reason: "Emergency stop requested from the visible control" },

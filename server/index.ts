@@ -622,7 +622,9 @@ app.get("/api/events", async (request, response) => {
 
 app.post("/api/humans", (request, response) => {
   try {
-    response.status(201).json(joinHumanWithSession(request, response, humans, humanSessions));
+    const human = joinHumanWithSession(request, response, humans, humanSessions);
+    broadcast();
+    response.status(201).json(human);
   } catch (error) {
     response.status(400).json({ error: error instanceof Error ? error.message : "A valid name is required." });
   }

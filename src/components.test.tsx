@@ -17,7 +17,7 @@ describe("RoomRoster", () => {
     }} agentHealth={{}} humans={[
       { id: "alice-id", name: "Alice", style: DEFAULT_PARTICIPANT_STYLES.you, avatarUrl: "data:image/jpeg;base64,/9j/AA==" },
       { id: "bob-id", name: "Bob", style: DEFAULT_PARTICIPANT_STYLES.you },
-    ]} currentHumanId="alice-id" onConfigureAgent={() => undefined} onConfigureHumanAvatar={() => undefined} />);
+    ]} currentHumanId="alice-id" onConfigureHumanAvatar={() => undefined} onManageRoster={() => undefined} />);
 
     expect(html).not.toContain("8 entities");
     expect(html).not.toContain("6 agents");
@@ -36,7 +36,8 @@ describe("RoomRoster", () => {
     expect(html).toContain(">Claude</strong>");
     expect(html).not.toContain("Buddy");
     expect(html).not.toContain("Rooms (1)");
-    expect(html.match(/aria-label="Configure (?:Sol|Claude|Grok|Composer|Flash|GLM)"/g)).toHaveLength(6);
+    expect(html.match(/role="button" tabindex="0" aria-label="Configure (?:Sol|Claude|Grok|Composer|Flash|GLM):/g)).toHaveLength(6);
+    expect(html).not.toContain("agent-settings-button\" aria-label=\"Configure");
     expect(html).toContain("https://models.dev/logos/openai.svg");
     expect(html).toContain("https://models.dev/logos/anthropic.svg");
     expect(html).toContain('aria-label="xAI model, accessed through Cursor"');
@@ -46,7 +47,7 @@ describe("RoomRoster", () => {
     expect(html).not.toContain("Configure You");
     expect(html).toContain('aria-label="Alice&#x27;s profile photo"');
     expect(html).toContain('aria-label="Bob&#x27;s initials"');
-    expect(html).toContain('aria-label="Change your profile photo"');
+    expect(html).toContain('aria-label="Edit your profile"');
   });
 
   it("identifies only agents with an active server generation", () => {
@@ -54,7 +55,7 @@ describe("RoomRoster", () => {
       activeAgents={new Set(["codex-sol", "cursor-gemini-flash"])}
       humans={[]}
       currentHumanId="alice-id"
-      onConfigureAgent={() => undefined}
+      onManageRoster={() => undefined}
     />);
 
     expect(html).toContain('aria-label="Sol is generating a response"');
@@ -69,7 +70,7 @@ describe("RoomRoster", () => {
       agentListSort="maker"
       humans={[]}
       currentHumanId="alice-id"
-      onConfigureAgent={() => undefined}
+      onManageRoster={() => undefined}
     />);
 
     expect(html.indexOf('class="presence-group-label" role="presentation">Anthropic')).toBeLessThan(html.indexOf('class="presence-group-label" role="presentation">Google'));

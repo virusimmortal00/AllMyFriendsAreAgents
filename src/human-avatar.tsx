@@ -52,18 +52,22 @@ export function HumanAvatar({ name, avatarUrl, compact = false }: { name: string
   );
 }
 
-export function HumanAvatarDialog({ human, busy, returnFocusTo, onAvatarChange, onClose }: {
+export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange, onClose }: {
   human: HumanPresence;
   busy: boolean;
   returnFocusTo: HTMLElement | null;
-  onAvatarChange: (avatarUrl?: string) => Promise<void>;
+  onProfileChange: (profile: { name: string; avatarUrl?: string }) => Promise<void>;
   onClose: () => void;
 }) {
   const titleId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState(human.name);
+  const [avatarUrl, setAvatarUrl] = useState(human.avatarUrl);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const locked = busy || processing;
+  const cleanName = name.trim().replace(/\s+/g, " ");
+  const changed = cleanName !== human.name || avatarUrl !== human.avatarUrl;
   const requestClose = () => { if (!locked) onClose(); };
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose, returnFocusTo);
 
@@ -72,40 +76,38 @@ export function HumanAvatarDialog({ human, busy, returnFocusTo, onAvatarChange, 
     setProcessing(true);
     setError("");
     try {
-      await onAvatarChange(await prepareHumanAvatar(file));
+      setAvatarUrl(await prepareHumanAvatar(file));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The profile photo could not be saved.");
+      setError(reason instanceof Error ? reason.message : "The profile photo could not be prepared.");
     } finally {
       setProcessing(false);
     }
   }
 
-  async function removePhoto() {
-    if (locked) return;
-    setProcessing(true);
+  async function saveProfile() {
+    if (locked || !changed) return;
     setError("");
     try {
-      await onAvatarChange();
+      await onProfileChange({ name: cleanName, avatarUrl });
+      onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The profile photo could not be removed.");
-    } finally {
-      setProcessing(false);
+      setError(reason instanceof Error ? reason.message : "Your profile could not be saved.");
     }
   }
 
   return (
     <div className="modal-backdrop human-avatar-backdrop" onMouseDown={onBackdropMouseDown}>
       <section ref={dialogRef} className="agent-settings-window human-avatar-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar"><h2 id={titleId}>Your profile photo</h2><button type="button" aria-label="Close profile photo settings" disabled={locked} onClick={requestClose}>×</button></header>
+        <header className="agent-settings-titlebar"><h2 id={titleId}>Your profile</h2><button type="button" aria-label="Close profile settings" disabled={locked} onClick={requestClose}>×</button></header>
         <div className="human-avatar-body">
-          <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} />
-          <div><strong>{human.name}</strong><span>Your photo appears beside your name in participant lists.</span></div>
+          <HumanAvatar name={cleanName || human.name} avatarUrl={avatarUrl} />
+          <label className="human-profile-name">Display name<input data-dialog-initial-focus className="classic-input" maxLength={32} value={name} aria-invalid={!cleanName} onChange={(event) => { setName(event.target.value); setError(""); }} /></label>
           <input ref={inputRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { void chooseFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
-          <div className="human-avatar-actions"><button type="button" className="classic-button" disabled={locked} onClick={() => inputRef.current?.click()}>{processing ? "Processing…" : human.avatarUrl ? "Choose another image" : "Choose image"}</button>{human.avatarUrl ? <button type="button" className="classic-button human-avatar-remove" disabled={locked} onClick={() => void removePhoto()}>Remove photo</button> : null}</div>
-          <small>Images are cropped to a square and stored as a compact room thumbnail.</small>
+          <div className="human-avatar-actions"><button type="button" className="classic-button" disabled={locked} onClick={() => inputRef.current?.click()}>{processing ? "Processing…" : avatarUrl ? "Choose another image" : "Choose image"}</button>{avatarUrl ? <button type="button" className="classic-button human-avatar-remove" disabled={locked} onClick={() => { setAvatarUrl(undefined); setError(""); }}>Remove photo</button> : null}</div>
+          <small>Your name and image appear together in participant lists. Images are cropped to a square and stored as a compact room thumbnail.</small>
           {error ? <p role="alert">{error}</p> : null}
         </div>
-        <footer className="agent-settings-actions"><button type="button" className="classic-button" disabled={locked} onClick={requestClose}>Done</button></footer>
+        <footer className="agent-settings-actions human-profile-footer"><button type="button" className="classic-button" disabled={locked} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" data-default-button disabled={locked || !changed || !cleanName} onClick={() => void saveProfile()}>{busy ? "Saving…" : "Save profile"}</button></footer>
       </section>
     </div>
   );

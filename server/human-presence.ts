@@ -80,11 +80,13 @@ export class HumanPresenceRegistry {
     const requestedId = typeof resumeId === "string" && /^[a-zA-Z0-9-]{8,80}$/.test(resumeId) ? resumeId : undefined;
     const id = requestedId || randomUUID();
     const existing = this.humans.get(id);
+    const avatarUrl = validHumanAvatarDataUrl(input.avatarUrl) ? input.avatarUrl : undefined;
+    const removeAvatar = input.avatarUrl === null || input.avatarUrl === "";
     const human: HumanPresence = {
       id,
       name,
       style: sanitizeChatStyle(input.style, existing?.style || DEFAULT_PARTICIPANT_STYLES.you),
-      ...(validHumanAvatarDataUrl(input.avatarUrl) ? { avatarUrl: input.avatarUrl } : existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
+      ...(avatarUrl ? { avatarUrl } : !removeAvatar && existing?.avatarUrl ? { avatarUrl: existing.avatarUrl } : {}),
     };
     this.humans.set(id, human);
     return structuredClone(human);

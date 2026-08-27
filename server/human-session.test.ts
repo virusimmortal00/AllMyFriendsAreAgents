@@ -49,6 +49,22 @@ describe("human sessions", () => {
     expect(sessionHuman(request({}, cookie), humans, sessions)?.id).toBe(first.id);
   });
 
+  it("updates the session-bound profile without changing identity", () => {
+    const humans = new HumanPresenceRegistry();
+    const sessions = new HumanSessions();
+    const avatarUrl = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64")}`;
+    const firstResponse = response();
+    const first = joinHumanWithSession(request({ name: "Ada", avatarUrl }), firstResponse.value, humans, sessions);
+    const cookie = firstResponse.headers.get("Set-Cookie")!.split(";")[0];
+    const updatedResponse = response();
+
+    const updated = joinHumanWithSession(request({ name: "Grace Hopper", avatarUrl: null }, cookie), updatedResponse.value, humans, sessions);
+
+    expect(updated).toMatchObject({ id: first.id, name: "Grace Hopper", style: first.style });
+    expect(updated).not.toHaveProperty("avatarUrl");
+    expect(sessionHuman(request({}, cookie), humans, sessions)).toEqual(updated);
+  });
+
   it("rejects missing, unknown, and malformed session cookies without resolving a human", () => {
     const humans = new HumanPresenceRegistry();
     const sessions = new HumanSessions();

@@ -8,6 +8,7 @@ export interface ClassicMenuDefinition {
   id: string;
   label: string;
   accessKey: string;
+  disabled?: boolean;
   items: ClassicMenuItem[];
 }
 
@@ -25,15 +26,25 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
   const menuRefs = useRef<Array<HTMLDivElement | null>>([]);
   const focusLastRef = useRef(false);
 
-  const focusTitle = (index: number, open = openIndex !== null) => {
-    const next = (index + menus.length) % menus.length;
+  const enabledMenuIndex = (start: number, direction: -1 | 1 = 1) => {
+    for (let offset = 0; offset < menus.length; offset += 1) {
+      const index = (start + offset * direction + menus.length) % menus.length;
+      if (!menus[index]?.disabled) return index;
+    }
+    return -1;
+  };
+
+  const focusTitle = (index: number, open = openIndex !== null, direction: -1 | 1 = 1) => {
+    const next = enabledMenuIndex(index, direction);
+    if (next < 0) return;
     setActiveIndex(next);
     setOpenIndex(open ? next : null);
     titleRefs.current[next]?.focus();
   };
 
-  const openMenu = (index: number, focusLast = false) => {
-    const next = (index + menus.length) % menus.length;
+  const openMenu = (index: number, focusLast = false, direction: -1 | 1 = 1) => {
+    const next = enabledMenuIndex(index, direction);
+    if (next < 0) return;
     focusLastRef.current = focusLast;
     setActiveIndex(next);
     setOpenIndex(next);
@@ -71,7 +82,7 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
         return;
       }
       if (!event.altKey || event.ctrlKey || event.metaKey || event.key.length !== 1) return;
-      const index = menus.findIndex((menu) => menu.accessKey.toLocaleLowerCase() === event.key.toLocaleLowerCase());
+      const index = menus.findIndex((menu) => !menu.disabled && menu.accessKey.toLocaleLowerCase() === event.key.toLocaleLowerCase());
       if (index < 0) return;
       event.preventDefault();
       openMenu(index);
@@ -87,7 +98,8 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
   function onTitleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      focusTitle(index + (event.key === "ArrowRight" ? 1 : -1));
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      focusTitle(index + direction, openIndex !== null, direction);
       return;
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
@@ -104,7 +116,8 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
   function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>, menuIndex: number) {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      openMenu(menuIndex + (event.key === "ArrowRight" ? 1 : -1));
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      openMenu(menuIndex + direction, false, direction);
       return;
     }
     if (event.key === "Escape") {
@@ -152,8 +165,9 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
           role="menuitem"
           aria-haspopup="menu"
           aria-expanded={openIndex === index}
+          disabled={menu.disabled}
           tabIndex={activeIndex === index ? 0 : -1}
-          onMouseEnter={() => { if (openIndex !== null && openIndex !== index) openMenu(index); }}
+          onMouseEnter={() => { if (!menu.disabled && openIndex !== null && openIndex !== index) openMenu(index); }}
           onKeyDown={(event) => onTitleKeyDown(event, index)}
           onClick={() => openIndex === index ? deactivate() : openMenu(index)}
         >{mnemonicLabel(menu.label, menu.accessKey)}</button>

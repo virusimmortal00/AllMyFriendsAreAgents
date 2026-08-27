@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   runAction: vi.fn(),
   sendMessage: vi.fn(),
   updateMyAvatar: vi.fn(),
+  updateMyProfile: vi.fn(),
   updateMyStyle: vi.fn(),
   updateSettings: vi.fn(),
 }));
@@ -141,6 +142,7 @@ beforeEach(() => {
   }));
   api.updateMyStyle.mockResolvedValue(human);
   api.updateMyAvatar.mockResolvedValue(human);
+  api.updateMyProfile.mockResolvedValue(human);
   api.updateSettings.mockResolvedValue(room("settings"));
 });
 
@@ -340,20 +342,51 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getByRole("status", { name: "Claude is generating a response" })).toBeTruthy();
   });
 
-  it("warns before resetting identity and preserves room state and draft when canceled", async () => {
+  it("opens Manage Agents on the exact activated roster row and restores focus to that row", async () => {
+    const roster = {
+      schemaVersion: 3 as const,
+      revision: 4,
+      entries: [
+        { agentId: "codex-sol" as const, conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true },
+        { agentId: "claude-opus" as const, conversationalName: "Opus", providerId: "anthropic", modelId: "claude-opus-5", enabled: true },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      roster,
+      catalog: [
+        { agentId: "codex-sol", provider: "openai", modelId: "gpt-5.6-sol", conversationalName: "Sol" },
+        { agentId: "claude-opus", provider: "anthropic", modelId: "claude-opus-5", conversationalName: "Opus" },
+      ],
+    }), { status: 200 })));
+    const user = userEvent.setup();
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], { roster })));
+    const row = screen.getByRole("button", { name: /Configure Opus:/ });
+
+    await user.dblClick(row);
+
+    expect((await screen.findByRole("button", { name: "View Opus configuration" })).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "View Sol configuration" }).getAttribute("aria-pressed")).toBe("false");
+    await user.click(screen.getByRole("button", { name: "Close roster manager" }));
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  });
+
+  it("keeps profile edits local when canceled and restores focus to You", async () => {
     const user = userEvent.setup();
     const composer = await renderConnected([{ id: "history", speaker: "codex-sol", text: "Keep the room", timestamp: "2026-08-21T12:00:00.000Z" }]);
     await user.type(composer, "Keep my draft");
-    await chooseMenuItem(user, "Room", "Change name...");
-    const dialog = screen.getByRole("alertdialog", { name: "Change your name?" });
-    expect(dialog.textContent).toContain("resets your room identity");
-    expect(dialog.textContent).toContain("saved draft will be deleted");
+    await chooseMenuItem(user, "You", "Profile...");
+    const dialog = screen.getByRole("dialog", { name: "Your profile" });
+    const name = within(dialog).getByRole("textbox", { name: "Display name" });
+    await user.clear(name);
+    await user.type(name, "Grace Hopper");
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Room" }));
+    expect(screen.queryByRole("dialog", { name: "Your profile" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "You" }));
     expect(screen.getByText("Keep the room")).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep my draft");
     expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("Keep my draft");
+    expect(api.updateMyProfile).not.toHaveBeenCalled();
   });
 
   it("edits room settings in a modal and restores focus after save", async () => {
@@ -431,36 +464,66 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
   });
 
-  it("opens People as a modal and closes it with Escape", async () => {
+  it("puts You first, removes People and Change name, and grays unavailable categories and room actions", async () => {
     const user = userEvent.setup();
     await renderConnected();
-    const trigger = screen.getByRole("menuitem", { name: "Room" });
+    const topLevelMenus = screen.getAllByRole("menuitem");
+    expect(topLevelMenus[0]?.textContent).toBe("You");
+    expect((screen.getByRole("menuitem", { name: "Window" }) as HTMLButtonElement).disabled).toBe(true);
 
-    await chooseMenuItem(user, "Room", "People...");
-    expect(screen.getByRole("dialog", { name: "People in this room" })).toBeTruthy();
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "People in this room" })).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    await user.click(screen.getByRole("menuitem", { name: "Room" }));
+    const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
+    expect(roomMenu.queryByRole("menuitem", { name: "People..." })).toBeNull();
+    expect(roomMenu.queryByRole("menuitem", { name: "Change name..." })).toBeNull();
+    expect(roomMenu.getByRole("menuitem", { name: "Manage agents..." })).toBeTruthy();
+    for (const name of ["Continue discussion", "Start roundtable", "Review with all agents"]) {
+      expect((roomMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 
-  it("warns about an unsent message and clears identity persistence only after confirmation", async () => {
+  it("opens the existing Manage Agents dialog from the Room menu and restores focus", async () => {
+    const roster = {
+      schemaVersion: 3 as const,
+      revision: 4,
+      entries: [{ agentId: "codex-sol" as const, conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true }],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      roster,
+      catalog: [{ agentId: "codex-sol", provider: "openai", modelId: "gpt-5.6-sol", conversationalName: "Sol" }],
+    }), { status: 200 })));
+    const user = userEvent.setup();
+    await renderConnected();
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], { roster })));
+    const roomTrigger = screen.getByRole("menuitem", { name: "Room" });
+
+    await chooseMenuItem(user, "Room", "Manage agents...");
+    expect(await screen.findByRole("dialog", { name: "Manage room agents" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "View Sol configuration" }).getAttribute("aria-pressed"))).toBe("true");
+    await user.click(screen.getByRole("button", { name: "Close roster manager" }));
+    await waitFor(() => expect(document.activeElement).toBe(roomTrigger));
+  });
+
+  it("updates the profile without replacing identity or clearing drafts and pending sends", async () => {
+    api.updateMyProfile.mockResolvedValueOnce({ ...human, name: "Grace Hopper" });
     await renderConnected([], () => {
       saveDraftSnapshot(window.localStorage, human.id, { text: "persisted draft", mentions: [] });
       savePendingSend(window.localStorage, human.id, { clientMessageId: "pending-1", text: "unsent message" });
     });
     const user = userEvent.setup();
-    await chooseMenuItem(user, "Room", "Change name...");
-    const dialog = screen.getByRole("alertdialog", { name: "Change your name?" });
-    expect(dialog.textContent).toContain("unsent message will be deleted");
-    expect(dialog.textContent).toContain("saved draft will be deleted");
-    await user.click(screen.getByRole("button", { name: "Reset identity and change name" }));
-    expect(await screen.findByRole("textbox", { name: "What should everyone call you?" })).toBeTruthy();
-    expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("");
-    expect(window.localStorage.getItem(`all-my-friends-are-agents-pending-send:${human.id}`)).toBeNull();
-    expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBeNull();
+    await chooseMenuItem(user, "You", "Profile...");
+    const name = screen.getByRole("textbox", { name: "Display name" });
+    await user.clear(name);
+    await user.type(name, "Grace Hopper");
+    await user.click(screen.getByRole("button", { name: "Save profile" }));
+
+    await waitFor(() => expect(api.updateMyProfile).toHaveBeenCalledWith({ name: "Grace Hopper", avatarUrl: undefined }));
+    expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("persisted draft");
+    expect(loadPendingSend(window.localStorage, human.id)?.text).toBe("unsent message");
+    expect(JSON.parse(window.localStorage.getItem("all-my-friends-are-agents-human") || "null")).toMatchObject({ id: human.id, name: "Grace Hopper" });
+    expect(screen.queryByRole("textbox", { name: "What should everyone call you?" })).toBeNull();
   });
 
-  it("keeps Chat and workspace labels stable without polluting navigation history", async () => {
+  it("keeps Room menu access inert and makes the Window category unavailable", async () => {
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -469,25 +532,13 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("menuitem", { name: "Room" }));
     expect(pushState).not.toHaveBeenCalled();
     await user.keyboard("{Escape}");
-    await chooseMenuItem(user, "Window", "Improvements");
-    expect(window.location.pathname).toBe("/improvements");
-    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    await user.click(screen.getByRole("menuitem", { name: "Window" }));
-    expect(within(screen.getByRole("menu", { name: "Window" })).getByRole("menuitemradio", { name: "Improvements" }).getAttribute("aria-checked")).toBe("true");
-
-    await user.keyboard("{Escape}");
-    await chooseMenuItem(user, "Window", "Improvements");
-    expect(pushState).toHaveBeenCalledTimes(1);
-
-    await chooseMenuItem(user, "Window", "Chat");
+    const windowMenu = screen.getByRole("menuitem", { name: "Window" });
+    expect((windowMenu as HTMLButtonElement).disabled).toBe(true);
+    await user.click(windowMenu);
     expect(window.location.pathname).toBe("/");
     expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
-    await user.click(screen.getByRole("menuitem", { name: "Window" }));
-    expect(within(screen.getByRole("menu", { name: "Window" })).getByRole("menuitemradio", { name: "Chat" }).getAttribute("aria-checked")).toBe("true");
-    expect(pushState.mock.calls.map(([, , path]) => path)).toEqual(["/improvements", "/"]);
-
-    await user.click(screen.getByRole("menuitem", { name: "Room" }));
-    expect(pushState).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("menu", { name: "Window" })).toBeNull();
+    expect(pushState).not.toHaveBeenCalled();
   });
 
   it("toggles and persists visual timestamps from the View menu", async () => {
@@ -611,57 +662,4 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByText("Late workshop failure")).toBeNull();
   });
 
-  it("identifies a failed room action, blocks duplicates, and permits only one safe retry after reconnect", async () => {
-    let rejectFirst!: (error: Error) => void;
-    let rejectRetry!: (error: Error) => void;
-    api.runAction
-      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }))
-      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRetry = reject; }));
-    const user = userEvent.setup();
-    await renderConnected();
-
-    await chooseMenuItem(user, "Room", "Continue discussion");
-    expect(api.runAction).toHaveBeenCalledOnce();
-    expect(screen.getByRole("status").textContent).toContain("Other room actions are unavailable");
-    await user.click(screen.getByRole("menuitem", { name: "Room" }));
-    const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
-    expect(["Continue discussion", "Start roundtable", "Review with all agents"].every((name) => (roomMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled)).toBe(true);
-    act(() => rejectFirst(new Error("Action service failed")));
-
-    const retry = await screen.findByRole("button", { name: "Retry once" });
-    expect(screen.getByRole("alert").textContent).toContain("Continue discussion failed");
-    act(() => ControlledEventSource.instances[0].fail());
-    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(true));
-    expect(screen.getByRole("alert").textContent).toContain("Retry is unavailable while reconnecting");
-    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
-    act(() => ControlledEventSource.instances[1].emit(room("server-after")));
-    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
-    await user.click(retry);
-    expect(api.runAction).toHaveBeenCalledTimes(2);
-    act(() => rejectRetry(new Error("Retry failed")));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("The retry failed"));
-    expect(screen.queryByRole("button", { name: "Retry once" })).toBeNull();
-  });
-
-  it("does not offer duplicate-prone retry when a room action outcome is unknown", async () => {
-    api.runAction.mockRejectedValueOnce(new ApiRequestError("Connection interrupted", true));
-    const user = userEvent.setup();
-    await renderConnected();
-    await chooseMenuItem(user, "Room", "Start roundtable");
-    expect((await screen.findByRole("alert")).textContent).toContain("retrying could duplicate the action");
-    expect(screen.queryByRole("button", { name: "Retry once" })).toBeNull();
-  });
-
-  it("ignores a late room-action failure after identity reset", async () => {
-    let rejectAction!: (error: Error) => void;
-    api.runAction.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectAction = reject; }));
-    const user = userEvent.setup();
-    await renderConnected();
-    await chooseMenuItem(user, "Room", "Continue discussion");
-    await chooseMenuItem(user, "Room", "Change name...");
-    await user.click(screen.getByRole("button", { name: "Reset identity and change name" }));
-    act(() => rejectAction(new Error("Late action failure")));
-    expect(await screen.findByRole("textbox", { name: "What should everyone call you?" })).toBeTruthy();
-    expect(screen.queryByText("Late action failure")).toBeNull();
-  });
 });
