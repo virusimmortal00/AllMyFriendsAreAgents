@@ -495,7 +495,7 @@ async function performTurn(turn: ConversationTurn) {
   }
 }
 
-async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}) {
+async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
   const snapshot = store.snapshot();
   const energy = snapshot.settings.conversationEnergy;
   await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
@@ -503,7 +503,7 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
   if (staged) {
     await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
       ...broadcastPolicy,
-      concurrencyLimit: agentConcurrency,
+      concurrencyLimit: Math.max(1, concurrencyLimit),
     });
     return;
   }
@@ -576,7 +576,10 @@ const commandRuntime = new CommandRuntime({
         const entry = roomAgentEntry(current,agent);
         return Boolean(entry?.enabled && agentHealth.canAttempt(agent));
       });
-      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true});
+      const availableSlots=Math.max(0,agentConcurrency-activeGenerations.size());
+      if (!availableSlots) throw new Error("Shared generation capacity is unavailable for POV execution.");
+      const selected=eligible.slice(0,availableSlots);
+      if (selected.length) await performConversation(selected.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true},availableSlots);
       }, true);if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
     });
     if (!accepted) reject(new Error("The room is already working."));

@@ -99,7 +99,8 @@ export class CommandRuntime {
     for (const attempt of await this.dependencies.store.listPendingCommandAttempts(this.roomId)) {
       const submission = await this.dependencies.store.getCommandSubmission(this.roomId, attempt.submissionId);
       if (!submission || submission.invocation.command !== "task") continue;
-      this.armRecovered(attempt, submission);
+      if (attempt.status === "delivery-pending") await this.resumeDelivery(attempt, submission);
+      else this.armRecovered(attempt, submission);
     }
     for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="pov")this.startPov(execution,submission);}
   }
@@ -237,14 +238,13 @@ export class CommandRuntime {
   private async complete(attempt:CommandAttempt,submission:CommandSubmission,result:CommandExecutionResult) {
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;
     if(!this.attemptCurrent(current))return this.failAndReassign(current,submission,"room or roster authority changed before command completion");
-    const completed={...current,generationId:result.generationId||current.generationId,status:"completed" as const,updatedAt:timestamp(this.clock,current.updatedAt)};
-    const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,completed); if(claimed.kind!=="accepted") return;
-    this.clearLive(attempt.attemptId);
     const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3);
-    if(!visible.length) await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});
-    else if(this.attemptCurrent(completed)) await this.dependencies.deliverTask(current.attemptId,current.agentId,visible,result);
-    else await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:authority-changed`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"authority-changed-before-delivery",text:result.diagnosticText||result.rawText||visible.join("\n"),metadata:{visibleMessages:visible.length}});
+    if(!visible.length){const completed={...current,generationId:result.generationId||current.generationId,status:"completed" as const,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,completed);if(claimed.kind!=="accepted")return;this.clearLive(attempt.attemptId);await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});return;}
+    const pending={...current,generationId:result.generationId||current.generationId,status:"delivery-pending" as const,deliveryMessages:visible,updatedAt:timestamp(this.clock,current.updatedAt)};
+    const claimed=await this.dependencies.store.compareAndSetCommandAttempt(current.updatedAt,pending);if(claimed.kind!=="accepted")return;this.clearLive(attempt.attemptId);await this.resumeDelivery(pending,submission,result);
   }
+
+  private async resumeDelivery(attempt:CommandAttempt,submission:CommandSubmission,result?:CommandExecutionResult){const messages=attempt.deliveryMessages||[];if(!messages.length)return;if(!this.attemptCurrent(attempt)){await this.captureDiagnostic({agentId:attempt.agentId,attemptId:attempt.attemptId,generationId:attempt.generationId||undefined,correlationId:`${attempt.attemptId}:authority-changed`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"authority-changed-before-delivery",text:messages.join("\n"),metadata:{visibleMessages:messages.length}});const dropped={...attempt,status:"completed" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,dropped);return;}await this.dependencies.deliverTask(attempt.attemptId,attempt.agentId,messages,result||{generationId:attempt.generationId||undefined,visibleMessages:messages});const completed={...attempt,status:"completed" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,completed);}
 
   private async fail(attempt:CommandAttempt,submission:CommandSubmission,error:unknown) { const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return; await this.failAndReassign(current,submission,error instanceof Error?error.message:String(error)); }
   private async stage1(attempt:CommandAttempt,submission:CommandSubmission,reason="generation did not start before the launch watchdog") { await this.failAndReassign(attempt,submission,reason); }

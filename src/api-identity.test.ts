@@ -2,11 +2,18 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
-import { ApiRequestError, authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings } from "./api";
+import { ApiRequestError, authorizeHeartbeat, controlLogin, emergencyStopHeartbeat, joinRoom, sendContinuationWorkRequest, sendMessage, updateMyAvatar, updateMyProfile, updateMyStyle, updateRoster, updateSettings, voteOnPoll } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("browser identity requests", () => {
+  it("keeps one browser vote identity across retry and identity recovery without colliding across browsers", async () => {
+    const bodies: Array<{clientVoteId:string}> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_path:string,init?:RequestInit)=>{bodies.push(JSON.parse(String(init?.body)));return new Response(JSON.stringify({kind:"accepted"}));}));
+    await voteOnPoll("poll-one",0);await voteOnPoll("poll-one",1);await voteOnPoll("poll-two",0);
+    expect(bodies[0]!.clientVoteId).toBe(bodies[1]!.clientVoteId);
+    expect(bodies[2]!.clientVoteId).not.toBe(bodies[0]!.clientVoteId);
+  });
   it("reports a private command rejection as a known HTTP outcome", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Denied." }), { status: 400, headers: { "Content-Type": "application/json" } })));
     await expect(sendMessage("/task no", "command-denied-1")).rejects.toMatchObject({ name: "ApiRequestError", message: "Denied.", outcomeUnknown: false, status: 400, body: { error: "Denied." } } satisfies Partial<ApiRequestError>);

@@ -126,7 +126,7 @@ export function registerRosterRoutes(input: {
       for (const entry of result.roster.entries) {
         const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
         if (!previous || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry)) await control.recordAudit(authenticated.principal.id, "MODEL_SELECTION_CHANGED", entry.agentId, { previousRevision: previous?.configurationRevision || 0, nextRevision: entry.configurationRevision || 1 });
-        if (!previous || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions))) await control.recordAudit(authenticated.principal.id, "COMMAND_PERMISSIONS_CHANGED", entry.agentId, { allowAll: normalizeCommandPermissions(entry.commandPermissions).allowAll, allowed: normalizeCommandPermissions(entry.commandPermissions).allowed });
+        if (!previous || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions))) await control.recordAudit(authenticated.principal.id, "COMMAND_PERMISSIONS_CHANGED", entry.agentId, { allowAll: normalizeCommandPermissions(entry.commandPermissions).allowAll, allowedCommands: normalizeCommandPermissions(entry.commandPermissions).allowed.join(",") });
       }
     }
     broadcast();

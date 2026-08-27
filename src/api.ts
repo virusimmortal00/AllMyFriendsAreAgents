@@ -13,6 +13,7 @@ import type { DiagnosticRecord } from "./diagnostics";
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 let controlCsrfToken = "";
+const pollVoteIds = new Map<string,string>();
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
@@ -248,7 +249,17 @@ export async function loadDiagnostic(token: string, agentId: string, recordId: s
 }
 
 export async function voteOnPoll(pollId: string, optionIndex: number) {
-  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex, clientVoteId: `pollvote:${pollId}:${optionIndex}`.slice(0,100) }) }).then((response) => response.json());
+  const storageKey = "amfaa.command.poll-votes.v1";
+  let stored: Record<string,string> = {};
+  try { stored = JSON.parse(window.localStorage.getItem(storageKey) || "{}"); } catch { stored = {}; }
+  const candidate = pollVoteIds.get(pollId) || stored[pollId] || "";
+  const clientVoteId = /^[a-zA-Z0-9_-]{8,100}$/.test(candidate) ? candidate : `pollvote_${crypto.randomUUID()}`;
+  pollVoteIds.set(pollId,clientVoteId);
+  if (!stored[pollId]) {
+    const entries = [...Object.entries(stored), [pollId, clientVoteId] as const].slice(-100);
+    try { window.localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries))); } catch { /* server voter identity still deduplicates same-session retries */ }
+  }
+  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex, clientVoteId }) }).then((response) => response.json());
 }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {

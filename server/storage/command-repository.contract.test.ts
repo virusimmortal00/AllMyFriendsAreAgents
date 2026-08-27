@@ -62,8 +62,11 @@ describe.each(factories)("%s command repository", (_backend, makeFixture) => {
       const attempt = { attemptId: "attempt-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", attempt: 1, agentId: "codex-sol" as const, generationId: "generation-1", status: "active" as const, reason: null, createdAt: submission().createdAt, updatedAt: submission().createdAt };
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("created");
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("duplicate");
-      const completed = { ...attempt, status: "completed" as const, updatedAt: "2026-08-27T12:03:00.000Z" };
-      expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, completed)).toMatchObject({ kind: "accepted" });
+      const deliveryPending = { ...attempt, status: "delivery-pending" as const, deliveryMessages: ["durable result"], updatedAt: "2026-08-27T12:02:00.000Z" };
+      expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, deliveryPending)).toMatchObject({ kind: "accepted" });
+      expect((await fixture.repository.listPendingCommandAttempts(DEFAULT_ROOM_ID))[0]).toEqual(deliveryPending);
+      const completed = { ...deliveryPending, status: "completed" as const, updatedAt: "2026-08-27T12:03:00.000Z" };
+      expect(await fixture.repository.compareAndSetCommandAttempt(deliveryPending.updatedAt, completed)).toMatchObject({ kind: "accepted" });
       expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, { ...completed, status: "failed" })).toEqual({ kind: "conflict" });
       expect(await fixture.repository.listPendingCommandAttempts(DEFAULT_ROOM_ID)).toEqual([]);
       const audit = { auditId: "audit-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", command: "poll" as const, invokerKind: "human" as const, invokerId: "human-1", targetAgentIds: [] as const, createdAt: submission().createdAt };

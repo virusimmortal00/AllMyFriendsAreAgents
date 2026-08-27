@@ -15,8 +15,8 @@ CREATE TABLE command_submission_tombstones (
 );
 CREATE TABLE command_attempts (
   attempt_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt > 0),
-  agent_id TEXT NOT NULL, generation_id TEXT, status TEXT NOT NULL CHECK(status IN ('queued','active','completed','failed','superseded')),
-  reason TEXT, room_epoch TEXT, roster_revision INTEGER, agent_configuration_revision INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  agent_id TEXT NOT NULL, generation_id TEXT, status TEXT NOT NULL CHECK(status IN ('queued','active','delivery-pending','completed','failed','superseded')),
+  reason TEXT, delivery_messages_json TEXT, room_epoch TEXT, roster_revision INTEGER, agent_configuration_revision INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   PRIMARY KEY(room_id, attempt_id), UNIQUE(room_id, submission_id, attempt),
   FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE
 );
