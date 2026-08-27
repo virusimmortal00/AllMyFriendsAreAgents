@@ -511,7 +511,7 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
   await runAgentConversation(turns, followUpAllowance, performTurn, agentConcurrency);
 }
 
-async function runJob(job: () => Promise<void>) {
+async function runJob(job: () => Promise<void>, propagateFailure = false) {
   try {
     await job();
     await store.setStatus("idle");
@@ -520,6 +520,7 @@ async function runJob(job: () => Promise<void>) {
     console.error("Agent command failed", error);
     await store.addMessage("system", "An agent command failed. Check the server log for details.", "status");
     await store.setStatus("error", undefined, "An agent command failed.");
+    if (propagateFailure) throw error;
   } finally {
     broadcast();
   }
@@ -576,7 +577,7 @@ const commandRuntime = new CommandRuntime({
         return Boolean(entry?.enabled && agentHealth.canAttempt(agent));
       });
       if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true});
-      });if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
+      }, true);if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
     });
     if (!accepted) reject(new Error("The room is already working."));
   }),

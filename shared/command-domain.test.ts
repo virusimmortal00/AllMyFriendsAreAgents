@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, resolveRoundRobin } from "./command-domain.js";
+import { effectiveAllowedCommands, normalizeCommandPermissions, parseCommand, parseCommandInput, resolveRoundRobin } from "./command-domain.js";
 
 describe("command parser", () => {
   it("parses all commands into one typed invocation model", () => {
@@ -16,6 +16,10 @@ describe("command parser", () => {
     for (const input of ["/poll question A B", '/poll "Question" "Only one"', '/poll "unterminated']) {
       expect(parseCommand(input)).toMatchObject({ kind: "private-error", message: expect.stringContaining('/poll "Question"') });
     }
+  });
+
+  it("preserves explicit structured round-robin selection for mention-prefixed prompts", () => {
+    expect(parseCommandInput({ command: "task", prompt: "@claude-sonnet compare this", selection: { kind: "round-robin" } })).toEqual({ kind: "command", invocation: { command: "task", prompt: "@claude-sonnet compare this", selection: { kind: "round-robin" } } });
   });
 });
 

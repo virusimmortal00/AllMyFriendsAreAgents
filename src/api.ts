@@ -211,7 +211,14 @@ export async function sendMessage(text: string, clientMessageId: string, mention
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
-  }, REQUEST_TIMEOUT_MS, [400]).then((response) => response.json()).then((acknowledgement: unknown) => {
+  }, REQUEST_TIMEOUT_MS, [400]).then(async (response) => {
+    const acknowledgement: unknown = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const body = acknowledgement as { error?: string };
+      throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, acknowledgement);
+    }
+    return acknowledgement;
+  }).then((acknowledgement: unknown) => {
     if (isCommandAcknowledgement(acknowledgement) && acknowledgement.clientSubmissionId === clientMessageId) return acknowledgement;
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);

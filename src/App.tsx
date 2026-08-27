@@ -156,6 +156,7 @@ export default function App() {
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [polls, setPolls] = useState<PublicPollProjection[]>([]);
+  const pollRequestSequence = useRef(0);
   const [pollVotePending, setPollVotePending] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
@@ -226,11 +227,12 @@ export default function App() {
     if (!human || !connected) { setPolls([]); return; }
     let cancelled = false;
     const refresh = async () => {
-      try { const result = await loadPolls(); if (!cancelled) setPolls(Array.isArray(result?.items) ? result.items : []); } catch { /* the room connection owns recovery */ }
+      const requestSequence = ++pollRequestSequence.current;
+      try { const result = await loadPolls(); if (!cancelled && requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []); } catch { /* the room connection owns recovery */ }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; pollRequestSequence.current += 1; window.clearInterval(timer); };
   }, [human?.id, connected, connectionEpoch]);
 
   useEffect(() => {
@@ -597,7 +599,11 @@ export default function App() {
   function vote(pollId: string, optionIndex: number) {
     if (pollVotePending || !connected) return;
     setPollVotePending(`${pollId}:${optionIndex}`);
-    void voteOnPoll(pollId, optionIndex).then(() => loadPolls()).then((result) => setPolls(Array.isArray(result?.items) ? result.items : [])).catch((error) => {
+    void voteOnPoll(pollId, optionIndex).then(async () => {
+      const requestSequence = ++pollRequestSequence.current;
+      const result = await loadPolls();
+      if (requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []);
+    }).catch((error) => {
       setClientError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
     }).finally(() => setPollVotePending(null));
   }

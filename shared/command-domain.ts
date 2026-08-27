@@ -43,14 +43,17 @@ export function parseCommand(text: string): CommandParseResult {
   return { kind: "command", invocation: { command: "task", prompt: rest, selection: { kind: "round-robin" } } };
 }
 
-/** Structured tool calls deliberately round-trip through the same text grammar as human slash input. */
+/** Structured tool calls share validation with slash input without changing the caller's explicit selection. */
 export function parseCommandInput(input: CommandInput): CommandParseResult {
   if (typeof input === "string") return parseCommand(input);
   if (!input || typeof input !== "object") return { kind: "private-error", message: "Try /help to see the available commands." };
   if (input.command === "help") return parseCommand("/help");
   if (input.command === "pov" && typeof input.prompt === "string") return parseCommand(`/pov ${input.prompt}`);
-  if (input.command === "task" && typeof input.prompt === "string" && input.selection?.kind === "round-robin") return parseCommand(`/task ${input.prompt}`);
-  if (input.command === "task" && typeof input.prompt === "string" && input.selection?.kind === "pinned" && isActiveAgentId(input.selection.agentId)) return parseCommand(`/task @${input.selection.agentId} ${input.prompt}`);
+  if (input.command === "task" && typeof input.prompt === "string" && (input.selection?.kind === "round-robin" || input.selection?.kind === "pinned" && isActiveAgentId(input.selection.agentId))) {
+    const prompt = input.prompt.trim();
+    if (prompt.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /task prompts under ${MAX_PROMPT_LENGTH} characters.` };
+    return { kind: "command", invocation: { command: "task", prompt, selection: input.selection } };
+  }
   if (input.command === "poll" && typeof input.question === "string" && Array.isArray(input.options)) {
     const quote = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
     if (input.options.every((option) => typeof option === "string")) return parseCommand(`/poll ${[input.question, ...input.options].map(quote).join(" ")}`);

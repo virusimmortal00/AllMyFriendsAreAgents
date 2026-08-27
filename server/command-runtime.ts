@@ -229,6 +229,7 @@ export class CommandRuntime {
     const active={...attempt,generationId,status:"active" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,active);
     if(claimed.kind!=="accepted") return false;
+    live.reservation?.release();
     live.timer=this.clock.setTimeout(()=>void this.stage2(active,submission),this.stage2Ms);
     return true;
   }
@@ -242,6 +243,7 @@ export class CommandRuntime {
     const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3);
     if(!visible.length) await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});
     else if(this.attemptCurrent(completed)) await this.dependencies.deliverTask(current.attemptId,current.agentId,visible,result);
+    else await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:authority-changed`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"authority-changed-before-delivery",text:result.diagnosticText||result.rawText||visible.join("\n"),metadata:{visibleMessages:visible.length}});
   }
 
   private async fail(attempt:CommandAttempt,submission:CommandSubmission,error:unknown) { const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return; await this.failAndReassign(current,submission,error instanceof Error?error.message:String(error)); }
