@@ -126,6 +126,7 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     burst?: { burstId: string; sequence: number },
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
   ): Promise<RoomMessage>;
+  addCommandAuditMessageOnce(auditId: string, text: string): Promise<RoomMessage>;
   updateSettings(update: Partial<RoomSettings>): Promise<void>;
   updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult>;
   changeTopic(topic: string): Promise<void>;

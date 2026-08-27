@@ -55,7 +55,6 @@ import { ControlError, ControlPlaneStore } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
-import { effectiveAllowedCommands, normalizeCommandPermissions } from "../shared/command-domain.js";
 import { roomAgentEntry } from "../shared/roster.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -537,13 +536,13 @@ const commandRuntime = new CommandRuntime({
       const current = normalizeRoomAgentRoster(store.snapshot().roster);
       const eligible = agents.filter((agent) => {
         const entry = roomAgentEntry(current,agent);
-        return Boolean(entry?.enabled && effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions),["pov"]).includes("pov") && agentHealth.canAttempt(agent));
+        return Boolean(entry?.enabled && agentHealth.canAttempt(agent));
       });
       if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true});
     }));
     if (!accepted) throw new Error("The room is already working.");
   },
-  publishStatus: async (text) => { await store.addMessage("system",text,"status"); broadcast(); },
+  publishStatus: async (auditId,text) => { await store.addCommandAuditMessageOnce(auditId,text); broadcast(); },
   deliverTask: async (agent,messages,result) => {
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
     const burstId=randomUUID();
