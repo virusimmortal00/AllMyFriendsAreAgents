@@ -26,6 +26,9 @@ export interface CommandExecutionResult {
   readonly visibleMessages?: readonly string[];
   readonly rawText?: string;
   readonly diagnosticText?: string;
+  readonly sessionId?: string;
+  readonly permission?: "read-only" | "writable";
+  readonly codeEpoch?: string;
 }
 
 export interface CommandLaunchHooks {
@@ -41,7 +44,7 @@ export interface CommandRuntimeDependencies {
   readonly executeTask: (agentId: ActiveAgentId, prompt: string, hooks: CommandLaunchHooks) => Promise<CommandExecutionResult>;
   readonly executePov: (agentIds: readonly ActiveAgentId[], prompt: string) => Promise<void>;
   readonly publishStatus: (text: string) => Promise<void>;
-  readonly deliverTask: (agentId: ActiveAgentId, messages: readonly string[]) => Promise<void>;
+  readonly deliverTask: (agentId: ActiveAgentId, messages: readonly string[], result: CommandExecutionResult) => Promise<void>;
   readonly ceiling?: readonly RoomCommandName[];
   readonly roomId?: string;
   readonly clock?: CommandClock;
@@ -65,7 +68,7 @@ export function sanitizeDiagnosticText(input: string | undefined) {
   if (!input) return null;
   const secret = /(?:authorization|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|cookie|set-cookie)\s*[:=]\s*\S+/gi;
   const reasoning = /(?:chain of thought|internal reasoning|hidden reasoning)\s*[:=][^\n]*/gi;
-  const sanitized = input.replace(secret, "$1[REDACTED]").replace(reasoning, "[REDACTED INTERNAL CONTENT]").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+  const sanitized = input.replace(secret, "[REDACTED]").replace(reasoning, "[REDACTED INTERNAL CONTENT]").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
   return sanitized ? sanitized.slice(0, MAX_DIAGNOSTIC_TEXT) : null;
 }
 
@@ -112,6 +115,7 @@ export class CommandRuntime {
     const submission: CommandSubmission = { submissionId: stableId(this.roomId, invoker.kind, invoker.id, clientSubmissionId), roomId: this.roomId, clientSubmissionId, command: parsed.invocation.command, invocation: parsed.invocation, invoker, createdAt };
     const persisted = await this.dependencies.store.createCommandSubmission(submission);
     if (persisted.kind === "duplicate") return this.replay(persisted.submission);
+    if (!this.allowed(invoker).includes(parsed.invocation.command)) return { kind:"private-error",message:"Command permission changed before dispatch." };
     return this.dispatch(submission);
   }
 
@@ -137,6 +141,7 @@ export class CommandRuntime {
   }
 
   private async replay(submission: CommandSubmission): Promise<CommandResponse> {
+    if (!await this.dependencies.store.getCommandAuditIdentity(this.roomId,submission.submissionId)) return { kind:"private-error",message:"The original command was not accepted." };
     if (submission.command === "poll") {
       const poll = await this.dependencies.store.getCommandPoll(this.roomId, stableId(submission.submissionId,"poll"));
       if (poll) return { kind: "accepted", submissionId: submission.submissionId, duplicate: true, poll: publicPollProjection(poll, await this.dependencies.store.listCommandVotes(this.roomId,poll.pollId)) };
@@ -209,7 +214,7 @@ export class CommandRuntime {
     const live: LiveAttempt = { controller:new AbortController(),partial:"" };
     this.live.set(attempt.attemptId,live);
     live.timer = this.clock.setTimeout(()=>void this.stage1(attempt,submission),this.stage1Ms);
-    void this.dependencies.executeTask(agentId,(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,{ signal:live.controller.signal, partial:(text)=>{ live.partial=sanitizeDiagnosticText(text)||""; }, active:async (generationId)=>this.markActive(attempt,generationId,submission) }).then((result)=>this.complete(attempt,submission,result)).catch((error)=>this.fail(attempt,submission,error));
+    void this.dependencies.executeTask(agentId,(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,{ signal:live.controller.signal, partial:(text)=>{ live.partial=sanitizeDiagnosticText(text)||""; void this.captureLateStallPartial(attempt,submission,live.partial); }, active:async (generationId)=>this.markActive(attempt,generationId,submission) }).then((result)=>this.complete(attempt,submission,result)).catch((error)=>this.fail(attempt,submission,error));
   }
 
   private async launchEligible(submission: CommandSubmission, agentId: ActiveAgentId) {
@@ -235,12 +240,13 @@ export class CommandRuntime {
     this.clearLive(attempt.attemptId);
     const visible=(result.visibleMessages||[]).filter(Boolean).slice(0,3);
     if(!visible.length) await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:completed.generationId||undefined,correlationId:`${current.attemptId}:no-response`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"no-response-needed",text:result.diagnosticText||result.rawText,metadata:{visibleMessages:0}});
-    else await this.dependencies.deliverTask(current.agentId,visible);
+    else await this.dependencies.deliverTask(current.agentId,visible,result);
   }
 
   private async fail(attempt:CommandAttempt,submission:CommandSubmission,error:unknown) { const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return; await this.failAndReassign(current,submission,error instanceof Error?error.message:String(error)); }
   private async stage1(attempt:CommandAttempt,submission:CommandSubmission,reason="generation did not start before the launch watchdog") { await this.failAndReassign(attempt,submission,reason); }
   private async stage2(attempt:CommandAttempt,submission:CommandSubmission) { const live=this.live.get(attempt.attemptId); if(live?.partial) await this.captureDiagnostic({agentId:attempt.agentId,attemptId:attempt.attemptId,generationId:attempt.generationId||undefined,correlationId:`${attempt.attemptId}:stage-2`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"generation-stalled",text:live.partial,metadata:{stage:2}}); await this.failAndReassign(attempt,submission,"generation stalled before a terminal outcome"); }
+  private async captureLateStallPartial(attempt:CommandAttempt,submission:CommandSubmission,text:string) { if(!text)return; const current=(await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId)).find((item)=>item.attemptId===attempt.attemptId); if(current?.status!=="superseded"||!current.reason?.includes("stalled"))return; await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:current.generationId||undefined,correlationId:`${current.attemptId}:stage-2`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"generation-stalled",text,metadata:{stage:2}}); }
 
   private async failAndReassign(attempt:CommandAttempt,submission:CommandSubmission,reason:string) {
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;

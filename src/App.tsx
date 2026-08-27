@@ -547,7 +547,15 @@ export default function App() {
     setRoom((current) => appendOptimisticHumanMessage(current, human, optimisticId, message, new Date().toISOString(), mentions, clientMessageId));
     try {
       setClientError("");
-      await sendMessage(message, clientMessageId, mentions);
+      const acknowledgement = await sendMessage(message, clientMessageId, mentions);
+      if ("command" in acknowledgement) {
+        setRoom((current) => discardOptimisticMessage(current, optimisticId));
+        if (acknowledgement.result.kind === "private-help") {
+          const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
+          setConnectionNotice(notice);
+          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
+        }
+      }
       return { restoreOnFailure: false };
     } catch (error) {
       const delivered = roomRef.current.messages.some(({ clientMessageId: deliveredId, id }) =>

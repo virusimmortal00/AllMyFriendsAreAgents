@@ -57,6 +57,10 @@ import { OpenCodeContextSummarizer } from "./context-summarizer.js";
 import { registerRoomHistoryRoutes } from "./room-history-api.js";
 import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
+import { CommandRuntime } from "./command-runtime.js";
+import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
+import { effectiveAllowedCommands, normalizeCommandPermissions } from "../shared/command-domain.js";
+import { roomAgentEntry } from "../shared/roster.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -339,8 +343,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
   });
+  if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
 
   if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+    if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
     await store.clearSession(agent);
     await generationJournal.append({
       type: "generation.delivery",
@@ -520,6 +526,66 @@ async function runJob(job: () => Promise<void>) {
   }
 }
 
+function commandAgentAvailable(agent: import("../shared/participants.js").ActiveAgentId) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+  const active = activeGenerations.snapshot();
+  return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
+    && !Object.values(active).includes(agent) && Object.keys(active).length < agentConcurrency && !jobs.busy);
+}
+
+async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
+  const before = roomSnapshot();
+  const revision = roomActivity.current();
+  const activityCancellation = roomActivity.abortSignal(revision);
+  const signal = AbortSignal.any([hooks.signal, activityCancellation.signal]);
+  try {
+    const result = await runAgent(
+      agent, before, prompt || "Take the next useful concrete step for the assigned task and report the result concisely.", false,
+      generationJournal, signal, undefined, activeGenerations,
+      { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
+      undefined, undefined, modelDiscovery,
+      undefined,
+      { onGenerationStart: hooks.active, onPartial: hooks.partial },
+    );
+    if (await agentHealth.recordSuccess(agent)) broadcast();
+    const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
+    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
+    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch };
+  } catch (error) {
+    if (!isAgentGenerationCancelledError(error)) await agentHealth.recordFailure(agent,error);
+    throw error;
+  } finally { activityCancellation.dispose(); }
+}
+
+const commandRuntime = new CommandRuntime({
+  store,
+  roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
+  canLaunch: commandAgentAvailable,
+  stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
+  stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
+  executeTask: performCommandTask,
+  executePov: async (agents, prompt) => {
+    const accepted = jobs.enqueue(`command:pov:${randomUUID()}`, () => runJob(async () => {
+      const current = normalizeRoomAgentRoster(store.snapshot().roster);
+      const eligible = agents.filter((agent) => {
+        const entry = roomAgentEntry(current,agent);
+        return Boolean(entry?.enabled && effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions),["pov"]).includes("pov") && agentHealth.canAttempt(agent));
+      });
+      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt})),true,{inviteAll:true});
+    }));
+    if (!accepted) throw new Error("The room is already working.");
+  },
+  publishStatus: async (text) => { await store.addMessage("system",text,"status"); broadcast(); },
+  deliverTask: async (agent,messages,result) => {
+    if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
+    const burstId=randomUUID();
+    for (const [sequence,message] of messages.entries()) await store.addMessage(agent,message,"chat",store.snapshot().settings.participantStyles[agent],{burstId,sequence});
+    broadcast();
+    if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
+  },
+});
+await commandRuntime.initialize();
+
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
   await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
   broadcast();
@@ -687,6 +753,7 @@ registerRoomSettingsRoutes({
   },
   broadcast,
 });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -745,6 +812,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, humans, sessions:humanSessions, text });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
@@ -936,6 +1004,7 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   jobs.close();
+  commandRuntime.close();
   roomActivity.interrupt();
   activeGenerations.clear();
   presenceAnnouncements.shutdown();

@@ -1,7 +1,7 @@
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
+import type { CommandMutationAcknowledgement, MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
@@ -206,17 +206,20 @@ export async function updateMyProfile(profile: { name: string; avatarUrl?: strin
   }).then((response) => response.json());
 }
 
-export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement> {
+export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement | CommandMutationAcknowledgement> {
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }).then((response) => response.json()).then((acknowledgement: unknown) => {
+    if (isCommandAcknowledgement(acknowledgement) && acknowledgement.clientSubmissionId === clientMessageId) return acknowledgement;
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
     }
     return acknowledgement;
   });
 }
+
+function isCommandAcknowledgement(value: unknown): value is CommandMutationAcknowledgement { const acknowledgement=value as Partial<CommandMutationAcknowledgement>|null; return Boolean(acknowledgement&&acknowledgement.command===true&&typeof acknowledgement.clientSubmissionId==="string"&&acknowledgement.result&&(acknowledgement.result.kind==="accepted"||acknowledgement.result.kind==="private-help")); }
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
   const continuation = { taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective };
@@ -225,6 +228,7 @@ export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "r
   pendingContinuationMessageIds.set(key, clientMessageId);
   try {
     const acknowledgement = await sendMessage(`Start governed continuation for “${task.title}”: ${objective}`, clientMessageId, [], continuation);
+    if ("command" in acknowledgement) throw new ApiRequestError("The room returned a command response for a continuation request.", true);
     if (pendingContinuationMessageIds.get(key) === clientMessageId) pendingContinuationMessageIds.delete(key);
     return acknowledgement;
   } catch (error) {
