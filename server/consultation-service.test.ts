@@ -59,7 +59,7 @@ describe("ConsultationRunner", () => {
     expect((await runner.get({ roomId: "room-a", consultationId: "blocked" }))?.finalArtifact?.synthesis).toContain("Friday after 18:00");
   });
 
-  it("recovers queued, discussing, and input-required work without duplicate turns or synthesis keys", async () => {
+  it("recovers safe work and refuses duplicate provider dispatch after an uncertain crash", async () => {
     const fixture = await repository();
     const queuedFirst = new ConsultationRunner(fixture.repository, settled("Should not run before restart."));
     await queuedFirst.start({ roomId: "room-a", consultationId: "queued-restart", idempotencyKey: "queued-restart", request: { topic: "Recover a queued consultation safely" }, provenance }); queuedFirst.close(); await new Promise((resolve) => setTimeout(resolve, 10));
@@ -79,9 +79,10 @@ describe("ConsultationRunner", () => {
     first.close(); rejectFirst(new Error("shutdown")); await new Promise((resolve) => setTimeout(resolve, 10));
     const secondSynthesis = settled("Recovered once."); const second = new ConsultationRunner(await JsonConsultationRepository.open(path.join(fixture.directory, "consultations.json")), secondSynthesis, dialogue);
     await second.reconcile("room-a");
-    await eventually(async () => (await second.get({ roomId: "room-a", consultationId: "restart" }))?.state === "complete");
+    await eventually(async () => (await second.get({ roomId: "room-a", consultationId: "restart" }))?.state === "failed");
     expect(dialogue.performTurn).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(secondSynthesis.synthesize).mock.calls[0][0].idempotencyKey).toBe(originalKey);
+    expect(vi.mocked(secondSynthesis.synthesize).mock.calls.filter(([input]) => input.consultationId === "restart")).toHaveLength(0);
+    expect((await second.get({ roomId: "room-a", consultationId: "restart" }))?.execution?.providerOperations).toContainEqual(expect.objectContaining({ operationKey: originalKey, kind: "synthesis", status: "started" }));
     second.close(); await new Promise((resolve) => setTimeout(resolve, 10));
 
     const waitingSynthesis: ConsultationSynthesisService = { synthesize: vi.fn(async (): Promise<ConsultationSynthesisOutput> => ({ kind: "input_required", question: "Which region?" })) };
@@ -91,6 +92,50 @@ describe("ConsultationRunner", () => {
     const afterWaiting = settled(); const recovered = new ConsultationRunner(await JsonConsultationRepository.open(path.join(fixture.directory, "consultations.json")), afterWaiting);
     await recovered.reconcile("room-a"); await new Promise((resolve) => setTimeout(resolve, 20));
     expect(afterWaiting.synthesize).not.toHaveBeenCalled();
+  });
+
+  it("recovers persisted dialogue configuration and duties when creation precedes execution initialization", async () => {
+    const fixture = await repository();
+    await fixture.repository.createConsultation({
+      roomId: "room-a", consultationId: "creation-crash", idempotencyKey: "creation-crash", idempotencyScope: provenance.actorId,
+      request: { topic: "Recover requested dialogue", requestedParticipantIds: ["agent-a"], dialogue: { enabled: true, participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1, timeLimitMs: 10_000 } },
+      provenance, now: provenance.recordedAt,
+    });
+    const dialogue: ConsultationDialogueExecutor = { performTurn: vi.fn(async () => ({ response: "Recovered turn" })) };
+    const runner = new ConsultationRunner(fixture.repository, settled(), dialogue);
+    await runner.reconcile("room-a");
+    await eventually(async () => (await runner.get({ roomId: "room-a", consultationId: "creation-crash" }))?.state === "complete");
+    expect(await runner.get({ roomId: "room-a", consultationId: "creation-crash" })).toMatchObject({
+      request: { dialogue: { enabled: true, turnLimit: 1 } },
+      execution: { dialogueEnabled: true, limits: { turnLimit: 1 }, participantIds: ["agent-a"], turns: [{ participantId: "agent-a" }] },
+      duties: [{ participantId: "agent-a", duty: "facilitator" }],
+    });
+  });
+
+  it("persists turn dispatch before provider invocation and never repeats an uncertain turn", async () => {
+    const fixture = await repository();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const firstDialogue: ConsultationDialogueExecutor = { performTurn: vi.fn(async () => { markStarted(); return new Promise<never>(() => undefined); }) };
+    const first = new ConsultationRunner(fixture.repository, settled(), firstDialogue);
+    await first.start({ roomId: "room-a", consultationId: "turn-crash", idempotencyKey: "turn-crash", request: { topic: "Do not repeat", requestedParticipantIds: ["agent-a"] }, provenance, dialogue: { enabled: true, participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1 } });
+    await started;
+    first.close();
+    const secondDialogue: ConsultationDialogueExecutor = { performTurn: vi.fn() };
+    const second = new ConsultationRunner(await JsonConsultationRepository.open(path.join(fixture.directory, "consultations.json")), settled(), secondDialogue);
+    await second.reconcile("room-a");
+    await eventually(async () => (await second.get({ roomId: "room-a", consultationId: "turn-crash" }))?.state === "failed");
+    expect(firstDialogue.performTurn).toHaveBeenCalledTimes(1);
+    expect(secondDialogue.performTurn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the shared generation ceiling cannot reserve dialogue capacity", async () => {
+    const fixture = await repository();
+    const dialogue: ConsultationDialogueExecutor = { performTurn: vi.fn() };
+    const runner = new ConsultationRunner(fixture.repository, settled(), dialogue, undefined, undefined, { reserve: () => undefined });
+    await runner.start({ roomId: "room-a", consultationId: "capacity", idempotencyKey: "capacity", request: { topic: "Respect shared ceiling", requestedParticipantIds: ["agent-a"] }, provenance, dialogue: { enabled: true, participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1 } });
+    await eventually(async () => (await runner.get({ roomId: "room-a", consultationId: "capacity" }))?.state === "failed");
+    expect(dialogue.performTurn).not.toHaveBeenCalled();
   });
 
   it("persists one winner when cancellation races completion and makes cancellation idempotent", async () => {

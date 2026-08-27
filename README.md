@@ -167,7 +167,7 @@ pnpm run storage:import:sqlite -- \
   --database=.runtime/import-check/amfaa.sqlite
 ```
 
-The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. PostgreSQL migrations exist, but the runtime adapter is not implemented.
+The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. Runtime storage backends are JSON and SQLite; PostgreSQL is not configurable until a complete room repository is available.
 
 Every generation is journaled to `.allmyfriendsareagents/generations.jsonl` with its prompt, raw output, timing, parsed messages, and delivery outcome. Prompts may include room history and worktree diffs, so treat this file as sensitive.
 

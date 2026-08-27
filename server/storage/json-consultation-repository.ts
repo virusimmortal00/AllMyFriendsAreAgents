@@ -28,7 +28,7 @@ export class JsonConsultationRepository implements ConsultationRepository {
   async createConsultation(input: CreateConsultationRequest): Promise<CreateConsultationResult> {
     return this.mutate<CreateConsultationResult>((state) => {
       const digest = consultationRequestDigest(input.request);
-      const replay = Object.values(state.consultations).find((consultation) => consultation.roomId === input.roomId && consultation.idempotencyKey === input.idempotencyKey);
+      const replay = Object.values(state.consultations).find((consultation) => consultation.roomId === input.roomId && consultation.idempotencyScope === input.idempotencyScope && consultation.idempotencyKey === input.idempotencyKey);
       if (replay) {
         if (replay.consultationId === input.consultationId && replay.requestDigest === digest) return { result: { kind: "replayed" as const, consultation: structuredClone(replay) } };
         return { result: { kind: "idempotency_conflict" as const, roomId: input.roomId, idempotencyKey: input.idempotencyKey } };

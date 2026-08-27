@@ -13,12 +13,7 @@ export async function openRoomRepository(
   } else if (configuration.backend === "sqlite") {
     const { SqliteRoomRepository } = await import("./sqlite-room-repository.js");
     repository = await SqliteRoomRepository.open(projectRoot, configuration.databasePath, { seedImprovements: true });
-  } else {
-    throw new Error(
-      "postgres storage is configured but its adapter is not implemented yet. "
-      + "Use ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=json or sqlite while storage plumbing is under development.",
-    );
-  }
+  } else { throw new Error("Unsupported room storage backend"); }
   await repository.setDeployment(await deriveDeploymentProvenance(repository.snapshot().settings.projectPath));
   return repository;
 }

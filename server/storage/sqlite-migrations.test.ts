@@ -1,10 +1,35 @@
 import { DatabaseSync } from "node:sqlite";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, runSqliteMigrations } from "./sqlite-migrations.js";
 
 describe("SQLite migrations", () => {
+  it("repairs databases that recorded the legacy consultation migration as 0021", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
+    try {
+      const files = (await readdir(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY)).filter((filename) => Number(filename.slice(0, 4)) <= 20).sort();
+      for (const filename of files) {
+        database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, filename), "utf8"));
+        database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)").run(Number(filename.slice(0, 4)), "2026-08-27T00:00:00.000Z");
+      }
+      const current = await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, "0024_room_consultations.sql"), "utf8");
+      const legacy = current
+        .replace("  idempotency_scope TEXT NOT NULL CHECK (length(idempotency_scope) > 0),\n", "")
+        .replace("UNIQUE (room_id, idempotency_scope, idempotency_key)", "UNIQUE (room_id, idempotency_key)")
+        .replace("ON DELETE RESTRICT", "ON DELETE CASCADE");
+      database.exec(legacy);
+      database.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES (21,?)").run("2026-08-27T00:00:00.000Z");
+      const projection = { schemaVersion: 1, roomId: "room", consultationId: "legacy", revision: 1, state: "queued", idempotencyKey: "same", requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "legacy" }, affinitySnapshot: [], duties: [], provenance: [{ kind: "human", actorId: "member-a", recordedAt: "2026-08-27T00:00:00.000Z" }], execution: null, finalArtifact: null, transitions: [{ revision: 1, from: null, to: "queued", at: "2026-08-27T00:00:00.000Z", actorId: "member-a", reason: "created" }], createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z" };
+      database.prepare("INSERT INTO consultations VALUES (?,?,?,?,?,?,?,?,?)").run("room", "legacy", 1, "queued", "same", projection.requestDigest, JSON.stringify(projection), projection.createdAt, projection.updatedAt);
+      await runSqliteMigrations(database);
+      expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
+      expect((database.prepare("PRAGMA table_info(consultations)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("idempotency_scope");
+      expect(JSON.parse((database.prepare("SELECT projection_json FROM consultations WHERE consultation_id='legacy'").get() as { projection_json: string }).projection_json)).toMatchObject({ idempotencyScope: "member-a" });
+      database.prepare("INSERT INTO consultations(room_id,consultation_id,revision,lifecycle_state,idempotency_scope,idempotency_key,request_digest,projection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("room", "other", 1, "queued", "member-b", "same", projection.requestDigest, JSON.stringify({ ...projection, consultationId: "other", idempotencyScope: "member-b" }), projection.createdAt, projection.updatedAt);
+    } finally { database.close(); }
+  });
+
   it("creates the portable storage schema and is idempotent", async () => {
     const database = new DatabaseSync(":memory:");
     try {
@@ -53,8 +78,10 @@ describe("SQLite migrations", () => {
         "consultations",
         "consultation_events",
         "consultation_affinities",
+        "command_gh_executions",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 21 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 24 });
+      expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
       const messageColumns = (database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name);
@@ -68,9 +95,46 @@ describe("SQLite migrations", () => {
       expect((database.prepare("PRAGMA table_info(agent_context_summaries)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("config_revision");
       const consultationIndexes = (database.prepare("PRAGMA index_list(consultations)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(consultationIndexes).toEqual(expect.arrayContaining(["consultations_room_state_updated_idx", "sqlite_autoindex_consultations_1", "sqlite_autoindex_consultations_2"]));
+      expect((database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining([
+        "command_polls_open_limit",
+        "command_poll_votes_require_open_poll",
+        "command_polls_monotonic_close",
+      ]));
     } finally {
       database.close();
     }
+  });
+
+  it("keeps PostgreSQL lifecycle, race, and retention guards in schema parity", async () => {
+    const migration = await readFile(path.join(process.cwd(), "server/storage/migrations/postgres/0016_poll_lifecycle.sql"), "utf8");
+    expect(migration).toContain("command_polls_lifecycle_consistent");
+    expect(migration).toContain("pg_advisory_xact_lock");
+    expect(migration).toContain("command_polls_open_limit");
+    expect(migration).toContain("command_poll_votes_require_open_poll");
+    expect(migration).toContain("command_polls_monotonic_close");
+    expect(migration).toContain("FOR UPDATE");
+    expect(migration).toContain("SET voter_id = 'human:' || voter_id");
+  });
+  it("keeps the PostgreSQL GitHub command constraint, durable execution, and atomic acceptance trigger in parity",async()=>{const migration=await readFile(path.join(process.cwd(),"server/storage/migrations/postgres/0017_github_read_commands.sql"),"utf8");expect(migration).toContain("'gh'");expect(migration).toContain("command_gh_executions");expect(migration).toContain("AFTER INSERT ON command_submissions");expect(migration).toContain("status IN ('queued','completed','failed')");expect(migration).not.toMatch(/authorization|etag|header|payload/i);});
+
+  it("keeps the forward PostgreSQL consultation schema member-scoped and deletion-consistent", async () => {
+    const migration = await readFile(path.join(process.cwd(), "server/storage/migrations/postgres/0018_room_consultations.sql"), "utf8");
+    expect(migration).toContain("UNIQUE (room_id, idempotency_scope, idempotency_key)");
+    expect(migration).toContain("ON DELETE RESTRICT");
+    expect(migration).not.toContain("ON DELETE CASCADE");
+  });
+
+  it("migrates legacy poll voter identities before accepting namespaced votes", async () => {
+    const database = new DatabaseSync(":memory:", { enableForeignKeyConstraints: false });
+    try {
+      database.exec("CREATE TABLE command_submissions(submission_id TEXT,room_id TEXT,invoker_kind TEXT,invoker_id TEXT); CREATE TABLE command_polls(poll_id TEXT,room_id TEXT,submission_id TEXT,question TEXT,options_json TEXT,created_at TEXT); CREATE TABLE command_poll_votes(room_id TEXT,poll_id TEXT,voter_id TEXT,mutation_id TEXT,option_index INTEGER,created_at TEXT,PRIMARY KEY(room_id,poll_id,voter_id),UNIQUE(room_id,poll_id,mutation_id));");
+      database.prepare("INSERT INTO command_submissions VALUES (?,?,?,?)").run("submission","room","human","legacy-human");
+      database.prepare("INSERT INTO command_polls VALUES (?,?,?,?,?,?)").run("poll","room","submission","Choose",'["A","B"]',"2026-08-27T12:00:00.000Z");
+      database.prepare("INSERT INTO command_poll_votes VALUES (?,?,?,?,?,?)").run("room","poll","legacy-human","legacy-vote",1,"2026-08-27T12:01:00.000Z");
+      database.exec(await readFile(path.join(DEFAULT_SQLITE_MIGRATIONS_DIRECTORY,"0022_poll_lifecycle.sql"),"utf8"));
+      expect(database.prepare("SELECT voter_id FROM command_poll_votes").get()).toEqual({voter_id:"human:legacy-human"});
+      expect(()=>database.prepare("INSERT INTO command_poll_votes VALUES (?,?,?,?,?,?)").run("room","poll","human:legacy-human","new-vote",0,"2026-08-27T12:02:00.000Z")).toThrow(/UNIQUE/);
+    } finally { database.close(); }
   });
 
   it("adds empty improvement storage without modifying existing room data", async () => {

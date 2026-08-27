@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { effectiveAllowedCommands, normalizeCommandPermissions, parseCommandInput, resolveRoundRobin, ROOM_COMMANDS, type CommandInput, type CommandInvocation, type RoomCommandName } from "../shared/command-domain.js";
 import { isActiveAgentId, type ActiveAgentId } from "../shared/participants.js";
-import { normalizeRoomAgentRoster, roomAgentEntry, type RoomAgentRoster } from "../shared/roster.js";
+import { normalizeRoomAgentRoster, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentEntry, type RoomAgentRoster } from "../shared/roster.js";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
-import { MAX_COMMAND_DELIVERY_MESSAGE, MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandInvoker, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type PublicPollProjection } from "./command-record.js";
+import { MAX_COMMAND_DELIVERY_MESSAGE, MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type GhProjection, type PublicPollProjection } from "./command-record.js";
+import type { GitHubReadService } from "./github-read-service.js";
+import type { GitHubEndpointFamily, GitHubFailureKind } from "./github-read-adapter.js";
 
 export const DEFAULT_COMMAND_STAGE_1_MS = 12_000;
 export const DEFAULT_COMMAND_STAGE_2_MS = 75_000;
@@ -51,6 +53,8 @@ export interface CommandRuntimeDependencies {
   readonly deliverPov: (executionId:string,agentId:ActiveAgentId,messages:readonly string[],result:CommandExecutionResult)=>Promise<void>;
   readonly publishStatus: (auditId: string, text: string) => Promise<void>;
   readonly deliverTask: (attemptId: string, agentId: ActiveAgentId, messages: readonly string[], result: CommandExecutionResult) => Promise<void>;
+  readonly githubRead?: GitHubReadService;
+  readonly publishGhResult?: (executionId:string,text:string)=>Promise<void>;
   readonly ceiling?: readonly RoomCommandName[];
   readonly roomId?: string;
   readonly clock?: CommandClock;
@@ -60,8 +64,8 @@ export interface CommandRuntimeDependencies {
 
 export type CommandResponse =
   | { readonly kind: "private-error"; readonly message: string }
-  | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[] }
-  | { readonly kind: "accepted"; readonly submissionId: string; readonly duplicate: boolean; readonly poll?: PublicPollProjection };
+  | { readonly kind: "private-help"; readonly commands: readonly RoomCommandName[]; readonly submissionId: string; readonly duplicate: boolean }
+  | { readonly kind: "accepted"; readonly submissionId: string; readonly duplicate: boolean; readonly poll?: PublicPollProjection; readonly github?: GhProjection; readonly resultText?: string };
 
 interface LiveAttempt { readonly controller: AbortController; readonly reservation?: { release(): unknown; activate?(generationId:string):unknown }; partial: string; timer?: unknown }
 class PovDeliveryPendingError extends Error {}
@@ -70,6 +74,7 @@ function boundedDelay(value: number | undefined, fallback: number, minimum: numb
 function stableId(...parts: string[]) { return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 32); }
 function timestamp(clock: CommandClock, after?: string) { const now = clock.now(); const previous = after ? Date.parse(after) : Number.NaN; return new Date(Number.isFinite(previous) ? Math.max(now, previous + 1) : now).toISOString(); }
 function safeLabel(value: string) { return value.replace(/[\r\n\t]+/g, " ").replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 80) || "participant"; }
+function ghEndpointFamily(submission:CommandSubmission):GitHubEndpointFamily{const selector=(submission.invocation as Extract<CommandInvocation,{command:"gh"}>).selector;if(selector.kind==="pr")return"pull-request";if(selector.kind==="issue")return"issue";if(selector.kind==="ci")return selector.number===undefined?"recent-runs":"pull-request";return"recent-pulls";}
 function promptFingerprint(prompt: string) { return `sha256:${createHash("sha256").update(prompt).digest("hex")}`; }
 function durableDeliveryResult(result: CommandExecutionResult) { return { ...(result.sessionId?{sessionId:result.sessionId.slice(0,500)}:{}), ...(result.permission?{permission:result.permission}:{}), ...(result.codeEpoch?{codeEpoch:result.codeEpoch.slice(0,500)}:{}), ...(result.cursorMessageId?{cursorMessageId:result.cursorMessageId.slice(0,500)}:{}) }; }
 export function sanitizeDiagnosticText(input: string | undefined) {
@@ -109,6 +114,8 @@ export class CommandRuntime {
       else this.armRecovered(attempt, submission);
     }
     for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="pov")this.startPov(execution,submission);}
+    for(const execution of await this.dependencies.store.listPendingGhExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="gh")await (execution.status==="queued"?this.executeGh(execution,submission):this.deliverGhResult(execution)).catch(()=>undefined);}
+    for(const poll of await this.dependencies.store.listCommandPolls(this.roomId,{limit:100,state:"CLOSED"}))await this.publishPollClosed(poll);
   }
 
   async close() {
@@ -130,29 +137,51 @@ export class CommandRuntime {
   async submit(input: CommandInput, invoker: CommandInvoker, clientSubmissionId: string): Promise<CommandResponse> {
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientSubmissionId)) return { kind: "private-error", message: "A valid command request ID is required." };
     await this.dependencies.store.compactCommandRecords(this.roomId,timestamp(this.clock));
-    const parsed = parseCommandInput(input);
+    const parsed = this.parseInput(input);
     if (parsed.kind !== "command") return parsed.kind === "private-error" ? parsed : { kind: "private-error", message: "No command was provided." };
     const allowed = this.allowed(invoker);
     if (!allowed.includes(parsed.invocation.command)) return { kind: "private-error", message: "That command is not available to this participant." };
-    if (parsed.invocation.command === "help") return { kind: "private-help", commands: allowed };
+    const canonical = this.canonicalInvocation(parsed.invocation);
+    if (canonical.kind === "private-error") return canonical;
     const createdAt = timestamp(this.clock);
-    const submission: CommandSubmission = { submissionId: stableId(this.roomId, invoker.kind, invoker.id, clientSubmissionId), roomId: this.roomId, clientSubmissionId, command: parsed.invocation.command, invocation: parsed.invocation, invoker, createdAt };
+    const submission: CommandSubmission = { submissionId: stableId(this.roomId, invoker.kind, invoker.id, clientSubmissionId), roomId: this.roomId, clientSubmissionId, command: canonical.invocation.command, invocation: canonical.invocation, invoker, createdAt };
     return this.dispatch(submission);
   }
 
-  async vote(pollId: string, voterId: string, mutationId: string, optionIndex: number) {
-    if (!voterId || !/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId) || !Number.isSafeInteger(optionIndex) || optionIndex < 0) return { kind: "private-error" as const, message: "A valid poll choice and request ID are required." };
+  async listOpenPolls(invoker: CommandInvoker) {
+    if (!await this.pollAuthorized(invoker)) return { kind:"private-error" as const,message:"Poll access is not available to this participant." };
+    const polls=await this.dependencies.store.listCommandPolls(this.roomId,{limit:20,state:"OPEN"});
+    return {kind:"polls" as const,items:await Promise.all(polls.map(async(poll)=>publicPollProjection(poll,await this.dependencies.store.listCommandVotes(this.roomId,poll.pollId),{kind:invoker.kind,id:invoker.id})))};
+  }
+
+  async vote(pollId: string, invoker: CommandInvoker, mutationId: string, optionIndex: number) {
+    if (!await this.pollAuthorized(invoker) || !/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId) || !Number.isSafeInteger(optionIndex) || optionIndex < 0) return { kind: "private-error" as const, message: "A valid poll choice and request ID are required." };
+    const voterId=`${invoker.kind}:${invoker.id}`;
     const vote = await this.dependencies.store.createCommandVote({ roomId: this.roomId, pollId, voterId, mutationId, optionIndex, createdAt: timestamp(this.clock) });
     if (vote.kind === "rejected") return { kind: "private-error" as const, message: vote.reason };
     const poll = await this.dependencies.store.getCommandPoll(this.roomId, pollId);
     if (!poll) return { kind: "private-error" as const, message: "Poll not found." };
-    return { kind: "accepted" as const, duplicate: vote.kind === "duplicate", poll: publicPollProjection(poll, await this.dependencies.store.listCommandVotes(this.roomId, pollId)) };
+    return { kind: "accepted" as const, duplicate: vote.kind === "duplicate", poll: publicPollProjection(poll, await this.dependencies.store.listCommandVotes(this.roomId, pollId),{kind:invoker.kind,id:invoker.id}) };
+  }
+
+  async closePoll(pollId:string,invoker:CommandInvoker|{kind:"controller";id:string;displayName:string},mutationId:string,expectedRevision:number){
+    if(!/^[a-zA-Z0-9:_-]{8,100}$/.test(mutationId)||!Number.isSafeInteger(expectedRevision)||expectedRevision<1)return{kind:"private-error" as const,message:"A valid close request and poll revision are required."};
+    const poll=await this.dependencies.store.getCommandPoll(this.roomId,pollId);if(!poll)return{kind:"private-error" as const,message:"Poll not found."};
+    const creator=invoker.kind===poll.creatorKind&&invoker.id===poll.creatorId;const controller=invoker.kind==="controller";
+    if(!controller&&(!creator||!await this.pollAuthorized(invoker)))return{kind:"private-error" as const,message:"Only the poll creator or a room controller can end this poll."};
+    const result=await this.dependencies.store.closeCommandPoll({roomId:this.roomId,pollId,expectedRevision,mutationId,closerKind:invoker.kind,closerId:invoker.id,closedAt:timestamp(this.clock)});
+    if(result.kind==="rejected"||result.kind==="not-found")return{kind:"private-error" as const,message:result.reason};
+    if(result.kind==="conflict")return{kind:"private-error" as const,message:"The poll changed; refresh before ending it."};
+    if(result.kind!=="closed"&&result.kind!=="duplicate")return{kind:"private-error" as const,message:"The poll could not be ended."};
+    await this.publishPollClosed(result.poll);
+    return{kind:"accepted" as const,duplicate:result.kind==="duplicate",poll:publicPollProjection(result.poll,await this.dependencies.store.listCommandVotes(this.roomId,pollId),{kind:invoker.kind,id:invoker.id,canControl:controller})};
   }
 
   async captureDiagnostic(input: { agentId: ActiveAgentId; attemptId: string; generationId?: string; correlationId: string; prompt: string; reason: string; text?: string; metadata?: DiagnosticRecord["metadata"] }) {
     const record: DiagnosticRecord = { recordId: stableId(this.roomId,input.correlationId), roomId: this.roomId, agentId: input.agentId, attemptId: input.attemptId, generationId: input.generationId || null, correlationId: input.correlationId.slice(0,500), promptHead: null, promptFingerprint: promptFingerprint(input.prompt), reason: safeLabel(input.reason), metadata: input.metadata || {}, diagnosticText: sanitizeDiagnosticText(input.text), createdAt: timestamp(this.clock) };
     return this.dependencies.store.appendDiagnostic(record);
   }
+  async getGhDiagnostic(invoker:CommandInvoker,submissionId:string){if(!this.allowed(invoker).includes("gh"))return{kind:"private-error" as const,message:"GitHub diagnostics are not available to this participant."};const submission=await this.dependencies.store.getCommandSubmission(this.roomId,submissionId);if(!submission||submission.command!=="gh"||submission.invoker.kind!==invoker.kind||submission.invoker.id!==invoker.id)return{kind:"private-error" as const,message:"GitHub diagnostic record not found."};const execution=await this.dependencies.store.getGhExecution(this.roomId,submissionId);return execution?{kind:"github-diagnostic" as const,submissionId,status:execution.status,items:execution.diagnostics}:{kind:"private-error" as const,message:"GitHub diagnostic record not found."};}
 
   private allowed(invoker: CommandInvoker) {
     if (invoker.kind === "human") return [...this.ceiling];
@@ -161,31 +190,65 @@ export class CommandRuntime {
     return entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), this.ceiling) : [];
   }
 
+  private pollAuthorized(invoker:CommandInvoker){return invoker.kind==="human"||isActiveAgentId(invoker.id)&&this.allowed(invoker).includes("poll")&&Boolean(roomAgentEntry(this.dependencies.roster(),invoker.id)?.enabled);}
+  private parseInput(input:CommandInput){
+    if(typeof input!=="string")return parseCommandInput(input);
+    const match=/^\s*\/pov\s+(@[\s\S]+)$/.exec(input);
+    if(!match)return parseCommandInput(input);
+    const target=resolveRoomAgentTargetPrefix(this.dependencies.roster(),match[1]!);
+    if(target.kind==="ambiguous")return{kind:"private-error" as const,message:"That participant name is ambiguous; choose the exact roster mention."};
+    return target.kind==="resolved"
+      ? parseCommandInput({command:"pov",prompt:target.rest,selection:{kind:"pinned",agentId:target.agentId}})
+      : parseCommandInput(input);
+  }
+  private canonicalInvocation(invocation:CommandInvocation):{kind:"command";invocation:CommandInvocation}|{kind:"private-error";message:string}{
+    if((invocation.command!=="task"&&invocation.command!=="pov")||invocation.selection.kind!=="pinned")return{kind:"command",invocation};
+    const resolved=resolveRoomAgentTarget(this.dependencies.roster(),invocation.selection.agentId);
+    if(resolved.kind!=="resolved")return{kind:"private-error",message:resolved.kind==="ambiguous"?"That participant name is ambiguous; choose the exact roster mention.":"That participant is not in the room roster."};
+    return{kind:"command",invocation:{...invocation,selection:{kind:"pinned",agentId:resolved.agentId}} as CommandInvocation};
+  }
+
   private async replay(submission: CommandSubmission): Promise<CommandResponse> {
     const audit=await this.dependencies.store.getCommandAuditIdentity(this.roomId,submission.submissionId);if(!audit)return{kind:"private-error",message:"The original command was not accepted."};await this.resumeAcceptedWork(submission);await this.publishAuditObserved(submission,audit);
+    if (submission.command === "help") return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: submission.submissionId, duplicate: true };
     if (submission.command === "poll") {
       const poll = await this.dependencies.store.getCommandPoll(this.roomId, stableId(submission.submissionId,"poll"));
       if (poll) return { kind: "accepted", submissionId: submission.submissionId, duplicate: true, poll: publicPollProjection(poll, await this.dependencies.store.listCommandVotes(this.roomId,poll.pollId)) };
     }
+    if(submission.command==="gh"){const execution=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(!execution)return{kind:"private-error",message:"The original GitHub command is still being recovered."};if(execution.status==="queued")return this.executeGh(execution,submission,true);await this.deliverGhResult(execution).catch(()=>undefined);return{kind:"accepted",submissionId:submission.submissionId,duplicate:true,...(execution.projection?{github:execution.projection}:{}),...(execution.renderedText?{resultText:execution.renderedText}:{})};}
     return { kind: "accepted", submissionId: submission.submissionId, duplicate: true };
   }
 
   private async dispatch(submission: CommandSubmission): Promise<CommandResponse> {
     const invocation = submission.invocation;
+    if (invocation.command === "help") {
+      if (!this.authorized(submission)) return { kind: "private-error", message: "Command permission changed before dispatch." };
+      const audit = this.auditRecord(submission, []);
+      const accepted = await this.dependencies.store.acceptCommand({ submission, audit });
+      if (accepted.kind === "duplicate") return this.replay(accepted.submission);
+      if (accepted.kind === "compacted-duplicate") return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: accepted.tombstone.submissionId, duplicate: true };
+      if (accepted.kind === "conflict") throw new Error("Unexpected help acceptance conflict.");
+      return { kind: "private-help", commands: this.allowed(submission.invoker), submissionId: submission.submissionId, duplicate: false };
+    }
     if (invocation.command === "poll") {
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
-      const poll={ pollId: stableId(submission.submissionId,"poll"), roomId: this.roomId, submissionId: submission.submissionId, question: invocation.question, options: invocation.options, createdAt: submission.createdAt };
+      const poll:CommandPoll={ pollId: stableId(submission.submissionId,"poll"), roomId: this.roomId, submissionId: submission.submissionId, question: invocation.question, options: invocation.options, creatorKind:submission.invoker.kind,creatorId:submission.invoker.id,state:"OPEN",revision:1,closedAt:null,closerKind:null,closerId:null,closeMutationId:null,finalTallies:null,finalTotalVotes:null,createdAt: submission.createdAt };
       const audit=this.auditRecord(submission,[]); const accepted=await this.dependencies.store.acceptCommand({submission,audit,poll});
-      if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAuditObserved(submission,audit);
+      if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true};if(accepted.kind==="rejected")return{kind:"private-error",message:accepted.reason};if(accepted.kind==="conflict")throw new Error("Unexpected poll acceptance conflict."); await this.publishAuditObserved(submission,audit);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false, poll: publicPollProjection(poll,[]) };
     }
     if (invocation.command === "pov") {
-      const targets = await this.eligibleAgents("pov");
+      const targets = invocation.selection.kind==="pinned"?(await this.launchEligible(submission,invocation.selection.agentId)?[invocation.selection.agentId]:[]):await this.eligibleAgents("pov");
       if (!targets.length) return { kind: "private-error", message: "No eligible participants are available." };
       if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
       const now=timestamp(this.clock);const povExecution:CommandPovExecution={executionId:stableId(submission.submissionId,"pov-execution"),roomId:this.roomId,submissionId:submission.submissionId,targetAgentIds:targets,processedTargetAgentIds:[],status:"queued",reason:null,createdAt:now,updatedAt:now};
       const audit=this.auditRecord(submission,targets); const accepted=await this.dependencies.store.acceptCommand({submission,audit,povExecution}); if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true}; if(accepted.kind==="conflict")throw new Error("Unexpected POV acceptance conflict."); this.startPov(povExecution,submission);await this.publishAuditObserved(submission,audit);
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false };
+    }
+    if(invocation.command==="gh"){
+      if(!this.dependencies.githubRead||!this.dependencies.publishGhResult)return{kind:"private-error",message:"GitHub reads are not configured."};
+      if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
+      const now=timestamp(this.clock);const execution:CommandGhExecution={executionId:stableId(submission.submissionId,"gh-execution"),roomId:this.roomId,submissionId:submission.submissionId,status:"queued",deliveryStatus:"pending",projection:null,renderedText:null,failureKind:null,diagnostics:[],createdAt:now,updatedAt:now};const audit=this.auditRecord(submission,[]);const accepted=await this.dependencies.store.acceptCommand({submission,audit,ghExecution:execution});if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true};if(accepted.kind==="conflict")throw new Error("Unexpected GitHub acceptance conflict.");await this.dependencies.store.createGhExecution(execution);await this.publishAuditObserved(submission,audit);return this.executeGh(execution,submission,false);
     }
     if (invocation.command !== "task") return { kind: "private-error", message: "Unsupported command." };
     for(let conflicts=0;conflicts<MAX_COMMAND_ATTEMPTS;conflicts++){
@@ -197,10 +260,12 @@ export class CommandRuntime {
 
   private authorized(submission:CommandSubmission){return this.allowed(submission.invoker).includes(submission.command);}
   private auditRecord(submission:CommandSubmission,targets:readonly ActiveAgentId[]){return{auditId:stableId(submission.submissionId,"audit"),roomId:this.roomId,submissionId:submission.submissionId,command:submission.command,invokerKind:submission.invoker.kind,invokerId:submission.invoker.id,targetAgentIds:targets,createdAt:timestamp(this.clock)} as const;}
-  private async publishAudit(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){let text=this.auditText(submission,audit.targetAgentIds);if(submission.command==="poll"){const invocation=submission.invocation as Extract<CommandInvocation,{command:"poll"}>;text=`— ${safeLabel(submission.invoker.displayName)} ran /poll — Options: ${invocation.options.map((option,index)=>`${index+1}. ${safeLabel(option)}`).join(" · ")}`;}await this.dependencies.publishStatus(audit.auditId,text);}
-  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){try{await this.publishAudit(submission,audit);}catch(error){console.error("Command audit publication failed; durable recovery will retry it.",error);}}
+  private async publishAudit(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){let text=this.auditText(submission,audit.targetAgentIds);if(submission.command==="poll"){const invocation=submission.invocation as Extract<CommandInvocation,{command:"poll"}>;text=`— ${safeLabel(submission.invoker.displayName)} ran /poll — Options: ${invocation.options.map((option,index)=>`${index+1}. ${safeLabel(option)}`).join(" · ")}`;}else if(submission.command==="gh")text=`— ${safeLabel(submission.invoker.displayName)} ran /gh — Read-only repository query`;await this.dependencies.publishStatus(audit.auditId,text);}
+  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){console.error("Command audit publication failed; durable recovery will retry it.",error);}}
+  private async publishPollClosed(poll:CommandPoll){if(poll.state!=="CLOSED"||!poll.finalTallies)return;const summary=poll.options.map((option,index)=>`${safeLabel(option)}: ${poll.finalTallies![index]||0}`).join(" · ");try{await this.dependencies.publishStatus(`poll-closed:${poll.pollId}`,`— Poll closed — ${summary}`);}catch(error){console.error("Poll result publication failed; durable recovery will retry it.",error);}}
 
   private async resumeAcceptedWork(submission: CommandSubmission) {
+    if(submission.command==="gh"){const execution=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(execution?.status==="queued")void this.executeGh(execution,submission);return;}
     if (submission.command === "pov") {
       const execution = await this.dependencies.store.getPovExecution(this.roomId, submission.submissionId);
       if (execution) this.startPov(execution, submission);
@@ -212,6 +277,20 @@ export class CommandRuntime {
     if (pending.status === "delivery-pending") await this.resumeDelivery(pending, submission);
     else await this.launch(submission, pending.agentId, pending.attempt, pending);
   }
+
+  private async executeGh(execution:CommandGhExecution,submission:CommandSubmission,duplicate=false):Promise<CommandResponse>{
+    if(!this.authorized(submission))return this.terminalizeGh(execution,submission,"forbidden","GitHub command permission changed before recovery.");
+    if(!this.dependencies.githubRead||!this.dependencies.publishGhResult)return this.terminalizeGh(execution,submission,"configuration","GitHub reads are no longer configured.");
+    const current=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(!current)return{kind:"private-error",message:"GitHub execution metadata is unavailable."};if(current.status!=="queued"){await this.deliverGhResult(current).catch(()=>undefined);return{kind:"accepted",submissionId:submission.submissionId,duplicate:true,...(current.projection?{github:current.projection}:{}),...(current.renderedText?{resultText:current.renderedText}:{})};}
+    let terminal:CommandGhExecution;
+    try{const result=await this.dependencies.githubRead.execute((submission.invocation as Extract<CommandInvocation,{command:"gh"}>).selector);terminal={...current,status:"completed",deliveryStatus:"pending",projection:result.projection,renderedText:result.renderedText,failureKind:null,diagnostics:result.diagnostics,updatedAt:timestamp(this.clock,current.updatedAt)};}
+    catch(error){const failed=this.dependencies.githubRead.failure(error);terminal={...current,status:"failed",deliveryStatus:"pending",projection:null,renderedText:failed.text.slice(0,MAX_COMMAND_DELIVERY_MESSAGE),failureKind:failed.kind,diagnostics:[failed.diagnostic],updatedAt:timestamp(this.clock,current.updatedAt)};}
+    const saved=await this.dependencies.store.compareAndSetGhExecution(current.updatedAt,terminal);const durable=saved.kind==="accepted"?saved.execution:await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(!durable||durable.status==="queued")return{kind:"private-error",message:"GitHub execution changed concurrently; retry with the same request ID."};await this.deliverGhResult(durable).catch(()=>undefined);return{kind:"accepted",submissionId:submission.submissionId,duplicate,...(durable.projection?{github:durable.projection}:{}),...(durable.renderedText?{resultText:durable.renderedText}:{})};
+  }
+
+  private async deliverGhResult(execution:CommandGhExecution){if(execution.status==="queued"||execution.deliveryStatus==="delivered"||!execution.renderedText||!this.dependencies.publishGhResult)return;await this.dependencies.publishGhResult(execution.executionId,execution.renderedText);await this.dependencies.store.markGhExecutionDelivered(execution.roomId,execution.executionId,execution.updatedAt,timestamp(this.clock,execution.updatedAt));}
+
+  private async terminalizeGh(execution:CommandGhExecution,submission:CommandSubmission,kind:GitHubFailureKind,text:string):Promise<CommandResponse>{if(execution.status!=="queued")return{kind:"accepted",submissionId:submission.submissionId,duplicate:true,...(execution.projection?{github:execution.projection}:{}),...(execution.renderedText?{resultText:execution.renderedText}:{})};const family=ghEndpointFamily(submission);const terminal:CommandGhExecution={...execution,status:"failed",deliveryStatus:"delivered",projection:null,renderedText:text.slice(0,MAX_COMMAND_DELIVERY_MESSAGE),failureKind:kind,diagnostics:[{endpointFamily:family,cacheOutcome:"miss",queueDelayMs:0,rateLimited:false,truncated:false,failureKind:kind,statusClass:"none",correlationId:`recovery:${kind}`}],updatedAt:timestamp(this.clock,execution.updatedAt)};const saved=await this.dependencies.store.compareAndSetGhExecution(execution.updatedAt,terminal);const durable=saved.kind==="accepted"?saved.execution:await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);return durable&&durable.status!=="queued"?{kind:"accepted",submissionId:submission.submissionId,duplicate:true,...(durable.renderedText?{resultText:durable.renderedText}:{}),...(durable.projection?{github:durable.projection}:{})}:{kind:"private-error",message:"GitHub recovery could not be finalized."};}
 
   private auditText(submission: CommandSubmission, targets: readonly ActiveAgentId[]) {
     const roster = normalizeRoomAgentRoster(this.dependencies.roster());
@@ -285,7 +364,7 @@ export class CommandRuntime {
 
   private agentCurrent(agentId:ActiveAgentId){const entry=roomAgentEntry(this.dependencies.roster(),agentId);return Boolean(entry?.enabled&&!entry.selectionConfirmationRequired);}
   private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){if(current.currentTargetAgentId)return;const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){if(active.currentTargetAgentId)return;const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);void this.runPovTargets(active,submission,controller).then(()=>this.finishPov(active.executionId,"completed",null)).catch(async(error)=>{if(error instanceof PovDeliveryPendingError){this.livePov.delete(active.executionId);return;}if(controller.signal.aborted){const durable=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(durable?.currentTargetAgentId){this.livePov.delete(active.executionId);return;}}return this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error));});}
-  private async runPovTargets(execution:CommandPovExecution,submission:CommandSubmission,controller:AbortController){for(;;){if(controller.signal.aborted)throw new Error("POV execution was cancelled.");const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||current.status!=="active")return;if(current.currentTargetAgentId){await this.resumePovDelivery(current,submission);continue;}const agentId=current.targetAgentIds.find((candidate)=>!current.processedTargetAgentIds.includes(candidate));if(!agentId)return;const authority=this.captureEpoch(agentId);const result=await this.dependencies.executePov(agentId,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal);const messages=(result.visibleMessages||[]).filter(Boolean).slice(0,3).map((message)=>message.slice(0,MAX_COMMAND_DELIVERY_MESSAGE));const outbox={...current,currentTargetAgentId:agentId,generationId:result.generationId||null,deliveryMessages:messages,deliveryResult:durableDeliveryResult(result),...authority,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,outbox);if(claimed.kind!=="accepted")throw new Error("POV target ownership changed before durable result persistence.");await this.resumePovDelivery(outbox,submission,result);}}
+  private async runPovTargets(execution:CommandPovExecution,submission:CommandSubmission,controller:AbortController){for(;;){if(controller.signal.aborted)throw new Error("POV execution was cancelled.");const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||current.status!=="active")return;if(current.currentTargetAgentId){await this.resumePovDelivery(current,submission);continue;}const agentId=current.targetAgentIds.find((candidate)=>!current.processedTargetAgentIds.includes(candidate));if(!agentId)return;if(!await this.launchEligible(submission,agentId)){const skipped={...current,processedTargetAgentIds:[...current.processedTargetAgentIds,agentId],updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,skipped);if(claimed.kind!=="accepted")throw new Error("POV target eligibility changed concurrently.");continue;}const authority=this.captureEpoch(agentId);const result=await this.dependencies.executePov(agentId,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal);const messages=(result.visibleMessages||[]).filter(Boolean).slice(0,3).map((message)=>message.slice(0,MAX_COMMAND_DELIVERY_MESSAGE));const outbox={...current,currentTargetAgentId:agentId,generationId:result.generationId||null,deliveryMessages:messages,deliveryResult:durableDeliveryResult(result),...authority,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,outbox);if(claimed.kind!=="accepted")throw new Error("POV target ownership changed before durable result persistence.");await this.resumePovDelivery(outbox,submission,result);}}
   private async resumePovDelivery(execution:CommandPovExecution,submission:CommandSubmission,result?:CommandExecutionResult){const agentId=execution.currentTargetAgentId;if(!agentId)return;const messages=execution.deliveryMessages||[];if(!this.povAuthorityCurrent(execution)){await this.captureDiagnostic({agentId,attemptId:execution.executionId,generationId:execution.generationId||undefined,correlationId:`${execution.executionId}:${agentId}:authority-changed`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,reason:"authority-changed-before-delivery",text:messages.join("\n"),metadata:{visibleMessages:messages.length}});}else try{await this.dependencies.deliverPov(stableId(execution.executionId,agentId),agentId,messages,result||{generationId:execution.generationId||undefined,visibleMessages:messages,...execution.deliveryResult});}catch(error){throw new PovDeliveryPendingError(error instanceof Error?error.message:String(error));}const completed={...execution,processedTargetAgentIds:[...execution.processedTargetAgentIds,agentId],currentTargetAgentId:null,generationId:null,deliveryMessages:undefined,deliveryResult:undefined,roomEpoch:undefined,rosterRevision:undefined,agentConfigurationRevision:undefined,updatedAt:timestamp(this.clock,execution.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(execution.updatedAt,completed);if(claimed.kind!=="accepted")throw new Error("POV delivery completion changed concurrently.");}
   private async finishPov(executionId:string,status:"completed"|"failed"|"cancelled",reason:string|null){const current=(await this.dependencies.store.listPendingPovExecutions(this.roomId)).find((item)=>item.executionId===executionId);if(!current)return;const terminal={...current,status,reason:reason?safeLabel(reason).slice(0,200):null,updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,terminal);this.livePov.delete(executionId);}
   private captureEpoch(agentId:ActiveAgentId){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,agentId);return{roomEpoch:this.dependencies.roomEpoch?.()||"0",rosterRevision:roster.revision,agentConfigurationRevision:entry?.configurationRevision||0};}

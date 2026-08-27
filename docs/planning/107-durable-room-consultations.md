@@ -23,7 +23,7 @@ SQLite reconstruction.
 - `queued`, `discussing`, `input_required`, `complete`, `failed`, and
   `cancelled` transitions are revision checked. Every accepted transition
   records its prior and next state, timestamp, actor, and non-empty reason.
-- A room-scoped idempotency key is at most 128 bytes. Reuse replays only the
+- An authenticated-member-and-room-scoped idempotency key is at most 128 bytes. Reuse replays only the
   same consultation ID and canonical SHA-256 request digest; conflicting reuse
   is rejected and cannot overwrite the immutable request.
 - Persistent participant affinities are keyed by room and captured as a
@@ -38,8 +38,8 @@ SQLite reconstruction.
 
 # Current state
 
-The version-one domain, repository contract, JSON and SQLite adapters, SQLite
-and PostgreSQL migrations, and contract coverage are implemented in the issue
+The version-one domain, repository contract, JSON and SQLite adapters, upgrade-safe SQLite
+migrations, forward-looking PostgreSQL schema, and contract coverage are implemented in the issue
 #107 worktree. Transport and consultation UI behavior remain intentionally out
 of scope for this foundation.
 

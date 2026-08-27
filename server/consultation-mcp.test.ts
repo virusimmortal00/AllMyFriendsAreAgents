@@ -75,6 +75,23 @@ async function waitFor(client: Client, consultationId: string, state: string) {
 }
 
 describe("consultation MCP contract", () => {
+  it("scopes start idempotency to the authenticated member and enforces the requested event limit", async () => {
+    const state = await fixture({ synthesize: async () => ({ kind: "settled", synthesis: "Done" }) });
+    const memberA = registry(["CONSULTATION_WRITE"]).authenticate(`Bearer ${TOKEN}`, "CONSULTATION_WRITE")!;
+    const secondToken = "second-consultation-token-with-at-least-thirty-two-characters";
+    const memberB = new DeveloperTeamRegistry([{ memberId: "other-consultant", revision: 1, displayName: "Other", roles: ["AUTHOR"], capabilities: ["CONSULTATION_WRITE"], tokenHash: hashToken(secondToken), createdAt: "2026-08-27T00:00:00.000Z" }]).authenticate(`Bearer ${secondToken}`, "CONSULTATION_WRITE")!;
+    const input = { room_id: ROOM_ID, topic: "Same key, different authenticated members", idempotency_key: "member-scoped-key" };
+    const first = await state.service.start(input, memberA);
+    const second = await state.service.start(input, memberB);
+    expect(first).toMatchObject({ kind: "ok" }); expect(second).toMatchObject({ kind: "ok" });
+    if (first.kind !== "ok" || second.kind !== "ok") return;
+    expect(second.consultation.consultationId).not.toBe(first.consultation.consultationId);
+    for (let attempt = 0; attempt < 100 && (await state.runner.get(first.consultation))?.state !== "complete"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const polled = await state.service.get({ room_id: ROOM_ID, consultation_id: first.consultation.consultationId, event_limit: 1 });
+    expect(polled).toMatchObject({ kind: "ok", hasMoreEvents: true });
+    if (polled.kind === "ok") expect(polled.events).toHaveLength(1);
+  });
+
   it("publishes four deterministic explicit-room schemas and least-privilege annotations", async () => {
     const state = await fixture();
     await withServer(["CONSULTATION_READ", "CONSULTATION_WRITE", "CONSULTATION_CANCEL"], state.service, async (url) => withClient(url, {}, async (client) => {
@@ -142,6 +159,20 @@ describe("consultation MCP contract", () => {
       expect(hidden.structuredContent).toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
     }));
     state.runner.close();
+  });
+
+  it("allows write-only and cancel-only credentials through authentication, then authorizes the exact operation", async () => {
+    const state = await fixture({ synthesize: () => new Promise(() => undefined) });
+    await withServer(["CONSULTATION_WRITE"], state.service, async (url) => withClient(url, {}, async (client) => {
+      const started = await client.callTool({ name: "start_room_consultation", arguments: { room_id: ROOM_ID, topic: "Write only", idempotency_key: "write-only" } });
+      expect(started.structuredContent).toMatchObject({ room_id: ROOM_ID, state: "queued" });
+      await expect(client.callTool({ name: "get_room_consultation", arguments: { room_id: ROOM_ID, consultation_id: (started.structuredContent as { consultation_id: string }).consultation_id } })).rejects.toBeInstanceOf(InsufficientScopeError);
+    }));
+    await withServer(["CONSULTATION_CANCEL"], state.service, async (url) => withClient(url, {}, async (client) => {
+      const hidden = await client.callTool({ name: "cancel_room_consultation", arguments: { room_id: ROOM_ID, consultation_id: "unknown", expected_revision: 1, idempotency_key: "cancel-only" } });
+      expect(hidden.structuredContent).toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
+      await expect(client.callTool({ name: "start_room_consultation", arguments: { room_id: ROOM_ID, topic: "Denied", idempotency_key: "cancel-cannot-write" } })).rejects.toBeInstanceOf(InsufficientScopeError);
+    }));
   });
 
   it("activates negotiated task projection and signed multi-round-trip input while preserving explicit response", async () => {

@@ -53,6 +53,7 @@ async function withMcp(
   roomBridge: RoomMcpBridge,
   run: (baseUrl: string, requests: readonly Record<string, string | undefined>[]) => Promise<void>,
   allowedHostnames?: readonly string[],
+  messageIdempotencyLimit?: number,
 ) {
   const app = express();
   const requests: Record<string, string | undefined>[] = [];
@@ -69,7 +70,7 @@ async function withMcp(
   });
   const jsonBodyParser = express.json();
   app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
-  const registration = registerRoomMcpRoutes({ app, developers: registry, bridge: roomBridge, allowedHostnames });
+  const registration = registerRoomMcpRoutes({ app, developers: registry, bridge: roomBridge, allowedHostnames, messageIdempotencyLimit });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   try {
@@ -313,6 +314,19 @@ describe("room MCP bridge", () => {
         expect(sendMessage).toHaveBeenCalledTimes(2);
       });
     });
+  });
+
+  it("bounds successful message idempotency entries while retaining recent retry acknowledgements", async () => {
+    const writable = bridge();
+    await withMcp(developers(["ROOM_READ", "ROOM_CHAT"]), writable.bridge, async (baseUrl) => {
+      await withClient(baseUrl, async (client) => {
+        for (const key of ["bounded-1", "bounded-2", "bounded-3"]) await client.callTool({ name: "send_room_message", arguments: { room_id: ROOM_ID, text: key, idempotency_key: key } });
+        await client.callTool({ name: "send_room_message", arguments: { room_id: ROOM_ID, text: "bounded-3", idempotency_key: "bounded-3" } });
+        expect(writable.sendMessage).toHaveBeenCalledTimes(3);
+        await client.callTool({ name: "send_room_message", arguments: { room_id: ROOM_ID, text: "bounded-1", idempotency_key: "bounded-1" } });
+        expect(writable.sendMessage).toHaveBeenCalledTimes(4);
+      });
+    }, undefined, 2);
   });
 
   it("attributes messages and uses HTTP scope step-up for modern write authorization", async () => {

@@ -13,5 +13,5 @@ export async function openConsultationRepository(
     const { SqliteConsultationRepository } = await import("./sqlite-consultation-repository.js");
     return SqliteConsultationRepository.open(configuration.databasePath);
   }
-  throw new Error("postgres consultation storage is migrated but its runtime adapter is not implemented yet. Use JSON or SQLite.");
+  throw new Error(`Unsupported consultation storage backend: ${(configuration as { backend: string }).backend}`);
 }

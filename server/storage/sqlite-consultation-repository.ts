@@ -10,12 +10,13 @@ import {
   consultationRequestDigest, paginateConsultations, type ConsultationEvent, type ConsultationListQuery,
   type ConsultationRepository, type CreateConsultationRequest, type CreateConsultationResult,
 } from "./consultation-repository.js";
-import { validateAffinity } from "./consultation-storage.js";
+import { normalizeStoredConsultation, validateAffinity } from "./consultation-storage.js";
 import { runSqliteMigrations } from "./sqlite-migrations.js";
 
 interface ProjectionRow { projection_json: string }
 interface EventRow { room_id: string; consultation_id: string; revision: number; actor_id: string; occurred_at: string; change_json: string; snapshot_json: string }
 interface AffinityRow { room_id: string; participant_id: string; duties_json: string; provenance_json: string; created_at: string; updated_at: string }
+function parseConsultation(value: string): Consultation { return normalizeStoredConsultation(JSON.parse(value) as Consultation); }
 function parse<T>(value: string): T { return JSON.parse(value) as T; }
 
 export class SqliteConsultationRepository implements ConsultationRepository {
@@ -36,34 +37,34 @@ export class SqliteConsultationRepository implements ConsultationRepository {
     const digest = consultationRequestDigest(input.request);
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      const replayRow = this.database.prepare("SELECT projection_json FROM consultations WHERE room_id = ? AND idempotency_key = ?").get(input.roomId, input.idempotencyKey) as ProjectionRow | undefined;
+      const replayRow = this.database.prepare("SELECT projection_json FROM consultations WHERE room_id = ? AND idempotency_scope = ? AND idempotency_key = ?").get(input.roomId, input.idempotencyScope, input.idempotencyKey) as ProjectionRow | undefined;
       if (replayRow) {
-        const replay = parse<Consultation>(replayRow.projection_json); this.database.exec("ROLLBACK");
+        const replay = parseConsultation(replayRow.projection_json); this.database.exec("ROLLBACK");
         if (replay.consultationId === input.consultationId && replay.requestDigest === digest) return { kind: "replayed", consultation: structuredClone(replay) };
         return { kind: "idempotency_conflict", roomId: input.roomId, idempotencyKey: input.idempotencyKey };
       }
       if (this.row(input)) { this.database.exec("ROLLBACK"); return { kind: "identity_conflict", identity: { roomId: input.roomId, consultationId: input.consultationId } }; }
       const affinitySnapshot = this.affinities(input.roomId);
       const consultation = createDomainConsultation({ ...input, requestDigest: digest, affinitySnapshot });
-      this.database.prepare("INSERT INTO consultations(room_id,consultation_id,revision,lifecycle_state,idempotency_key,request_digest,projection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(consultation.roomId, consultation.consultationId, consultation.revision, consultation.state, consultation.idempotencyKey, consultation.requestDigest, JSON.stringify(consultation), consultation.createdAt, consultation.updatedAt);
+      this.database.prepare("INSERT INTO consultations(room_id,consultation_id,revision,lifecycle_state,idempotency_scope,idempotency_key,request_digest,projection_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .run(consultation.roomId, consultation.consultationId, consultation.revision, consultation.state, consultation.idempotencyScope, consultation.idempotencyKey, consultation.requestDigest, JSON.stringify(consultation), consultation.createdAt, consultation.updatedAt);
       this.insertEvent({ ...input, revision: 1, actorId: input.provenance.actorId, at: input.now, change: "create", snapshot: consultation });
       this.database.exec("COMMIT"); return { kind: "created", consultation: structuredClone(consultation) };
     } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
 
-  async getConsultation(identity: ConsultationIdentity) { const row = this.row(identity); return row ? structuredClone(parse<Consultation>(row.projection_json)) : undefined; }
+  async getConsultation(identity: ConsultationIdentity) { const row = this.row(identity); return row ? structuredClone(parseConsultation(row.projection_json)) : undefined; }
   async listConsultations(query: ConsultationListQuery) {
     validateConsultationId(query.roomId, "Room ID");
     const rows = this.database.prepare("SELECT projection_json FROM consultations WHERE room_id = ?").all(query.roomId) as unknown as ProjectionRow[];
-    return paginateConsultations(rows.map((row) => parse<Consultation>(row.projection_json)), query);
+    return paginateConsultations(rows.map((row) => parseConsultation(row.projection_json)), query);
   }
   async applyConsultationChange(identity: ConsultationIdentity, expectedRevision: number, change: ConsultationChange, actorId: string, now: string): Promise<ConsultationChangeResult> {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const row = this.row(identity);
       if (!row) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Consultation ${identity.consultationId} does not exist in room ${identity.roomId}` }; }
-      const current = parse<Consultation>(row.projection_json);
+      const current = parseConsultation(row.projection_json);
       const result = applyDomainChange(current, expectedRevision, change, actorId, now);
       if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
       const snapshot = result.consultation;
@@ -81,14 +82,18 @@ export class SqliteConsultationRepository implements ConsultationRepository {
     const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
     const rows = this.database.prepare("SELECT room_id,consultation_id,revision,actor_id,occurred_at,change_json,snapshot_json FROM consultation_events WHERE room_id=? AND consultation_id=? AND revision>? ORDER BY revision LIMIT ?")
       .all(identity.roomId, identity.consultationId, options.afterRevision ?? 0, limit) as unknown as EventRow[];
-    return rows.map((row): ConsultationEvent => ({ roomId: row.room_id, consultationId: row.consultation_id, revision: row.revision, actorId: row.actor_id, at: row.occurred_at, change: parse(row.change_json), snapshot: parse(row.snapshot_json) }));
+    return rows.map((row): ConsultationEvent => ({ roomId: row.room_id, consultationId: row.consultation_id, revision: row.revision, actorId: row.actor_id, at: row.occurred_at, change: parse(row.change_json), snapshot: normalizeStoredConsultation(parse(row.snapshot_json)) }));
   }
   async putConsultationAffinity(affinity: ConsultationAffinity) {
     validateAffinity(affinity);
-    const existing = this.database.prepare("SELECT created_at FROM consultation_affinities WHERE room_id=? AND participant_id=?").get(affinity.roomId, affinity.participantId) as { created_at: string } | undefined;
-    if (existing && existing.created_at !== affinity.createdAt) throw new Error("Affinity creation metadata is immutable");
-    this.database.prepare("INSERT INTO consultation_affinities(room_id,participant_id,duties_json,provenance_json,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(room_id,participant_id) DO UPDATE SET duties_json=excluded.duties_json,provenance_json=excluded.provenance_json,updated_at=excluded.updated_at")
-      .run(affinity.roomId, affinity.participantId, JSON.stringify(affinity.duties), JSON.stringify(affinity.provenance), affinity.createdAt, affinity.updatedAt);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.database.prepare("SELECT created_at FROM consultation_affinities WHERE room_id=? AND participant_id=?").get(affinity.roomId, affinity.participantId) as { created_at: string } | undefined;
+      if (existing && existing.created_at !== affinity.createdAt) throw new Error("Affinity creation metadata is immutable");
+      this.database.prepare("INSERT INTO consultation_affinities(room_id,participant_id,duties_json,provenance_json,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(room_id,participant_id) DO UPDATE SET duties_json=excluded.duties_json,provenance_json=excluded.provenance_json,updated_at=excluded.updated_at")
+        .run(affinity.roomId, affinity.participantId, JSON.stringify(affinity.duties), JSON.stringify(affinity.provenance), affinity.createdAt, affinity.updatedAt);
+      this.database.exec("COMMIT");
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
   }
   async listConsultationAffinities(roomId: string) { validateConsultationId(roomId, "Room ID"); return structuredClone(this.affinities(roomId)); }
 

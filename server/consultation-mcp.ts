@@ -52,7 +52,7 @@ export interface ConsultationRoomAuthorizer {
 }
 
 export type ConsultationMcpResult =
-  | { readonly kind: "ok"; readonly consultation: Consultation; readonly events?: readonly ConsultationEvent[] }
+  | { readonly kind: "ok"; readonly consultation: Consultation; readonly events?: readonly ConsultationEvent[]; readonly hasMoreEvents?: boolean }
   | { readonly kind: "not_found" }
   | { readonly kind: "idempotency_conflict" }
   | { readonly kind: "stale_revision"; readonly actualRevision: number }
@@ -101,7 +101,7 @@ export class DurableConsultationMcpService {
     if (afterRevision > consultation.revision) return { kind: "stale_revision", actualRevision: consultation.revision };
     const limit = Math.max(1, Math.min(50, Math.trunc(input.event_limit ?? 20)));
     const events = await this.repository.listConsultationEvents(consultation, { afterRevision, limit: limit + 1 });
-    return { kind: "ok", consultation, events };
+    return { kind: "ok", consultation, events: events.slice(0, limit), hasMoreEvents: events.length > limit };
   }
 
   async respond(input: RespondInput, developer: AuthenticatedDeveloper): Promise<ConsultationMcpResult> {
@@ -276,8 +276,7 @@ function present(result: ConsultationMcpResult, ctx: ServerContext) {
   if (result.kind === "stale_revision") return errorResult("STALE_REVISION", `Refresh the consultation; its current revision is ${result.actualRevision}.`);
   if (result.kind === "invalid_state") return errorResult("INVALID_STATE", result.reason);
   const events = result.events ?? [];
-  const limit = Math.min(events.length, 50);
-  const visible = events.slice(0, limit);
+  const visible = events.slice(0, 50);
   const enhanced = supportsTasks(ctx);
   const value = {
     room_id: result.consultation.roomId,
@@ -286,7 +285,7 @@ function present(result: ConsultationMcpResult, ctx: ServerContext) {
     revision: result.consultation.revision,
     progress: {
       events: visible.map(projectEvent),
-      truncated: events.length > limit,
+      truncated: result.hasMoreEvents === true,
       next_revision: visible.at(-1)?.revision ?? result.consultation.revision,
     },
     blocking_question: result.consultation.execution?.blockingQuestion ?? null,

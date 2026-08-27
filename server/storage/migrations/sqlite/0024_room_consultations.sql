@@ -3,6 +3,7 @@ CREATE TABLE consultations (
   consultation_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK (revision >= 1),
   lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('queued','discussing','input_required','complete','failed','cancelled')),
+  idempotency_scope TEXT NOT NULL CHECK (length(idempotency_scope) > 0),
   idempotency_key TEXT NOT NULL CHECK (length(CAST(idempotency_key AS BLOB)) BETWEEN 1 AND 128),
   request_digest TEXT NOT NULL CHECK (
     length(request_digest) = 71
@@ -13,7 +14,7 @@ CREATE TABLE consultations (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (room_id, consultation_id),
-  UNIQUE (room_id, idempotency_key)
+  UNIQUE (room_id, idempotency_scope, idempotency_key)
 );
 
 CREATE TABLE consultation_events (
@@ -25,7 +26,7 @@ CREATE TABLE consultation_events (
   change_json TEXT NOT NULL CHECK (json_valid(change_json)),
   snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
   PRIMARY KEY (room_id, consultation_id, revision),
-  FOREIGN KEY (room_id, consultation_id) REFERENCES consultations(room_id, consultation_id) ON DELETE CASCADE
+  FOREIGN KEY (room_id, consultation_id) REFERENCES consultations(room_id, consultation_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE consultation_affinities (

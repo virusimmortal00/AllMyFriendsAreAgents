@@ -265,7 +265,7 @@ describe("consultation end-to-end compatibility", () => {
     expect(dialogue.performTurn).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("recovers an opted-in bounded dialogue after restart without duplicate turns or artifacts", async () => {
+  it("preserves dialogue settings and refuses duplicate provider execution after restart", async () => {
     const file = await repositoryFile("consultation-restart-e2e-");
     const firstRepository = await JsonConsultationRepository.open(file);
     const dialogue: ConsultationDialogueExecutor = {
@@ -298,7 +298,7 @@ describe("consultation end-to-end compatibility", () => {
       const started = await client.callTool({ name: "start_room_consultation", arguments: startInput });
       consultationId = (started.structuredContent as { consultation_id: string }).consultation_id;
       expect(started.structuredContent).toMatchObject({ room_id: ROOM_B, consultation_id: consultationId, state: "queued" });
-      await synthesisStarted;
+      await startedSynthesis;
       await eventually(async () => (await firstRepository.getConsultation({ roomId: ROOM_B, consultationId }))?.execution?.turns.length === 2);
       const discussing = await waitFor(client, ROOM_B, consultationId, "discussing");
       expect((discussing.structuredContent as { progress: { events: unknown[] } }).progress.events.length).toBeGreaterThan(0);
@@ -336,26 +336,23 @@ describe("consultation end-to-end compatibility", () => {
         idempotency_key: "restart-bounded-start",
       } });
       expect(replay.structuredContent).toMatchObject({ room_id: ROOM_B, consultation_id: consultationId });
-      const complete = await waitFor(client, ROOM_B, consultationId, "complete");
-      expect(complete.structuredContent).toMatchObject({
+      const failed = await waitFor(client, ROOM_B, consultationId, "failed");
+      expect(failed.structuredContent).toMatchObject({
         room_id: ROOM_B,
         consultation_id: consultationId,
-        final_artifact: {
-          synthesis: `Recovered 2 bounded turns in ${ROOM_B}`,
-          dissent: [],
-        },
+        final_artifact: null,
       });
-      const revision = (complete.structuredContent as { revision: number }).revision;
+      const revision = (failed.structuredContent as { revision: number }).revision;
       const delta = await client.callTool({ name: "get_room_consultation", arguments: { room_id: ROOM_B, consultation_id: consultationId, after_revision: revision - 1 } });
-      expect((delta.structuredContent as { progress: { events: Array<{ state: string }> } }).progress.events).toEqual([expect.objectContaining({ state: "complete" })]);
+      expect((delta.structuredContent as { progress: { events: Array<{ state: string }> } }).progress.events).toEqual([expect.objectContaining({ state: "failed" })]);
     }));
 
     const terminal = await reopened.getConsultation({ roomId: ROOM_B, consultationId });
     expect(terminal?.execution?.turns).toHaveLength(2);
     expect(terminal?.execution?.synthesisKey).toBe(synthesisKey);
     expect(dialogue.performTurn).toHaveBeenCalledTimes(2);
-    expect(recoveredSynthesis.synthesize).toHaveBeenCalledTimes(1);
-    expect((await reopened.listConsultationEvents({ roomId: ROOM_B, consultationId })).filter(({ snapshot }) => snapshot.state === "complete")).toHaveLength(1);
+    expect(recoveredSynthesis.synthesize).not.toHaveBeenCalled();
+    expect((await reopened.listConsultationEvents({ roomId: ROOM_B, consultationId })).filter(({ snapshot }) => snapshot.state === "failed")).toHaveLength(1);
   }, 20_000);
 
   it("makes cancellation exact-replay safe, rejects conflicting reuse, and persists one completion-race winner", async () => {

@@ -51,9 +51,11 @@ The restart scenario opts into dialogue with two participants and explicit
 ceilings of two turns, one round, one concurrent call, and ten seconds. It
 stops after both turns are durable and synthesis is claimed, reopens the JSON
 repository, reconciles the unrelated room and then the owning room, and polls
-through completion. It asserts the original consultation ID and synthesis key,
-exactly two unique turns, one synthesis call after recovery, and exactly one
-terminal artifact.
+through the durable uncertainty failure. It asserts the original consultation
+ID and synthesis key, exactly two unique turns, no second synthesis dispatch,
+and exactly one terminal failure. This is an explicit at-most-once provider
+boundary: a persisted `started` claim is never re-invoked after a crash because
+the external effect may already have happened.
 
 The cancellation scenario dispatches cancellation while synthesis is in
 flight. It proves one terminal winner, exact cancellation replay, rejection of
@@ -66,8 +68,8 @@ The integrated candidate was checked on 2026-08-27 with these commands:
 | Check | Command | Result |
 | --- | --- | --- |
 | Focused E2E | `pnpm exec vitest run server/consultation-e2e.test.ts` | passed: 1 file, 3 tests |
-| Consultation/restart regression | `pnpm exec vitest run server/consultation-e2e.test.ts server/consultation-mcp.test.ts server/consultation-service.test.ts server/storage/consultation-repository.contract.test.ts` | passed: 4 files, 20 tests |
-| Full suite | `pnpm test` | passed: 119 files, 779 tests; 1 intentional skip |
+| Consultation/restart regression | `pnpm exec vitest run shared/consultation-domain.test.ts server/storage/consultation-storage.test.ts server/storage/consultation-repository.contract.test.ts server/storage/sqlite-migrations.test.ts server/consultation-service.test.ts server/consultation-mcp.test.ts server/consultation-e2e.test.ts server/room-mcp.test.ts server/universal-plugin-package.test.ts` | passed: 9 files, 57 tests |
+| Full suite | `pnpm test` | passed: 125 files, 840 tests; 1 intentional skip |
 | Typecheck | `pnpm exec tsc -b --force` | passed |
 | Production build | `pnpm build` | passed |
 | Plugin package contract | `pnpm exec vitest run server/universal-plugin-package.test.ts` | passed |

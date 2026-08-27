@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { applyConsultationChange, createConsultation, type ConsultationFinalArtifact } from "./consultation-domain.js";
 
 const provenance = { kind: "human" as const, actorId: "human-1", recordedAt: "2026-08-27T10:00:00.000Z" };
-const initial = () => createConsultation({ roomId: "room:opaque/a", consultationId: "consult:opaque/a", idempotencyKey: "request-1", requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Choose a release strategy" }, provenance, now: provenance.recordedAt });
+const initial = () => createConsultation({ roomId: "room:opaque/a", consultationId: "consult:opaque/a", idempotencyKey: "request-1", idempotencyScope: provenance.actorId, requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Choose a release strategy" }, provenance, now: provenance.recordedAt });
 
 describe("consultation lifecycle", () => {
   it("requires bounded idempotency and participant inputs", () => {
-    expect(() => createConsultation({ roomId: "room", consultationId: "consult", idempotencyKey: "x".repeat(129), requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Topic" }, provenance, now: provenance.recordedAt })).toThrow(/128 bytes/);
-    expect(() => createConsultation({ roomId: "room", consultationId: "consult", idempotencyKey: "key", requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Topic", requestedParticipantIds: Array.from({ length: 33 }, (_, index) => `agent-${index}`) }, provenance, now: provenance.recordedAt })).toThrow(/at most 32/);
+    expect(() => createConsultation({ roomId: "room", consultationId: "consult", idempotencyKey: "x".repeat(129), idempotencyScope: provenance.actorId, requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Topic" }, provenance, now: provenance.recordedAt })).toThrow(/128 bytes/);
+    expect(() => createConsultation({ roomId: "room", consultationId: "consult", idempotencyKey: "key", idempotencyScope: provenance.actorId, requestDigest: `sha256:${"a".repeat(64)}`, request: { topic: "Topic", requestedParticipantIds: Array.from({ length: 33 }, (_, index) => `agent-${index}`) }, provenance, now: provenance.recordedAt })).toThrow(/at most 32/);
   });
 
   it("accepts the complete lifecycle and records revisioned timestamps and reasons", () => {

@@ -20,7 +20,7 @@ import { ConfirmationDialog } from "./components";
 import { RichModelPicker } from "./model-picker";
 import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
-import { normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
+import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 
 export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
   initialRoster: RoomAgentRoster;
@@ -311,14 +311,14 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       <fieldset className="roster-command-permissions">
                         <legend>Agent commands</legend>
                         <p>Choose which slash commands this agent may invoke. Human commands are controlled by the room server.</p>
-                        <label className="roster-permission-toggle"><input type="checkbox" checked={selectedCommandPermissions?.allowAll ?? true} disabled={saving} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: event.target.checked ? { allowAll: true, allowed: [...ROOM_COMMANDS] } : { allowAll: false, allowed: [...ROOM_COMMANDS] } })} /> Allow all commands</label>
+                        <label className="roster-permission-toggle"><input type="checkbox" checked={selectedCommandPermissions?.allowAll === true && selectedCommandPermissions.catalogRevision === COMMAND_CATALOG_REVISION} disabled={saving} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: { allowAll: event.target.checked, allowed: [...ROOM_COMMANDS], catalogRevision: COMMAND_CATALOG_REVISION } })} /> Allow all commands</label>
                         <div className="roster-command-list" aria-label={`Command permissions for ${selectedName}`}>
                           {ROOM_COMMANDS.map((command) => {
-                            const checked = selectedCommandPermissions?.allowAll || selectedCommandPermissions?.allowed.includes(command);
-                            return <label key={command}><input type="checkbox" checked={checked} disabled={saving || selectedCommandPermissions?.allowAll} onChange={(event) => {
+                            const currentAllowAll=selectedCommandPermissions?.allowAll===true&&selectedCommandPermissions.catalogRevision===COMMAND_CATALOG_REVISION;const checked = currentAllowAll || selectedCommandPermissions?.allowed.includes(command);
+                            return <label key={command}><input type="checkbox" checked={checked} disabled={saving || currentAllowAll} onChange={(event) => {
                               const allowed = new Set(selectedCommandPermissions?.allowed || []);
                               if (event.target.checked) allowed.add(command); else allowed.delete(command);
-                              replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: { allowAll: false, allowed: [...allowed] as RoomCommandName[] } });
+                              replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: { allowAll: false, allowed: [...allowed] as RoomCommandName[], catalogRevision: COMMAND_CATALOG_REVISION } });
                             }} /> /{command}</label>;
                           })}
                         </div>

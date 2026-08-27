@@ -16,7 +16,7 @@ const factories: ReadonlyArray<readonly [string, (root: string) => Promise<Fixtu
 ];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 const provenance = (at = "2026-08-27T12:00:00.000Z"): ConsultationProvenance => ({ kind: "human", actorId: "human-1", sourceId: "message-1", recordedAt: at });
-const create = (roomId: string, consultationId: string, idempotencyKey = "idem-1", topic = "Review release strategy") => ({ roomId, consultationId, idempotencyKey, request: { topic, context: { priority: "safe", nested: { a: 1, b: 2 } } } as const, provenance: provenance(), now: "2026-08-27T12:00:00.000Z" });
+const create = (roomId: string, consultationId: string, idempotencyKey = "idem-1", topic = "Review release strategy", idempotencyScope = "human-1") => ({ roomId, consultationId, idempotencyKey, idempotencyScope, request: { topic, context: { priority: "safe", nested: { a: 1, b: 2 } } } as const, provenance: provenance(), now: "2026-08-27T12:00:00.000Z" });
 
 describe.each(factories)("%s consultation repository contract", (_backend, makeFixture) => {
   it("replays exact requests and rejects conflicting idempotency reuse", async () => {
@@ -26,7 +26,20 @@ describe.each(factories)("%s consultation repository contract", (_backend, makeF
       expect(first).toMatchObject({ kind: "created", consultation: { state: "queued", revision: 1, roomId: "room-a", requestDigest: consultationRequestDigest(create("room-a", "consult-a").request) } });
       expect(await fixture.repository.createConsultation(create("room-a", "consult-a"))).toEqual({ kind: "replayed", consultation: first.kind === "created" ? first.consultation : undefined });
       expect(await fixture.repository.createConsultation(create("room-a", "consult-b", "idem-1", "Different request"))).toEqual({ kind: "idempotency_conflict", roomId: "room-a", idempotencyKey: "idem-1" });
+      expect(await fixture.repository.createConsultation(create("room-a", "consult-other-member", "idem-1", "Different member request", "human-2"))).toMatchObject({ kind: "created", consultation: { idempotencyScope: "human-2" } });
       expect(await fixture.repository.getConsultation({ roomId: "room-a", consultationId: "consult-a" })).toMatchObject({ request: { topic: "Review release strategy" }, idempotencyKey: "idem-1" });
+    } finally { fixture.close(); }
+  });
+
+  it("uses an immutable keyset cursor so concurrent updates do not duplicate or skip reconciliation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-consult-")); roots.push(root); const fixture = await makeFixture(root);
+    try {
+      for (const [index, at] of ["03", "02", "01"].entries()) await fixture.repository.createConsultation({ ...create("room-a", `page-${index}`, `page-${index}`), now: `2026-08-27T12:00:${at}.000Z` });
+      const first = await fixture.repository.listConsultations({ roomId: "room-a", limit: 2 });
+      expect(first.items.map(({ consultationId }) => consultationId)).toEqual(["page-0", "page-1"]);
+      await fixture.repository.applyConsultationChange({ roomId: "room-a", consultationId: "page-0" }, 1, { kind: "transition", to: "cancelled", reason: "concurrent update" }, "human-1", "2026-08-27T13:00:00.000Z");
+      const second = await fixture.repository.listConsultations({ roomId: "room-a", limit: 2, cursor: first.nextCursor! });
+      expect(second.items.map(({ consultationId }) => consultationId)).toEqual(["page-2"]);
     } finally { fixture.close(); }
   });
 
@@ -66,5 +79,18 @@ describe.each(factories)("%s consultation repository contract", (_backend, makeF
       expect(await fixture.repository.listConsultationAffinities("room-b")).toMatchObject([{ roomId: "room-b", duties: ["challenger"] }]);
       expect(await fixture.repository.getConsultation({ roomId: "room-c", consultationId: "same-id" })).toBeUndefined();
     } finally { fixture.close(); }
+  });
+});
+
+describe("SQLite consultation affinity concurrency", () => {
+  it("atomically checks immutable creation metadata with the upsert", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-consult-affinity-")); roots.push(root);
+    const file = path.join(root, "consultations.sqlite");
+    const first = await SqliteConsultationRepository.open(file); const second = await SqliteConsultationRepository.open(file);
+    const base: ConsultationAffinity = { roomId: "room-a", participantId: "agent-a", duties: ["scribe"], provenance: provenance(), createdAt: "2026-08-27T00:00:00.000Z", updatedAt: "2026-08-27T00:00:00.000Z" };
+    await first.putConsultationAffinity(base);
+    await expect(second.putConsultationAffinity({ ...base, duties: ["challenger"], createdAt: "2026-08-27T00:00:01.000Z", updatedAt: "2026-08-27T00:00:01.000Z" })).rejects.toThrow(/creation metadata is immutable/);
+    expect(await first.listConsultationAffinities("room-a")).toEqual([base]);
+    first.close(); second.close();
   });
 });

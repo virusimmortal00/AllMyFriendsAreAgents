@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
@@ -158,6 +158,7 @@ export default function App() {
   const [polls, setPolls] = useState<PublicPollProjection[]>([]);
   const pollRequestSequence = useRef(0);
   const [pollVotePending, setPollVotePending] = useState<string | null>(null);
+  const [pollError,setPollError]=useState("");
   const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
@@ -573,11 +574,7 @@ export default function App() {
       const acknowledgement = await sendMessage(message, clientMessageId, mentions);
       if ("command" in acknowledgement) {
         if (!isCommand) setRoom((current) => discardOptimisticMessage(current, optimisticId));
-        if (acknowledgement.result.kind === "private-help") {
-          const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
-          setConnectionNotice(notice);
-          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
-        } else if (acknowledgement.result.kind === "private-error") {
+        if (acknowledgement.result.kind === "private-error") {
           const notice = acknowledgement.result.message || "The command was rejected.";
           setConnectionNotice(notice);
           window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
@@ -599,7 +596,7 @@ export default function App() {
 
   function vote(pollId: string, optionIndex: number) {
     if (pollVotePending || !connected) return;
-    setPollVotePending(`${pollId}:${optionIndex}`);
+    setPollError("");setPollVotePending(`vote:${pollId}`);
     void voteOnPoll(pollId, optionIndex).then(async () => {
       const requestSequence = ++pollRequestSequence.current;
       try {
@@ -607,9 +604,11 @@ export default function App() {
         if (requestSequence === pollRequestSequence.current) setPolls(Array.isArray(result?.items) ? result.items : []);
       } catch { /* the periodic refresh owns poll projection recovery */ }
     }).catch((error) => {
-      setClientError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
+      setPollError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
     }).finally(() => setPollVotePending(null));
   }
+
+  function endPoll(pollId:string,expectedRevision:number){if(pollVotePending||!connected)return;setPollError("");setPollVotePending(`close:${pollId}`);void closePoll(pollId,expectedRevision).then(({poll})=>setPolls((current)=>current.map((item)=>item.pollId===pollId?poll:item))).catch((error)=>setPollError(error instanceof Error?error.message:"The poll could not be ended.")).finally(()=>setPollVotePending(null));}
 
   function resendPending() {
     if (!pendingSend || !human || !connected || resendingPending) return;
@@ -831,7 +830,7 @@ export default function App() {
           {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics agents={enabledAgents} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
-            <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} onVote={vote} />
+            <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
             <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />

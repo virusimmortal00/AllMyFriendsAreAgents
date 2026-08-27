@@ -90,12 +90,17 @@ export class DeveloperTeamRegistry {
   }
 
   authenticate(authorization: string | undefined, capability: DeveloperCapability, preferredRole: ActorRole = "AUTHOR"): AuthenticatedDeveloper | null {
+    const authenticated = this.authenticateAny(authorization, preferredRole);
+    return authenticated?.member.capabilities.includes(capability) ? authenticated : null;
+  }
+
+  authenticateAny(authorization: string | undefined, preferredRole: ActorRole = "AUTHOR"): AuthenticatedDeveloper | null {
     if (!authorization?.startsWith("Bearer ")) return null;
     const suppliedHash = hashToken(authorization.slice("Bearer ".length).trim());
     const member = this.revisions
       .filter((candidate) => safeEqual(candidate.tokenHash, suppliedHash))
       .sort((a, b) => b.revision - a.revision)[0];
-    if (!member || this.latest(member.memberId)?.revision !== member.revision || !member.capabilities.includes(capability)) return null;
+    if (!member || this.latest(member.memberId)?.revision !== member.revision) return null;
     const role = member.roles.includes(preferredRole) ? preferredRole : member.roles[0];
     if (!role) return null;
     return { member, actor: { id: member.memberId, role, human: false } };

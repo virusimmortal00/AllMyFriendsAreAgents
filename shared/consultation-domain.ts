@@ -11,6 +11,7 @@ export interface ConsultationRequest {
   readonly topic: string;
   readonly context?: JsonValue;
   readonly requestedParticipantIds?: readonly string[];
+  readonly dialogue?: ConsultationDialogueConfiguration;
 }
 export interface ConsultationDialogueLimits {
   readonly participantLimit: number;
@@ -18,6 +19,14 @@ export interface ConsultationDialogueLimits {
   readonly roundLimit: number;
   readonly concurrencyLimit: number;
   readonly timeLimitMs: number;
+}
+export interface ConsultationDialogueConfiguration extends ConsultationDialogueLimits { readonly enabled: boolean }
+export interface ConsultationProviderOperation {
+  readonly operationKey: string;
+  readonly kind: "turn" | "synthesis";
+  readonly status: "started" | "completed";
+  readonly startedAt: string;
+  readonly completedAt: string | null;
 }
 export interface ConsultationTurnRecord {
   readonly turnId: string;
@@ -46,6 +55,7 @@ export interface ConsultationExecution {
   readonly blockingQuestion: string | null;
   readonly synthesisKey: string;
   readonly synthesisStarted: boolean;
+  readonly providerOperations: readonly ConsultationProviderOperation[];
 }
 export interface ConsultationProvenance {
   readonly kind: "human" | "agent" | "system" | "import";
@@ -95,6 +105,7 @@ export interface Consultation extends ConsultationIdentity {
   readonly revision: number;
   readonly state: ConsultationState;
   readonly idempotencyKey: string;
+  readonly idempotencyScope: string;
   readonly requestDigest: string;
   readonly request: ConsultationRequest;
   readonly affinitySnapshot: readonly ConsultationAffinity[];
@@ -108,7 +119,7 @@ export interface Consultation extends ConsultationIdentity {
 }
 
 export type ConsultationChange =
-  | { readonly kind: "transition"; readonly to: ConsultationState; readonly reason: string; readonly finalArtifact?: ConsultationFinalArtifact }
+  | { readonly kind: "transition"; readonly to: ConsultationState; readonly reason: string; readonly finalArtifact?: ConsultationFinalArtifact; readonly execution?: ConsultationExecution }
   | { readonly kind: "assign_duty"; readonly participantId: string; readonly duty: ConsultationDuty; readonly provenance: ConsultationProvenance }
   | { readonly kind: "release_duty"; readonly participantId: string; readonly duty: ConsultationDuty; readonly reason: string }
   | { readonly kind: "record_execution"; readonly execution: ConsultationExecution };
@@ -128,12 +139,23 @@ function required(value: string, label: string, maximum = 256) {
   if (!value.trim()) throw new Error(`${label} must not be empty`);
   if (new TextEncoder().encode(value).length > maximum) throw new Error(`${label} must be at most ${maximum} bytes`);
 }
+function executionValidationReason(execution: ConsultationExecution) {
+  if (execution.participantIds.length > MAX_CONSULTATION_PARTICIPANTS) return `A consultation may run at most ${MAX_CONSULTATION_PARTICIPANTS} participants`;
+  if (new Set(execution.participantIds).size !== execution.participantIds.length) return "Execution participant IDs must be unique";
+  if (execution.participantIds.some((participantId) => !participantId.trim())) return "Execution participant IDs must not be empty";
+  if (execution.turns.some((turn) => !execution.participantIds.includes(turn.participantId))) return "Every turn must belong to a selected participant";
+  if (new Set(execution.turns.map(({ turnId }) => turnId)).size !== execution.turns.length) return "Consultation turn IDs must be unique";
+  if (new Set(execution.providerOperations.map(({ operationKey }) => operationKey)).size !== execution.providerOperations.length) return "Consultation provider operation keys must be unique";
+  if (execution.providerOperations.some((operation) => !operation.operationKey.trim() || !["turn", "synthesis"].includes(operation.kind) || !["started", "completed"].includes(operation.status) || (operation.status === "completed") !== Boolean(operation.completedAt))) return "Consultation provider operations must be valid";
+  return undefined;
+}
 
 export function validateConsultationId(value: string, label: string) { required(value, label); }
 export function validateConsultationIdempotencyKey(value: string) { required(value, "Idempotency key", 128); }
 
 export function createConsultation(input: ConsultationIdentity & {
   readonly idempotencyKey: string;
+  readonly idempotencyScope: string;
   readonly requestDigest: string;
   readonly request: ConsultationRequest;
   readonly affinitySnapshot?: readonly ConsultationAffinity[];
@@ -143,6 +165,7 @@ export function createConsultation(input: ConsultationIdentity & {
   validateConsultationId(input.roomId, "Room ID");
   validateConsultationId(input.consultationId, "Consultation ID");
   validateConsultationIdempotencyKey(input.idempotencyKey);
+  required(input.idempotencyScope, "Idempotency scope");
   if (!/^sha256:[a-f0-9]{64}$/.test(input.requestDigest)) throw new Error("Request digest must be a lowercase SHA-256 digest");
   required(input.request.topic, "Consultation topic", 8_000);
   required(input.provenance.actorId, "Provenance actor ID");
@@ -153,7 +176,7 @@ export function createConsultation(input: ConsultationIdentity & {
   if (affinitySnapshot.some((affinity) => affinity.roomId !== input.roomId)) throw new Error("Affinity snapshots must belong to the consultation room");
   return {
     schemaVersion: 1, roomId: input.roomId, consultationId: input.consultationId,
-    revision: 1, state: "queued", idempotencyKey: input.idempotencyKey,
+    revision: 1, state: "queued", idempotencyKey: input.idempotencyKey, idempotencyScope: input.idempotencyScope,
     requestDigest: input.requestDigest, request: structuredClone(input.request), affinitySnapshot,
     duties: [], provenance: [structuredClone(input.provenance)], execution: null, finalArtifact: null,
     transitions: [{ revision: 1, from: null, to: "queued", at: input.now, actorId: input.provenance.actorId, reason: "created" }],
@@ -178,18 +201,16 @@ export function applyConsultationChange(
     if (change.to === "complete" && !change.finalArtifact) return { kind: "rejected", reason: "Completing a consultation requires a final artifact" };
     if (change.to !== "complete" && change.finalArtifact) return { kind: "rejected", reason: "A final artifact is only valid for completion" };
     if (change.finalArtifact && (change.finalArtifact.schemaVersion !== 1 || change.finalArtifact.completedAt !== now || !change.finalArtifact.completedBy.trim())) return { kind: "rejected", reason: "Final artifact completion metadata must match the transition" };
+    if (change.execution) { const reason = executionValidationReason(change.execution); if (reason) return { kind: "rejected", reason }; }
     return { kind: "accepted", consultation: {
-      ...consultation, revision, state: change.to, finalArtifact: change.finalArtifact ? structuredClone(change.finalArtifact) : consultation.finalArtifact,
+      ...consultation, revision, state: change.to, execution: change.execution ? structuredClone(change.execution) : consultation.execution, finalArtifact: change.finalArtifact ? structuredClone(change.finalArtifact) : consultation.finalArtifact,
       transitions: [...consultation.transitions, { revision, from: consultation.state, to: change.to, at: now, actorId, reason: change.reason }], updatedAt: now,
     } };
   }
   if (["complete", "failed", "cancelled"].includes(consultation.state)) return { kind: "rejected", reason: `Terminal consultation ${consultation.consultationId} cannot be changed` };
   if (change.kind === "record_execution") {
     const execution = structuredClone(change.execution);
-    if (execution.participantIds.length > MAX_CONSULTATION_PARTICIPANTS) return { kind: "rejected", reason: `A consultation may run at most ${MAX_CONSULTATION_PARTICIPANTS} participants` };
-    if (new Set(execution.participantIds).size !== execution.participantIds.length) return { kind: "rejected", reason: "Execution participant IDs must be unique" };
-    if (execution.turns.some((turn) => !execution.participantIds.includes(turn.participantId))) return { kind: "rejected", reason: "Every turn must belong to a selected participant" };
-    if (new Set(execution.turns.map(({ turnId }) => turnId)).size !== execution.turns.length) return { kind: "rejected", reason: "Consultation turn IDs must be unique" };
+    const reason = executionValidationReason(execution); if (reason) return { kind: "rejected", reason };
     return { kind: "accepted", consultation: { ...consultation, revision, execution, updatedAt: now } };
   }
   if (change.kind === "assign_duty") {

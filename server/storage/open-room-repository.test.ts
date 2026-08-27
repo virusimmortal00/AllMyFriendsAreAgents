@@ -39,16 +39,6 @@ describe("room repository factory", () => {
     expect(repository.snapshot().settings.conversationEnergy).toBe("party");
   });
 
-  it("fails closed while the postgres adapter is incomplete", async () => {
-    const environment = {
-      ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "postgres",
-      DATABASE_URL: "postgresql://localhost/amfaa",
-    };
-    const configuration = resolveStorageConfiguration("/tmp/amfaa-project", environment);
-
-    await expect(openRoomRepository("/tmp/amfaa-project", configuration)).rejects.toThrow("adapter is not implemented yet");
-  });
-
   it("preserves same-epoch sessions across restarts and classifies a new commit as stale", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "amfaa-epoch-restart-"));
     temporaryDirectories.push(base);

@@ -8,6 +8,7 @@ export const MAX_CONSULTATION_PAGE_SIZE = 100;
 
 export interface CreateConsultationRequest extends ConsultationIdentity {
   readonly idempotencyKey: string;
+  readonly idempotencyScope: string;
   readonly request: ConsultationRequest;
   readonly provenance: ConsultationProvenance;
   readonly now: string;
@@ -54,13 +55,26 @@ export function consultationRequestDigest(request: ConsultationRequest) {
 
 export function paginateConsultations(consultations: readonly Consultation[], query: ConsultationListQuery): ConsultationPage {
   const limit = Math.max(1, Math.min(MAX_CONSULTATION_PAGE_SIZE, Math.trunc(query.limit ?? 50)));
-  const parsed = Number.parseInt(query.cursor ?? "0", 10);
-  const offset = Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+  const cursor = decodeCursor(query.cursor);
   const filtered = consultations
     .filter((consultation) => consultation.roomId === query.roomId)
     .filter((consultation) => !query.states?.length || query.states.includes(consultation.state))
     .filter((consultation) => !query.participantId || consultation.duties.some(({ participantId }) => participantId === query.participantId) || consultation.affinitySnapshot.some(({ participantId }) => participantId === query.participantId))
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.consultationId.localeCompare(right.consultationId));
-  const items = filtered.slice(offset, offset + limit);
-  return { items: structuredClone(items), nextCursor: offset + items.length < filtered.length ? String(offset + items.length) : null };
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.consultationId.localeCompare(right.consultationId))
+    .filter((consultation) => !cursor || consultation.createdAt < cursor.createdAt || (consultation.createdAt === cursor.createdAt && consultation.consultationId > cursor.consultationId));
+  const items = filtered.slice(0, limit);
+  const last = items.at(-1);
+  return { items: structuredClone(items), nextCursor: last && filtered.length > items.length ? encodeCursor(last) : null };
+}
+
+function encodeCursor(consultation: Consultation) {
+  return Buffer.from(JSON.stringify({ version: 1, createdAt: consultation.createdAt, consultationId: consultation.consultationId })).toString("base64url");
+}
+function decodeCursor(value: string | undefined): { createdAt: string; consultationId: string } | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (parsed.version !== 1 || typeof parsed.createdAt !== "string" || typeof parsed.consultationId !== "string") throw new Error();
+    return { createdAt: parsed.createdAt, consultationId: parsed.consultationId };
+  } catch { throw new Error("Consultation cursor is invalid; restart reconciliation without a cursor."); }
 }

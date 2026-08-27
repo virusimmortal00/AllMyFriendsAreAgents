@@ -184,7 +184,9 @@ function decodeCursor(cursor: string, roomId: string): string | null | undefined
 interface IdempotencyEntry {
   readonly digest: string;
   readonly acknowledgement: Promise<RoomMcpSendResult>;
+  settled: boolean;
 }
+export const MAX_MESSAGE_IDEMPOTENCY_ENTRIES = 1_024;
 
 function requestDigest(roomId: string, developer: AuthenticatedDeveloper, text: string) {
   return createHash("sha256").update(JSON.stringify([roomId, developer.member.memberId, text])).digest("base64url");
@@ -210,6 +212,7 @@ function createRoomMcpServer(
   idempotency: Map<string, IdempotencyEntry>,
   consultationService?: DurableConsultationMcpService,
   requestState = consultationRequestStateCodec(developers),
+  idempotencyLimit = MAX_MESSAGE_IDEMPOTENCY_ENTRIES,
 ) {
   const server = new McpServer(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
@@ -280,9 +283,17 @@ function createRoomMcpServer(
       return toolError("IDEMPOTENCY_CONFLICT", "That idempotency key was already used for a different request.");
     }
     let acknowledgement = replay?.acknowledgement;
+    if (replay) { idempotency.delete(lookupKey); idempotency.set(lookupKey, replay); }
     if (!acknowledgement) {
+      if (idempotency.size >= idempotencyLimit) {
+        const evictable = [...idempotency].find(([, entry]) => entry.settled);
+        if (!evictable) return toolError("SERVER_BUSY", "Too many message submissions are still in flight; retry later with the same key.");
+        idempotency.delete(evictable[0]);
+      }
       acknowledgement = bridge.sendMessage(roomId, developer, normalizedText, { key: idempotencyKey, requestDigest: digest });
-      idempotency.set(lookupKey, { digest, acknowledgement });
+      const entry: IdempotencyEntry = { digest, acknowledgement, settled: false };
+      idempotency.set(lookupKey, entry);
+      acknowledgement.then(() => { entry.settled = true; }, () => undefined);
       acknowledgement.catch(() => {
         if (idempotency.get(lookupKey)?.acknowledgement === acknowledgement) idempotency.delete(lookupKey);
       });
@@ -319,6 +330,7 @@ export function registerRoomMcpRoutes(options: {
   readonly bridge: RoomMcpBridge;
   readonly consultationService?: DurableConsultationMcpService;
   readonly allowedHostnames?: readonly string[];
+  readonly messageIdempotencyLimit?: number;
 }) {
   const idempotency = new Map<string, IdempotencyEntry>();
   const requestState = consultationRequestStateCodec(options.developers);
@@ -329,6 +341,7 @@ export function registerRoomMcpRoutes(options: {
     idempotency,
     options.consultationService,
     requestState,
+    Math.max(1, options.messageIdempotencyLimit ?? MAX_MESSAGE_IDEMPOTENCY_ENTRIES),
   ), {
     legacy: "stateless",
     responseMode: "auto",
@@ -342,13 +355,12 @@ export function registerRoomMcpRoutes(options: {
     if (!validateHost(request, response) || !validateOrigin(request, response)) return;
 
     const authorization = request.header("authorization");
-    if (!options.developers.authenticate(authorization, "ROOM_READ")
-      && !options.developers.authenticate(authorization, "CONSULTATION_READ")) {
+    if (!options.developers.authenticateAny(authorization)) {
       response
         .status(401)
         .set("Cache-Control", "no-store")
         .set("WWW-Authenticate", bearerChallenge())
-        .json({ error: "A room bridge credential with ROOM_READ is required." });
+        .json({ error: "A valid room bridge bearer credential is required." });
       return;
     }
 

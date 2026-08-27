@@ -101,4 +101,19 @@ describe("room state responses", () => {
     expect(publicState).not.toHaveProperty("roomConfigurationAudit");
     expect(publicState.roster?.entries[0]).not.toHaveProperty("lastSeenMessageId");
   });
+
+  it("projects private transcript nodes only to their human and strips the recipient identifier", () => {
+    const snapshot: RoomState = {
+      messages: [
+        { id: "public", speaker: "system", text: "public", timestamp: "2026-08-27T00:00:00Z" },
+        { id: "private", speaker: "system", text: "private marker", timestamp: "2026-08-27T00:00:01Z", recipientHumanId: "human-a" },
+      ],
+      sessions: {}, settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: "/tmp", participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle",
+    };
+    expect(publicRoomState(snapshot).messages.map(({ id }) => id)).toEqual(["public"]);
+    expect(publicRoomState(snapshot, undefined, "human-b").messages.map(({ id }) => id)).toEqual(["public"]);
+    const own = publicRoomState(snapshot, undefined, "human-a");
+    expect(own.messages.map(({ id }) => id)).toEqual(["public", "private"]);
+    expect(JSON.stringify(own)).not.toContain("human-a");
+  });
 });

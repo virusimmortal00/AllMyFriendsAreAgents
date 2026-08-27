@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
   it("migrates missing command permissions to allow-all and rejects malformed updates", () => {
@@ -34,6 +34,22 @@ describe("room roster contract", () => {
     ] as const;
     expect(validateRosterEntries(entries)).toHaveLength(2);
     expect(validateRosterEntries([{ ...entries[0] }, { ...entries[1], conversationalName: " alpha " }])).toBeUndefined();
+  });
+
+  it("resolves exact roster mentions and fails closed on ID/name ambiguity", () => {
+    const roster = normalizeRoomAgentRoster({
+      schemaVersion: 3,
+      revision: 1,
+      entries: [
+        { agentId: "codex-sol", conversationalName: "claude-sonnet", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true },
+        { agentId: "claude-sonnet", conversationalName: "Claude", providerId: "anthropic", modelId: "claude-sonnet-5", enabled: true },
+      ],
+    });
+    expect(resolveRoomAgentTarget(roster, "@Claude")).toEqual({ kind: "resolved", agentId: "claude-sonnet" });
+    expect(resolveRoomAgentTarget(roster, "claude-sonnet")).toEqual({ kind: "ambiguous" });
+    expect(resolveRoomAgentTarget(roster, "@Missing")).toEqual({ kind: "unknown" });
+    const multiword = normalizeRoomAgentRoster({ schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Meta Muse", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true }] });
+    expect(resolveRoomAgentTargetPrefix(multiword, "@Meta Muse compare this")).toEqual({ kind: "resolved", agentId: "codex-sol", rest: "compare this" });
   });
 
   it("accepts OpenRouter alias model identifiers without allowing alias provider identifiers", () => {

@@ -60,6 +60,8 @@ import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
+import { effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
+import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
@@ -69,6 +71,9 @@ import { DurableConsultationMcpService } from "./consultation-mcp.js";
 import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
+import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
+import { GitHubReadStore } from "./github-read-store.js";
+import { GitHubReadService } from "./github-read-service.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -102,7 +107,7 @@ const store = await openRoomRepository(projectRoot, storageConfiguration);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
-const roomEvents = new RoomEventStream(serverIdentity.instanceId);
+const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
@@ -126,6 +131,12 @@ const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataD
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
+const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
+const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
+const githubReadParts=githubReadRepository?.split("/")||[];
+const fakeSha="0123456789abcdef0123456789abcdef01234567";
+const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
+const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch)),githubReadRepository!):undefined;
 const githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
@@ -218,7 +229,8 @@ registerRoomHistoryRoutes({
   app,
   store,
   authorize: (request) => {
-    if (sessionHuman(request, humans, humanSessions)) return true;
+    const human = sessionHuman(request, humans, humanSessions);
+    if (human) return { humanId: human.id };
     if (developerTeam.authenticate(request.header("authorization"), "ROOM_READ")) return true;
     const authorization = request.header("authorization") || "";
     const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -238,8 +250,8 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-function publicRoomSnapshot() {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
+function publicRoomSnapshot(viewerHumanId?: string) {
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -305,7 +317,25 @@ async function refreshImplementationCapabilitiesAndBroadcast() {
 }
 
 function broadcast() {
-  roomEvents.broadcast(publicRoomSnapshot());
+  for (const [viewerHumanId, stream] of roomEvents) stream.broadcast(publicRoomSnapshot(viewerHumanId));
+}
+
+function roomEventStream(humanId: string) {
+  let stream = roomEvents.get(humanId);
+  if (!stream) { stream = new RoomEventStream(`${serverIdentity.instanceId}:${humanId}`); roomEvents.set(humanId, stream); }
+  return stream;
+}
+
+function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
+  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS) : [];
+  if (!entry || !allowedCommands.length) return undefined;
+  return {
+    url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
+    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands }),
+    allowedCommands,
+    guide: roomCommandGuide(allowedCommands),
+  };
 }
 
 function developerRoomView(limit = 50) {
@@ -440,6 +470,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         summarizer: contextSummarizer,
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
+        commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
@@ -496,7 +527,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   }
 
   if (parsed.investigationRequest) {
-    const recentMessages = before.messages.slice(-8);
+    const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
     const evidenceRefs = [
       ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
       ...parsed.investigationRequest.evidenceRefs,
@@ -687,7 +718,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      undefined,
+      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
     if (await agentHealth.recordSuccess(agent)) broadcast();
@@ -702,6 +733,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
 
 const commandRuntime = new CommandRuntime({
   store,
+  ceiling:githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS,
   roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
   canLaunch: commandAgentAvailable,
   reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
@@ -734,7 +766,11 @@ const commandRuntime = new CommandRuntime({
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
+  githubRead:githubReadService,
+  publishGhResult:async(executionId,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",text);broadcast();},
 });
+const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null);
+registerRoomCommandToolRoute(app, roomCommandToolBroker);
 await commandRuntime.initialize();
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
@@ -744,15 +780,21 @@ const consultationRunner = new ConsultationRunner(
     synthesize: async (input) => {
       const agent = currentEnabledAgents()[0];
       if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
+      const reservation = activeGenerations.reserve(agent, agentConcurrency);
+      if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation synthesis.");
       const prior = input.turns.map(({ participantId, duty, response, dissent }) => ({ participantId, duty, response, dissent }));
-      const result = await performCommandTask(agent, [
-        "Synthesize the following bounded room consultation into one concise, decision-ready artifact.",
-        "Preserve material dissent and blockers. Do not edit, publish, deploy, or claim code authority.",
-        `Topic: ${input.topic}`,
-        `Context: ${JSON.stringify(input.context ?? null)}`,
-        `Consultation turns: ${JSON.stringify(prior)}`,
-        `Human inputs: ${JSON.stringify(input.inputs.map(({ value }) => value))}`,
-      ].join("\n"), { signal: input.signal, partial: () => undefined, active: async () => true });
+      let result;
+      try {
+        result = await performCommandTask(agent, [
+          "Synthesize the following bounded room consultation into one concise, decision-ready artifact.",
+          "Preserve material dissent and blockers. Do not edit, publish, deploy, or claim code authority.",
+          `Idempotency key: ${input.idempotencyKey}`,
+          `Topic: ${input.topic}`,
+          `Context: ${JSON.stringify(input.context ?? null)}`,
+          `Consultation turns: ${JSON.stringify(prior)}`,
+          `Human inputs: ${JSON.stringify(input.inputs.map(({ value }) => value))}`,
+        ].join("\n"), { signal: input.signal, partial: () => undefined, active: async (generationId) => reservation.activate(generationId) });
+      } finally { reservation.release(); }
       const synthesis = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
       if (!synthesis) throw new Error("The consultation synthesizer returned no public artifact.");
       return { kind: "settled" as const, synthesis, completedBy: agent };
@@ -761,9 +803,14 @@ const consultationRunner = new ConsultationRunner(
   {
     performTurn: async (input) => {
       if (!isActiveAgentId(input.participantId)) throw new Error(`Consultation participant ${input.participantId} is unavailable.`);
-      const result = await performCommandTask(input.participantId, `${input.prompt}\n\nBounded context: ${JSON.stringify(input.context ?? null)}`, {
-        signal: input.signal, partial: () => undefined, active: async () => true,
-      });
+      const reservation = activeGenerations.reserve(input.participantId, agentConcurrency);
+      if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation dialogue.");
+      let result;
+      try {
+        result = await performCommandTask(input.participantId, `${input.prompt}\n\nIdempotency key: ${input.idempotencyKey}\nBounded context: ${JSON.stringify(input.context ?? null)}`, {
+          signal: input.signal, partial: () => undefined, active: async (generationId) => reservation.activate(generationId),
+        });
+      } finally { reservation.release(); }
       const response = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
       if (!response) throw new Error(`Consultation participant ${input.participantId} returned no public response.`);
       return { response };
@@ -812,12 +859,13 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
 
 const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresence);
 
-app.get("/api/state", async (_request, response) => {
+app.get("/api/state", async (request, response) => {
+  const viewerHumanId = sessionHuman(request, humans, humanSessions)?.id;
   response.json({
     ...(await roomStateWithAvailability(roomSnapshot, () => cliAvailability(currentEnabledAgents()), async () => {
       await refreshImplementationCapabilities();
       return implementationCapabilities;
-    })),
+    }, viewerHumanId)),
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
     server: serverIdentity,
@@ -908,7 +956,7 @@ app.get("/api/events", async (request, response) => {
   const connection = humans.connect(human.id);
   if (!connection) return response.status(401).json({ error: "Join the room before connecting." });
   await refreshImplementationCapabilities();
-  roomEvents.connect(request, response, publicRoomSnapshot(), () => {
+  roomEventStream(human.id).connect(request, response, publicRoomSnapshot(human.id), () => {
     const departure = humans.disconnect(human.id);
     broadcast();
     if (departure) presenceAnnouncements.departure(departure.human, departure.becameAbsent);
@@ -954,7 +1002,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -1013,7 +1061,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, humans, sessions:humanSessions, text });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });

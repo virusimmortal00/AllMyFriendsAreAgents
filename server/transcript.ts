@@ -74,11 +74,11 @@ export interface AgentScopedTranscript {
 }
 
 function visibleMessages(messages: RoomMessage[]) {
-  return messages.filter((message) => entriesFor([message], true).length > 0);
+  return messages.filter((message) => !message.recipientHumanId && entriesFor([message], true).length > 0);
 }
 
 function transcriptMessages(messages: RoomMessage[]) {
-  return entriesFor(messages, true).map((entry) => formatEntry(entry)).join("\n\n");
+  return entriesFor(messages.filter((message) => !message.recipientHumanId), true).map((entry) => formatEntry(entry)).join("\n\n");
 }
 
 function pinnedState(state: RoomState, options: AgentScopedTranscriptOptions) {
@@ -205,7 +205,7 @@ export function transcriptFor(state: RoomState, input: number | AgentScopedTrans
     }
   }
 
-  const entries = entriesFor(state.messages.slice(topicStart));
+  const entries = entriesFor(state.messages.slice(topicStart).filter((message) => !message.recipientHumanId));
   const selected: string[] = [];
   let remaining = Math.max(0, characterBudget);
   for (let index = entries.length - 1; index >= 0 && remaining > 0; index -= 1) {

@@ -130,3 +130,36 @@ export function participantConfigurationFingerprintMatches(stored: string | unde
 }
 export function roomAgentTurnEpoch(roster: RoomAgentRoster, agent: ActiveAgentId): RoomAgentTurnEpoch | undefined { const entry = normalizedEntry(roster.entries.find((candidate) => candidate.agentId === agent && candidate.enabled)); return entry ? { agentId: agent, rosterRevision: roster.revision, configurationRevision: entry.configurationRevision || 1 } : undefined; }
 export function roomAgentTurnEpochIsCurrent(roster: RoomAgentRoster, epoch: RoomAgentTurnEpoch) { const entry = normalizedEntry(roster.entries.find((candidate) => candidate.agentId === epoch.agentId && candidate.enabled)); return roster.revision === epoch.rosterRevision && entry?.configurationRevision === epoch.configurationRevision; }
+
+/** Resolve the exact token emitted by mention autocomplete, or a canonical ID. */
+export function resolveRoomAgentTarget(roster: RoomAgentRoster, token: string):
+  | { readonly kind: "resolved"; readonly agentId: ActiveAgentId }
+  | { readonly kind: "unknown" | "ambiguous" } {
+  const normalized = token.trim().replace(/^@/, "").toLocaleLowerCase();
+  if (!normalized) return { kind: "unknown" };
+  const matches = normalizeRoomAgentRoster(roster).entries.filter((entry) =>
+    entry.agentId.toLocaleLowerCase() === normalized
+    || entry.conversationalName?.toLocaleLowerCase() === normalized
+  );
+  const ids = [...new Set(matches.map(({ agentId }) => agentId))];
+  if (ids.length === 1) return { kind: "resolved", agentId: ids[0]! };
+  return { kind: ids.length ? "ambiguous" : "unknown" };
+}
+
+/** Split a leading roster mention from its prompt, preferring the longest exact roster label. */
+export function resolveRoomAgentTargetPrefix(roster: RoomAgentRoster, value: string):
+  | { readonly kind: "resolved"; readonly agentId: ActiveAgentId; readonly rest: string }
+  | { readonly kind: "unknown" | "ambiguous" } {
+  const input = value.trimStart();
+  if (!input.startsWith("@")) return { kind: "unknown" };
+  const entries = normalizeRoomAgentRoster(roster).entries;
+  const tokens = entries.flatMap((entry) => [entry.agentId, entry.conversationalName])
+    .filter((token): token is string => typeof token === "string")
+    .filter((token, index, values) => values.findIndex((candidate) => candidate.toLocaleLowerCase() === token.toLocaleLowerCase()) === index)
+    .filter((token) => input.toLocaleLowerCase().startsWith(`@${token.toLocaleLowerCase()}`) && /^(?:\s|$)/.test(input.slice(token.length + 1, token.length + 2)))
+    .sort((left, right) => right.length - left.length);
+  const token = tokens[0];
+  if (!token) return { kind: "unknown" };
+  const resolved = resolveRoomAgentTarget(roster, token);
+  return resolved.kind === "resolved" ? { ...resolved, rest: input.slice(token.length + 1).trim() } : resolved;
+}

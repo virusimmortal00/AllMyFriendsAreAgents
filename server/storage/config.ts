@@ -1,7 +1,7 @@
 import path from "node:path";
 import { chmod, mkdir, realpath, stat } from "node:fs/promises";
 
-export const STORAGE_BACKENDS = ["json", "sqlite", "postgres"] as const;
+export const STORAGE_BACKENDS = ["json", "sqlite"] as const;
 export type StorageBackend = typeof STORAGE_BACKENDS[number];
 
 interface StorageConfigurationBase {
@@ -20,12 +20,7 @@ export interface SqliteStorageConfiguration extends StorageConfigurationBase {
   databasePath: string;
 }
 
-export interface PostgresStorageConfiguration extends StorageConfigurationBase {
-  backend: "postgres";
-  connectionString: string;
-}
-
-export type StorageConfiguration = JsonStorageConfiguration | SqliteStorageConfiguration | PostgresStorageConfiguration;
+export type StorageConfiguration = JsonStorageConfiguration | SqliteStorageConfiguration;
 
 function overlaps(left: string, right: string) {
   const relative = path.relative(left, right);
@@ -63,22 +58,6 @@ function configuredPath(projectRoot: string, value: string | undefined, fallback
   return path.isAbsolute(value) ? value : path.resolve(projectRoot, value);
 }
 
-function postgresConnectionString(value: string | undefined) {
-  if (!value?.trim()) {
-    throw new Error("DATABASE_URL is required when the storage backend is postgres.");
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
-    throw new Error("DATABASE_URL must use the postgres:// or postgresql:// scheme.");
-  }
-  return value;
-}
-
 export function resolveStorageConfiguration(
   projectRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -112,14 +91,6 @@ export function resolveStorageConfiguration(
         environment.ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH,
         path.join(dataDirectory, "amfaa.sqlite"),
       ),
-    };
-  }
-  if (backend === "postgres") {
-    return {
-      backend,
-      dataDirectory,
-      assignmentWorktreesDirectory,
-      connectionString: postgresConnectionString(environment.DATABASE_URL),
     };
   }
   return { backend, dataDirectory, assignmentWorktreesDirectory, stateDirectory: dataDirectory };

@@ -61,6 +61,7 @@ export interface ConsultationTurnOutput {
   readonly blockingQuestion?: string;
 }
 export interface ConsultationDialogueExecutor { performTurn(input: ConsultationTurnInput): Promise<ConsultationTurnOutput> }
+export interface ConsultationGenerationGate { reserve(participantId: string): { release(): void } | undefined }
 
 export interface ConsultationSynthesisInput {
   readonly roomId: string;
@@ -117,6 +118,7 @@ export class ConsultationRunner {
     private readonly dialogue?: ConsultationDialogueExecutor,
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly logError: (error: unknown) => void = () => undefined,
+    private readonly generationGate?: ConsultationGenerationGate,
   ) {}
 
   async start(input: StartConsultationInput): Promise<CreateConsultationResult> {
@@ -127,19 +129,20 @@ export class ConsultationRunner {
       topic: publicText(input.request.topic, 8_000),
       context: sanitizeConsultationContext(input.request.context),
       requestedParticipantIds: input.request.requestedParticipantIds ? [...input.request.requestedParticipantIds] : undefined,
+      dialogue: { enabled: input.dialogue?.enabled === true, ...boundLimits(input.dialogue) },
     };
-    const result = await this.repository.createConsultation({ ...input, consultationId, request, now: this.now() });
+    const result = await this.repository.createConsultation({ ...input, consultationId, idempotencyScope: input.provenance.actorId, request, now: this.now() });
     if (result.kind !== "created" && result.kind !== "replayed") return result;
     let consultation = result.consultation;
     if (!consultation.execution) {
-      const limits = boundLimits(input.dialogue);
+      const limits = request.dialogue!;
       const execution: ConsultationExecution = {
-        dialogueEnabled: input.dialogue?.enabled === true,
+        dialogueEnabled: request.dialogue!.enabled,
         limits,
         participantIds: selectParticipants(consultation, limits.participantLimit),
         turns: [], inputs: [], blockingQuestion: null,
         synthesisKey: `${consultation.roomId}:${consultation.consultationId}:synthesis:v1`,
-        synthesisStarted: false,
+        synthesisStarted: false, providerOperations: [],
       };
       const initialized = await this.repository.applyConsultationChange(consultation, consultation.revision, { kind: "record_execution", execution }, "consultation-runner", this.now());
       if (initialized.kind === "accepted") consultation = initialized.consultation;
@@ -225,17 +228,21 @@ export class ConsultationRunner {
     let current = await this.repository.getConsultation(seed);
     if (!current || controller.signal.aborted || !["queued", "discussing"].includes(current.state)) return;
     if (!current.execution) {
-      const enabled = false;
-      const limits = boundLimits(undefined);
+      const requested = current.request.dialogue ?? { enabled: false, ...boundLimits(undefined) };
+      const enabled = requested.enabled;
+      const limits = requested;
       const participantIds = selectParticipants(current, limits.participantLimit);
       if (enabled && (!this.dialogue || !participantIds.length)) {
         await this.fail(current, this.dialogue ? "Opted-in dialogue has no eligible participants." : "Opted-in dialogue executor is unavailable."); return;
       }
-      const execution: ConsultationExecution = { dialogueEnabled: enabled, limits, participantIds, turns: [], inputs: [], blockingQuestion: null, synthesisKey: `${current.roomId}:${current.consultationId}:synthesis:v1`, synthesisStarted: false };
+      const execution: ConsultationExecution = { dialogueEnabled: enabled, limits, participantIds, turns: [], inputs: [], blockingQuestion: null, synthesisKey: `${current.roomId}:${current.consultationId}:synthesis:v1`, synthesisStarted: false, providerOperations: [] };
       const initialized = await this.repository.applyConsultationChange(current, current.revision, { kind: "record_execution", execution }, "consultation-runner", this.now());
       if (initialized.kind !== "accepted") return;
       current = initialized.consultation;
-      for (const [index, participantId] of participantIds.entries()) {
+    }
+    const participantIds = current.execution!.participantIds;
+    for (const [index, participantId] of participantIds.entries()) {
+      if (!current.duties.some((duty) => duty.participantId === participantId && duty.releasedAt === null)) {
         const duty = dutyFor(current, participantId, index, participantIds.length);
         const assigned = await this.repository.applyConsultationChange(current, current.revision, { kind: "assign_duty", participantId, duty, provenance: { kind: "system", actorId: "consultation-runner", sourceId: `selection:${current.consultationId}`, recordedAt: this.now() } }, "consultation-runner", this.now());
         if (assigned.kind !== "accepted") return;
@@ -260,6 +267,10 @@ export class ConsultationRunner {
     const startedAt = Date.now();
     while (!controller.signal.aborted) {
       const execution = current.execution!;
+      if (execution.providerOperations.some((operation) => operation.kind === "turn" && operation.status === "started")) {
+        await this.fail(current, "A consultation turn may have executed before restart; refusing duplicate provider execution.");
+        return undefined;
+      }
       const eligible = execution.participantIds.filter((participantId) => {
         const count = execution.turns.filter((turn) => turn.participantId === participantId).length;
         return count < execution.limits.roundLimit && execution.turns.length + count < execution.limits.turnLimit + count;
@@ -270,13 +281,29 @@ export class ConsultationRunner {
       const available = execution.limits.turnLimit - execution.turns.length;
       const batch = eligible.slice(0, Math.min(execution.limits.concurrencyLimit, available));
       const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(remainingMs)]);
-      const outputs = await withTimeCeiling(Promise.all(batch.map(async (participantId) => {
-        const round = execution.turns.filter((turn) => turn.participantId === participantId).length + 1;
+      const reservations = batch.map((participantId) => this.generationGate?.reserve(participantId));
+      if (this.generationGate && reservations.some((reservation) => !reservation)) {
+        for (const reservation of reservations) reservation?.release();
+        await this.fail(current, "Shared generation capacity is unavailable for consultation dialogue.");
+        return undefined;
+      }
+      const claims: Array<{ participantId: string; duty: ConsultationDuty; round: number; turnId: string; prompt: string; reservation: { release(): void } | undefined }> = [];
+      for (const [index, participantId] of batch.entries()) {
+        const round = current.execution!.turns.filter((turn) => turn.participantId === participantId).length + 1;
         const turnId = `${current.consultationId}:turn:${participantId}:${round}`;
         const duty = activeDuty(current, participantId);
         const prompt = deriveConsultationPrompt(current, participantId, duty, round);
-        const output = await this.dialogue!.performTurn({ roomId: current.roomId, consultationId: current.consultationId, turnId, idempotencyKey: turnId, participantId, duty, round, prompt, context: sanitizeConsultationContext(current.request.context), priorTurns: execution.turns.map(({ participantId: id, duty: priorDuty, response, dissent }) => ({ participantId: id, duty: priorDuty, response, dissent })), signal: deadline });
-        return { participantId, duty, round, turnId, prompt, output };
+        const claimed = await this.repository.applyConsultationChange(current, current.revision, { kind: "record_execution", execution: { ...current.execution!, providerOperations: [...current.execution!.providerOperations, { operationKey: turnId, kind: "turn", status: "started", startedAt: this.now(), completedAt: null }] } }, "consultation-runner", this.now());
+        if (claimed.kind !== "accepted") { for (const reservation of reservations) reservation?.release(); return undefined; }
+        current = claimed.consultation;
+        claims.push({ participantId, duty, round, turnId, prompt, reservation: reservations[index] });
+      }
+      const priorTurns = execution.turns.map(({ participantId: id, duty: priorDuty, response, dissent }) => ({ participantId: id, duty: priorDuty, response, dissent }));
+      const outputs = await withTimeCeiling(Promise.all(claims.map(async (claim) => {
+        try {
+          const output = await this.dialogue!.performTurn({ roomId: current.roomId, consultationId: current.consultationId, turnId: claim.turnId, idempotencyKey: claim.turnId, participantId: claim.participantId, duty: claim.duty, round: claim.round, prompt: claim.prompt, context: sanitizeConsultationContext(current.request.context), priorTurns, signal: deadline });
+          return { ...claim, output };
+        } finally { claim.reservation?.release(); }
       })), remainingMs);
       for (const completed of outputs) {
         if (controller.signal.aborted) return undefined;
@@ -287,7 +314,7 @@ export class ConsultationRunner {
         if (!response) { await this.fail(fresh, `Participant ${completed.participantId} returned an empty consultation response.`); return undefined; }
         const turn: ConsultationTurnRecord = { turnId: completed.turnId, participantId: completed.participantId, duty: completed.duty, round: completed.round, prompt: completed.prompt, response, evidence: sanitizeEvidence(completed.output.evidence), dissent: completed.output.dissent === true, completedAt: this.now() };
         const question = completed.output.blockingQuestion ? publicText(completed.output.blockingQuestion, 1_000).trim() : null;
-        const nextExecution: ConsultationExecution = { ...fresh.execution, turns: [...fresh.execution.turns, turn], blockingQuestion: question || fresh.execution.blockingQuestion };
+        const nextExecution: ConsultationExecution = { ...fresh.execution, turns: [...fresh.execution.turns, turn], blockingQuestion: question || fresh.execution.blockingQuestion, providerOperations: fresh.execution.providerOperations.map((operation) => operation.operationKey === completed.turnId ? { ...operation, status: "completed" as const, completedAt: this.now() } : operation) };
         const persisted = await this.repository.applyConsultationChange(fresh, fresh.revision, { kind: "record_execution", execution: nextExecution }, completed.participantId, this.now());
         if (persisted.kind !== "accepted") return undefined;
         current = persisted.consultation;
@@ -303,26 +330,35 @@ export class ConsultationRunner {
   private async runSynthesis(seed: Consultation, controller: AbortController) {
     let current = await this.repository.getConsultation(seed);
     if (!current || current.state !== "discussing" || !current.execution || controller.signal.aborted) return;
-    if (!current.execution.synthesisStarted) {
-      const claimed = await this.repository.applyConsultationChange(current, current.revision, { kind: "record_execution", execution: { ...current.execution, synthesisStarted: true } }, "consultation-synthesizer", this.now());
-      if (claimed.kind !== "accepted") return;
-      current = claimed.consultation;
+    const operationKey = `${current.execution.synthesisKey}:inputs:${current.execution.inputs.length}`;
+    const previous = current.execution.providerOperations.find((operation) => operation.operationKey === operationKey);
+    if (previous?.status === "started") {
+      await this.fail(current, "Consultation synthesis may have executed before restart; refusing duplicate provider execution.");
+      return;
     }
+    if (previous?.status === "completed") {
+      if (current.execution.blockingQuestion) await this.repository.applyConsultationChange(current, current.revision, { kind: "transition", to: "input_required", reason: current.execution.blockingQuestion }, "consultation-synthesizer", this.now());
+      else await this.fail(current, "Consultation synthesis completed without a durable terminal result.");
+      return;
+    }
+    const claimed = await this.repository.applyConsultationChange(current, current.revision, { kind: "record_execution", execution: { ...current.execution, synthesisStarted: true, providerOperations: [...current.execution.providerOperations, { operationKey, kind: "synthesis", status: "started", startedAt: this.now(), completedAt: null }] } }, "consultation-synthesizer", this.now());
+    if (claimed.kind !== "accepted") return;
+    current = claimed.consultation;
     try {
       const execution = current.execution;
       if (!execution) return;
-      const output = await this.synthesis.synthesize({ roomId: current.roomId, consultationId: current.consultationId, idempotencyKey: execution.synthesisKey, topic: publicText(current.request.topic, 8_000), context: sanitizeConsultationContext(current.request.context), turns: execution.turns, inputs: execution.inputs, provenance: current.provenance.map(sanitizeProvenance), signal: controller.signal });
+      const output = await this.synthesis.synthesize({ roomId: current.roomId, consultationId: current.consultationId, idempotencyKey: operationKey, topic: publicText(current.request.topic, 8_000), context: sanitizeConsultationContext(current.request.context), turns: execution.turns, inputs: execution.inputs, provenance: current.provenance.map(sanitizeProvenance), signal: controller.signal });
       const fresh = await this.repository.getConsultation(current);
       if (!fresh || fresh.state !== "discussing" || !fresh.execution) return;
       if (output.kind === "input_required") {
         const question = publicText(output.question, 1_000).trim() || "Additional human input is required.";
-        const journaled = await this.repository.applyConsultationChange(fresh, fresh.revision, { kind: "record_execution", execution: { ...fresh.execution, blockingQuestion: question } }, "consultation-synthesizer", this.now());
+        const journaled = await this.repository.applyConsultationChange(fresh, fresh.revision, { kind: "record_execution", execution: { ...fresh.execution, blockingQuestion: question, providerOperations: completeOperation(fresh.execution.providerOperations, operationKey, this.now()) } }, "consultation-synthesizer", this.now());
         if (journaled.kind === "accepted") await this.repository.applyConsultationChange(journaled.consultation, journaled.consultation.revision, { kind: "transition", to: "input_required", reason: question }, "consultation-synthesizer", this.now());
         return;
       }
       const completedAt = this.now();
       const artifact = artifactFrom(fresh, output, completedAt);
-      await this.repository.applyConsultationChange(fresh, fresh.revision, { kind: "transition", to: "complete", reason: "Durable consultation synthesis completed.", finalArtifact: artifact }, artifact.completedBy, completedAt);
+      await this.repository.applyConsultationChange(fresh, fresh.revision, { kind: "transition", to: "complete", reason: "Durable consultation synthesis completed.", finalArtifact: artifact, execution: { ...fresh.execution, providerOperations: completeOperation(fresh.execution.providerOperations, operationKey, completedAt) } }, artifact.completedBy, completedAt);
     } catch (error) {
       if (controller.signal.aborted) return;
       const fresh = await this.repository.getConsultation(current);
@@ -369,6 +405,7 @@ function artifactFrom(consultation: Consultation, output: Extract<ConsultationSy
 function sanitizeProvenance(value: ConsultationProvenance): ConsultationProvenance { return { ...value, actorId: publicText(value.actorId, 256), sourceId: value.sourceId ? publicText(value.sourceId, 2_000) : undefined }; }
 function key(identity: ConsultationIdentity) { return `${identity.roomId.length}:${identity.roomId}${identity.consultationId}`; }
 function changeFailure(result: { kind: "conflict"; expectedRevision: number; actualRevision: number } | { kind: "rejected"; reason: string }): ConsultationOperationResult { return result.kind === "conflict" ? { kind: "conflict", reason: `Expected revision ${result.expectedRevision}; actual revision is ${result.actualRevision}.` } : { kind: "rejected", reason: result.reason }; }
+function completeOperation(operations: ConsultationExecution["providerOperations"], operationKey: string, completedAt: string) { return operations.map((operation) => operation.operationKey === operationKey ? { ...operation, status: "completed" as const, completedAt } : operation); }
 async function withTimeCeiling<T>(operation: Promise<T>, timeMs: number) {
   let timer: NodeJS.Timeout | undefined;
   try { return await Promise.race([operation, new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Consultation dialogue time ceiling reached.")), timeMs); })]); }

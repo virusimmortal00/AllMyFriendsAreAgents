@@ -39,6 +39,7 @@ export interface AgentContextRuntime {
   readonly summarizer?: AgentContextSummarizer;
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
+  readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
 }
 
 interface ProcessResult {
@@ -251,8 +252,10 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
   const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment });
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
+  const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";
   const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
 ${basePromptSection}
+${commandGuide}
 
 ROOM NAME
 ${state.settings.roomName}
@@ -559,13 +562,14 @@ function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>)
   };
 }
 
-function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable") {
+function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false) {
   return permission === "read-only" ? {
     ...environment,
     OPENCODE_PERMISSION: JSON.stringify({
       "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
       webfetch: "allow", websearch: "allow", lsp: "allow",
       room_history: "allow",
+      room_command: roomCommandAvailable ? "allow" : "deny",
     }),
   } : environment;
 }
@@ -673,14 +677,21 @@ export async function runAgent(
     const invoke = async (sessionId?: string) => {
       const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
       const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
-      const environment = context?.historyTool ? {
+      const environment = {
         ...invocation.env,
-        OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
-        AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
-        AMFAA_ROOM_HISTORY_TOKEN: context.historyTool.token,
-      } : invocation.env;
+        ...(context?.historyTool ? {
+          OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
+          AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
+          AMFAA_ROOM_HISTORY_TOKEN: context.historyTool.token,
+        } : {}),
+        ...(context?.commandTool ? {
+          AMFAA_ROOM_COMMAND_URL: context.commandTool.url,
+          AMFAA_ROOM_COMMAND_TOKEN: context.commandTool.token,
+          AMFAA_ROOM_COMMANDS: JSON.stringify(context.commandTool.allowedCommands),
+        } : {}),
+      };
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(environment, permission),
+        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length)),
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });

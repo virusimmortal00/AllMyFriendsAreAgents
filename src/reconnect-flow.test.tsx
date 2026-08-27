@@ -235,6 +235,9 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByText("/help")).toBeNull();
     act(() => resolveCommand({ command: true, clientSubmissionId: api.sendMessage.mock.calls[0][1], result: { kind: "private-help", commands: ["help"] } }));
     expect(screen.queryByText("/help")).toBeNull();
+    expect(screen.queryByText("Commands: /help")).toBeNull();
+    act(() => ControlledEventSource.instances[0].emitEvent({kind:"messages-appended",streamId:"stream-1",fromVersion:0,version:1,messages:[{id:"private-help",speaker:"system",kind:"status",text:"Room commands available to you:\n/help — List commands",timestamp:"2026-08-27T12:00:00Z"}]}));
+    expect(await screen.findByText(/Room commands available to you/)).toBeTruthy();
   });
 
   it("keeps command errors private to the invoker instead of projecting raw slash text", async () => {
@@ -249,7 +252,7 @@ describe("rendered reconnect recovery", () => {
   });
 
   it("renders ordered authoritative poll tallies and replaces them after a vote without optimistic duplication", async () => {
-    const initial = { pollId: "poll-1", question: "Choose a path", options: ["B", "A"], tallies: [2, 1], totalVotes: 3 };
+    const initial = { pollId: "poll-1", question: "Choose a path", options: ["B", "A"], tallies: [2, 1], totalVotes: 3,state:"OPEN" as const,revision:1,closedAt:null,ownVote:null,canClose:true };
     const projected = { ...initial, tallies: [2, 2], totalVotes: 4 };
     api.loadPolls.mockResolvedValueOnce({ items: [initial] }).mockResolvedValueOnce({ items: [projected] });
     const user = userEvent.setup();
