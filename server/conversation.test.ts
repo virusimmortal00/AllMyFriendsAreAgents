@@ -254,6 +254,19 @@ describe("room message policy", () => {
     expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
   });
 
+  it("sanctions a cheap one-line reaction for a conversational human message", () => {
+    const state = roomState([{
+      id: "human-joke",
+      speaker: "you",
+      text: "Five agents walk into a server and somehow I'm still doing stand-up.",
+      timestamp: "2026-08-21T12:00:00.000Z",
+    }]);
+
+    expect(latestHumanBroadcastPolicy(state).conversationalFloor).toBe(true);
+    expect(roomMessageTurns(state)[0]?.instruction).toContain("one-line social reaction is a valid response");
+    expect(roomMessageTurns(state)[0]?.instruction).toContain("does not bar your own distinct-flavored reaction");
+  });
+
   it("prefers conversational continuity while preserving quiet-time and jitter inputs", () => {
     const state = roomState([
       { id: "sol", speaker: "codex-sol", text: "I can bring snacks.", timestamp: "2026-08-19T12:00:00Z" },
@@ -262,7 +275,7 @@ describe("room message policy", () => {
     expect(rankRoomAgents(state, () => 0)[0]).toBe("codex-sol");
   });
 
-  it("treats a structured mention as a strong signal without forcing a response", () => {
+  it("makes a structured direct mention reply-by-default", () => {
     const state = roomState([{
       id: "human-mention",
       speaker: "you",
@@ -276,7 +289,10 @@ describe("room message policy", () => {
     expect(rankRoomAgents(state, () => 0)[0]).toBe("cursor-gemini-flash");
     const turns = roomMessageTurns(state);
     expect(turns).toHaveLength(AGENT_IDS.length);
-    expect(turns.find(({ agent }) => agent === "cursor-gemini-flash")?.instruction).toContain("use NO_RESPONSE_NEEDED");
+    const instruction = turns.find(({ agent }) => agent === "cursor-gemini-flash")?.instruction;
+    expect(instruction).toContain("Reply by default");
+    expect(instruction).toContain("concrete reason");
+    expect(instruction).not.toContain("reply exactly NO_RESPONSE_NEEDED");
   });
 
   it.each([
@@ -311,7 +327,7 @@ describe("room message policy", () => {
   ])("routes a single-answer broadcast through the settled-response guard: %s", (text) => {
     const state = roomState([{ id: "human", speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" }]);
 
-    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: false, stopOnSettledResponse: true });
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: false, stopOnSettledResponse: true, conversationalFloor: false });
     expect(roomMessageTurns(state)[0]?.instruction).not.toContain("explicitly invites the whole room");
   });
 
@@ -323,7 +339,7 @@ describe("room message policy", () => {
       timestamp: "2026-08-19T12:00:00Z",
     }]);
 
-    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false, conversationalFloor: false });
   });
 
   it("recognizes each-of-you phrasing as an explicit request for distinct answers", () => {
@@ -334,7 +350,7 @@ describe("room message policy", () => {
       timestamp: "2026-08-19T12:00:00Z",
     }]);
 
-    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false });
+    expect(latestHumanBroadcastPolicy(state)).toEqual({ inviteAll: true, stopOnSettledResponse: false, conversationalFloor: false });
     expect(roomMessageTurns(state)[0]?.instruction).toContain("explicitly invites the whole room");
   });
 
@@ -400,6 +416,62 @@ describe("conversation energy", () => {
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
     expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
+    expect(performTurn.mock.calls[1][0].instruction).toContain("distinct, natural contribution");
+    expect(performTurn.mock.calls[1][0].instruction).toContain("reply exactly NO_RESPONSE_NEEDED");
+  });
+
+  it("allows a cheap distinct-flavored reaction in an ambient conversational follow-up", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1 })
+      .mockResolvedValueOnce({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { conversationalFloor: true });
+
+    expect(performTurn).toHaveBeenCalledTimes(2);
+    expect(performTurn.mock.calls[1][0].instruction).toContain("one-line reaction is welcome");
+    expect(performTurn.mock.calls[1][0].instruction).toContain("does not bar your own distinct-flavored reaction");
+    expect(performTurn.mock.calls[1][0].instruction).toContain("Do not manufacture a question");
+  });
+
+  it("fires the conversational floor exactly once after every invited agent declines", async () => {
+    const state = roomState([{
+      id: "human-joke",
+      speaker: "you",
+      text: "Five agents walk into a server and somehow I'm still doing stand-up.",
+      timestamp: "2026-08-21T12:00:00.000Z",
+    }]);
+    const turns = roomMessageTurns(state);
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(turns, "low", performTurn, () => 1, latestHumanBroadcastPolicy(state));
+
+    expect(performTurn).toHaveBeenCalledTimes(turns.length + 1);
+    expect(performTurn.mock.calls.at(-1)?.[0].agent).toBe(turns[0].agent);
+    expect(performTurn.mock.calls.at(-1)?.[0].instruction).toContain("Nobody has reacted yet");
+    expect(performTurn.mock.calls.at(-1)?.[0].instruction).toContain("one final conversational-floor turn");
+  });
+
+  it.each([
+    "Please implement the cursor migration and run the tests.",
+    "Thanks, that's all for now.",
+  ])("does not fire the conversational floor for task-shaped or settled text: %s", async (text) => {
+    const state = roomState([{ id: "human", speaker: "you", text, timestamp: "2026-08-21T12:00:00.000Z" }]);
+    const turns = roomMessageTurns(state);
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(turns, "low", performTurn, () => 1, latestHumanBroadcastPolicy(state));
+
+    expect(latestHumanBroadcastPolicy(state).conversationalFloor).toBe(false);
+    expect(performTurn).toHaveBeenCalledTimes(turns.length);
+    expect(performTurn.mock.calls.every(([turn]) => !turn.instruction.includes("Nobody has reacted yet"))).toBe(true);
+  });
+
+  it("does not treat failed generations as conversational declines", async () => {
+    const performTurn = vi.fn().mockResolvedValue({ failed: true });
+
+    await runEnergyConversation(candidates, "low", performTurn, () => 1, { conversationalFloor: true });
+
+    expect(performTurn).toHaveBeenCalledTimes(candidates.length);
   });
 
   it("overlaps independently selected openings and refills slots in completion order", async () => {
@@ -630,6 +702,9 @@ describe("conversation energy", () => {
 
     expect(performTurn.mock.calls[2][0]).toMatchObject({ agent: "cursor-grok" });
     expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
+    expect(performTurn.mock.calls[2][0].instruction).toContain("Reply by default");
+    expect(performTurn.mock.calls[2][0].instruction).toContain("concrete reason");
+    expect(performTurn.mock.calls[2][0].instruction).not.toContain("reply exactly NO_RESPONSE_NEEDED");
   });
 
   it("preserves a mention follow-up when the concurrent target completes last", async () => {
@@ -657,6 +732,7 @@ describe("conversation energy", () => {
       "claude-sonnet",
     ]);
     expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
+    expect(performTurn.mock.calls[2][0].instruction).toContain("Reply by default");
   });
 
   it("stops launching queued openings after concurrent cancellation", async () => {
