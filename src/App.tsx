@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings } from "./api";
-import { HelpDialog, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { ApiRequestError, checkReady, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -11,7 +11,7 @@ import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import { agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
-import type { AgentId, HumanPresence, RoomState, WorkshopResponse } from "./types";
+import type { AgentId, HumanPresence, PublicPollProjection, RoomState, WorkshopResponse } from "./types";
 import { Improvements, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
 import { reconcileRoomEvent } from "./room-reconciliation";
@@ -151,6 +151,8 @@ export default function App() {
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
+  const [polls, setPolls] = useState<PublicPollProjection[]>([]);
+  const [pollVotePending, setPollVotePending] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
@@ -212,6 +214,19 @@ export default function App() {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [Boolean(savedHuman), joinRequestRevision]);
+
+  // Polls are a separate, server-authoritative projection. Replacing this list
+  // (rather than incrementing local tallies) makes reconnect and replay idempotent.
+  useEffect(() => {
+    if (!human || !connected) { setPolls([]); return; }
+    let cancelled = false;
+    const refresh = async () => {
+      try { const result = await loadPolls(); if (!cancelled) setPolls(Array.isArray(result?.items) ? result.items : []); } catch { /* the room connection owns recovery */ }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [human?.id, connected, connectionEpoch]);
 
   useEffect(() => {
     if (!human) return;
@@ -554,6 +569,10 @@ export default function App() {
           const notice = `Commands: ${(acknowledgement.result.commands || []).map((command)=>`/${command}`).join(", ")}`;
           setConnectionNotice(notice);
           window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
+        } else if (acknowledgement.result.kind === "private-error") {
+          const notice = acknowledgement.result.message || "The command was rejected.";
+          setConnectionNotice(notice);
+          window.setTimeout(() => setConnectionNotice((current) => current === notice ? "" : current), 4_000);
         }
       }
       return { restoreOnFailure: false };
@@ -568,6 +587,14 @@ export default function App() {
       setClientError(error instanceof Error ? error.message : String(error));
       return { restoreOnFailure: !(error instanceof ApiRequestError && error.outcomeUnknown) };
     }
+  }
+
+  function vote(pollId: string, optionIndex: number) {
+    if (pollVotePending || !connected) return;
+    setPollVotePending(`${pollId}:${optionIndex}`);
+    void voteOnPoll(pollId, optionIndex).then(() => loadPolls()).then((result) => setPolls(Array.isArray(result?.items) ? result.items : [])).catch((error) => {
+      setClientError(error instanceof Error ? error.message : "The poll vote could not be submitted.");
+    }).finally(() => setPollVotePending(null));
   }
 
   function resendPending() {
@@ -781,6 +808,7 @@ export default function App() {
           {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
+            <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} onVote={vote} />
           </section>
           <div className="right-rail">
             <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />

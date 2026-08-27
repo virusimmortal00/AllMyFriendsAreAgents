@@ -20,7 +20,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-export async function request(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+export async function request(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS, acceptedErrorStatuses: readonly number[] = []) {
   const controller = new AbortController();
   const externalSignal = options.signal;
   const abortFromCaller = () => controller.abort(externalSignal?.reason);
@@ -35,7 +35,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
       headers,
       signal: controller.signal,
     });
-    if (!response.ok) {
+    if (!response.ok && !acceptedErrorStatuses.includes(response.status)) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
       throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, body);
     }
@@ -186,7 +186,7 @@ export async function sendMessage(text: string, clientMessageId: string, mention
   return request("/api/messages", {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
-  }).then((response) => response.json()).then((acknowledgement: unknown) => {
+  }, REQUEST_TIMEOUT_MS, [400]).then((response) => response.json()).then((acknowledgement: unknown) => {
     if (isCommandAcknowledgement(acknowledgement) && acknowledgement.clientSubmissionId === clientMessageId) return acknowledgement;
     if (!isMessageAcknowledgement(acknowledgement) || acknowledgement.clientMessageId !== clientMessageId) {
       throw new ApiRequestError("The room returned an incompatible message acknowledgement.", true);
@@ -195,7 +195,15 @@ export async function sendMessage(text: string, clientMessageId: string, mention
   });
 }
 
-function isCommandAcknowledgement(value: unknown): value is CommandMutationAcknowledgement { const acknowledgement=value as Partial<CommandMutationAcknowledgement>|null; return Boolean(acknowledgement&&acknowledgement.command===true&&typeof acknowledgement.clientSubmissionId==="string"&&acknowledgement.result&&(acknowledgement.result.kind==="accepted"||acknowledgement.result.kind==="private-help")); }
+function isCommandAcknowledgement(value: unknown): value is CommandMutationAcknowledgement { const acknowledgement=value as Partial<CommandMutationAcknowledgement>|null; return Boolean(acknowledgement&&acknowledgement.command===true&&typeof acknowledgement.clientSubmissionId==="string"&&acknowledgement.result&&(acknowledgement.result.kind==="accepted"||acknowledgement.result.kind==="private-help"||acknowledgement.result.kind==="private-error")); }
+
+export async function loadPolls() {
+  return request("/api/polls", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: import("./types").PublicPollProjection[] }>);
+}
+
+export async function voteOnPoll(pollId: string, optionIndex: number) {
+  return request(`/api/polls/${encodeURIComponent(pollId)}/votes`, { method: "POST", body: JSON.stringify({ optionIndex }) }).then((response) => response.json());
+}
 
 export async function sendContinuationWorkRequest(task: Pick<Task, "taskId" | "revision" | "title">, assignmentReferenceId: string, objective: string) {
   const continuation = { taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId, objective };
