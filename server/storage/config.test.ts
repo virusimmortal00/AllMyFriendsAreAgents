@@ -39,18 +39,10 @@ describe("storage configuration", () => {
     });
   });
 
-  it("requires a PostgreSQL connection URL", () => {
+  it("does not advertise the incomplete PostgreSQL runtime", () => {
     expect(() => resolveStorageConfiguration(projectRoot, {
       ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "postgres",
-    })).toThrow("DATABASE_URL is required");
-  });
-
-  it("accepts a PostgreSQL URL without exposing it in an error", () => {
-    const connectionString = "postgresql://amfaa:secret@amfaa-db.sayers.io/amfaa";
-    expect(resolveStorageConfiguration(projectRoot, {
-      ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "postgres",
-      DATABASE_URL: connectionString,
-    })).toMatchObject({ backend: "postgres", connectionString });
+    })).toThrow('Expected one of: json, sqlite');
   });
 
   it("rejects unsupported backends", () => {

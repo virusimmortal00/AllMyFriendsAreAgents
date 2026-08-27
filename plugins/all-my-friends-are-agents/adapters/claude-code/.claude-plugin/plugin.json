@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "all-my-friends-are-agents",
+  "displayName": "All My Friends Are Agents",
+  "version": "0.1.0",
+  "description": "Discover authenticated rooms and run durable, bounded consultations over MCP.",
+  "author": {
+    "name": "All My Friends Are Agents"
+  },
+  "homepage": "https://github.com/virusimmortal00/AllMyFriendsAreAgents",
+  "repository": "https://github.com/virusimmortal00/AllMyFriendsAreAgents",
+  "license": "MIT"
+}

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "all-my-friends-are-agents": {
+      "url": "http://127.0.0.1:53147/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AMFAA_ROOM_AUTH}"
+      }
+    }
+  }
+}

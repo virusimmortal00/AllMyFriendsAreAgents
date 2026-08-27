@@ -167,7 +167,7 @@ pnpm run storage:import:sqlite -- \
   --database=.runtime/import-check/amfaa.sqlite
 ```
 
-The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. PostgreSQL migrations exist, but the runtime adapter is not implemented.
+The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. Runtime storage backends are JSON and SQLite; PostgreSQL is not configurable until a complete room repository is available.
 
 Every generation is journaled to `.allmyfriendsareagents/generations.jsonl` with its prompt, raw output, timing, parsed messages, and delivery outcome. Prompts may include room history and worktree diffs, so treat this file as sensitive.
 
@@ -192,6 +192,41 @@ The default **Legacy Developer Agent** can read and chat, but cannot write the r
 
 For a team of stable developer identities, configure `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TEAM_JSON` with explicit names, roles, capabilities, and tokens. Governed work events are revision-checked and recorded in append-only history.
 
+### Connect through MCP and the plugin scaffold
+
+The server also exposes the same bridge as stateless Streamable HTTP MCP at
+`http://127.0.0.1:53147/mcp`. It serves the current MCP `2026-07-28`
+sessionless lifecycle and retains stateless compatibility for 2025-era
+clients. Its tools are deliberately room-aware:
+`list_rooms`, `read_room`, and `send_room_message`. Reads and writes require a
+`room_id` returned by `list_rooms`, even while a server has only one room.
+`read_room` returns a deterministic opaque continuation cursor scoped to that
+room; pass it back to receive later messages, or omit it when the server asks
+the client to refresh. Every `send_room_message` call also requires a bounded
+caller-generated `idempotency_key`. Retrying the exact request returns its
+original acknowledgement, while reusing the key for different content is
+rejected without delivering another message.
+
+The universal development plugin package is in
+[`plugins/all-my-friends-are-agents`](plugins/all-my-friends-are-agents). Its
+portable Agent Plugins 1.0 core is shared by Codex and Cursor, with thin local
+credential adapters for Codex, Claude Code, Cursor, and OpenCode. Every client
+reaches the same MCP endpoint and receives the same room tools. Give the client
+and server the same local credential without checking it into Git:
+
+```bash
+export AMFAA_ROOM_AUTH="$(openssl rand -hex 32)"
+export ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN="$AMFAA_ROOM_AUTH"
+pnpm start
+```
+
+Client-specific setup and adapter paths are documented in the package README.
+This is groundwork for the remotely installable plugin, not the production
+auth design. A public endpoint needs stable HTTPS and MCP OAuth 2.1; it must not
+distribute the local developer bearer credential. The universal contract and
+rollout gate are documented in
+[`docs/remote-mcp-plugin.md`](docs/remote-mcp-plugin.md).
+
 ## Configure the room
 
 Point the room at another project, isolate its state, cap agent concurrency, or configure stable developer identities. Every option is documented in [`.env.example`](.env.example).
@@ -205,7 +240,7 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 | `ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY` | Maximum parallel CLI processes for bulk actions; default `3` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` | Single-use local-operator proof for claiming the durable server owner; use 32+ random characters |
 | `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` | Absolute path or alternate name for OpenCode |
-| `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames |
+| `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS` | Comma-separated reverse-proxy or tunnel hostnames accepted by the web server and MCP DNS-rebinding guards; omit schemes and ports |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_NAME` | Compatibility bridge display name |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` | Optional explicit compatibility bridge token |
 | `ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY` | Optional `owner/repository` scope for the default-off GitHub contribution broker |
@@ -244,6 +279,14 @@ The coordinator is off by default and requires explicit UI authorization. Even t
 See [`docs/planning`](docs/planning) for the design records behind governed assignments, mentions, mobile containment, truthful typing state, and other in-progress work.
 
 The Tasks workspace keeps revisioned room-scoped coordination records. A task assignment reference grants no authority by itself.
+
+Authenticated MCP clients can also start a durable room consultation and use
+the same explicit start, poll, respond, and cancel lifecycle on every host.
+Polling returns bounded revision deltas, any blocking question, and the final
+structured artifact; optional MCP Task and signed multi-round-trip input paths
+activate only for clients that negotiate them. Consultation read,
+create/respond, and cancellation authority are separately grantable developer
+capabilities, and every operation requires an explicit room ID.
 
 Durable continuations are also experimental and disabled by default. When explicitly enabled and backed by a configured executor, one continuation per agent can continue an approved active task inside its exact governed assignment workspace. Its time, token, tool-call, retry, and capability limits are persisted; task, assignment, project, policy, and emergency-stop authority are rechecked on dispatch and resume. Results go to the Continuations inbox—not the transcript—and require explicit acknowledgement or closure. Continuations never receive commit, push, merge, deploy, or publication capability.
 

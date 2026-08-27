@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
@@ -12,7 +12,7 @@ import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
-import { openDeveloperTeamRegistry } from "./developer-team.js";
+import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
@@ -66,6 +66,11 @@ import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
+import { ConsultationRunner } from "./consultation-service.js";
+import { DurableConsultationMcpService } from "./consultation-mcp.js";
+import { openConsultationRepository } from "./storage/open-consultation-repository.js";
+import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
+import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
 import { GitHubReadStore } from "./github-read-store.js";
 import { GitHubReadService } from "./github-read-service.js";
@@ -79,6 +84,17 @@ const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCO
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
+const configuredAllowedHostnames = (process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+const roomMcpAllowedHostnames = [...new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  ...(normalizedHost && normalizedHost !== "0.0.0.0" && normalizedHost !== "::" ? [normalizedHost === "::1" ? "[::1]" : normalizedHost] : []),
+  ...configuredAllowedHostnames,
+])];
 if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE !== "true") {
   throw new Error(
     "Refusing to bind the unauthenticated room API to a non-loopback host. "
@@ -207,7 +223,8 @@ const investigationService = new InvestigationService(investigationStore, store,
 });
 await investigationService.initialize();
 
-app.use(express.json({ limit: "64kb" }));
+const jsonBodyParser = express.json({ limit: "64kb" });
+app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
 registerRoomHistoryRoutes({
   app,
   store,
@@ -323,14 +340,89 @@ function commandToolContext(agent: import("../shared/participants.js").ActiveAge
 
 function developerRoomView(limit = 50) {
   const state = publicRoomSnapshot();
-  const messages = state.messages.slice(-limit);
   return {
     ...state,
-    messages,
+    roomId: CANONICAL_ROOM_ID,
+    messages: state.messages.slice(-limit),
     busy: jobs.busy,
     cursor: state.messages.at(-1)?.id,
     developerTeam: developerTeam.roster(),
   };
+}
+
+function developerMcpRoomView(limit = 50, afterMessageId?: string | null) {
+  const state = publicRoomSnapshot();
+  const afterIndex = afterMessageId == null ? -1 : state.messages.findIndex(({ id }) => id === afterMessageId);
+  if (afterMessageId != null && afterIndex < 0) return { kind: "stale_cursor" as const };
+  const messages = afterMessageId === undefined
+    ? state.messages.slice(-limit)
+    : state.messages.slice(afterIndex + 1, afterIndex + 1 + limit);
+  return {
+    kind: "ok" as const,
+    value: {
+      ...state,
+      roomId: CANONICAL_ROOM_ID,
+      messages,
+      busy: jobs.busy,
+      developerTeam: developerTeam.roster(),
+    },
+    continuationMessageId: messages.at(-1)?.id ?? afterMessageId ?? null,
+  };
+}
+
+function developerRoomDescriptor() {
+  const state = publicRoomSnapshot();
+  return {
+    roomId: CANONICAL_ROOM_ID,
+    name: state.settings.roomName,
+    topic: state.settings.topic,
+    status: "active" as const,
+    cursor: state.messages.at(-1)?.id,
+    busy: jobs.busy,
+  };
+}
+
+function enqueueDeveloperConversation() {
+  broadcast();
+  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
+    const conversationState = roomSnapshot();
+    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
+  }));
+}
+
+async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string, idempotency: { key: string; requestDigest: string }) {
+  const clientMessageId = `mcp_${createHash("sha256")
+    .update(JSON.stringify([CANONICAL_ROOM_ID, authenticated.member.memberId, idempotency.key]))
+    .digest("base64url")}`;
+  const duplicate = store.snapshot().messages.find((message) =>
+    message.humanId === authenticated.member.memberId && message.clientMessageId === clientMessageId
+  );
+  if (duplicate) {
+    const duplicateDigest = createHash("sha256")
+      .update(JSON.stringify([CANONICAL_ROOM_ID, authenticated.member.memberId, duplicate.text]))
+      .digest("base64url");
+    return duplicateDigest === idempotency.requestDigest
+      ? { kind: "ok" as const, value: { accepted: true, message: duplicate } }
+      : { kind: "idempotency_conflict" as const };
+  }
+  roomActivity.interrupt();
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
+    id: authenticated.member.memberId,
+    name: authenticated.member.displayName,
+    clientMessageId,
+  });
+  enqueueDeveloperConversation();
+  return { kind: "ok" as const, value: { accepted: true, message } };
+}
+
+async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string) {
+  roomActivity.interrupt();
+  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
+    id: authenticated.member.memberId,
+    name: authenticated.member.displayName,
+  });
+  enqueueDeveloperConversation();
+  return { accepted: true, message, room: developerRoomView() };
 }
 
 function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }, notFoundMessage = "Improvement not found.") {
@@ -681,6 +773,66 @@ const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
 await commandRuntime.initialize();
 
+const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
+const consultationRunner = new ConsultationRunner(
+  consultationRepository,
+  {
+    synthesize: async (input) => {
+      const agent = currentEnabledAgents()[0];
+      if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
+      const reservation = activeGenerations.reserve(agent, agentConcurrency);
+      if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation synthesis.");
+      const prior = input.turns.map(({ participantId, duty, response, dissent }) => ({ participantId, duty, response, dissent }));
+      let result;
+      try {
+        result = await performCommandTask(agent, [
+          "Synthesize the following bounded room consultation into one concise, decision-ready artifact.",
+          "Preserve material dissent and blockers. Do not edit, publish, deploy, or claim code authority.",
+          `Idempotency key: ${input.idempotencyKey}`,
+          `Topic: ${input.topic}`,
+          `Context: ${JSON.stringify(input.context ?? null)}`,
+          `Consultation turns: ${JSON.stringify(prior)}`,
+          `Human inputs: ${JSON.stringify(input.inputs.map(({ value }) => value))}`,
+        ].join("\n"), { signal: input.signal, partial: () => undefined, active: async (generationId) => reservation.activate(generationId) });
+      } finally { reservation.release(); }
+      const synthesis = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
+      if (!synthesis) throw new Error("The consultation synthesizer returned no public artifact.");
+      return { kind: "settled" as const, synthesis, completedBy: agent };
+    },
+  },
+  {
+    performTurn: async (input) => {
+      if (!isActiveAgentId(input.participantId)) throw new Error(`Consultation participant ${input.participantId} is unavailable.`);
+      const reservation = activeGenerations.reserve(input.participantId, agentConcurrency);
+      if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation dialogue.");
+      let result;
+      try {
+        result = await performCommandTask(input.participantId, `${input.prompt}\n\nIdempotency key: ${input.idempotencyKey}\nBounded context: ${JSON.stringify(input.context ?? null)}`, {
+          signal: input.signal, partial: () => undefined, active: async (generationId) => reservation.activate(generationId),
+        });
+      } finally { reservation.release(); }
+      const response = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
+      if (!response) throw new Error(`Consultation participant ${input.participantId} returned no public response.`);
+      return { response };
+    },
+  },
+  undefined,
+  (error) => console.error("Consultation lifecycle failed", error),
+);
+await consultationRunner.reconcile(CANONICAL_ROOM_ID);
+const roomMcp = registerRoomMcpRoutes({
+  app,
+  developers: developerTeam,
+  consultationService: new DurableConsultationMcpService(consultationRunner, consultationRepository),
+  allowedHostnames: roomMcpAllowedHostnames,
+  bridge: singleRoomMcpBridge({
+    roomId: CANONICAL_ROOM_ID,
+    describe: developerRoomDescriptor,
+    read: developerMcpRoomView,
+    send: deliverMcpDeveloperMessage,
+  }),
+});
+
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
   await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
   broadcast();
@@ -986,17 +1138,7 @@ app.post("/api/developer/messages", async (request, response) => {
   if (!text) return response.status(400).json({ error: "Message text is required." });
   if (text.length > 16_000) return response.status(400).json({ error: "Developer messages are limited to 16,000 characters." });
 
-  roomActivity.interrupt();
-  const message = await store.addMessage("you", text, "chat", undefined, undefined, {
-    id: authenticated.member.memberId,
-    name: authenticated.member.displayName,
-  });
-  broadcast();
-  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
-    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
-  return response.status(202).json({ accepted: true, message, room: developerRoomView() });
+  return response.status(202).json(await deliverDeveloperMessage(authenticated, text));
 });
 
 app.get("/api/developer/improvements/:id", async (request, response) => {
@@ -1133,7 +1275,9 @@ async function shutdown(signal: string) {
     resolve();
   }));
   httpServer.closeAllConnections();
-  await Promise.all([closeServer, agentProcesses.shutdown(), investigationShutdown]);
+  consultationRunner.close();
+  if ("close" in consultationRepository && typeof consultationRepository.close === "function") consultationRepository.close();
+  await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
