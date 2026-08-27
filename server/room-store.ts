@@ -53,6 +53,8 @@ import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
 import { normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
+import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validDiagnostic, validPoll, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
+import { MAX_DIAGNOSTICS_PER_ROOM_AGENT, type CommandAttempt, type CommandAuditIdentity, type CommandPoll, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -146,6 +148,7 @@ export class RoomStore implements RoomRepository {
   readonly assignmentsPath: string;
   readonly tasksPath: string;
   readonly continuationsPath: string;
+  readonly commandsPath: string;
   private state: RoomState;
   private improvementState: JsonImprovementState;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -154,17 +157,20 @@ export class RoomStore implements RoomRepository {
   private taskQueue: Promise<void> = Promise.resolve();
   private continuationQueue: Promise<void> = Promise.resolve();
   private readonly contextSummaries = new Map<string, string>();
+  private commandQueue: Promise<void> = Promise.resolve();
   private assignments: AssignmentRecord[];
   private taskState: JsonTaskState;
   private continuationState: JsonContinuationState;
+  private commandState: JsonCommandState;
 
-  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState) {
+  private constructor(stateDirectory: string, state: RoomState, improvementState: JsonImprovementState, assignments: AssignmentRecord[], taskState: JsonTaskState, continuationState: JsonContinuationState, commandState: JsonCommandState) {
     this.stateDirectory = stateDirectory;
     this.statePath = path.join(stateDirectory, "room.json");
     this.improvementsPath = path.join(stateDirectory, "canonical-improvements.json");
     this.assignmentsPath = path.join(stateDirectory, "assignments.json");
     this.tasksPath = path.join(stateDirectory, "tasks.json");
     this.continuationsPath = path.join(stateDirectory, "continuations.json");
+    this.commandsPath = path.join(stateDirectory, "command-records.json");
     this.state = state;
     this.improvementState = improvementState;
     this.assignments = assignments;
@@ -175,6 +181,7 @@ export class RoomStore implements RoomRepository {
         this.contextSummaries.set(this.contextSummaryKey(entry), entry.summary);
       }
     }
+    this.commandState = commandState;
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -185,6 +192,7 @@ export class RoomStore implements RoomRepository {
     const assignmentsPath = path.join(stateDirectory, "assignments.json");
     const tasksPath = path.join(stateDirectory, "tasks.json");
     const continuationsPath = path.join(stateDirectory, "continuations.json");
+    const commandsPath = path.join(stateDirectory, "command-records.json");
     const defaultSettings = createDefaultRoomState(projectRoot).settings;
     const improvementState = await readFile(improvementsPath, "utf8")
       .then((contents) => normalizeJsonImprovementState(JSON.parse(contents)))
@@ -211,6 +219,9 @@ export class RoomStore implements RoomRepository {
     const continuationState = await readFile(continuationsPath, "utf8")
       .then((contents) => normalizeJsonContinuationState(JSON.parse(contents), CANONICAL_ROOM_ID))
       .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonContinuationState(); throw error; });
+    const commandState = await readFile(commandsPath, "utf8")
+      .then((contents) => normalizeJsonCommandState(JSON.parse(contents)))
+      .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return emptyJsonCommandState(); throw error; });
 
     try {
       await chmod(statePath, 0o600);
@@ -274,7 +285,7 @@ export class RoomStore implements RoomRepository {
         ...(deployment ? { deployment } : {}),
         ...(stored.roomConfiguration ? { roomConfiguration: normalizeRoomConfiguration(stored.roomConfiguration) } : {}),
       };
-      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
+      const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState, commandState);
       if (topicWasMissing
         || roomNameWasMissing
         || state.settings.projectPath !== stored.settings.projectPath
@@ -291,7 +302,7 @@ export class RoomStore implements RoomRepository {
       return store;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState);
+      const store = new RoomStore(stateDirectory, createDefaultRoomState(projectRoot), improvementState, assignments, taskState, continuationState, commandState);
       await store.save();
       return store;
     }
@@ -853,6 +864,23 @@ export class RoomStore implements RoomRepository {
     return this.mutateContinuations<CasResult<ContinuationInboxEntry>>((state) => { const current = state.inbox[value.inboxEntryId]; if (!current) return { result: { kind: "not_found" as const } }; if (current.inboxRevision !== expectedRevision) return { result: { kind: "conflict" as const, actualRevision: current.inboxRevision } }; if (value.roomId !== CANONICAL_ROOM_ID || !continuationInboxMutationMatches(current, value, true)) throw new Error("Invalid continuation inbox archive or immutable provenance"); const job = state.jobs[current.jobId]; if (!job) return { result: { kind: "not_found" as const } }; if (!continuationInboxMatchesJob(value, job)) throw new Error("Continuation inbox provenance does not match its job"); const archivedJob = { ...job, jobRevision: job.jobRevision + 1, resultDisposition: "ARCHIVED" as const, updatedAt: value.updatedAt }; const archiveEvent = capacityArchiveAudit(archivedJob, job.status, value.updatedAt); if (!continuationAuditMatches(job, archivedJob, archiveEvent)) throw new Error("Invalid archived continuation projection"); return { next: { ...state, inbox: { ...state.inbox, [value.inboxEntryId]: value }, jobs: { ...state.jobs, [job.jobId]: archivedJob }, events: [...state.events, archiveEvent] }, result: { kind: "accepted" as const, value: structuredClone(value) } }; });
   }
 
+  async createCommandSubmission(submission: CommandSubmission) {
+    if (!validSubmission(submission)) throw new Error("Invalid command submission");
+    return this.mutateCommands<CreateCommandSubmissionResult>((state) => { const duplicate = state.submissions.find((item) => item.roomId === submission.roomId && (item.submissionId === submission.submissionId || item.clientSubmissionId === submission.clientSubmissionId)); return duplicate ? { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } } : { next: { ...state, submissions: [...state.submissions, structuredClone(submission)] }, result: { kind: "created" as const, submission: structuredClone(submission) } }; });
+  }
+  async getCommandSubmission(roomId: string, submissionId: string) { await this.commandQueue; const value = this.commandState.submissions.find((item) => item.roomId === roomId && item.submissionId === submissionId); return value ? structuredClone(value) : undefined; }
+  async getRoundRobinState(roomId: string) { await this.commandQueue; return structuredClone(this.commandState.roundRobin.find((item) => item.roomId === roomId) || { roomId, lastAssignedAgentId: null, revision: 0, updatedAt: new Date(0).toISOString() }); }
+  async compareAndSetRoundRobinState(expectedRevision: number, value: RoundRobinState) { if (!validRoundRobin(value) || value.revision !== expectedRevision + 1) throw new Error("Invalid round-robin state"); return this.mutateCommands<{ kind: "accepted"; state: RoundRobinState } | { kind: "conflict"; actualRevision: number }>((state) => { const actualRevision = state.roundRobin.find((item) => item.roomId === value.roomId)?.revision ?? 0; return actualRevision !== expectedRevision ? { result: { kind: "conflict" as const, actualRevision } } : { next: { ...state, roundRobin: [...state.roundRobin.filter((item) => item.roomId !== value.roomId), structuredClone(value)] }, result: { kind: "accepted" as const, state: structuredClone(value) } }; }); }
+  async createCommandAttempt(attempt: CommandAttempt) { if (!validAttempt(attempt)) throw new Error("Invalid command attempt"); return this.mutateCommands<{ kind: "created" | "duplicate"; attempt: CommandAttempt }>((state) => { const duplicate = state.attempts.find((item) => item.roomId === attempt.roomId && (item.attemptId === attempt.attemptId || item.submissionId === attempt.submissionId && item.attempt === attempt.attempt)); return duplicate ? { result: { kind: "duplicate" as const, attempt: structuredClone(duplicate) } } : { next: { ...state, attempts: [...state.attempts, structuredClone(attempt)] }, result: { kind: "created" as const, attempt: structuredClone(attempt) } }; }); }
+  async listCommandAttempts(roomId: string, submissionId: string) { await this.commandQueue; return structuredClone(this.commandState.attempts.filter((item) => item.roomId === roomId && item.submissionId === submissionId).sort((a, b) => a.attempt - b.attempt)); }
+  async createCommandPoll(poll: CommandPoll) { if (!validPoll(poll)) throw new Error("Invalid command poll"); return this.mutateCommands<{ kind: "created" | "duplicate"; poll: CommandPoll }>((state) => { const duplicate = state.polls.find((item) => item.roomId === poll.roomId && (item.pollId === poll.pollId || item.submissionId === poll.submissionId)); return duplicate ? { result: { kind: "duplicate" as const, poll: structuredClone(duplicate) } } : { next: { ...state, polls: [...state.polls, structuredClone(poll)] }, result: { kind: "created" as const, poll: structuredClone(poll) } }; }); }
+  async getCommandPoll(roomId: string, pollId: string) { await this.commandQueue; const poll = this.commandState.polls.find((item) => item.roomId === roomId && item.pollId === pollId); return poll ? structuredClone(poll) : undefined; }
+  async createCommandVote(vote: CommandVote) { if (!validVote(vote)) throw new Error("Invalid command vote"); return this.mutateCommands<CreateCommandVoteResult>((state) => { const poll = state.polls.find((item) => item.roomId === vote.roomId && item.pollId === vote.pollId); if (!poll || vote.optionIndex >= poll.options.length) return { result: { kind: "rejected" as const, reason: "Poll or option does not exist in this room." } }; const duplicate = state.votes.find((item) => item.roomId === vote.roomId && item.pollId === vote.pollId && item.voterId === vote.voterId); return duplicate ? { result: { kind: "duplicate" as const, vote: structuredClone(duplicate) } } : { next: { ...state, votes: [...state.votes, structuredClone(vote)] }, result: { kind: "created" as const, vote: structuredClone(vote) } }; }); }
+  async listCommandVotes(roomId: string, pollId: string) { await this.commandQueue; return structuredClone(this.commandState.votes.filter((item) => item.roomId === roomId && item.pollId === pollId)); }
+  async createCommandAuditIdentity(audit: CommandAuditIdentity) { if (!validAudit(audit)) throw new Error("Invalid command audit"); return this.mutateCommands<{ kind: "created" | "duplicate"; audit: CommandAuditIdentity }>((state) => { const duplicate = state.audits.find((item) => item.roomId === audit.roomId && (item.auditId === audit.auditId || item.submissionId === audit.submissionId)); return duplicate ? { result: { kind: "duplicate" as const, audit: structuredClone(duplicate) } } : { next: { ...state, audits: [...state.audits, structuredClone(audit)] }, result: { kind: "created" as const, audit: structuredClone(audit) } }; }); }
+  async appendDiagnostic(record: DiagnosticRecord) { if (!validDiagnostic(record)) throw new Error("Invalid diagnostic record"); return this.mutateCommands<{ kind: "created" | "duplicate"; record: DiagnosticRecord }>((state) => { const duplicate = state.diagnostics.find((item) => item.roomId === record.roomId && (item.recordId === record.recordId || item.correlationId === record.correlationId)); if (duplicate) return { result: { kind: "duplicate" as const, record: structuredClone(duplicate) } }; const peers = state.diagnostics.filter((item) => item.roomId === record.roomId && item.agentId === record.agentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); const remove = new Set(peers.slice(0, Math.max(0, peers.length - MAX_DIAGNOSTICS_PER_ROOM_AGENT + 1)).map(({ recordId }) => recordId)); return { next: { ...state, diagnostics: [...state.diagnostics.filter((item) => !remove.has(item.recordId)), structuredClone(record)] }, result: { kind: "created" as const, record: structuredClone(record) } }; }); }
+  async listDiagnostics(roomId: string, agentId: AgentId, limit = 50) { await this.commandQueue; return structuredClone(this.commandState.diagnostics.filter((item) => item.roomId === roomId && item.agentId === agentId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, Math.max(1, Math.min(200, limit)))); }
+
   private async mutateImprovements<T>(
     mutation: (state: JsonImprovementState) => Promise<{ next?: JsonImprovementState; result: T }>,
   ): Promise<T> {
@@ -908,6 +936,13 @@ export class RoomStore implements RoomRepository {
     const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
     const operation = this.continuationQueue.then(async () => { try { const changed = mutation(this.continuationState); if (changed.next) { const next = normalizeJsonContinuationState(changed.next, CANONICAL_ROOM_ID); const temporaryPath = `${this.continuationsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.continuationsPath); await chmod(this.continuationsPath, 0o600); this.continuationState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
     this.continuationQueue = operation.catch(() => undefined); return result;
+  }
+
+  private async mutateCommands<T>(mutation: (state: JsonCommandState) => { next?: JsonCommandState; result: T }): Promise<T> {
+    let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    const operation = this.commandQueue.then(async () => { try { const changed = mutation(this.commandState); if (changed.next) { const next = normalizeJsonCommandState(changed.next); const temporaryPath = `${this.commandsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.commandsPath); await chmod(this.commandsPath, 0o600); this.commandState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    this.commandQueue = operation.catch(() => undefined); return result;
   }
 
   private async save() {

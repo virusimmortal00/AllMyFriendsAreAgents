@@ -30,6 +30,7 @@ import type { RoomAgentRoster, RoomAgentRosterEntry } from "../../shared/roster.
 import type { DeploymentProvenance } from "../deployment-provenance.js";
 import type { AgentContextSummaryKey } from "../transcript.js";
 import type { RoomConfiguration, RoomConfigurationUpdate } from "../room-configuration.js";
+import type { CommandRecordStore } from "../command-record.js";
 
 export const CANONICAL_ROOM_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -117,7 +118,7 @@ export type EmergencyStopChangeResult =
   | { readonly kind: "accepted"; readonly emergencyStop: EmergencyStopProjection }
   | RevisionConflict;
 
-export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore {
+export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore, CommandRecordStore {
   snapshot(): RoomState;
   addMessage(
     speaker: RoomMessage["speaker"],
