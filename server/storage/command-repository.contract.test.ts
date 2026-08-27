@@ -52,14 +52,21 @@ describe.each(factories)("%s command repository", (_backend, makeFixture) => {
       const attempt = { attemptId: "attempt-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", attempt: 1, agentId: "codex-sol" as const, generationId: "generation-1", status: "active" as const, reason: null, createdAt: submission().createdAt, updatedAt: submission().createdAt };
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("created");
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("duplicate");
+      const completed = { ...attempt, status: "completed" as const, updatedAt: "2026-08-27T12:03:00.000Z" };
+      expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, completed)).toMatchObject({ kind: "accepted" });
+      expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, { ...completed, status: "failed" })).toEqual({ kind: "conflict" });
+      expect(await fixture.repository.listPendingCommandAttempts(DEFAULT_ROOM_ID)).toEqual([]);
       const audit = { auditId: "audit-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", command: "poll" as const, invokerKind: "human" as const, invokerId: "human-1", targetAgentIds: [] as const, createdAt: submission().createdAt };
       expect((await fixture.repository.createCommandAuditIdentity(audit)).kind).toBe("created");
       const diagnostic = { recordId: "diagnostic-1", roomId: DEFAULT_ROOM_ID, agentId: "codex-sol" as const, attemptId: "attempt-1", generationId: "generation-1", correlationId: "correlation-1", promptHead: "bounded", promptFingerprint: "sha256:prompt", reason: "stalled", metadata: { bytes: 7 }, diagnosticText: "safe partial", createdAt: submission().createdAt };
       expect((await fixture.repository.appendDiagnostic(diagnostic)).kind).toBe("created");
       expect((await fixture.repository.appendDiagnostic({ ...diagnostic, recordId: "replay" })).kind).toBe("duplicate");
       const reopened = await fixture.reopen();
-      expect(await reopened.listCommandAttempts(DEFAULT_ROOM_ID, "submission-1")).toEqual([attempt]);
+      expect(await reopened.listCommandAttempts(DEFAULT_ROOM_ID, "submission-1")).toEqual([completed]);
+      expect(await reopened.getCommandAuditIdentity(DEFAULT_ROOM_ID, "submission-1")).toEqual(audit);
       expect(await reopened.listDiagnostics(DEFAULT_ROOM_ID, "codex-sol")).toEqual([diagnostic]);
+      expect(await reopened.getDiagnostic(DEFAULT_ROOM_ID, "codex-sol", "diagnostic-1")).toEqual(diagnostic);
+      expect(await reopened.listDiagnostics(DEFAULT_ROOM_ID, { agentId: "codex-sol", search: "SAFE PARTIAL", reason: "stalled" })).toEqual([diagnostic]);
       expect(await reopened.listDiagnostics("other-room", "codex-sol")).toEqual([]);
     } finally { fixture.close(); }
   });
