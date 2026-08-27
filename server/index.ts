@@ -838,7 +838,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, broadcast });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);

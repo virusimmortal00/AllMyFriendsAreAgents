@@ -1,4 +1,4 @@
-import { isActiveAgentId, type ActiveAgentId } from "./participants.js";
+import type { ActiveAgentId } from "./participants.js";
 
 export const ROOM_COMMANDS = ["task", "pov", "poll", "help"] as const;
 export type RoomCommandName = typeof ROOM_COMMANDS[number];
@@ -13,7 +13,7 @@ export interface RoomCommandCatalogEntry {
 const COMMAND_CATALOG: Readonly<Record<RoomCommandName, RoomCommandCatalogEntry>> = {
   help: { command: "help", summary: "List the room commands currently available to you.", syntax: "/help", example: "/help" },
   task: { command: "task", summary: "Delegate bounded work to one eligible agent.", syntax: "/task [@agent] <bounded work>", example: "/task @Sol check the error path" },
-  pov: { command: "pov", summary: "Request bounded perspectives from eligible agents.", syntax: "/pov <question>", example: "/pov What tradeoff are we missing?" },
+  pov: { command: "pov", summary: "Request bounded perspectives from all eligible agents or one named agent.", syntax: "/pov [@agent] <question>", example: "/pov @Sol What tradeoff are we missing?" },
   poll: { command: "poll", summary: "Create a server-authoritative poll with quoted options.", syntax: '/poll "Question" "Option A" "Option B"', example: '/poll "Ship today?" "Yes" "No"' },
 };
 
@@ -35,19 +35,20 @@ export function roomCommandGuide(commands: readonly RoomCommandName[]) {
 - Use the structured room_command tool when you intend to create room work, request bounded perspectives, create a poll, or inspect your current command catalog. Respond conversationally when you only need to answer or discuss something.
 - Never emit raw slash-command text as a visible chat response. The tool is the command transport; slash syntax below is explanatory human syntax only.
 - A soft @mention in ordinary conversation is only a conversational hint. It is not hard routing, authorization, or delegation. Use room_command task with pinned selection for hard routing.
+- Poll participation is an explicit tool action, not conversational discussion: use polls to inspect open polls, poll_vote with a stable poll ID and zero-based option index to vote, and poll_close only for a poll you created.
 ${entries.map((entry) => `- ${entry.command}: ${entry.summary} Structured example: ${structuredExample(entry.command)} Human syntax example (never emit it): ${entry.example}`).join("\n")}`;
 }
 
 function structuredExample(command: RoomCommandName) {
   if (command === "help") return '{"command":"help"}';
   if (command === "task") return '{"command":"task","prompt":"Check the error path","selection":{"kind":"pinned","agentId":"codex-sol"}}';
-  if (command === "pov") return '{"command":"pov","prompt":"What tradeoff are we missing?"}';
+  if (command === "pov") return '{"command":"pov","prompt":"What tradeoff are we missing?","selection":{"kind":"all-eligible"}} or {"command":"pov","prompt":"What tradeoff are we missing?","selection":{"kind":"pinned","agentId":"codex-sol"}}';
   return '{"command":"poll","question":"Ship today?","options":["Yes","No"]}';
 }
 
 export type CommandInvocation =
   | { readonly command: "task"; readonly prompt: string; readonly selection: { readonly kind: "round-robin" } | { readonly kind: "pinned"; readonly agentId: ActiveAgentId } }
-  | { readonly command: "pov"; readonly prompt: string }
+  | { readonly command: "pov"; readonly prompt: string; readonly selection: { readonly kind: "all-eligible" } | { readonly kind: "pinned"; readonly agentId: ActiveAgentId } }
   | { readonly command: "poll"; readonly question: string; readonly options: readonly [string, string, ...string[]] }
   | { readonly command: "help" };
 
@@ -72,12 +73,10 @@ export function parseCommand(text: string): CommandParseResult {
   if (!ROOM_COMMANDS.includes(command as RoomCommandName)) return { kind: "private-error", message: `Unknown command /${command}. Try /help.` };
   if (command === "help") return rest ? { kind: "private-error", message: "/help does not take any arguments." } : { kind: "command", invocation: { command: "help" } };
   if (command === "poll") return parsePoll(rest);
-  if (command === "pov") return rest && rest.length <= MAX_PROMPT_LENGTH
-    ? { kind: "command", invocation: { command: "pov", prompt: rest } }
-    : { kind: "private-error", message: rest ? `Keep /pov prompts under ${MAX_PROMPT_LENGTH} characters.` : "Add a prompt after /pov." };
+  if (command === "pov") return parsePov(rest);
   if (rest.startsWith("@")) {
     const pinned = /^@([^\s]+)(?:\s+([\s\S]*))?$/.exec(rest);
-    if (!pinned || !isActiveAgentId(pinned[1])) return { kind: "private-error", message: "Choose a roster agent after /task, or omit @agent for round-robin." };
+    if (!pinned) return { kind: "private-error", message: "Choose a roster agent after /task, or omit @agent for round-robin." };
     const prompt = pinned[2]?.trim() ?? "";
     if (prompt.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /task prompts under ${MAX_PROMPT_LENGTH} characters.` };
     return { kind: "command", invocation: { command: "task", prompt, selection: { kind: "pinned", agentId: pinned[1] } } };
@@ -91,8 +90,13 @@ export function parseCommandInput(input: CommandInput): CommandParseResult {
   if (typeof input === "string") return parseCommand(input);
   if (!input || typeof input !== "object") return { kind: "private-error", message: "Try /help to see the available commands." };
   if (input.command === "help") return parseCommand("/help");
-  if (input.command === "pov" && typeof input.prompt === "string") return parseCommand(`/pov ${input.prompt}`);
-  if (input.command === "task" && typeof input.prompt === "string" && (input.selection?.kind === "round-robin" || input.selection?.kind === "pinned" && isActiveAgentId(input.selection.agentId))) {
+  if (input.command === "pov" && typeof input.prompt === "string" && (input.selection === undefined || input.selection?.kind === "all-eligible" || input.selection?.kind === "pinned" && typeof input.selection.agentId === "string")) {
+    const prompt = input.prompt.trim();
+    if (!prompt) return { kind: "private-error", message: "Add a prompt after /pov." };
+    if (prompt.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /pov prompts under ${MAX_PROMPT_LENGTH} characters.` };
+    return { kind: "command", invocation: { command: "pov", prompt, selection: input.selection || { kind: "all-eligible" } } };
+  }
+  if (input.command === "task" && typeof input.prompt === "string" && (input.selection?.kind === "round-robin" || input.selection?.kind === "pinned" && typeof input.selection.agentId === "string")) {
     const prompt = input.prompt.trim();
     if (prompt.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /task prompts under ${MAX_PROMPT_LENGTH} characters.` };
     return { kind: "command", invocation: { command: "task", prompt, selection: input.selection } };
@@ -102,6 +106,19 @@ export function parseCommandInput(input: CommandInput): CommandParseResult {
     if (input.options.every((option) => typeof option === "string")) return parseCommand(`/poll ${[input.question, ...input.options].map(quote).join(" ")}`);
   }
   return { kind: "private-error", message: "The structured command arguments are invalid. Try /help." };
+}
+
+function parsePov(rest: string): CommandParseResult {
+  if (!rest) return { kind: "private-error", message: "Add a prompt after /pov." };
+  if (rest.startsWith("@")) {
+    const pinned = /^@([^\s]+)(?:\s+([\s\S]*))?$/.exec(rest);
+    const prompt = pinned?.[2]?.trim() ?? "";
+    if (!pinned || !prompt) return { kind: "private-error", message: "Choose one roster agent and add a prompt after /pov @agent." };
+    if (prompt.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /pov prompts under ${MAX_PROMPT_LENGTH} characters.` };
+    return { kind: "command", invocation: { command: "pov", prompt, selection: { kind: "pinned", agentId: pinned[1]! } } };
+  }
+  if (rest.length > MAX_PROMPT_LENGTH) return { kind: "private-error", message: `Keep /pov prompts under ${MAX_PROMPT_LENGTH} characters.` };
+  return { kind: "command", invocation: { command: "pov", prompt: rest, selection: { kind: "all-eligible" } } };
 }
 
 function parsePoll(rest: string): CommandParseResult {

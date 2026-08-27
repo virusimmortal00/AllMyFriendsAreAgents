@@ -4,12 +4,13 @@ import { validCommandReassignment, validPoll, validSubmission } from "./command-
 describe("command storage validation", () => {
   const createdAt = "2026-08-27T12:00:00.000Z";
   const submission = { submissionId: "submission", roomId: "room", clientSubmissionId: "client", command: "task" as const, invocation: { command: "task" as const, prompt: "work", selection: { kind: "round-robin" as const } }, invoker: { kind: "human" as const, id: "human", displayName: "Ada" }, createdAt };
+  const poll={pollId:"poll",roomId:"room",submissionId:"submission",question:"Choose",options:["A","B"] as [string,string],creatorKind:"human" as const,creatorId:"human",state:"OPEN" as const,revision:1,closedAt:null,closerKind:null,closerId:null,closeMutationId:null,finalTallies:null,finalTotalVotes:null,createdAt};
 
   it("requires persisted display names and poll timestamps", () => {
     expect(validSubmission(submission)).toBe(true);
     expect(validSubmission({ ...submission, invoker: { ...submission.invoker, displayName: "" } })).toBe(false);
-    expect(validPoll({ pollId: "poll", roomId: "room", submissionId: "submission", question: "Choose", options: ["A", "B"], createdAt })).toBe(true);
-    expect(validPoll({ pollId: "poll", roomId: "room", submissionId: "submission", question: "Choose", options: ["A", "B"], createdAt: "" })).toBe(false);
+    expect(validPoll(poll)).toBe(true);
+    expect(validPoll({ ...poll, createdAt: "" })).toBe(false);
   });
 
   it("rejects a malformed reassignment without dereferencing a missing pointer", () => {

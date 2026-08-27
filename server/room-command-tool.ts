@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type express from "express";
-import type { CommandInput, RoomCommandName } from "../shared/command-domain.js";
+import type { CommandInput, CommandInvocation, RoomCommandName } from "../shared/command-domain.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { CommandRuntime, CommandResponse } from "./command-runtime.js";
 
@@ -13,7 +13,7 @@ interface CommandToolLease {
   readonly providerSessionId: string | null;
   readonly allowedCommands: readonly RoomCommandName[];
   readonly expiresAt: number;
-  readonly requests: Map<string, Promise<CommandResponse>>;
+  readonly requests: Map<string, { readonly fingerprint: string; readonly result: Promise<unknown> }>;
 }
 
 function digest(value: string) { return createHash("sha256").update(value).digest(); }
@@ -32,23 +32,29 @@ export class RoomCommandToolBroker {
     return token;
   }
 
-  async execute(token: string, input: { invocation: CommandInput; clientSubmissionId: string }) {
+  async execute(token: string, input: { invocation: CommandInput | {command:"polls"}|{command:"poll_vote";pollId:string;optionIndex:number}|{command:"poll_close";pollId:string;expectedRevision:number}; clientSubmissionId: string }) {
     this.prune();
     const supplied = digest(token);
     const lease = this.leases.get(supplied.toString("hex"));
     if (!lease || lease.digest.length !== supplied.length || !timingSafeEqual(lease.digest, supplied)) return undefined;
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(input.clientSubmissionId)) return { kind: "private-error", message: "A valid command request ID is required." } as const;
     const requestFingerprint = fingerprint(input);
-    const replay = lease.requests.get(requestFingerprint);
-    if (replay) return replay;
+    const replay = lease.requests.get(input.clientSubmissionId);
+    if (replay) return replay.fingerprint === requestFingerprint
+      ? replay.result
+      : { kind: "private-error", message: "That request ID is already bound to a different room command." } as const;
     if (lease.requests.size >= 8) return { kind: "private-error", message: "This room command session has reached its bounded call limit." } as const;
-    const command = typeof input.invocation === "object" && input.invocation ? input.invocation.command : undefined;
-    if (!command || !lease.allowedCommands.includes(command)) {
+    const operation = typeof input.invocation === "object" && input.invocation ? input.invocation.command : undefined;
+    const command = operation==="polls"||operation==="poll_vote"||operation==="poll_close"?"poll":operation;
+    if (!command || !lease.allowedCommands.includes(command as RoomCommandName)) {
       const rejected = Promise.resolve({ kind: "private-error", message: "That command is not available to this participant." } as const);
-      lease.requests.set(requestFingerprint, rejected);
+      lease.requests.set(input.clientSubmissionId, { fingerprint: requestFingerprint, result: rejected });
       return rejected;
     }
-    const result = this.runtime.submit(input.invocation, { kind: "agent", id: lease.agentId, displayName: lease.displayName }, input.clientSubmissionId);
-    lease.requests.set(requestFingerprint, result);
+    const invoker={ kind: "agent" as const, id: lease.agentId, displayName: lease.displayName };
+    const special=input.invocation as {command:string;pollId?:string;optionIndex?:number;expectedRevision?:number};
+    const result = operation==="polls"?this.runtime.listOpenPolls(invoker):operation==="poll_vote"?this.runtime.vote(special.pollId||"",invoker,input.clientSubmissionId,special.optionIndex??-1):operation==="poll_close"?this.runtime.closePoll(special.pollId||"",invoker,input.clientSubmissionId,special.expectedRevision??-1):this.runtime.submit(input.invocation as CommandInvocation,invoker,input.clientSubmissionId);
+    lease.requests.set(input.clientSubmissionId, { fingerprint: requestFingerprint, result });
     return result;
   }
 

@@ -10,7 +10,7 @@ const configured = (() => {
   } catch { return []; }
 })();
 
-const variants = configured.map((command) => {
+const variants = configured.flatMap((command) => {
   if (command === "help") return tool.schema.object({ command: tool.schema.literal("help") });
   if (command === "task") return tool.schema.object({
     command: tool.schema.literal("task"),
@@ -20,8 +20,13 @@ const variants = configured.map((command) => {
       tool.schema.object({ kind: tool.schema.literal("pinned"), agentId: tool.schema.string().min(1).max(100) }),
     ]),
   });
-  if (command === "pov") return tool.schema.object({ command: tool.schema.literal("pov"), prompt: tool.schema.string().min(1).max(8_000) });
-  return tool.schema.object({ command: tool.schema.literal("poll"), question: tool.schema.string().min(1).max(500), options: tool.schema.array(tool.schema.string().min(1).max(500)).min(2).max(12) });
+  if (command === "pov") return tool.schema.object({ command: tool.schema.literal("pov"), prompt: tool.schema.string().min(1).max(8_000), selection: tool.schema.discriminatedUnion("kind", [tool.schema.object({kind:tool.schema.literal("all-eligible")}),tool.schema.object({kind:tool.schema.literal("pinned"),agentId:tool.schema.string().min(1).max(100)})]) });
+  return [
+    tool.schema.object({ command: tool.schema.literal("poll"), question: tool.schema.string().min(1).max(500), options: tool.schema.array(tool.schema.string().min(1).max(500)).min(2).max(12) }),
+    tool.schema.object({command:tool.schema.literal("polls")}),
+    tool.schema.object({command:tool.schema.literal("poll_vote"),pollId:tool.schema.string().min(1).max(100),optionIndex:tool.schema.number().int().min(0).max(11)}),
+    tool.schema.object({command:tool.schema.literal("poll_close"),pollId:tool.schema.string().min(1).max(100),expectedRevision:tool.schema.number().int().min(1)}),
+  ];
 });
 
 const unavailable = tool.schema.object({ command: tool.schema.literal("unavailable") });

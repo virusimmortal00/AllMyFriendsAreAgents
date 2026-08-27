@@ -51,7 +51,7 @@ describe("SQLite migrations", () => {
         "command_audit_identities",
         "command_diagnostics",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 21 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 22 });
       expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
@@ -64,9 +64,24 @@ describe("SQLite migrations", () => {
       expect((database.prepare("PRAGMA table_info(room_agents)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("last_seen_message_id");
       expect((database.prepare("PRAGMA table_info(room_settings)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["configuration_revision", "base_prompt_revision", "base_prompt_text", "summarizer_model", "summarizer_prompt_text", "summarizer_prompt_revision", "feature_flags_json", "preflight_mode"]));
       expect((database.prepare("PRAGMA table_info(agent_context_summaries)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("config_revision");
+      expect((database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining([
+        "command_polls_open_limit",
+        "command_poll_votes_require_open_poll",
+        "command_polls_monotonic_close",
+      ]));
     } finally {
       database.close();
     }
+  });
+
+  it("keeps PostgreSQL lifecycle, race, and retention guards in schema parity", async () => {
+    const migration = await readFile(path.join(process.cwd(), "server/storage/migrations/postgres/0016_poll_lifecycle.sql"), "utf8");
+    expect(migration).toContain("command_polls_lifecycle_consistent");
+    expect(migration).toContain("pg_advisory_xact_lock");
+    expect(migration).toContain("command_polls_open_limit");
+    expect(migration).toContain("command_poll_votes_require_open_poll");
+    expect(migration).toContain("command_polls_monotonic_close");
+    expect(migration).toContain("FOR UPDATE");
   });
 
   it("adds empty improvement storage without modifying existing room data", async () => {
