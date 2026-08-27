@@ -62,7 +62,7 @@ describe.each(factories)("%s command repository", (_backend, makeFixture) => {
       const attempt = { attemptId: "attempt-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", attempt: 1, agentId: "codex-sol" as const, generationId: "generation-1", status: "active" as const, reason: null, createdAt: submission().createdAt, updatedAt: submission().createdAt };
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("created");
       expect((await fixture.repository.createCommandAttempt(attempt)).kind).toBe("duplicate");
-      const deliveryPending = { ...attempt, status: "delivery-pending" as const, deliveryMessages: ["durable result"], updatedAt: "2026-08-27T12:02:00.000Z" };
+      const deliveryPending = { ...attempt, status: "delivery-pending" as const, deliveryMessages: ["durable result"], deliveryResult: { sessionId: "session-1", permission: "writable" as const, codeEpoch: "epoch-1", cursorMessageId: "message-1" }, updatedAt: "2026-08-27T12:02:00.000Z" };
       expect(await fixture.repository.compareAndSetCommandAttempt(attempt.updatedAt, deliveryPending)).toMatchObject({ kind: "accepted" });
       expect((await fixture.repository.listPendingCommandAttempts(DEFAULT_ROOM_ID))[0]).toEqual(deliveryPending);
       const completed = { ...deliveryPending, status: "completed" as const, updatedAt: "2026-08-27T12:03:00.000Z" };
