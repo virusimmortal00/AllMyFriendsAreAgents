@@ -577,6 +577,7 @@ export async function runAgent(
   assignmentId?: string,
   writerGrant?: ConfinedWriterGrant,
   discoveryService?: ModelDiscoveryService,
+  commandControl?: { readonly onGenerationStart?: (generationId: string) => Promise<boolean>; readonly onPartial?: (text: string) => void },
 ): Promise<RunResult> {
   const generationId = randomUUID();
   const startedAt = Date.now();
@@ -637,6 +638,7 @@ export async function runAgent(
   });
 
   try {
+    if (commandControl?.onGenerationStart && !await commandControl.onGenerationStart(generationId)) throw new AgentGenerationCancelledError();
     lifecycle?.start(generationId, agent);
     let resumedSessionId = existing?.id;
     const invoke = async (sessionId?: string) => {
@@ -676,6 +678,7 @@ export async function runAgent(
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
       const parsed = parseOpenCodeOutput(error.process.stdout);
+      if (parsed.text) commandControl?.onPartial?.(parsed.text);
       await journal?.append({
         type: "generation.cancelled",
         generationId,

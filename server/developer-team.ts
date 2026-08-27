@@ -9,6 +9,8 @@ export const DEVELOPER_TEAM_FILE = "developer-team.json";
 export type DeveloperCapability =
   | "ROOM_READ"
   | "ROOM_CHAT"
+  | "COMMAND_RUN"
+  | "DIAGNOSTIC_READ"
   | "IMPROVEMENT_READ"
   | "IMPROVEMENT_CLAIM"
   | "IMPROVEMENT_EVIDENCE"

@@ -46,6 +46,8 @@ describe("durable command runtime",()=>{
     expect(denied.statuses).toEqual([]);
   });
 
+  it("fails closed when agent command permission changes while a tool call is being persisted",async()=>{let current=roster();const api=await fixture({roster:()=>current});const create=api.store.createCommandSubmission.bind(api.store);api.store.createCommandSubmission=async(submission)=>{const result=await create(submission);current=roster("help");return result;};expect(await api.runtime.submit({command:"task",prompt:"no",selection:{kind:"round-robin"}},{kind:"agent",id:"codex-sol",displayName:"Sol"},"permission-race-1")).toEqual({kind:"private-error",message:"Command permission changed before dispatch."});expect(api.statuses).toEqual([]);expect(api.deliveries).toEqual([]);});
+
   it("keeps pov bounded to launch-eligible participants and polls durable, ordered, authoritative, and replay-safe",async()=>{
     const api=await fixture({eligible:(agent)=>agent==="codex-sol"});
     expect(await api.runtime.submit("/pov thoughts?",{kind:"human",id:"h1",displayName:"Ada"},"human-pov-0001")).toMatchObject({kind:"accepted"});await settle();expect(api.pov).toEqual([["codex-sol"]]);
@@ -62,16 +64,16 @@ describe("durable command runtime",()=>{
     const clock=new FakeClock();let firstHooks:CommandLaunchHooks|undefined;let finishFirst!:(value:CommandExecutionResult)=>void;const first=new Promise<CommandExecutionResult>((resolve)=>{finishFirst=resolve;});
     const api=await fixture({clock,execute:async(agent,_prompt,hooks)=>{if(agent==="codex-sol"){firstHooks=hooks;return first;}await hooks.active("generation-2");return{generationId:"generation-2",visibleMessages:["fallback"]};}});
     const accepted=await api.runtime.submit("/task work",{kind:"human",id:"h1",displayName:"Ada"},"watchdog-one-01");await clock.tick(10);
-    expect(firstHooks!.signal.aborted).toBe(true);await eventually(()=>expect(api.deliveries).toEqual([{agent:"claude-sonnet",messages:["fallback"]}]));expect(api.statuses.filter((line)=>line.includes("reassigned"))).toHaveLength(1);
+    await eventually(()=>expect(firstHooks!.signal.aborted).toBe(true));await eventually(()=>expect(api.deliveries).toEqual([{agent:"claude-sonnet",messages:["fallback"]}]));expect(api.statuses.filter((line)=>line.includes("reassigned"))).toHaveLength(1);
     finishFirst({generationId:"late",visibleMessages:["late"]});await settle();expect(api.deliveries).toHaveLength(1);
     const attempts=await api.store.listCommandAttempts("00000000-0000-4000-8000-000000000001",(accepted as Extract<typeof accepted,{kind:"accepted"}>).submissionId);
     expect(attempts.map(({status})=>status)).toEqual(["superseded","completed"]);
   });
 
   it("wins stage-two terminal races exactly once and stores one bounded sanitized partial",async()=>{
-    const clock=new FakeClock();let resolveFirst!:(value:CommandExecutionResult)=>void;const first=new Promise<CommandExecutionResult>((resolve)=>{resolveFirst=resolve;});let calls=0;
-    const api=await fixture({clock,execute:async(agent,_prompt,hooks)=>{calls++;await hooks.active(`generation-${calls}`);if(calls===1){hooks.partial("Authorization: bearer-secret\nuseful partial");return first;}return{generationId:"generation-2",visibleMessages:["replacement"]};}});
-    const accepted=await api.runtime.submit("/task work",{kind:"human",id:"h1",displayName:"Ada"},"watchdog-two-01");await eventually(async()=>expect((await api.store.listPendingCommandAttempts("00000000-0000-4000-8000-000000000001"))[0]?.status).toBe("active"));await clock.tick(20);
+    const clock=new FakeClock();let resolveFirst!:(value:CommandExecutionResult)=>void;const first=new Promise<CommandExecutionResult>((resolve)=>{resolveFirst=resolve;});let calls=0;let activeReady=false;let firstSignal:AbortSignal|undefined;
+    const api=await fixture({clock,execute:async(agent,_prompt,hooks)=>{calls++;await hooks.active(`generation-${calls}`);activeReady=true;if(calls===1){firstSignal=hooks.signal;hooks.partial("Authorization: bearer-secret\nuseful partial");return first;}return{generationId:"generation-2",visibleMessages:["replacement"]};}});
+    const accepted=await api.runtime.submit("/task work",{kind:"human",id:"h1",displayName:"Ada"},"watchdog-two-01");await eventually(()=>expect(activeReady).toBe(true));await clock.tick(20);await eventually(()=>expect(firstSignal?.aborted).toBe(true));
     resolveFirst({generationId:"generation-1",visibleMessages:["late"]});await eventually(()=>expect(api.deliveries).toEqual([{agent:"claude-sonnet",messages:["replacement"]}]));
     const diagnostics=await api.store.listDiagnostics("00000000-0000-4000-8000-000000000001",{agentId:"codex-sol",search:"useful"});expect(diagnostics).toHaveLength(1);expect(diagnostics[0]!.diagnosticText).not.toContain("bearer-secret");expect(JSON.stringify(api.store.snapshot())).not.toContain("useful partial");
     const attempts=await api.store.listCommandAttempts("00000000-0000-4000-8000-000000000001",(accepted as Extract<typeof accepted,{kind:"accepted"}>).submissionId);expect(attempts.map(({status})=>status)).toEqual(["superseded","completed"]);
