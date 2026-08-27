@@ -1,6 +1,6 @@
 ---
 id: 107-durable-room-consultations
-status: active
+status: done
 issue: 107
 owner: developer-team
 reviewers: []
@@ -38,20 +38,22 @@ SQLite reconstruction.
 
 # Current state
 
-The version-one domain, repository contract, JSON and SQLite adapters, upgrade-safe SQLite
-migrations, forward-looking PostgreSQL schema, and contract coverage are implemented in the issue
-#107 worktree. Transport and consultation UI behavior remain intentionally out
-of scope for this foundation.
+The version-one domain, repository contract, JSON and SQLite adapters,
+upgrade-safe SQLite migrations, forward-looking PostgreSQL schema, and contract
+coverage are integrated with the authenticated consultation MCP transport and
+portable plugin in PR #125. Dedicated PR review and code-mutation authority
+remain intentionally out of scope.
 
 # Next action
 
-Integrate the repository boundary with the consultation transport in the next
-bounded child issue after #107 review.
+No implementation action remains for #107. Future changes should extend the
+versioned domain through a new linked issue.
 
 # Evidence
 
 - Tracking issue: https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/107
 - Parent issue: https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/106
+- Delivery PR: https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/125
 - `pnpm test -- --run shared/consultation-domain.test.ts server/storage/consultation-repository.contract.test.ts server/storage/sqlite-migrations.test.ts`
 - `pnpm build`
 - `pnpm check:planning-docs`
