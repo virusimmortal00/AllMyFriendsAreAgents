@@ -10,6 +10,9 @@ developer-team bearer identities and capability checks:
 | --- | --- | --- |
 | Discovery, legacy initialization, `list_rooms`, `read_room` | `ROOM_READ` | `rooms:read` |
 | `send_room_message` | `ROOM_CHAT` | `rooms:chat` |
+| `get_room_consultation` | `CONSULTATION_READ` | `consultations:read` |
+| `start_room_consultation`, `respond_to_room_consultation` | `CONSULTATION_WRITE` | `consultations:write` |
+| `cancel_room_consultation` | `CONSULTATION_CANCEL` | `consultations:cancel` |
 
 The checked-in package at
 [`plugins/all-my-friends-are-agents`](../plugins/all-my-friends-are-agents) is a
@@ -71,13 +74,16 @@ The bridge uses the stable split TypeScript SDK v2 packages and the
   allowed hostname. Remote reverse-proxy hostnames must be explicitly listed
   in `ALL_MY_FRIENDS_ARE_AGENTS_ALLOWED_HOSTS`.
 
-The current room tools complete synchronously from MCP's perspective: a send
-returns an acknowledgement while the actor conversation continues internally.
-The bridge therefore does not advertise the Tasks extension. If a later tool
-needs durable polling, implement `io.modelcontextprotocol/tasks`; do not revive
-the experimental 2025 core task methods. Likewise, new interactive tools must
-use 2026 multi-round-trip `input_required` results and integrity-protected
-`requestState`, not deprecated server-pushed sampling, roots, or elicitation.
+Room sends complete synchronously from MCP's perspective: a send returns an
+acknowledgement while the actor conversation continues internally.
+Consultations are different: start returns a durable consultation ID promptly,
+and every client can explicitly poll, respond, and cancel. Clients negotiating
+`io.modelcontextprotocol/tasks` also receive the consultation ID as a task
+projection. Modern clients negotiating form elicitation may let
+`respond_to_room_consultation` collect the response through multi-round-trip
+`input_required`; its `requestState` is HMAC-protected, expires after ten
+minutes, and is bound to the authenticated request. Neither enhancement changes
+the universal four-tool lifecycle or revives deprecated server-pushed methods.
 
 ## Room contract
 
@@ -104,6 +110,28 @@ Room identity is explicit at every boundary:
 `singleRoomMcpBridge` adapter maps the canonical room into that interface. A
 multi-room repository can replace the adapter without renaming tools or
 changing their input schemas.
+
+## Consultation contract
+
+The portable catalog exposes four deterministic tools:
+
+- `start_room_consultation` requires `room_id` and a bounded idempotency key,
+  and returns the durable `consultation_id` without waiting for synthesis.
+- `get_room_consultation` requires both IDs and returns lifecycle state,
+  revision, at most 50 projected event deltas, a blocking question when
+  applicable, and the final structured artifact when complete.
+- `respond_to_room_consultation` requires the current revision and a bounded
+  idempotency key. Exact retries replay the durable acknowledgement; changed
+  content, stale revisions, and non-blocked consultations fail explicitly.
+- `cancel_room_consultation` uses its own step-up scope and persists one winner
+  in cancellation/completion races. Exact cancellation retries are harmless.
+
+Authorization and room membership are resolved before consultation, cursor, or
+idempotency lookup, so an unauthorized or cross-room probe receives the same
+non-sensitive unavailable result. Mutation keys are scoped to room,
+consultation, and authenticated member. Polling remains authoritative across
+server restarts because consultations and event revisions share the configured
+JSON or SQLite durable backend.
 
 When storage becomes multi-room, keep these invariants:
 

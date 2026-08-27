@@ -4,6 +4,12 @@ import { hostHeaderValidation, originValidation, toNodeHandler } from "@modelcon
 import { createMcpHandler, fromJsonSchema, McpServer, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 import type { AuthenticatedDeveloper, DeveloperTeamRegistry } from "./developer-team.js";
+import {
+  consultationRequestStateCodec,
+  registerConsultationMcpTools,
+  type ConsultationRoomAuthorizer,
+  type DurableConsultationMcpService,
+} from "./consultation-mcp.js";
 
 const MCP_SERVER_NAME = "all-my-friends-are-agents-room-bridge";
 const MCP_SERVER_VERSION = "0.1.0";
@@ -17,9 +23,9 @@ export interface McpRoomDescriptor {
   readonly busy: boolean;
 }
 
-export interface RoomMcpBridge {
+export interface RoomMcpBridge extends ConsultationRoomAuthorizer {
   listRooms(developer: AuthenticatedDeveloper): readonly McpRoomDescriptor[];
-  authorizeRoom(roomId: string, developer: AuthenticatedDeveloper, capability: "read" | "chat"): boolean;
+  authorizeRoom(roomId: string, developer: AuthenticatedDeveloper, capability: "read" | "chat" | "consult" | "cancel"): boolean;
   readRoom(roomId: string, limit: number, afterMessageId?: string | null): RoomMcpReadResult;
   sendMessage(
     roomId: string,
@@ -202,16 +208,19 @@ function createRoomMcpServer(
   developers: DeveloperTeamRegistry,
   authorization: string | undefined,
   idempotency: Map<string, IdempotencyEntry>,
+  consultationService?: DurableConsultationMcpService,
+  requestState = consultationRequestStateCodec(developers),
 ) {
   const server = new McpServer(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
     {
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/tasks": { version: "1" } } },
       instructions: "Every room operation requires an explicit opaque room_id. Call list_rooms whenever the user has not selected a room; never infer or cache a singleton room. The server currently exposes one room, but the returned directory may contain multiple rooms without a tool-contract change.",
       cacheHints: {
         "server/discover": { ttlMs: 300_000, cacheScope: "private" },
         "tools/list": { ttlMs: 300_000, cacheScope: "private" },
       },
+      requestState: { verify: requestState.verify },
     },
   );
 
@@ -287,6 +296,15 @@ function createRoomMcpServer(
       : toolError("ROOM_NOT_FOUND", "That room is not available. Call list_rooms to refresh the room directory.");
   });
 
+  if (consultationService) registerConsultationMcpTools({
+    server,
+    service: consultationService,
+    developers,
+    authorization,
+    rooms: bridge,
+    requestState,
+  });
+
   return server;
 }
 
@@ -299,14 +317,18 @@ export function registerRoomMcpRoutes(options: {
   readonly app: express.Express;
   readonly developers: DeveloperTeamRegistry;
   readonly bridge: RoomMcpBridge;
+  readonly consultationService?: DurableConsultationMcpService;
   readonly allowedHostnames?: readonly string[];
 }) {
   const idempotency = new Map<string, IdempotencyEntry>();
+  const requestState = consultationRequestStateCodec(options.developers);
   const handler = createMcpHandler(({ requestInfo }) => createRoomMcpServer(
     options.bridge,
     options.developers,
     requestInfo?.headers.get("authorization") ?? undefined,
     idempotency,
+    options.consultationService,
+    requestState,
   ), {
     legacy: "stateless",
     responseMode: "auto",
@@ -320,7 +342,8 @@ export function registerRoomMcpRoutes(options: {
     if (!validateHost(request, response) || !validateOrigin(request, response)) return;
 
     const authorization = request.header("authorization");
-    if (!options.developers.authenticate(authorization, "ROOM_READ")) {
+    if (!options.developers.authenticate(authorization, "ROOM_READ")
+      && !options.developers.authenticate(authorization, "CONSULTATION_READ")) {
       response
         .status(401)
         .set("Cache-Control", "no-store")
@@ -329,14 +352,22 @@ export function registerRoomMcpRoutes(options: {
       return;
     }
 
-    const routedWrite = request.header("mcp-method") === "tools/call"
-      && request.header("mcp-name") === "send_room_message";
-    if (routedWrite && !options.developers.authenticate(authorization, "ROOM_CHAT")) {
+    const routedTool = request.header("mcp-method") === "tools/call" ? request.header("mcp-name") : undefined;
+    const requiredCapability = routedTool === "send_room_message" ? "ROOM_CHAT"
+      : routedTool === "start_room_consultation" || routedTool === "respond_to_room_consultation" ? "CONSULTATION_WRITE"
+      : routedTool === "cancel_room_consultation" ? "CONSULTATION_CANCEL"
+      : routedTool === "get_room_consultation" ? "CONSULTATION_READ"
+      : undefined;
+    if (requiredCapability && !options.developers.authenticate(authorization, requiredCapability)) {
+      const scope = requiredCapability === "ROOM_CHAT" ? "rooms:chat"
+        : requiredCapability === "CONSULTATION_CANCEL" ? "consultations:cancel"
+        : requiredCapability === "CONSULTATION_WRITE" ? "consultations:write"
+        : "consultations:read";
       response
         .status(403)
         .set("Cache-Control", "no-store")
-        .set("WWW-Authenticate", bearerChallenge("rooms:chat"))
-        .json({ error: "This developer identity cannot send room messages." });
+        .set("WWW-Authenticate", bearerChallenge(scope))
+        .json({ error: "This developer identity lacks the required scope." });
       return;
     }
 

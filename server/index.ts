@@ -64,6 +64,9 @@ import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
+import { ConsultationRunner } from "./consultation-service.js";
+import { DurableConsultationMcpService } from "./consultation-mcp.js";
+import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 
@@ -391,18 +394,6 @@ async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, te
   enqueueDeveloperConversation();
   return { accepted: true, message, room: developerRoomView() };
 }
-
-const roomMcp = registerRoomMcpRoutes({
-  app,
-  developers: developerTeam,
-  allowedHostnames: roomMcpAllowedHostnames,
-  bridge: singleRoomMcpBridge({
-    roomId: CANONICAL_ROOM_ID,
-    describe: developerRoomDescriptor,
-    read: developerMcpRoomView,
-    send: deliverMcpDeveloperMessage,
-  }),
-});
 
 function sendBridgeResult(response: express.Response, result: { readonly kind: string; readonly [key: string]: unknown }, notFoundMessage = "Improvement not found.") {
   if (result.kind === "ok") return response.json(result.value);
@@ -745,6 +736,55 @@ const commandRuntime = new CommandRuntime({
   },
 });
 await commandRuntime.initialize();
+
+const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
+const consultationRunner = new ConsultationRunner(
+  consultationRepository,
+  {
+    synthesize: async (input) => {
+      const agent = currentEnabledAgents()[0];
+      if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
+      const prior = input.turns.map(({ participantId, duty, response, dissent }) => ({ participantId, duty, response, dissent }));
+      const result = await performCommandTask(agent, [
+        "Synthesize the following bounded room consultation into one concise, decision-ready artifact.",
+        "Preserve material dissent and blockers. Do not edit, publish, deploy, or claim code authority.",
+        `Topic: ${input.topic}`,
+        `Context: ${JSON.stringify(input.context ?? null)}`,
+        `Consultation turns: ${JSON.stringify(prior)}`,
+        `Human inputs: ${JSON.stringify(input.inputs.map(({ value }) => value))}`,
+      ].join("\n"), { signal: input.signal, partial: () => undefined, active: async () => true });
+      const synthesis = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
+      if (!synthesis) throw new Error("The consultation synthesizer returned no public artifact.");
+      return { kind: "settled" as const, synthesis, completedBy: agent };
+    },
+  },
+  {
+    performTurn: async (input) => {
+      if (!isActiveAgentId(input.participantId)) throw new Error(`Consultation participant ${input.participantId} is unavailable.`);
+      const result = await performCommandTask(input.participantId, `${input.prompt}\n\nBounded context: ${JSON.stringify(input.context ?? null)}`, {
+        signal: input.signal, partial: () => undefined, active: async () => true,
+      });
+      const response = result.rawText?.trim() || result.visibleMessages?.join("\n").trim();
+      if (!response) throw new Error(`Consultation participant ${input.participantId} returned no public response.`);
+      return { response };
+    },
+  },
+  undefined,
+  (error) => console.error("Consultation lifecycle failed", error),
+);
+await consultationRunner.reconcile(CANONICAL_ROOM_ID);
+const roomMcp = registerRoomMcpRoutes({
+  app,
+  developers: developerTeam,
+  consultationService: new DurableConsultationMcpService(consultationRunner, consultationRepository),
+  allowedHostnames: roomMcpAllowedHostnames,
+  bridge: singleRoomMcpBridge({
+    roomId: CANONICAL_ROOM_ID,
+    describe: developerRoomDescriptor,
+    read: developerMcpRoomView,
+    send: deliverMcpDeveloperMessage,
+  }),
+});
 
 async function announceHumanPresence(human: { id: string; name: string }, event: HumanPresenceEvent) {
   await store.addMessage("system", humanPresenceAnnouncement(human.name, event), "status");
@@ -1187,6 +1227,8 @@ async function shutdown(signal: string) {
     resolve();
   }));
   httpServer.closeAllConnections();
+  consultationRunner.close();
+  if ("close" in consultationRepository && typeof consultationRepository.close === "function") consultationRepository.close();
   await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
 }
 

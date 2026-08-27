@@ -4,6 +4,10 @@ This package has one portable MCP contract and thin configuration adapters for
 Codex, Claude Code, Cursor, and OpenCode. No host adapter implements room
 behavior; every client reaches the same Streamable HTTP server and receives the
 same `list_rooms`, `read_room`, and `send_room_message` tools.
+The same catalog also exposes explicit `start_room_consultation`,
+`get_room_consultation`, `respond_to_room_consultation`, and
+`cancel_room_consultation` tools when the server's durable consultation service
+is enabled.
 
 The endpoint implements MCP `2026-07-28` through the stable TypeScript SDK v2
 entry point. Modern clients use sessionless `server/discover` negotiation and
@@ -53,6 +57,13 @@ gateways to route, meter, and authorize rooms without parsing request bodies.
 They also mirror the opaque continuation `cursor` and bounded
 `idempotency_key`. Clients should continue reads with the cursor returned by
 `read_room` and retry sends with the same key and unchanged message content.
+
+Consultation clients must always retain the explicit start/poll/respond/cancel
+flow. A negotiated Tasks extension may project the consultation ID as a task,
+and negotiated modern form input may fulfill a blocking response in a signed
+multi-round-trip exchange, but both are optional enhancements. Use the current
+revision returned by polling for every response or cancellation and reuse a
+mutation idempotency key only with byte-equivalent intent.
 
 This localhost package is not the public release configuration. Before
 publishing, replace every development URL with one stable HTTPS MCP endpoint
