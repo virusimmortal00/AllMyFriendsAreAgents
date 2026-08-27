@@ -4,8 +4,8 @@ import { agentContextConfigFor, defaultRoomConfiguration, normalizeRoomConfigura
 describe("room configuration defaults", () => {
   it("uses Muse Spark first and DeepSeek V4 Flash as the built-in fallback", () => {
     expect(agentContextConfigFor(defaultRoomConfiguration()).summarizerModels).toEqual([
-      { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" },
-      { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest", variant: "low" },
+      { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free" },
+      { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest" },
     ]);
   });
 
