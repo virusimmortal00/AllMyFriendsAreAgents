@@ -1,4 +1,17 @@
-export const ROOM_PROTOCOL_VERSION = 5;
+export const ROOM_PROTOCOL_VERSION = 6;
+
+export type ImplementationUnavailableReason =
+  | "participant-ineligible"
+  | "no-active-assignment"
+  | "assignment-owner-mismatch"
+  | "governance-invalid"
+  | "confinement-unavailable";
+
+export interface ImplementationCapability {
+  eligible: boolean;
+  available: boolean;
+  unavailableReason?: ImplementationUnavailableReason;
+}
 
 export interface ServerIdentity {
   instanceId: string;

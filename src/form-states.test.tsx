@@ -52,39 +52,10 @@ describe("user-editable settings", () => {
     expect(screen.getByRole("status").textContent).toBe("Room settings saved.");
   });
 
-  it("confirms a project permission grant and reports a save failure without duplicate submission", async () => {
-    const user = userEvent.setup();
-    let rejectSave!: (error: Error) => void;
-    const onWritableChange = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
-    render(<AgentSettingsDialog agent="codex-sol" available writableAgent="nobody" disabled={false} onWritableChange={onWritableChange} onClose={() => undefined} />);
-    const permission = screen.getByRole("checkbox", { name: "Allow this agent to edit project files" }) as HTMLInputElement;
-    await user.click(permission);
-    const confirmation = screen.getByRole("alertdialog", { name: "Grant project write access?" });
-    expect(confirmation.getAttribute("aria-describedby")).toBeTruthy();
-    expect(confirmation.textContent).toContain("Codex [gpt-5.6 Sol]");
-    expect(onWritableChange).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Grant write access" }));
-    expect(onWritableChange).toHaveBeenCalledOnce();
-    expect(onWritableChange).toHaveBeenCalledWith("codex-sol");
-    expect(permission.disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Saving permission…" }) as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => rejectSave(new Error("Permission update failed")));
-    expect(permission.checked).toBe(false);
-    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Permission update failed"))).toBe(true);
-  });
-
-  it("cancels a write-access transfer, restores focus, and makes no request", async () => {
-    const user = userEvent.setup();
-    const onWritableChange = vi.fn(async () => undefined);
-    render(<AgentSettingsDialog agent="cursor-grok" available writableAgent="codex-sol" disabled={false} onWritableChange={onWritableChange} onClose={() => undefined} />);
-    const permission = screen.getByRole("checkbox", { name: "Allow this agent to edit project files" }) as HTMLInputElement;
-    await user.click(permission);
-    const dialog = screen.getByRole("alertdialog", { name: "Transfer project write access?" });
-    expect(dialog.textContent).toContain("Codex [gpt-5.6 Sol]");
-    expect(dialog.textContent).toContain("Cursor [Grok 4.6]");
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(onWritableChange).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(permission);
+  it("renders implementation status as read-only server state with no mutation control", () => {
+    render(<AgentSettingsDialog agent="codex-sol" available implementationCapability={{ eligible: true, available: false, unavailableReason: "governance-invalid" }} onClose={() => undefined} />);
+    expect(screen.getByRole("status").textContent).toContain("assignment governance is no longer current");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /write|grant|transfer/i })).toBeNull();
   });
 });

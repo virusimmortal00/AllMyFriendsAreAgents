@@ -18,9 +18,7 @@ function AgentSettingsFlow() {
     {open ? <AgentSettingsDialog
       agent="codex-sol"
       available
-      writableAgent="nobody"
-      disabled={false}
-      onWritableChange={() => undefined}
+      implementationCapability={{ eligible: true, available: false, unavailableReason: "no-active-assignment" }}
       onClose={() => setOpen(false)}
     /> : null}
   </>;
@@ -53,7 +51,7 @@ function StackedOverlayFlow() {
       <button type="button" onClick={() => setSettingsOpen(true)}>Configure agent</button>
       <button type="button" onClick={() => setPanelOpen(false)}>Close panel</button>
     </aside> : null}
-    {settingsOpen ? <AgentSettingsDialog agent="codex-sol" available writableAgent="nobody" disabled={false} onWritableChange={() => undefined} onClose={() => setSettingsOpen(false)} /> : null}
+    {settingsOpen ? <AgentSettingsDialog agent="codex-sol" available implementationCapability={{ eligible: true, available: false, unavailableReason: "no-active-assignment" }} onClose={() => setSettingsOpen(false)} /> : null}
   </>;
 }
 
@@ -68,7 +66,7 @@ describe("overlay foundation", () => {
     expect(document.body.style.overflow).toBe("hidden");
 
     await user.tab();
-    expect(document.activeElement).toBe(screen.getByRole("checkbox", { name: "Allow this agent to edit project files" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
     await user.tab({ shift: true });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close agent settings" }));
 

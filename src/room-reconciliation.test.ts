@@ -13,7 +13,6 @@ function state(messages: RoomMessage[] = [], overrides: Partial<RoomState> = {})
     settings: {
       roomName: "Delta Lab",
       topic: "Reconciliation",
-      writableAgent: "nobody",
       conversationEnergy: "balanced",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
@@ -110,7 +109,7 @@ describe("room delta reconciliation", () => {
     if (restarted.kind === "applied") expect(restarted.room.messages.map(({ id }) => id)).toEqual(["new"]);
   });
 
-  it("accepts a fresh snapshot whose writable agent is an enabled dynamic roster participant", () => {
+  it("accepts a fresh snapshot with a server-derived implementation status for an enabled dynamic roster participant", () => {
     const dynamicAgent = "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     const dynamicRoster = {
       schemaVersion: 3 as const,
@@ -127,33 +126,20 @@ describe("room delta reconciliation", () => {
     };
     const dynamicState = state([], {
       roster: dynamicRoster,
-      settings: { ...state().settings, writableAgent: dynamicAgent },
+      implementationCapabilities: { [dynamicAgent]: { eligible: true, available: false, unavailableReason: "no-active-assignment" } },
     });
 
     expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState))).toMatchObject({
       kind: "applied",
-      room: { settings: { writableAgent: dynamicAgent } },
+      room: { implementationCapabilities: { [dynamicAgent]: { eligible: true, available: false, unavailableReason: "no-active-assignment" } } },
     });
   });
 
-  it("rejects an unlisted, disabled, or read-only dynamic writable agent", () => {
+  it("replaces implementation status across a reconnect snapshot without retaining a removed dynamic participant", () => {
     const dynamicAgent = "agent-ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb";
-    const dynamicState = (entries: NonNullable<RoomState["roster"]>["entries"]) => state([], {
-      roster: { schemaVersion: 3, revision: 2, entries },
-      settings: { ...state().settings, writableAgent: dynamicAgent },
-    });
-    const entry = {
-      agentId: dynamicAgent,
-      conversationalName: "Dynamic writer",
-      providerId: "openrouter",
-      modelId: "example/dynamic-writer",
-      enabled: true,
-      supportsProjectWrites: true,
-      configurationRevision: 1,
-    };
-
-    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([]))).kind).toBe("resync");
-    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([{ ...entry, enabled: false }]))).kind).toBe("resync");
-    expect(reconcileRoomEvent(state(), undefined, snapshot(dynamicState([{ ...entry, supportsProjectWrites: false }]))).kind).toBe("resync");
+    const current = state([], { implementationCapabilities: { [dynamicAgent]: { eligible: true, available: true } } });
+    const next = state([], { roster: { schemaVersion: 3, revision: 3, entries: [] }, implementationCapabilities: {} });
+    const reconciled = reconcileRoomEvent(current, { streamId: "old", version: 2 }, snapshot(next, "new", 0));
+    expect(reconciled).toMatchObject({ kind: "applied", room: { implementationCapabilities: {} } });
   });
 });

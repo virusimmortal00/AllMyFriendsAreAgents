@@ -5,9 +5,14 @@ import { registerAssignmentRoutes } from "./assignment-api.js";
 import type { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 
-async function withApi(service: Partial<AssignmentLifecycleService>, run: (baseUrl: string) => Promise<void>) {
+async function withApi(service: Partial<AssignmentLifecycleService>, run: (baseUrl: string) => Promise<void>, options: { authenticated?: boolean; onChanged?: () => void | Promise<void> } = {}) {
   const app = express(); app.use(express.json());
-  registerAssignmentRoutes({ app, service: service as AssignmentLifecycleService, developers: {} as DeveloperTeamRegistry });
+  registerAssignmentRoutes({
+    app,
+    service: service as AssignmentLifecycleService,
+    developers: { authenticate: () => options.authenticated ? ({ member: {} }) : null } as unknown as DeveloperTeamRegistry,
+    onChanged: options.onChanged,
+  });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   try { await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`); }
   finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
@@ -33,5 +38,16 @@ describe("assignment lifecycle API", () => {
       expect(missing.status).toBe(404); expect(await missing.json()).toEqual({ error: "Assignment not found." });
       expect((await fetch(`${base}/api/developer/assignments/a/dispose`, { method: "POST", headers, body: "{}" })).status).toBe(409);
     });
+  });
+
+  it("refreshes public implementation status after lifecycle cleanup", async () => {
+    const cleanup = vi.fn().mockResolvedValue([{ assignmentId: "a-1", lifecycleStatus: "MISSING" }]);
+    const onChanged = vi.fn(async () => undefined);
+    await withApi({ metadata: {} as AssignmentLifecycleService["metadata"], cleanup }, async (base) => {
+      const response = await fetch(`${base}/api/developer/assignments/cleanup`, { method: "POST" });
+      expect(response.status).toBe(200);
+      expect(onChanged).toHaveBeenCalledOnce();
+      expect(cleanup).toHaveBeenCalledOnce();
+    }, { authenticated: true, onChanged });
   });
 });

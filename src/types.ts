@@ -1,7 +1,7 @@
 import type { ChatStyle, ParticipantStyles } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
-import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants";
-import type { ServerIdentity } from "../shared/protocol";
+import type { ActiveAgentId, AgentId, SpeakerId } from "../shared/participants";
+import type { ImplementationCapability, ServerIdentity } from "../shared/protocol";
 import type { ImprovementWorkshopView } from "../shared/workshop";
 import type { GovernedImprovementDetail } from "../shared/governed-improvements";
 import type { GovernedImprovementSummary } from "../shared/governed-improvements";
@@ -9,7 +9,7 @@ import type { ImprovementStatusContract } from "../shared/improvement-status";
 import type { MessageMention } from "../shared/mentions";
 import type { RoomAgentRoster } from "../shared/roster";
 
-export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants";
+export type { AgentId, SpeakerId } from "../shared/participants";
 
 export interface AgentHealth {
   status: "cooldown" | "unavailable";
@@ -56,7 +56,6 @@ export interface RoomState {
   settings: {
     roomName: string;
     topic: string;
-    writableAgent: WritableAgent;
     conversationEnergy: ConversationEnergy;
     participantStyles: ParticipantStyles;
   };
@@ -66,6 +65,7 @@ export interface RoomState {
   activeGenerations?: Record<string, AgentId>;
   error?: string;
   availability?: Partial<Record<ActiveAgentId, boolean>>;
+  implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
   humans?: HumanPresence[];

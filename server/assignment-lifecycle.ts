@@ -3,6 +3,8 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { isAgentId } from "../shared/participants.js";
+import type { ImplementationCapability } from "../shared/protocol.js";
+import { normalizeRoomAgentRoster } from "../shared/roster.js";
 import type { AssignmentRecord, AssignmentRecordStore, AssignmentRecoveryClassification } from "./assignment-record.js";
 import { ASSIGNMENT_LIFECYCLE_METADATA } from "./assignment-record.js";
 import type { DeveloperTeamRegistry } from "./developer-team.js";
@@ -49,6 +51,7 @@ export class AssignmentLifecycleService {
     private readonly now: () => string = () => new Date().toISOString(),
     private readonly singleWriter = true,
     private readonly processes?: { terminateScope(scope: string): Promise<void> },
+    private readonly implementationConfinementAvailable = true,
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
@@ -64,8 +67,8 @@ export class AssignmentLifecycleService {
       || !Number.isSafeInteger(input.fencingToken) || !Number.isSafeInteger(input.manifestRevision)) {
       return { kind: "rejected", reason: "Valid assignment, improvement, agent, fencing-token, and manifest-revision fields are required" };
     }
-    if (this.rooms.snapshot().settings.writableAgent !== input.agent) {
-      return { kind: "rejected", reason: "The project-write toggle does not grant this agent writable execution" };
+    if (!this.participantEligible(input.agent)) {
+      return { kind: "rejected", reason: "The implementation assignment participant is not enabled or eligible" };
     }
     const governed = await this.validateGovernance(authenticated.member.memberId, authenticated.member.revision, input);
     if (governed.kind !== "ok") return governed;
@@ -73,7 +76,7 @@ export class AssignmentLifecycleService {
     if (assignments.some((assignment) => assignment.assignmentId === input.assignmentId)) {
       return { kind: "conflict", reason: "Assignment ID already exists" };
     }
-    if (this.singleWriter && assignments.some(isWritableAssignment)) {
+    if (this.singleWriter && assignments.some(reservesWriterSlot)) {
       return { kind: "conflict", reason: "Trusted lifecycle prototype permits only one active writable assignment" };
     }
 
@@ -119,7 +122,13 @@ export class AssignmentLifecycleService {
 
   async list() { return this.records.listAssignments(); }
 
-  async reconcile(): Promise<readonly AssignmentRecord[]> {
+  reconcile(): Promise<readonly AssignmentRecord[]> {
+    const operation = this.mutationQueue.then(() => this.reconcileLocked());
+    this.mutationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async reconcileLocked(): Promise<readonly AssignmentRecord[]> {
     const reconciled: AssignmentRecord[] = [];
     for (const assignment of await this.records.listAssignments()) {
       if (assignment.lifecycleStatus === "CANCELLED" || assignment.lifecycleStatus === "DISPOSED") {
@@ -155,10 +164,54 @@ export class AssignmentLifecycleService {
   async assignmentForAgent(agent: AgentId): Promise<AssignmentRecord | undefined> {
     const assignments = await this.reconcile();
     const assignment = assignments.find((candidate) => candidate.agent === agent && isWritableAssignment(candidate));
-    if (!assignment || this.rooms.snapshot().settings.writableAgent !== agent) return undefined;
+    if (!assignment || !this.participantEligible(agent)) return undefined;
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return undefined;
     return assignment;
+  }
+
+  async implementationCapabilities(agents: readonly AgentId[]): Promise<Partial<Record<AgentId, ImplementationCapability>>> {
+    return (await this.implementationCapabilitySnapshot(agents)).capabilities;
+  }
+
+  async implementationCapabilitySnapshot(agents: readonly AgentId[]): Promise<{
+    capabilities: Partial<Record<AgentId, ImplementationCapability>>;
+    refreshAt?: string;
+  }> {
+    const assignments = await this.reconcile();
+    const roster = normalizeRoomAgentRoster(this.rooms.snapshot().roster);
+    const capabilities: Partial<Record<AgentId, ImplementationCapability>> = {};
+    let refreshAt: string | undefined;
+    for (const agent of agents) {
+      const participant = roster.entries.find((entry) => entry.agentId === agent && entry.enabled);
+      if (!participant?.supportsProjectWrites) {
+        capabilities[agent] = unavailable(false, "participant-ineligible");
+        continue;
+      }
+      const current = assignments.filter((assignment) => ["ACTIVE", "RECOVERABLE", "MISSING"].includes(assignment.lifecycleStatus));
+      const assignment = current.find((candidate) => candidate.agent === agent);
+      if (!assignment) {
+        capabilities[agent] = unavailable(true, current.length ? "assignment-owner-mismatch" : "no-active-assignment");
+        continue;
+      }
+      if (assignment.lifecycleStatus === "MISSING" || !this.implementationConfinementAvailable) {
+        capabilities[agent] = unavailable(true, "confinement-unavailable");
+        continue;
+      }
+      const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
+      if (governed.kind !== "ok") {
+        capabilities[agent] = unavailable(true, "governance-invalid");
+        continue;
+      }
+      capabilities[agent] = await implementationWorkspaceIsConfined(this.repositoryPath, this.worktreesRoot, assignment)
+        ? { eligible: true, available: true }
+        : unavailable(true, "confinement-unavailable");
+      if (capabilities[agent]?.available
+        && (!refreshAt || Date.parse(governed.value.leaseExpiresAt) < Date.parse(refreshAt))) {
+        refreshAt = governed.value.leaseExpiresAt;
+      }
+    }
+    return { capabilities, ...(refreshAt ? { refreshAt } : {}) };
   }
 
   /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
@@ -167,9 +220,13 @@ export class AssignmentLifecycleService {
     const assignment = assignments.find((candidate) => candidate.assignmentId === assignmentId && candidate.agent === agent);
     if (!assignment || assignment.agent !== agent) return { kind: "revoked", reason: "Assignment is missing or belongs to another agent." };
     if (!["ACTIVE", "RECOVERABLE"].includes(assignment.lifecycleStatus)) return { kind: "revoked", reason: `Assignment lifecycle is ${assignment.lifecycleStatus}.` };
-    if (this.rooms.snapshot().settings.writableAgent !== agent) return { kind: "revoked", reason: "Project write capability was revoked for this agent." };
+    if (!this.participantEligible(agent)) return { kind: "revoked", reason: "Implementation participant eligibility changed." };
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return { kind: "revoked", reason: governed.kind === "rejected" || governed.kind === "conflict" ? governed.reason : "Assignment claim authority no longer exists." };
+    if (!this.implementationConfinementAvailable
+      || !await implementationWorkspaceIsConfined(this.repositoryPath, this.worktreesRoot, assignment)) {
+      return { kind: "revoked", reason: "Assignment workspace confinement is unavailable." };
+    }
     const workspace = await this.workspaceForAgent(agent);
     if (!workspace || workspace !== assignment.workspacePath) return { kind: "revoked", reason: "Assignment workspace authority changed." };
     return { kind: "ok", assignment, workspace };
@@ -250,7 +307,7 @@ export class AssignmentLifecycleService {
 
   private async validateGovernance(memberId: string, memberRevision: number, input: {
     improvementId: string; fencingToken: number; manifestRevision: number;
-  }): Promise<AssignmentResult<{ repositoryBaseCommit: string }>> {
+  }): Promise<AssignmentResult<{ repositoryBaseCommit: string; leaseExpiresAt: string }>> {
     const member = this.developers.latest(memberId);
     if (!member || member.revision !== memberRevision || !member.capabilities.includes("ASSIGNMENT_WRITE")) {
       return { kind: "rejected", reason: "Developer-team identity or assignment capability changed" };
@@ -267,12 +324,45 @@ export class AssignmentLifecycleService {
       || manifest.effectiveToolGrants.some((grant) => PROHIBITED_GRANT.test(grant))) {
       return { kind: "rejected", reason: "The execution manifest does not authorize this trusted, non-publication lifecycle" };
     }
-    return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit } };
+    return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit, leaseExpiresAt: claim.leaseExpiresAt } };
+  }
+
+  private participantEligible(agent: AgentId) {
+    const participant = normalizeRoomAgentRoster(this.rooms.snapshot().roster).entries.find((entry) => entry.agentId === agent);
+    return Boolean(participant?.enabled && participant.supportsProjectWrites);
   }
 }
 
 function isWritableAssignment(assignment: AssignmentRecord) {
-  return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE" || assignment.lifecycleStatus === "MISSING";
+  return assignment.lifecycleStatus === "ACTIVE" || assignment.lifecycleStatus === "RECOVERABLE";
+}
+
+function reservesWriterSlot(assignment: AssignmentRecord) {
+  return isWritableAssignment(assignment) || assignment.lifecycleStatus === "MISSING";
+}
+
+function unavailable(eligible: boolean, unavailableReason: NonNullable<ImplementationCapability["unavailableReason"]>): ImplementationCapability {
+  return { eligible, available: false, unavailableReason };
+}
+
+async function implementationWorkspaceIsConfined(repositoryPath: string, worktreesRoot: string, assignment: AssignmentRecord) {
+  const [repository, root, workspace] = await Promise.all([
+    realpath(repositoryPath).catch(() => ""),
+    realpath(worktreesRoot).catch(() => ""),
+    realpath(assignment.workspacePath).catch(() => ""),
+  ]);
+  if (!repository || !root || !workspace || workspace !== assignment.workspacePath || workspace === repository) return false;
+  const relative = path.relative(root, workspace);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  const [branch, common, repositoryCommon, head] = await Promise.all([
+    git(workspace, ["branch", "--show-current"]).catch(() => ""),
+    git(workspace, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => ""),
+    git(repository, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => ""),
+    git(workspace, ["rev-parse", "HEAD"]).catch(() => ""),
+  ]);
+  if (branch !== assignment.branch || !head || head !== assignment.observedHeadSha || !common || !repositoryCommon) return false;
+  const [canonicalCommon, canonicalRepositoryCommon] = await Promise.all([realpath(common).catch(() => ""), realpath(repositoryCommon).catch(() => "")]);
+  return Boolean(canonicalCommon && canonicalCommon === canonicalRepositoryCommon);
 }
 
 async function disposableWorkspace(repositoryPath: string, worktreesRoot: string, assignment: AssignmentRecord): Promise<AssignmentResult<true>> {

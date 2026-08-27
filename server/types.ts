@@ -2,7 +2,7 @@ import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 import type { AgentHealth } from "./agent-health.js";
-import type { RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol.js";
+import type { ImplementationCapability, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
@@ -65,9 +65,10 @@ export interface RoomState {
 }
 
 export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
-  settings: Omit<RoomSettings, "projectPath">;
+  settings: Omit<RoomSettings, "projectPath" | "writableAgent">;
   activeGenerations?: ActiveGenerations;
   availability?: Partial<Record<ActiveAgentId, boolean>>;
+  implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
 }

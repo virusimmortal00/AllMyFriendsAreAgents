@@ -92,7 +92,6 @@ function room(instanceId: string, messages: RoomState["messages"] = [], state: P
     settings: {
       roomName: "Reconnect Lab",
       topic: "Recovery",
-      writableAgent: "nobody",
       conversationEnergy: "balanced",
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },

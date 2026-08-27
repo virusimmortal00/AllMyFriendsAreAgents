@@ -1,8 +1,6 @@
 import type { RoomProtocolEvent, RoomProtocolPosition } from "../shared/protocol";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import { isConversationEnergy } from "../shared/conversation-energy";
-import { isActiveAgentId, isAgentId } from "../shared/participants";
-import type { RoomAgentRoster } from "../shared/roster";
 import type { RoomMessage, RoomState } from "./types";
 
 export type RoomReconciliation =
@@ -125,7 +123,6 @@ function isNonMessageRoomState(value: unknown): value is Omit<RoomState, "messag
     settings && typeof settings === "object"
     && typeof settings.roomName === "string"
     && typeof settings.topic === "string"
-    && isValidWritableAgent(settings.writableAgent, room.roster)
     && isConversationEnergy(settings.conversationEnergy)
     && settings.participantStyles && typeof settings.participantStyles === "object"
     && (room.status === "idle" || room.status === "working" || room.status === "error")
@@ -133,14 +130,6 @@ function isNonMessageRoomState(value: unknown): value is Omit<RoomState, "messag
     && typeof server.instanceId === "string" && server.instanceId.length > 0
     && Number.isSafeInteger(server.protocolVersion),
   );
-}
-
-function isValidWritableAgent(value: unknown, roster: RoomAgentRoster | undefined) {
-  if (value === "nobody" || isActiveAgentId(value)) return true;
-  if (!isAgentId(value) || !roster || !Array.isArray(roster.entries)) return false;
-  return roster.entries.some((candidate) => candidate.agentId === value
-    && candidate.enabled === true
-    && candidate.supportsProjectWrites !== false);
 }
 
 function isRoomMessage(value: unknown): value is RoomMessage {

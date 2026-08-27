@@ -33,6 +33,8 @@ The goal is useful dissent and a more complete view, not consensus at any cost�
 >
 > **Opus:** “Nobody clones a repo because it's safe; they clone it because it does something their seven tabs can't.”
 
+That first-draft write-toggle line is retained as history; the room-participant/implementation-worker boundary below supersedes it.
+
 That disagreement replaced a staged hero with the real discussion, clarified setup and usage costs, and moved permissions from the hook to the trust proof. The product improved its own public story in the open.
 
 ## What happens when you press Send?
@@ -79,7 +81,7 @@ pnpm run dev
 
 Open [http://127.0.0.1:4173](http://127.0.0.1:4173), choose a screen name, and say hello.
 
-Project context is optional. By default, agents can inspect this repository; point the room at another folder when you want them to review or work with its files:
+Project context is optional. By default, room participants can inspect this repository; point the room at another folder when you want them to discuss or review its files:
 
 ```bash
 ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
@@ -87,11 +89,11 @@ ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
 
 ## Boundaries without a boss
 
-**Agents decide when to speak; you decide what they can touch.** Project access is read-only until you deliberately grant one participant permission to write. Only one agent can be writable at a time, and all-agent reviews are always read-only.
+**Room participants converse and inspect; implementation workers change source.** Ordinary room turns and reviews are always read-only against project files. Durable source work begins only through an explicit governed implementation handoff to a separate worker/job identity and session in an assignment-owned worktree.
 
-![Agent settings showing the explicit project write permission toggle and read-only review guarantee](docs/screenshots/project-permissions.jpg)
+Agent Settings reports a bounded, server-derived implementation-handoff status. It never exposes provider sessions, worktree paths, broker grants, or governance records, and it is not a permission toggle. OpenCode plan/build selection is an internal runtime detail; humans do not need to switch modes.
 
-These are boundaries around capability—not commands to answer or agree. The room, transcript, sessions, styles, and diagnostics remain local and resumable.
+These are boundaries around capability—not commands to answer or agree. Issue creation, publication, merge, and deployment remain separately authorized actions. The room, transcript, sessions, styles, and diagnostics remain local and resumable.
 
 ## Why one OpenCode runtime?
 
@@ -103,7 +105,7 @@ Every new and resumed invocation pins the selected model. OpenCode receives `--m
 
 ### Claim the server owner before configuring providers
 
-Room screen names and presence cookies are deliberately not administrative identity. Set a long random `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` on the server, open **Manage room agents**, and use that proof once to create the durable `OWNER` credential. Existing rooms keep ordinary chat and history working but fail closed for model discovery, roster changes, provider setup, and write grants until bootstrap completes.
+Room screen names and presence cookies are deliberately not administrative identity. Set a long random `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` on the server, open **Manage room agents**, and use that proof once to create the durable `OWNER` credential. Existing rooms keep ordinary chat and history working but fail closed for model discovery, roster changes, and provider setup until bootstrap completes.
 
 The owner can create durable `ADMIN` or `MEMBER` identities and delegate narrow capabilities. Privileged requests are checked server-side and mutating requests require a per-session CSRF token; grant changes immediately invalidate the affected privileged sessions. Control identities, password hashes, and redacted audit events live in a mode-`0600` control-plane file separate from public room presence and profiles.
 
@@ -124,14 +126,14 @@ notice an opportunity
     ↓
 agents debate the improvement
     ↓
-human authorizes scoped work
+human authorizes an implementation handoff
     ↓
-one agent implements; others review
+separate worker implements; room agents review
     ↓
 the room gets better for everyone
 ```
 
-This is not an autonomous system silently rewriting itself: a human authorizes scoped work, one agent implements, and others review. Because the project is open source, every room can discover improvements that make all the others better. That flywheel is why coding came first even though the conversation can be about anything.
+This is not an autonomous system silently rewriting itself: a human authorizes a scoped handoff, a separate implementation worker operates inside the governed assignment worktree, and room participants review read-only evidence. Because the project is open source, every room can discover improvements that make all the others better. That flywheel is why coding came first even though the conversation can be about anything.
 
 ## Built for actual conversations
 
@@ -196,7 +198,7 @@ Point the room at another project, isolate its state, cap agent concurrency, or 
 
 | Variable | Purpose |
 | --- | --- |
-| `ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` | Project agents may inspect or edit |
+| `ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` | Project context room participants may inspect |
 | `ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND` | `json` (default) or `sqlite` |
 | `ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR` | Runtime data directory |
 | `ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR` | Durable assignment worktrees outside the source checkout; relative paths resolve beside the checkout |

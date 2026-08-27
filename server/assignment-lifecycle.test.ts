@@ -23,13 +23,19 @@ const member: DeveloperTeamMemberRevision = {
   tokenHash: hashToken(token), createdAt: "2026-08-21T11:00:00.000Z",
 };
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 afterEach(async () => Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))));
 
 async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 }
 
-async function repositoryFixture(kind: "json" | "sqlite" = "json") {
+async function repositoryFixture(kind: "json" | "sqlite" = "json", implementationConfinementAvailable = true) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-assignment-"));
   directories.push(root);
   await git(root, "init", "-b", "main");
@@ -51,8 +57,11 @@ async function repositoryFixture(kind: "json" | "sqlite" = "json") {
     improvementId: "imp-1", expectedRevision: 1, idempotencyKey: "claim:first", leaseExpiresAt: "2099-01-01T01:00:00.000Z",
     manifest: { model: "gpt-test", harness: "codex", promptReference: "prompt://assignment", effectiveToolGrants: ["read", "edit", "test"], policyRevision: 1, repositoryBaseCommit: base, environmentId: "assignment" },
   });
-  const service = new AssignmentLifecycleService(repository, repository, registry, root, path.join(root, ".worktrees"), () => "2099-01-01T00:02:00.000Z");
-  return { root, state, repository, service, base };
+  const service = new AssignmentLifecycleService(
+    repository, repository, registry, root, path.join(root, ".worktrees"),
+    () => "2099-01-01T00:02:00.000Z", true, undefined, implementationConfinementAvailable,
+  );
+  return { root, state, repository, service, bridge, base };
 }
 
 function assignmentRecord(workspacePath: string): AssignmentRecord {
@@ -121,6 +130,59 @@ describe("trusted single-writer assignment lifecycle", () => {
     expect((await service.create(`Bearer ${token}`, { assignmentId: "assignment-2", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 })).kind).toBe("conflict");
   });
 
+  it("derives bounded implementation availability for no assignment, owner mismatch, and a valid governed assignment", async () => {
+    const { service } = await repositoryFixture();
+    expect(await service.implementationCapabilities(["codex-sol"])).toEqual({
+      "codex-sol": { eligible: true, available: false, unavailableReason: "no-active-assignment" },
+    });
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "capability-1", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    expect(created.kind).toBe("ok");
+    expect(await service.implementationCapabilities(["claude-sonnet", "codex-sol"])).toEqual({
+      "claude-sonnet": { eligible: true, available: false, unavailableReason: "assignment-owner-mismatch" },
+      "codex-sol": { eligible: true, available: true },
+    });
+    expect(await service.implementationCapabilitySnapshot(["codex-sol"])).toEqual({
+      capabilities: { "codex-sol": { eligible: true, available: true } },
+      refreshAt: "2099-01-01T01:00:00.000Z",
+    });
+  });
+
+  it("fails closed when assignment governance becomes stale", async () => {
+    const { service, bridge } = await repositoryFixture();
+    expect((await service.create(`Bearer ${token}`, { assignmentId: "stale-governance", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 })).kind).toBe("ok");
+    expect((await bridge.mutateClaim(`Bearer ${token}`, { improvementId: "imp-1", expectedRevision: 2, idempotencyKey: "release:capability", fencingToken: 1, operation: "release" })).kind).toBe("ok");
+    expect(await service.implementationCapabilities(["codex-sol"])).toEqual({
+      "codex-sol": { eligible: true, available: false, unavailableReason: "governance-invalid" },
+    });
+  });
+
+  it("revokes continuation authority when implementation confinement is unavailable", async () => {
+    const { service } = await repositoryFixture("json", false);
+    const created = await service.create(`Bearer ${token}`, {
+      assignmentId: "unconfined-authority", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1,
+    });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    expect(await service.implementationCapabilities(["codex-sol"])).toEqual({
+      "codex-sol": { eligible: true, available: false, unavailableReason: "confinement-unavailable" },
+    });
+    expect(await service.authorityForContinuation(created.value.assignmentId, "codex-sol")).toEqual({
+      kind: "revoked", reason: "Assignment workspace confinement is unavailable.",
+    });
+  });
+
+  it("revokes assignment lookup when the owning dynamic roster participant is deactivated", async () => {
+    const { service, repository } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "roster-revocation", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    expect(created.kind).toBe("ok");
+    const roster = repository.snapshot().roster!;
+    expect((await repository.updateRoster(roster.revision, roster.entries.map((entry) => entry.agentId === "codex-sol" ? { ...entry, enabled: false } : entry))).kind).toBe("accepted");
+    expect(await service.assignmentForAgent("codex-sol")).toBeUndefined();
+    expect(await service.implementationCapabilities(["codex-sol"])).toEqual({
+      "codex-sol": { eligible: false, available: false, unavailableReason: "participant-ineligible" },
+    });
+    if (created.kind === "ok") expect(await service.authorityForContinuation(created.value.assignmentId, "codex-sol")).toMatchObject({ kind: "revoked", reason: "Implementation participant eligibility changed." });
+  });
+
   it("serializes concurrent creation requests under the single-writer gate", async () => {
     const { service } = await repositoryFixture();
     const results = await Promise.all([
@@ -129,6 +191,43 @@ describe("trusted single-writer assignment lifecycle", () => {
     ]);
     expect(results.map(({ kind }) => kind).sort()).toEqual(["conflict", "ok"]);
     expect(await service.list()).toHaveLength(1);
+  });
+
+  it("serializes capability reconciliation with assignment cancellation", async () => {
+    const { service, repository } = await repositoryFixture();
+    const created = await service.create(`Bearer ${token}`, {
+      assignmentId: "reconcile-cancel", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1,
+    });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    await writeFile(path.join(created.value.workspacePath, "local.txt"), "dirty\n");
+
+    const reconcileWriteStarted = deferred();
+    const releaseReconcileWrite = deferred();
+    const putAssignment = repository.putAssignment.bind(repository);
+    let blockReconcileWrite = true;
+    repository.putAssignment = async (assignment) => {
+      if (blockReconcileWrite && assignment.assignmentId === created.value.assignmentId && assignment.lifecycleStatus === "RECOVERABLE") {
+        blockReconcileWrite = false;
+        reconcileWriteStarted.resolve();
+        await releaseReconcileWrite.promise;
+      }
+      await putAssignment(assignment);
+    };
+
+    const capabilities = service.implementationCapabilities(["codex-sol"]);
+    await reconcileWriteStarted.promise;
+    const cancellation = service.cancel(`Bearer ${token}`, {
+      assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-after-reconcile",
+    });
+    let cancellationSettled = false;
+    void cancellation.then(() => { cancellationSettled = true; });
+    await Promise.resolve();
+    expect(cancellationSettled).toBe(false);
+
+    releaseReconcileWrite.resolve();
+    await capabilities;
+    expect(await cancellation).toMatchObject({ kind: "ok", value: { lifecycleStatus: "CANCELLED" } });
+    expect(await repository.getAssignment(created.value.assignmentId)).toMatchObject({ lifecycleStatus: "CANCELLED" });
   });
 
   it("recovers dirty and missing work without cleanup deletion", async () => {
@@ -141,6 +240,12 @@ describe("trusted single-writer assignment lifecycle", () => {
     expect(await stat(path.join(created.value.workspacePath, "local.txt"))).toBeTruthy();
     await rm(created.value.workspacePath, { recursive: true });
     expect((await service.reconcile())[0]).toMatchObject({ lifecycleStatus: "MISSING", recovery: { classification: "missing" }, workspacePath: created.value.workspacePath });
+    expect(await service.implementationCapabilities(["codex-sol"])).toEqual({
+      "codex-sol": { eligible: true, available: false, unavailableReason: "confinement-unavailable" },
+    });
+    expect((await service.create(`Bearer ${token}`, {
+      assignmentId: "replacement-for-missing", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1,
+    })).kind).toBe("conflict");
     expect((await service.cleanup())[0].workspacePath).toBe(created.value.workspacePath);
   });
 

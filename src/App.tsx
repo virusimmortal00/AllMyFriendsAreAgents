@@ -11,7 +11,7 @@ import { nextWorkshopId } from "./workshop-dialog";
 import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style";
 import { agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
-import type { AgentId, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
+import type { AgentId, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import { Improvements, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
 import { reconcileRoomEvent } from "./room-reconciliation";
@@ -33,7 +33,6 @@ const EMPTY_ROOM: RoomState = {
   settings: {
     roomName: "The Agent Room",
     topic: "Open conversation",
-    writableAgent: "nobody",
     conversationEnergy: DEFAULT_CONVERSATION_ENERGY,
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
@@ -457,12 +456,6 @@ export default function App() {
   const activeTypingAgents = [...activeAgentSet];
   const working = activeAgentSet.size > 0;
 
-  async function changeWritable(agent: WritableAgent) {
-    if (!human) throw new Error("Join the room before changing project permissions.");
-    await updateSettings({ writableAgent: agent });
-    setRoom((current) => ({ ...current, settings: { ...current.settings, writableAgent: agent } }));
-  }
-
   async function saveRoomSettings(settings: RoomSettingsInput) {
     await updateSettings(settings);
     setRoom((current) => ({ ...current, settings: { ...current.settings, ...settings } }));
@@ -842,9 +835,7 @@ export default function App() {
             agent={configuredAgent}
             available={room.availability?.[configuredAgent] !== false}
             health={room.agentHealth?.[configuredAgent]}
-            writableAgent={room.settings.writableAgent}
-            disabled={working || !connected}
-            onWritableChange={changeWritable}
+            implementationCapability={room.implementationCapabilities?.[configuredAgent]}
             onClose={() => setConfiguredAgent(null)}
           />
         ) : null}
@@ -853,13 +844,7 @@ export default function App() {
           agentListSort={agentListSort}
           onAgentListSortChange={changeAgentListSort}
           returnFocusTo={rosterTrigger}
-          onSaved={(nextRoster) => setRoom((current) => ({
-            ...current,
-            roster: nextRoster,
-            settings: enabledRoomAgentIds(nextRoster).includes(current.settings.writableAgent as ActiveAgentId)
-              ? current.settings
-              : { ...current.settings, writableAgent: "nobody" },
-          }))}
+          onSaved={(nextRoster) => setRoom((current) => ({ ...current, roster: nextRoster }))}
           onClose={() => setRosterOpen(false)}
         /> : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}

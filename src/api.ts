@@ -1,4 +1,4 @@
-import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse, WritableAgent } from "./types";
+import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
 import type { MessageMutationAcknowledgement, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol";
@@ -146,7 +146,7 @@ export async function loadControlPrincipals() { return request("/api/control/pri
 export async function createControlPrincipal(username: string, password: string, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request("/api/control/principals", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ username, password, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 export async function updateControlGrants(principal: ControlPrincipal, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request(`/api/control/principals/${principal.id}/grants`, { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision: principal.revision, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 
-export async function updateSettings(settings: { roomName?: string; topic?: string; writableAgent?: WritableAgent; conversationEnergy?: ConversationEnergy }) {
+export async function updateSettings(settings: { roomName?: string; topic?: string; conversationEnergy?: ConversationEnergy }) {
   return request("/api/settings", {
     method: "PATCH",
     headers: { "X-AMFAA-CSRF": controlCsrfToken },
