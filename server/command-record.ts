@@ -23,6 +23,16 @@ export function publicPollProjection(poll: CommandPoll, votes: readonly CommandV
 export const MAX_DIAGNOSTIC_TEXT = 2_000;
 export const MAX_DIAGNOSTIC_PROMPT_HEAD = 300;
 export const MAX_DIAGNOSTICS_PER_ROOM_AGENT = 200;
+export const MAX_DIAGNOSTIC_QUERY_LIMIT = 200;
+export const MAX_DIAGNOSTIC_SEARCH_LENGTH = 200;
+export const DIAGNOSTIC_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+
+export interface DiagnosticQuery {
+  readonly agentId: ActiveAgentId;
+  readonly limit?: number;
+  readonly search?: string;
+  readonly reason?: string;
+}
 
 export type CreateCommandSubmissionResult = { readonly kind: "created"; readonly submission: CommandSubmission } | { readonly kind: "duplicate"; readonly submission: CommandSubmission };
 export type CreateCommandVoteResult = { readonly kind: "created"; readonly vote: CommandVote } | { readonly kind: "duplicate"; readonly vote: CommandVote } | { readonly kind: "rejected"; readonly reason: string };
@@ -34,11 +44,15 @@ export interface CommandRecordStore {
   compareAndSetRoundRobinState(expectedRevision: number, state: RoundRobinState): Promise<{ readonly kind: "accepted"; readonly state: RoundRobinState } | { readonly kind: "conflict"; readonly actualRevision: number }>;
   createCommandAttempt(attempt: CommandAttempt): Promise<{ readonly kind: "created" | "duplicate"; readonly attempt: CommandAttempt }>;
   listCommandAttempts(roomId: string, submissionId: string): Promise<readonly CommandAttempt[]>;
+  listPendingCommandAttempts(roomId: string): Promise<readonly CommandAttempt[]>;
+  compareAndSetCommandAttempt(expectedUpdatedAt: string, attempt: CommandAttempt): Promise<{ readonly kind: "accepted"; readonly attempt: CommandAttempt } | { readonly kind: "conflict" | "not-found" }>;
   createCommandPoll(poll: CommandPoll): Promise<{ readonly kind: "created" | "duplicate"; readonly poll: CommandPoll }>;
   getCommandPoll(roomId: string, pollId: string): Promise<CommandPoll | undefined>;
   createCommandVote(vote: CommandVote): Promise<CreateCommandVoteResult>;
   listCommandVotes(roomId: string, pollId: string): Promise<readonly CommandVote[]>;
   createCommandAuditIdentity(audit: CommandAuditIdentity): Promise<{ readonly kind: "created" | "duplicate"; readonly audit: CommandAuditIdentity }>;
+  getCommandAuditIdentity(roomId: string, submissionId: string): Promise<CommandAuditIdentity | undefined>;
   appendDiagnostic(record: DiagnosticRecord): Promise<{ readonly kind: "created" | "duplicate"; readonly record: DiagnosticRecord }>;
-  listDiagnostics(roomId: string, agentId: ActiveAgentId, limit?: number): Promise<readonly DiagnosticRecord[]>;
+  getDiagnostic(roomId: string, agentId: ActiveAgentId, recordId: string): Promise<DiagnosticRecord | undefined>;
+  listDiagnostics(roomId: string, query: ActiveAgentId | DiagnosticQuery, limit?: number): Promise<readonly DiagnosticRecord[]>;
 }
