@@ -294,6 +294,15 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 }
 .room-settings-window { width: min(480px, calc(100vw - 28px)); overflow: hidden; }
 .room-settings-window .controls-panel { max-height: calc(100vh - 96px); overflow: auto; border: 0; }
+.room-configuration-window { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+.room-configuration-body { display: grid; gap: 14px; padding: 14px; overflow: auto; background: var(--chrome); }
+.room-configuration-card { display: grid; gap: 8px; padding: 14px; border: 2px groove white; background: #f4f4f4; }
+.room-configuration-card h3, .room-configuration-card p { margin: 0; }
+.room-configuration-card > label:not(.room-configuration-check) { display: grid; gap: 4px; font-weight: 700; }
+.room-configuration-card textarea { width: 100%; resize: vertical; font: 13px/1.4 Arial, sans-serif; }
+.room-configuration-check { display: flex; align-items: center; gap: 7px; font-weight: 700; }
+.room-configuration-model { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.room-configuration-card .model-picker { max-height: 460px; overflow: auto; }
 .room-settings-window .room-settings-form { padding: 8px 16px 18px; }
 .help-window { width: min(520px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100vh - 28px); overflow: auto; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 2px outset white; box-shadow: 2px 2px 0 #000; }
 .help-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.45 Tahoma, Arial, sans-serif; }
@@ -825,6 +834,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .model-offer { grid-template-columns: 28px minmax(0, 1fr); }
   .model-offer > span:last-of-type, .model-offer > em { grid-column: 2; }
   .room-settings-window .controls-panel { max-height: calc(100dvh - 58px); }
+  .room-configuration-window { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
   .human-avatar-body { grid-template-columns: 54px minmax(0, 1fr); padding: 14px; }
   .human-avatar-body > .human-avatar { width: 54px; height: 54px; border-radius: 12px; }
   .human-avatar-actions .classic-button { min-height: 42px; }

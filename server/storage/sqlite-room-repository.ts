@@ -49,6 +49,8 @@ import { validateContinuationDurableState } from "./continuation-storage.js";
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "../continuation-record.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "../deployment-provenance.js";
+import type { AgentContextSummaryKey } from "../transcript.js";
+import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfiguration, type RoomConfigurationUpdate } from "../room-configuration.js";
 
 export const DEFAULT_ROOM_ID = CANONICAL_ROOM_ID;
 export const DEFAULT_ROOM_SLUG = "the-agent-room";
@@ -77,6 +79,16 @@ interface RoomRow {
   roster_revision: number;
   roster_schema_version: number;
   deployment_provenance_json: string | null;
+}
+
+interface RoomSettingsRow {
+  base_prompt_revision: number;
+  base_prompt_text: string | null;
+  summarizer_model: string | null;
+  summarizer_prompt_text: string;
+  summarizer_prompt_revision: number;
+  feature_flags_json: string;
+  updated_at: string;
 }
 
 interface MessageRow {
@@ -292,7 +304,8 @@ export class SqliteRoomRepository implements RoomRepository {
       this.database.prepare(`
         INSERT INTO rooms(
           id, slug, name, topic, writable_agent, conversation_energy, project_path,
-          participant_styles_json, status, active_agent, error, roster_revision, roster_schema_version, deployment_provenance_json, created_at, updated_at
+          participant_styles_json, status, active_agent, error, roster_revision, roster_schema_version,
+          deployment_provenance_json, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           slug = excluded.slug,
@@ -338,10 +351,12 @@ export class SqliteRoomRepository implements RoomRepository {
       normalizeRoomAgentRoster(state.roster).entries.forEach((entry, position) => {
         this.upsertRosterAgent(entry);
         this.database.prepare(`
-        INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, JSON.stringify(entry), now, now);
+        INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, last_seen_message_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, JSON.stringify(entry), entry.lastSeenMessageId || null, now, now);
       });
+      this.database.prepare("DELETE FROM room_settings WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+      if (state.roomConfiguration) this.persistRoomConfiguration(normalizeRoomConfiguration(state.roomConfiguration));
       this.database.exec("RELEASE replace_room_state");
       this.state = structuredClone(state);
     } catch (error) {
@@ -396,7 +411,44 @@ export class SqliteRoomRepository implements RoomRepository {
     const state = this.snapshot();
     state.settings = { ...state.settings, ...update };
     this.persistSettings(state.settings);
+    this.invalidateAgentContextSummaries();
     this.state = state;
+  }
+
+  async getRoomConfiguration() {
+    return normalizeRoomConfiguration(this.snapshot().roomConfiguration);
+  }
+
+  async updateRoomConfiguration(update: RoomConfigurationUpdate, actorId: string) {
+    const current = await this.getRoomConfiguration();
+    const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
+    const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
+    const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
+    const now = new Date().toISOString();
+    const next = normalizeRoomConfiguration({
+      ...current,
+      ...update,
+      basePromptText: update.basePromptText === "" ? undefined : update.basePromptText ?? (baseChanged ? null : current.basePromptText),
+      basePromptRevision: current.basePromptRevision + (baseChanged ? 1 : 0),
+      summarizerPromptRevision: current.summarizerPromptRevision + (summarizerChanged ? 1 : 0),
+      updatedAt: now,
+    });
+    const changeKind = [baseChanged, summarizerChanged, flagsChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.persistRoomConfiguration(next);
+      this.database.prepare(`INSERT INTO room_settings_history(event_id, room_id, actor_id, change_kind, base_prompt_revision, summarizer_prompt_revision, snapshot_json, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), DEFAULT_ROOM_ID, actorId, changeKind, next.basePromptRevision, next.summarizerPromptRevision, JSON.stringify(next), now);
+      if (summarizerChanged) this.invalidateAgentContextSummaries();
+      this.database.exec("COMMIT");
+      const state = this.snapshot();
+      state.roomConfiguration = next;
+      this.state = state;
+      return structuredClone(next);
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]) {
@@ -405,7 +457,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const state = this.snapshot();
     const current = normalizeRoomAgentRoster(state.roster);
     if (current.revision !== expectedRevision) return { kind: "conflict" as const, expectedRevision, actualRevision: current.revision };
-    const roster = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(validated.map((entry) => { const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId); const changed = previous && participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry); if (!changed) return { ...entry, configurationRevision: previous?.configurationRevision || entry.configurationRevision || 1 }; const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry; return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated." }; })) };
+    const roster = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(validated.map((entry) => { const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId); const changed = previous && participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry); if (!changed) return { ...entry, configurationRevision: previous?.configurationRevision || entry.configurationRevision || 1, lastSeenMessageId: previous?.lastSeenMessageId ?? null }; const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry; return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated.", lastSeenMessageId: previous.lastSeenMessageId ?? null }; })) };
     for (const entry of roster.entries) state.settings.participantStyles[entry.agentId] ||= structuredClone(DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
     const enabled = new Set(enabledRoomAgentIds(roster));
     this.database.exec("BEGIN IMMEDIATE");
@@ -419,8 +471,8 @@ export class SqliteRoomRepository implements RoomRepository {
         return { kind: "conflict" as const, expectedRevision, actualRevision: latest.roster_revision };
       }
       this.database.prepare("DELETE FROM room_agents WHERE room_id = ?").run(DEFAULT_ROOM_ID);
-      const insert = this.database.prepare("INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-      roster.entries.forEach((entry, position) => { this.upsertRosterAgent(entry); insert.run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, JSON.stringify(entry), now, now); });
+      const insert = this.database.prepare("INSERT INTO room_agents(room_id, agent_id, enabled, position, configuration_json, last_seen_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+      roster.entries.forEach((entry, position) => { this.upsertRosterAgent(entry); insert.run(DEFAULT_ROOM_ID, entry.agentId, entry.enabled ? 1 : 0, position, JSON.stringify(entry), entry.lastSeenMessageId || null, now, now); });
       for (const agent of Object.keys(state.sessions) as AgentId[]) {
         const previous = current.entries.find((entry) => entry.agentId === agent); const updatedEntry = roster.entries.find((entry) => entry.agentId === agent);
         if (enabled.has(agent as never) && previous && updatedEntry && participantConfigurationFingerprint(previous) === participantConfigurationFingerprint(updatedEntry)) continue;
@@ -431,6 +483,7 @@ export class SqliteRoomRepository implements RoomRepository {
         state.settings.writableAgent = "nobody";
       }
       this.persistSettings(state.settings);
+      this.invalidateAgentContextSummaries();
       this.database.exec("COMMIT");
       state.roster = roster;
       this.state = state;
@@ -450,10 +503,13 @@ export class SqliteRoomRepository implements RoomRepository {
       this.database.prepare("UPDATE rooms SET topic = ?, updated_at = ? WHERE id = ?")
         .run(topic, new Date().toISOString(), DEFAULT_ROOM_ID);
       this.database.prepare("DELETE FROM agent_sessions WHERE room_id = ?").run(DEFAULT_ROOM_ID);
+      this.database.prepare("UPDATE room_agents SET last_seen_message_id = NULL, updated_at = ? WHERE room_id = ?").run(new Date().toISOString(), DEFAULT_ROOM_ID);
+      this.invalidateAgentContextSummaries();
       this.insertMessage(message);
       this.database.exec("COMMIT");
       state.settings.topic = topic;
       state.sessions = {};
+      state.roster = { ...normalizeRoomAgentRoster(state.roster), entries: normalizeRoomAgentRoster(state.roster).entries.map((entry) => ({ ...entry, lastSeenMessageId: null })) };
       state.messages.push(message);
       this.state = state;
     } catch (error) {
@@ -466,6 +522,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const state = this.snapshot();
     state.settings.participantStyles[participant] = sanitizeChatStyle(style, state.settings.participantStyles[participant]);
     this.persistSettings(state.settings);
+    this.invalidateAgentContextSummaries();
     this.state = state;
   }
 
@@ -492,6 +549,34 @@ export class SqliteRoomRepository implements RoomRepository {
     const state = this.snapshot();
     delete state.sessions[agent];
     this.state = state;
+  }
+
+  async setLastSeenMessageId(agent: AgentId, messageId: string | null) {
+    if (messageId !== null && !this.database.prepare("SELECT 1 FROM messages WHERE room_id = ? AND id = ?").get(DEFAULT_ROOM_ID, messageId)) {
+      throw new Error("Cannot advance an agent cursor to an unknown room message.");
+    }
+    const result = this.database.prepare("UPDATE room_agents SET last_seen_message_id = ?, updated_at = ? WHERE room_id = ? AND agent_id = ?")
+      .run(messageId, new Date().toISOString(), DEFAULT_ROOM_ID, agent);
+    if (result.changes !== 1) throw new Error("Cannot advance the cursor for an agent outside the room roster.");
+    const state = this.snapshot();
+    const roster = normalizeRoomAgentRoster(state.roster);
+    state.roster = { ...roster, entries: roster.entries.map((entry) => entry.agentId === agent ? { ...entry, lastSeenMessageId: messageId } : entry) };
+    this.state = state;
+  }
+
+  async getAgentContextSummary(key: AgentContextSummaryKey) {
+    const row = this.database.prepare("SELECT summary FROM agent_context_summaries WHERE room_id = ? AND agent_id = ? AND span_start_message_id = ? AND span_end_message_id = ? AND config_revision = ?")
+      .get(DEFAULT_ROOM_ID, key.agentId, key.spanStartId, key.spanEndId, key.configRevision) as unknown as { summary: string } | undefined;
+    return row?.summary;
+  }
+
+  async putAgentContextSummary(key: AgentContextSummaryKey, summary: string) {
+    this.database.prepare(`
+      INSERT INTO agent_context_summaries(room_id, agent_id, span_start_message_id, span_end_message_id, config_revision, summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(room_id, agent_id, span_start_message_id, span_end_message_id, config_revision)
+      DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at
+    `).run(DEFAULT_ROOM_ID, key.agentId, key.spanStartId, key.spanEndId, key.configRevision, summary, new Date().toISOString());
   }
 
   async setStatus(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
@@ -1228,8 +1313,8 @@ export class SqliteRoomRepository implements RoomRepository {
     const participantStyles = normalizeParticipantStyles(parseJson(row.participant_styles_json, {}));
     const configuredProjectPath = process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH;
     const storedRosterEntries: Array<Record<string, unknown> & { agentId: string; enabled: boolean }> = (
-      this.database.prepare("SELECT agent_id, enabled, configuration_json FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string }>
-    ).map((entry) => ({ ...parseJson<Record<string, unknown>>(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled) }));
+      this.database.prepare("SELECT agent_id, enabled, configuration_json, last_seen_message_id FROM room_agents WHERE room_id = ? ORDER BY position, agent_id").all(DEFAULT_ROOM_ID) as unknown as Array<{ agent_id: string; enabled: number; configuration_json: string; last_seen_message_id: string | null }>
+    ).map((entry) => ({ ...parseJson<Record<string, unknown>>(entry.configuration_json, {}), agentId: entry.agent_id, enabled: Boolean(entry.enabled), ...(entry.last_seen_message_id ? { lastSeenMessageId: entry.last_seen_message_id } : {}) }));
     const roster = normalizeRoomAgentRoster({ ...(row.roster_schema_version === 3 ? { schemaVersion: 3 as const } : {}), revision: row.roster_revision, entries: storedRosterEntries });
     const settings: RoomSettings = {
       roomName: row.name,
@@ -1264,6 +1349,7 @@ export class SqliteRoomRepository implements RoomRepository {
       }
     }
     const deployment = normalizeDeploymentProvenance(parseJson(row.deployment_provenance_json, undefined));
+    const roomConfiguration = this.readRoomConfiguration();
     return {
       messages,
       sessions,
@@ -1273,6 +1359,7 @@ export class SqliteRoomRepository implements RoomRepository {
       ...(isAgentId(row.active_agent) ? { activeAgent: row.active_agent } : {}),
       ...(row.error ? { error: row.error } : {}),
       ...(deployment ? { deployment } : {}),
+      ...(roomConfiguration ? { roomConfiguration } : {}),
     };
   }
 
@@ -1318,6 +1405,35 @@ export class SqliteRoomRepository implements RoomRepository {
     );
   }
 
+  private readRoomConfiguration(): RoomConfiguration | undefined {
+    const row = this.database.prepare("SELECT * FROM room_settings WHERE room_id = ?").get(DEFAULT_ROOM_ID) as unknown as RoomSettingsRow | undefined;
+    if (!row) return undefined;
+    return normalizeRoomConfiguration({
+      basePromptRevision: row.base_prompt_revision,
+      basePromptText: row.base_prompt_text,
+      summarizerModel: parseJson(row.summarizer_model, null),
+      summarizerPromptText: row.summarizer_prompt_text,
+      summarizerPromptRevision: row.summarizer_prompt_revision,
+      featureFlags: parseJson(row.feature_flags_json, {}),
+      updatedAt: row.updated_at,
+    });
+  }
+
+  private persistRoomConfiguration(configuration: RoomConfiguration) {
+    this.database.prepare(`
+      INSERT INTO room_settings(room_id, base_prompt_revision, base_prompt_text, summarizer_model, summarizer_prompt_text, summarizer_prompt_revision, feature_flags_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(room_id) DO UPDATE SET
+        base_prompt_revision = excluded.base_prompt_revision,
+        base_prompt_text = excluded.base_prompt_text,
+        summarizer_model = excluded.summarizer_model,
+        summarizer_prompt_text = excluded.summarizer_prompt_text,
+        summarizer_prompt_revision = excluded.summarizer_prompt_revision,
+        feature_flags_json = excluded.feature_flags_json,
+        updated_at = excluded.updated_at
+    `).run(DEFAULT_ROOM_ID, configuration.basePromptRevision, configuration.basePromptText, configuration.summarizerModel ? JSON.stringify(configuration.summarizerModel) : null, configuration.summarizerPromptText, configuration.summarizerPromptRevision, JSON.stringify(configuration.featureFlags), configuration.updatedAt || new Date().toISOString());
+  }
+
   private upsertSession(agent: AgentId, id: string, permission: "read-only" | "writable", fingerprint?: string, configurationRevision?: number, codeEpoch?: string) {
     this.database.prepare(`
       INSERT INTO agent_sessions(room_id, agent_id, provider_session_id, permission, configuration_fingerprint, configuration_revision, code_epoch, updated_at)
@@ -1336,6 +1452,10 @@ export class SqliteRoomRepository implements RoomRepository {
     const now = new Date().toISOString();
     this.database.prepare(`INSERT INTO agents(id, display_name, provider, model_id, configuration_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, provider = excluded.provider, model_id = excluded.model_id, configuration_json = excluded.configuration_json, updated_at = excluded.updated_at`)
       .run(entry.agentId, entry.conversationalName || entry.agentId, "opencode", entry.modelId || "configured", JSON.stringify(entry), now, now);
+  }
+
+  private invalidateAgentContextSummaries() {
+    this.database.prepare("DELETE FROM agent_context_summaries WHERE room_id = ?").run(DEFAULT_ROOM_ID);
   }
 
   private insertImprovementEvent(event: ImprovementEvent) {

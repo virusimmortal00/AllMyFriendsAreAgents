@@ -86,4 +86,19 @@ describe("room state responses", () => {
     });
     expect(JSON.stringify(publicState)).not.toMatch(/secret|project|session|workspace|broker/i);
   });
+
+  it("keeps context cursors and summary cache server-owned", () => {
+    const snapshot: RoomState = {
+      messages: [], sessions: {},
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: "/tmp/project", participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+      roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "private-cursor" }] },
+      agentContextSummaries: [{ agentId: "codex-sol", spanStartId: "one", spanEndId: "two", configRevision: 0, summary: "private cache" }],
+      roomConfigurationAudit: [],
+      status: "idle",
+    };
+    const publicState = publicRoomState(snapshot);
+    expect(publicState).not.toHaveProperty("agentContextSummaries");
+    expect(publicState).not.toHaveProperty("roomConfigurationAudit");
+    expect(publicState.roster?.entries[0]).not.toHaveProperty("lastSeenMessageId");
+  });
 });

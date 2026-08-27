@@ -7,6 +7,7 @@ import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
 import type { DeploymentProvenance } from "./deployment-provenance.js";
+import type { RoomConfiguration, RoomConfigurationAuditEvent } from "./room-configuration.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -62,9 +63,14 @@ export interface RoomState {
   error?: string;
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
+  /** Optional for backward-compatible JSON state; absence resolves to built-in defaults. */
+  roomConfiguration?: RoomConfiguration;
+  roomConfigurationAudit?: RoomConfigurationAuditEvent[];
+  /** JSON-backend persistence for derived context summaries; never sent to room clients. */
+  agentContextSummaries?: Array<{ agentId: AgentId; spanStartId: string; spanEndId: string; configRevision: number; summary: string }>;
 }
 
-export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error"> {
+export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings" | "error" | "agentContextSummaries" | "roomConfigurationAudit"> {
   settings: Omit<RoomSettings, "projectPath" | "writableAgent">;
   activeGenerations?: ActiveGenerations;
   availability?: Partial<Record<ActiveAgentId, boolean>>;

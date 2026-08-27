@@ -51,6 +51,8 @@ import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationSt
 import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
+import type { AgentContextSummaryKey } from "./transcript.js";
+import { normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -151,6 +153,7 @@ export class RoomStore implements RoomRepository {
   private assignmentQueue: Promise<void> = Promise.resolve();
   private taskQueue: Promise<void> = Promise.resolve();
   private continuationQueue: Promise<void> = Promise.resolve();
+  private readonly contextSummaries = new Map<string, string>();
   private assignments: AssignmentRecord[];
   private taskState: JsonTaskState;
   private continuationState: JsonContinuationState;
@@ -167,6 +170,11 @@ export class RoomStore implements RoomRepository {
     this.assignments = assignments;
     this.taskState = taskState;
     this.continuationState = continuationState;
+    for (const entry of state.agentContextSummaries || []) {
+      if (entry && typeof entry.summary === "string" && entry.summary && typeof entry.spanStartId === "string" && typeof entry.spanEndId === "string" && Number.isSafeInteger(entry.configRevision)) {
+        this.contextSummaries.set(this.contextSummaryKey(entry), entry.summary);
+      }
+    }
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents")) {
@@ -264,6 +272,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
         ...(deployment ? { deployment } : {}),
+        ...(stored.roomConfiguration ? { roomConfiguration: normalizeRoomConfiguration(stored.roomConfiguration) } : {}),
       };
       const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState);
       if (topicWasMissing
@@ -325,7 +334,35 @@ export class RoomStore implements RoomRepository {
 
   async updateSettings(update: Partial<RoomSettings>) {
     this.state.settings = { ...this.state.settings, ...update };
+    this.clearAgentContextSummaries();
     await this.save();
+  }
+
+  async getRoomConfiguration() {
+    return normalizeRoomConfiguration(this.state.roomConfiguration);
+  }
+
+  async updateRoomConfiguration(update: RoomConfigurationUpdate, actorId: string) {
+    const current = await this.getRoomConfiguration();
+    const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
+    const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
+    const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
+    const now = new Date().toISOString();
+    const next = normalizeRoomConfiguration({
+      ...current,
+      ...update,
+      basePromptText: update.basePromptText === "" ? undefined : update.basePromptText ?? (baseChanged ? null : current.basePromptText),
+      basePromptRevision: current.basePromptRevision + (baseChanged ? 1 : 0),
+      summarizerPromptRevision: current.summarizerPromptRevision + (summarizerChanged ? 1 : 0),
+      updatedAt: now,
+    });
+    const changeKind = [baseChanged, summarizerChanged, flagsChanged].filter(Boolean).length > 1 ? "mixed" : baseChanged ? "base_prompt" : summarizerChanged ? "summarizer" : "feature_flags";
+    this.state.roomConfiguration = next;
+    this.state.roomConfigurationAudit ||= [];
+    this.state.roomConfigurationAudit.push({ id: randomUUID(), actorId, changeKind, basePromptRevision: next.basePromptRevision, summarizerPromptRevision: next.summarizerPromptRevision, at: now, snapshot: structuredClone(next) });
+    if (summarizerChanged) this.clearAgentContextSummaries();
+    await this.save();
+    return structuredClone(next);
   }
 
   async updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterChangeResult> {
@@ -335,11 +372,11 @@ export class RoomStore implements RoomRepository {
     if (current.revision !== expectedRevision) return { kind: "conflict", expectedRevision, actualRevision: current.revision };
     const nextEntries = validated.map((entry) => {
       const previous = current.entries.find((candidate) => candidate.agentId === entry.agentId);
-      if (!previous) return entry;
+      if (!previous) return { ...entry, lastSeenMessageId: null };
       const changed = participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry);
-      if (!changed) return { ...entry, configurationRevision: previous.configurationRevision || 1 };
+      if (!changed) return { ...entry, configurationRevision: previous.configurationRevision || 1, lastSeenMessageId: previous.lastSeenMessageId ?? null };
       const { selectionConfirmationRequired: _confirmation, ...confirmedEntry } = entry;
-      return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated." };
+      return { ...confirmedEntry, configurationRevision: (previous.configurationRevision || 1) + 1, sessionInvalidationReason: "Model configuration changed; the previous OpenCode session was invalidated.", lastSeenMessageId: previous.lastSeenMessageId ?? null };
     });
     const next = { schemaVersion: 3 as const, revision: current.revision + 1, entries: structuredClone(nextEntries) };
     for (const entry of next.entries) this.state.settings.participantStyles[entry.agentId] ||= structuredClone(DEFAULT_PARTICIPANT_STYLES["codex-sol"]);
@@ -351,6 +388,7 @@ export class RoomStore implements RoomRepository {
     }
     if (this.state.settings.writableAgent !== "nobody" && !enabled.has(this.state.settings.writableAgent)) this.state.settings.writableAgent = "nobody";
     this.state.roster = next;
+    this.clearAgentContextSummaries();
     await this.save();
     return { kind: "accepted", roster: structuredClone(next) };
   }
@@ -359,12 +397,15 @@ export class RoomStore implements RoomRepository {
     if (topic === this.state.settings.topic) return;
     this.state.settings.topic = topic;
     this.state.sessions = {};
+    this.state.roster = { ...normalizeRoomAgentRoster(this.state.roster), entries: normalizeRoomAgentRoster(this.state.roster).entries.map((entry) => ({ ...entry, lastSeenMessageId: null })) };
+    this.clearAgentContextSummaries();
     this.state.messages.push(topicMessage(topic));
     await this.save();
   }
 
   async updateParticipantStyle(participant: StyledParticipant, style: ChatStyle) {
     this.state.settings.participantStyles[participant] = sanitizeChatStyle(style, this.state.settings.participantStyles[participant]);
+    this.clearAgentContextSummaries();
     await this.save();
   }
 
@@ -378,6 +419,36 @@ export class RoomStore implements RoomRepository {
     const normalizedEpoch = normalizeDeploymentEpoch(codeEpoch);
     this.state.sessions[agent] = { id, permission, ...(entry ? { configurationFingerprint: participantConfigurationFingerprint(entry), configurationRevision: entry.configurationRevision || 1 } : {}), ...(normalizedEpoch ? { codeEpoch: normalizedEpoch } : {}) };
     await this.save();
+  }
+
+  async setLastSeenMessageId(agent: AgentId, messageId: string | null) {
+    if (messageId !== null && !this.state.messages.some((message) => message.id === messageId)) throw new Error("Cannot advance an agent cursor to an unknown room message.");
+    const roster = normalizeRoomAgentRoster(this.state.roster);
+    if (!roster.entries.some((entry) => entry.agentId === agent)) throw new Error("Cannot advance the cursor for an agent outside the room roster.");
+    this.state.roster = { ...roster, entries: roster.entries.map((entry) => entry.agentId === agent ? { ...entry, lastSeenMessageId: messageId } : entry) };
+    await this.save();
+  }
+
+  private contextSummaryKey(key: AgentContextSummaryKey) {
+    return `${key.agentId}\u0000${key.spanStartId}\u0000${key.spanEndId}\u0000${key.configRevision}`;
+  }
+
+  async getAgentContextSummary(key: AgentContextSummaryKey) {
+    return this.contextSummaries.get(this.contextSummaryKey(key));
+  }
+
+  async putAgentContextSummary(key: AgentContextSummaryKey, summary: string) {
+    this.contextSummaries.set(this.contextSummaryKey(key), summary);
+    this.state.agentContextSummaries = [...this.contextSummaries.entries()].map(([encoded, value]) => {
+      const [agentId, spanStartId, spanEndId, configRevision] = encoded.split("\u0000");
+      return { agentId: agentId as AgentId, spanStartId, spanEndId, configRevision: Number(configRevision), summary: value };
+    });
+    await this.save();
+  }
+
+  private clearAgentContextSummaries() {
+    this.contextSummaries.clear();
+    this.state.agentContextSummaries = [];
   }
 
   async clearSession(agent: AgentId) {

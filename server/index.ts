@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
@@ -53,6 +53,10 @@ import { ModelDiscoveryService } from "./model-discovery.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
+import { OpenCodeContextSummarizer } from "./context-summarizer.js";
+import { registerRoomHistoryRoutes } from "./room-history-api.js";
+import { registerRoomSettingsRoutes } from "./room-settings-api.js";
+import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -83,6 +87,13 @@ const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const modelDiscovery = new ModelDiscoveryService();
 const openRouterCatalog = new OpenRouterCatalogService();
+const contextSummarizer = new OpenCodeContextSummarizer();
+const roomHistoryToken = `${randomUUID()}${randomUUID()}`;
+const roomHistoryTool = {
+  configDirectory: path.join(serverDirectory, "agent-tools"),
+  url: `http://127.0.0.1:${port}/api/room/history`,
+  token: roomHistoryToken,
+};
 const controlPlane = await ControlPlaneStore.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const humanSessions = new HumanSessions();
@@ -177,6 +188,19 @@ const investigationService = new InvestigationService(investigationStore, store,
 await investigationService.initialize();
 
 app.use(express.json({ limit: "64kb" }));
+registerRoomHistoryRoutes({
+  app,
+  store,
+  authorize: (request) => {
+    if (sessionHuman(request, humans, humanSessions)) return true;
+    if (developerTeam.authenticate(request.header("authorization"), "ROOM_READ")) return true;
+    const authorization = request.header("authorization") || "";
+    const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+    const expected = Buffer.from(roomHistoryToken);
+    const candidate = Buffer.from(supplied);
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  },
+});
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
 registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
 
@@ -273,6 +297,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       undefined,
       undefined,
       modelDiscovery,
+      {
+        summaryStore: store,
+        summarizer: contextSummarizer,
+        activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
+        historyTool: roomHistoryTool,
+      },
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -292,6 +322,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     await store.clearSession(agent);
     return { cancelled: true };
   }
+  if (activeAgent && rosterEpoch) await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
   if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
@@ -635,6 +666,27 @@ registerContinuationRoutes({ app, service: continuationService, progressChannel:
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
 registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, broadcast: () => { void refreshImplementationCapabilitiesAndBroadcast(); } });
+registerRoomSettingsRoutes({
+  app,
+  store,
+  discovery: modelDiscovery,
+  authorizeView: (request, response) => {
+    if (sessionHuman(request, humans, humanSessions)) return true;
+    try { controlPlane.require(request, "ROSTER_MANAGE"); return true; }
+    catch (error) { response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." }); return false; }
+  },
+  authorizeEdit: (request, response, modelSelection) => {
+    try {
+      const session = controlPlane.require(request, "ROSTER_MANAGE", true);
+      if (modelSelection) controlPlane.require(request, "MODEL_SELECT", true);
+      return session.principal.id;
+    } catch (error) {
+      response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." });
+      return undefined;
+    }
+  },
+  broadcast,
+});
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);

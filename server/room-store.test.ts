@@ -12,6 +12,34 @@ afterEach(async () => {
 });
 
 describe("room style persistence", () => {
+  it("persists revisioned room configuration and explicit base-prompt deletion in JSON storage", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-configuration-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    const configured = await store.updateRoomConfiguration({ basePromptText: null, summarizerPromptText: "Changed {{transcript}}" }, "owner");
+    expect(configured).toMatchObject({ basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
+    expect(reopened.snapshot().roomConfigurationAudit).toHaveLength(1);
+  });
+
+  it("persists JSON summary cache records and per-agent cursors across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-context-cache-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    const firstId = store.snapshot().messages[0].id;
+    const message = await store.addMessage("you", "checkpoint");
+    await store.setLastSeenMessageId("codex-sol", message.id);
+    const key = { agentId: "codex-sol" as const, spanStartId: firstId, spanEndId: message.id, configRevision: 0 };
+    await store.putAgentContextSummary(key, "durable cache");
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
+    expect(await reopened.getAgentContextSummary(key)).toBe("durable cache");
+  });
+
   it("persists revisioned live roster changes and clears deactivated authority", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-roster-"));
     temporaryDirectories.push(projectRoot);

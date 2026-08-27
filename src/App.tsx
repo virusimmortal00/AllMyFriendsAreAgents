@@ -27,6 +27,7 @@ import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agen
 import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
+import { RoomConfigurationDialog } from "./room-configuration-dialog";
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -131,6 +132,7 @@ export default function App() {
   const [resendingPending, setResendingPending] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
+  const [roomConfigurationOpen, setRoomConfigurationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
@@ -166,6 +168,7 @@ export default function App() {
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
   const roomSettingsTrigger = useRef<HTMLButtonElement | null>(null);
+  const roomConfigurationTrigger = useRef<HTMLElement | null>(null);
   const profileTrigger = useRef<HTMLElement | null>(null);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
@@ -676,6 +679,10 @@ export default function App() {
     roomSettingsTrigger.current = trigger;
     setRoomSettingsOpen(true);
   }, []);
+  const openRoomConfiguration = useCallback((trigger: HTMLElement) => {
+    roomConfigurationTrigger.current = trigger;
+    setRoomConfigurationOpen(true);
+  }, []);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
     setWorkshopRequestRevision((current) => current + 1);
@@ -697,6 +704,7 @@ export default function App() {
       accessKey: "R",
       items: [
         { label: "Room properties...", accessKey: "P", onSelect: openRoomSettings },
+        { label: "Room settings...", accessKey: "S", onSelect: openRoomConfiguration },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
         { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("continue", "all"); } },
@@ -797,6 +805,7 @@ export default function App() {
         </div>
 
         {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
+        {roomConfigurationOpen ? <RoomConfigurationDialog returnFocusTo={roomConfigurationTrigger.current} onClose={() => setRoomConfigurationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {rosterOpen ? <RosterManagerDialog
