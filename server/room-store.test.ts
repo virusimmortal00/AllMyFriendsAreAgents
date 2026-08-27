@@ -12,6 +12,10 @@ afterEach(async () => {
 });
 
 describe("room style persistence", () => {
+  it("retries private command persistence after an interrupted JSON save without duplicating the node", async () => {
+    const projectRoot=await mkdtemp(path.join(os.tmpdir(),"all-my-friends-private-retry-"));temporaryDirectories.push(projectRoot);const stateDirectory=path.join(projectRoot,"state");const store=await RoomStore.open(projectRoot,stateDirectory);const mutable=store as unknown as {save:()=>Promise<void>};const save=mutable.save.bind(store);let interrupt=true;mutable.save=async()=>{if(interrupt){interrupt=false;throw new Error("interrupted save");}await save();};
+    await expect(store.addPrivateCommandResponseOnce("retry-submission","human-a","sanitized help")).rejects.toThrow("interrupted save");await expect(store.addPrivateCommandResponseOnce("retry-submission","human-a","sanitized help")).resolves.toMatchObject({recipientHumanId:"human-a"});const reopened=await RoomStore.open(projectRoot,stateDirectory);expect(reopened.snapshot().messages.filter(({id})=>id==="command-private:retry-submission")).toHaveLength(1);
+  });
   it("persists revisioned room configuration and explicit base-prompt deletion in JSON storage", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-configuration-"));
     temporaryDirectories.push(projectRoot);

@@ -3,11 +3,14 @@ import type { RoomRepository } from "./storage/room-repository.js";
 import { projectVisibleRoomMessage } from "./message-visibility.js";
 
 export function roomHistoryAfter(messages: ReturnType<RoomRepository["snapshot"]>["messages"], after: string | undefined, limit: number, viewerHumanId?: string) {
-  const project = (values: typeof messages) => values.map((message) => projectVisibleRoomMessage(message, viewerHumanId)).filter((message): message is NonNullable<typeof message> => Boolean(message));
-  if (!after) return project(messages).slice(0, limit);
-  const index = messages.findIndex((message) => message.id === after);
-  if (index < 0) return undefined;
-  return project(messages.slice(index + 1)).slice(0, limit);
+  const start = after ? messages.findIndex((message) => message.id === after) : -1;
+  if (after && start < 0) return undefined;
+  const projected: NonNullable<ReturnType<typeof projectVisibleRoomMessage>>[] = [];
+  for (let index = start + 1; index < messages.length && projected.length < limit; index += 1) {
+    const message = projectVisibleRoomMessage(messages[index]!, viewerHumanId);
+    if (message) projected.push(message);
+  }
+  return projected;
 }
 
 export function registerRoomHistoryRoutes(options: {
