@@ -57,7 +57,7 @@ export interface AgentContextSummaryStore {
 }
 
 export interface AgentContextSummarizer {
-  summarize(input: { readonly transcript: string; readonly tokenTarget: number; readonly promptTemplate: string; readonly projectPath: string; readonly models: ReturnType<typeof normalizeAgentContextConfig>["summarizerModels"] }): Promise<string>;
+  summarize(input: { readonly transcript: string; readonly tokenTarget: number; readonly promptTemplate: string; readonly projectPath: string; readonly models: ReturnType<typeof normalizeAgentContextConfig>["summarizerModels"]; readonly configRevision?: number }): Promise<string>;
 }
 
 export interface AgentScopedTranscriptOptions {
@@ -83,7 +83,8 @@ function transcriptMessages(messages: RoomMessage[]) {
 
 function pinnedState(state: RoomState, options: AgentScopedTranscriptOptions) {
   const roster = normalizeRoomAgentRoster(state.roster);
-  const roomFlags = Object.entries(normalizeRoomConfiguration(state.roomConfiguration).featureFlags).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${value}`).join(", ");
+  const roomConfiguration = normalizeRoomConfiguration(state.roomConfiguration);
+  const roomFlags = Object.entries(roomConfiguration.featureFlags).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${value}`).join(", ");
   const rosterLine = roster.entries.map((entry) => `${entry.conversationalName || entry.agentId}=${entry.enabled ? "enabled" : "disabled"}`).join(", ") || "(empty)";
   return `PINNED ROOM STATE
 Room: ${state.settings.roomName}
@@ -94,13 +95,14 @@ Roster: ${rosterLine}
 Active task/assignment: ${options.activeAssignment || "none"}
 Round-robin cursor: ${state.activeAgent || "none"}
 Conversation energy: ${state.settings.conversationEnergy}
+Pre-flight routing: ${roomConfiguration.preflightMode}
 Project writes: ${state.settings.writableAgent === "nobody" ? "governed-only" : state.settings.writableAgent}
 Config flags: ${roomFlags || "none"}; deployment=${state.deployment ? "available" : "unavailable"}; context=per-agent-delta`;
 }
 
 async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTranscriptOptions): Promise<AgentScopedTranscript> {
   const config = state.roomConfiguration ? agentContextConfigFor(state.roomConfiguration) : normalizeAgentContextConfig(undefined);
-  const configRevision = normalizeRoomConfiguration(state.roomConfiguration).summarizerPromptRevision;
+  const configRevision = normalizeRoomConfiguration(state.roomConfiguration).configurationRevision;
   const roster = normalizeRoomAgentRoster(state.roster);
   const cursor = roster.entries.find((entry) => entry.agentId === options.agentId)?.lastSeenMessageId ?? null;
   // Cursors normally sit near the tail, so reverse lookup keeps steady-state work proportional to the delta.
@@ -144,6 +146,7 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
         promptTemplate: config.summaryPromptTemplate,
         projectPath: state.settings.projectPath,
         models: config.summarizerModels,
+        configRevision,
       });
       const outcome = await foregroundSummary(pending);
       if (outcome.kind === "pending") {

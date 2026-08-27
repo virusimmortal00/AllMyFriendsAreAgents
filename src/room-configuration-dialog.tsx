@@ -4,6 +4,7 @@ import type { DiscoveredModel, ModelReference } from "../shared/model-discovery"
 import { ApiRequestError, loadRoomConfiguration, updateRoomConfiguration, type RoomConfiguration } from "./api";
 import { RichModelPicker } from "./model-picker";
 import { useModalOverlay } from "./overlay";
+import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
 
 export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocusTo: HTMLElement | null; onClose: () => void }) {
   const titleId = useId();
@@ -13,13 +14,15 @@ export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocu
   const [summarizerModel, setSummarizerModel] = useState<ModelReference | null>(null);
   const [summarizerPromptText, setSummarizerPromptText] = useState("");
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({ preflightInvocationGating: false });
+  const [preflightMode, setPreflightMode] = useState<PreflightMode>("off");
+  const [routingEvidence, setRoutingEvidence] = useState<PreflightEvidence>();
   const [models, setModels] = useState<readonly DiscoveredModel[]>([]);
   const [defaultBasePrompt, setDefaultBasePrompt] = useState("");
   const [choosingModel, setChoosingModel] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags]);
+  const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode]);
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
 
   useEffect(() => {
@@ -32,6 +35,8 @@ export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocu
       setSummarizerModel(result.settings.summarizerModel);
       setSummarizerPromptText(result.settings.summarizerPromptText);
       setFeatureFlags(result.settings.featureFlags);
+      setPreflightMode(result.settings.preflightMode || "off");
+      setRoutingEvidence(result.routingEvidence);
       setModels(result.modelDiscovery?.models || []);
       setDefaultBasePrompt(result.defaults?.basePromptText || "");
     }).catch((failure) => { if (current) setError(failure instanceof Error ? failure.message : "Could not load room settings."); }).finally(() => { if (current) setLoading(false); });
@@ -49,6 +54,7 @@ export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocu
         ...(JSON.stringify(saved?.summarizerModel) !== JSON.stringify(summarizerModel) ? { summarizerModel } : {}),
         ...(saved?.summarizerPromptText !== summarizerPromptText ? { summarizerPromptText } : {}),
         ...(JSON.stringify(saved?.featureFlags) !== JSON.stringify(featureFlags) ? { featureFlags } : {}),
+        ...(saved?.preflightMode !== preflightMode ? { preflightMode } : {}),
       };
       const result = await updateRoomConfiguration(update);
       setSaved(result.settings);
@@ -83,10 +89,15 @@ export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocu
               <label>Prompt template<textarea rows={9} maxLength={8000} value={summarizerPromptText} onChange={(event) => setSummarizerPromptText(event.target.value)} /></label>
               <small>Revision {saved.summarizerPromptRevision}. Keep {"{{transcript}}"} where verbatim input should be inserted. DeepSeek V4 Flash remains the built-in failover route.</small>
             </section>
-            <section className="room-configuration-card" aria-labelledby="flags-heading">
-              <h3 id="flags-heading">Feature Flags</h3>
-              <label className="room-configuration-check"><input type="checkbox" checked={Boolean(featureFlags.preflightInvocationGating)} onChange={(event) => setFeatureFlags((current) => ({ ...current, preflightInvocationGating: event.target.checked }))} /> Pre-flight invocation gating</label>
-              <small>The flag is stored now; gate-decision behavior is tracked separately.</small>
+            <section className="room-configuration-card" aria-labelledby="routing-heading">
+              <h3 id="routing-heading">Agent Routing</h3>
+              <label>Pre-flight mode<select value={preflightMode} onChange={(event) => setPreflightMode(event.target.value as PreflightMode)}>
+                {PREFLIGHT_MODES.map((mode) => <option value={mode} key={mode}>{PREFLIGHT_MODE_LABELS[mode].label}</option>)}
+              </select></label>
+              <p>{PREFLIGHT_MODE_LABELS[preflightMode].description}</p>
+              <small data-testid="preflight-evidence">{routingEvidence?.recordedDecisions
+                ? `${routingEvidence.evaluatedShadowSuppressions} evaluated shadow suppressions; ${routingEvidence.falseSuppressionRate === null ? "false-suppression rate unavailable" : `${(routingEvidence.falseSuppressionRate * 100).toFixed(1)}% false-suppression rate`}. ${routingEvidence.promotionEligible ? "Eligible for explicit owner/admin promotion." : "Not yet eligible for enforcement."}`
+                : "No shadow routing evidence has been recorded yet."}</small>
             </section>
           </> : null}
         </div>

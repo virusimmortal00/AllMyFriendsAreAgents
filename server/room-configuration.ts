@@ -1,4 +1,5 @@
 import type { ModelReference } from "../shared/model-discovery.js";
+import { DEFAULT_PREFLIGHT_MODE, isPreflightMode, type PreflightMode } from "../shared/preflight.js";
 import {
   DEFAULT_CONTEXT_SUMMARIZER_MODELS,
   DEFAULT_CONTEXT_SUMMARY_PROMPT,
@@ -10,6 +11,7 @@ export const DEFAULT_ROOM_BASE_PROMPT = "Evaluate every contribution — human o
 export const DEFAULT_ROOM_FEATURE_FLAGS = Object.freeze({ preflightInvocationGating: false });
 
 export interface RoomConfiguration {
+  readonly configurationRevision: number;
   readonly basePromptRevision: number;
   /** Null explicitly disables the room base-prompt section. */
   readonly basePromptText: string | null;
@@ -17,6 +19,7 @@ export interface RoomConfiguration {
   readonly summarizerPromptText: string;
   readonly summarizerPromptRevision: number;
   readonly featureFlags: Readonly<Record<string, boolean>>;
+  readonly preflightMode: PreflightMode;
   readonly updatedAt: string | null;
 }
 
@@ -25,6 +28,7 @@ export interface RoomConfigurationUpdate {
   readonly summarizerModel?: ModelReference | null;
   readonly summarizerPromptText?: string;
   readonly featureFlags?: Readonly<Record<string, boolean>>;
+  readonly preflightMode?: PreflightMode;
 }
 
 export interface RoomConfigurationAuditEvent {
@@ -39,12 +43,14 @@ export interface RoomConfigurationAuditEvent {
 
 export function defaultRoomConfiguration(): RoomConfiguration {
   return {
+    configurationRevision: 0,
     basePromptRevision: 0,
     basePromptText: DEFAULT_ROOM_BASE_PROMPT,
     summarizerModel: { ...DEFAULT_CONTEXT_SUMMARIZER_MODELS[0] },
     summarizerPromptText: DEFAULT_CONTEXT_SUMMARY_PROMPT,
     summarizerPromptRevision: 0,
     featureFlags: { ...DEFAULT_ROOM_FEATURE_FLAGS },
+    preflightMode: DEFAULT_PREFLIGHT_MODE,
     updatedAt: null,
   };
 }
@@ -80,12 +86,16 @@ export function normalizeRoomConfiguration(input: unknown): RoomConfiguration {
       ? { ...value.summarizerModel }
       : defaults.summarizerModel;
   return {
+    configurationRevision: revision(value.configurationRevision),
     basePromptRevision: revision(value.basePromptRevision),
     basePromptText,
     summarizerModel: configured,
     summarizerPromptText,
     summarizerPromptRevision: revision(value.summarizerPromptRevision),
     featureFlags: featureFlags(value.featureFlags),
+    preflightMode: isPreflightMode(value.preflightMode)
+      ? value.preflightMode
+      : value.featureFlags?.preflightInvocationGating === true ? "shadow" : DEFAULT_PREFLIGHT_MODE,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
   };
 }

@@ -62,8 +62,8 @@ export function humanPresenceAnnouncement(name: string, event: HumanPresenceEven
 
 export function humanPresenceInstruction(name: string, event: HumanPresenceEvent) {
   return event === "joined"
-    ? `The system just announced that ${name} joined the chat. This is an optional chance to greet them naturally. Respond only if you genuinely want to add a brief welcome; otherwise reply exactly NO_RESPONSE_NEEDED.`
-    : `The system just announced that ${name} left the chat. This is an optional chance for a brief natural reaction. Do not address them as if they are still present. Respond only if it adds something; otherwise reply exactly NO_RESPONSE_NEEDED.`;
+    ? `The system just announced that ${name} joined the chat. This is an optional chance to greet them naturally. Respond only if you genuinely want to add a brief welcome; otherwise yield with the appropriate TURN_DISPOSITION reason.`
+    : `The system just announced that ${name} left the chat. This is an optional chance for a brief natural reaction. Do not address them as if they are still present. Respond only if it adds something; otherwise yield with the appropriate TURN_DISPOSITION reason.`;
 }
 
 function cleanName(value: unknown) {
