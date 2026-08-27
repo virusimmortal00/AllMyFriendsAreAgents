@@ -618,22 +618,20 @@ const commandRuntime = new CommandRuntime({
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
   stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
   executeTask: performCommandTask,
-  executePov: async (agents, prompt, signal, deliveryId) => new Promise<void>((resolve,reject) => {
-    const accepted = jobs.enqueue(`command:pov:${randomUUID()}`, async () => {
-      if(signal.aborted){reject(new Error("POV execution was cancelled before launch."));return;}
-      try{await runJob(async () => {
-      const current = normalizeRoomAgentRoster(store.snapshot().roster);
-      const eligible = agents.filter((agent) => {
-        const entry = roomAgentEntry(current,agent);
-        return Boolean(entry?.enabled && agentHealth.canAttempt(agent));
-      });
-      const availableSlots=Math.max(0,agentConcurrency-activeGenerations.size());
-      if (!availableSlots) throw new Error("Shared generation capacity is unavailable for POV execution.");
-      if (eligible.length) await performConversation(eligible.map((agent)=>({agent,instruction:prompt,deliveryId})),true,{inviteAll:true},availableSlots);
-      }, true);if(signal.aborted)reject(new Error("POV execution was cancelled."));else resolve();}catch(error){reject(error);}
-    });
-    if (!accepted) reject(new Error("The room is already working."));
-  }),
+  executePov: async (agent, prompt, signal) => {
+    const reservation=activeGenerations.reserve(agent,agentConcurrency);
+    if(!reservation)throw new Error("Shared generation capacity is unavailable for POV execution.");
+    try{return await performCommandTask(agent,prompt,{signal,partial:()=>undefined,active:async(generationId)=>reservation.activate(generationId)});}
+    finally{reservation.release();}
+  },
+  deliverPov: async (deliveryId,agent,messages,result) => {
+    if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
+    const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+    if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence});
+    broadcast();
+    if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
+  },
   publishStatus: async (auditId,text) => { await store.addCommandAuditMessageOnce(auditId,text); broadcast(); },
   deliverTask: async (attemptId,agent,messages,result) => {
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
