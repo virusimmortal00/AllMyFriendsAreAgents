@@ -1,0 +1,41 @@
+CREATE TABLE command_submissions (
+  submission_id TEXT NOT NULL, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  client_submission_id TEXT NOT NULL, command_name TEXT NOT NULL CHECK(command_name IN ('task','pov','poll','help')),
+  invocation_json TEXT NOT NULL, invoker_kind TEXT NOT NULL CHECK(invoker_kind IN ('human','agent')),
+  invoker_id TEXT NOT NULL, invoker_display_name TEXT NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY(room_id, submission_id), UNIQUE(room_id, client_submission_id)
+);
+CREATE TABLE command_round_robin (
+  room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE, last_assigned_agent_id TEXT,
+  revision INTEGER NOT NULL CHECK(revision >= 0), updated_at TEXT NOT NULL
+);
+CREATE TABLE command_attempts (
+  attempt_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt > 0),
+  agent_id TEXT NOT NULL, generation_id TEXT, status TEXT NOT NULL CHECK(status IN ('queued','active','completed','failed','superseded')),
+  reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(room_id, attempt_id), UNIQUE(room_id, submission_id, attempt),
+  FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE
+);
+CREATE TABLE command_polls (
+  poll_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, question TEXT NOT NULL,
+  options_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(room_id, poll_id), UNIQUE(room_id, submission_id),
+  FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE
+);
+CREATE TABLE command_poll_votes (
+  room_id TEXT NOT NULL, poll_id TEXT NOT NULL, voter_id TEXT NOT NULL, option_index INTEGER NOT NULL CHECK(option_index >= 0),
+  created_at TEXT NOT NULL, PRIMARY KEY(room_id, poll_id, voter_id),
+  FOREIGN KEY(room_id, poll_id) REFERENCES command_polls(room_id, poll_id) ON DELETE CASCADE
+);
+CREATE TABLE command_audit_identities (
+  audit_id TEXT NOT NULL, room_id TEXT NOT NULL, submission_id TEXT NOT NULL, command_name TEXT NOT NULL,
+  invoker_kind TEXT NOT NULL, invoker_id TEXT NOT NULL, target_agent_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY(room_id, audit_id), UNIQUE(room_id, submission_id),
+  FOREIGN KEY(room_id, submission_id) REFERENCES command_submissions(room_id, submission_id) ON DELETE CASCADE
+);
+CREATE TABLE command_diagnostics (
+  record_id TEXT NOT NULL, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, agent_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL, generation_id TEXT, correlation_id TEXT NOT NULL, prompt_head TEXT CHECK(prompt_head IS NULL OR length(prompt_head) <= 300), prompt_fingerprint TEXT NOT NULL,
+  reason TEXT NOT NULL, metadata_json TEXT NOT NULL, diagnostic_text TEXT CHECK(diagnostic_text IS NULL OR length(diagnostic_text) <= 2000), created_at TEXT NOT NULL,
+  PRIMARY KEY(room_id, record_id), UNIQUE(room_id, correlation_id)
+);
+CREATE INDEX command_diagnostics_scope_idx ON command_diagnostics(room_id, agent_id, created_at DESC);
