@@ -14,4 +14,10 @@ describe("room configuration defaults", () => {
     expect(roomBasePrompt(normalizeRoomConfiguration({ basePromptText: "" }))).toBe(DEFAULT_ROOM_BASE_PROMPT);
     expect(roomBasePrompt(normalizeRoomConfiguration({ basePromptText: null }))).toBeNull();
   });
+
+  it("defaults routing off and migrates the legacy boolean flag conservatively to shadow", () => {
+    expect(defaultRoomConfiguration()).toMatchObject({ configurationRevision: 0, preflightMode: "off" });
+    expect(normalizeRoomConfiguration({ featureFlags: { preflightInvocationGating: true } }).preflightMode).toBe("shadow");
+    expect(normalizeRoomConfiguration({ featureFlags: { preflightInvocationGating: true }, preflightMode: "enforce" }).preflightMode).toBe("enforce");
+  });
 });

@@ -8,6 +8,7 @@ import type { GovernedImprovementSummary } from "../shared/governed-improvements
 import type { ImprovementStatusContract } from "../shared/improvement-status";
 import type { MessageMention } from "../shared/mentions";
 import type { RoomAgentRoster } from "../shared/roster";
+import type { PreflightEvidence } from "../shared/preflight";
 
 export type { AgentId, SpeakerId } from "../shared/participants";
 
@@ -68,6 +69,7 @@ export interface RoomState {
   implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
+  preflightEvidence?: PreflightEvidence;
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
 }

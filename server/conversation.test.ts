@@ -62,6 +62,29 @@ describe("agent turn parsing", () => {
     });
   });
 
+  it("suppresses legacy explanatory prose that terminates in the no-response marker", () => {
+    expect(parseAgentTurn("claude-sonnet", "That is directed at another agent, so I should stand down. NO_RESPONSE_NEEDED").visibleMessages).toEqual([]);
+  });
+
+  it("accepts a structured yield without exposing its reason as chat", () => {
+    expect(parseAgentTurn("claude-sonnet", "TURN_DISPOSITION: {\"action\":\"yield\",\"reason\":\"already_covered\"}")).toMatchObject({
+      visibleMessages: [],
+      yieldReason: "already_covered",
+    });
+  });
+
+  it("fails closed when a structured disposition is malformed", () => {
+    expect(parseAgentTurn("claude-sonnet", "This must not leak.\nTURN_DISPOSITION: {not-json}").visibleMessages).toEqual([]);
+  });
+
+  it("delivers speaking text while stripping a valid speaking disposition", () => {
+    expect(parseAgentTurn("claude-sonnet", "A distinct contribution.\nTURN_DISPOSITION: {\"action\":\"speak\"}\nCONVERSATION_STATE: SETTLED")).toMatchObject({
+      visibleMessages: ["A distinct contribution."],
+      disposition: "speak",
+      conversationState: "settled",
+    });
+  });
+
   it("extracts and validates an agent's private style directive", () => {
     expect(parseAgentTurn(
       "claude-sonnet",
@@ -251,7 +274,7 @@ describe("room message policy", () => {
     const turns = roomMessageTurns(roomState([]));
     expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(AGENT_IDS));
     expect(turns[0]?.instruction).toContain("decide whether the message is actually directed at you");
-    expect(turns[0]?.instruction).toContain("otherwise use NO_RESPONSE_NEEDED");
+    expect(turns[0]?.instruction).toContain("TURN_DISPOSITION");
   });
 
   it("sanctions a cheap one-line reaction for a conversational human message", () => {
@@ -291,8 +314,8 @@ describe("room message policy", () => {
     expect(turns).toHaveLength(AGENT_IDS.length);
     const instruction = turns.find(({ agent }) => agent === "cursor-gemini-flash")?.instruction;
     expect(instruction).toContain("Reply by default");
-    expect(instruction).toContain("concrete reason");
-    expect(instruction).not.toContain("reply exactly NO_RESPONSE_NEEDED");
+    expect(instruction).toContain("TURN_DISPOSITION");
+    expect(instruction).not.toContain("NO_RESPONSE_NEEDED");
   });
 
   it.each([
@@ -417,7 +440,7 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
     expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
     expect(performTurn.mock.calls[1][0].instruction).toContain("distinct, natural contribution");
-    expect(performTurn.mock.calls[1][0].instruction).toContain("reply exactly NO_RESPONSE_NEEDED");
+    expect(performTurn.mock.calls[1][0].instruction).toContain("TURN_DISPOSITION");
   });
 
   it("allows a cheap distinct-flavored reaction in an ambient conversational follow-up", async () => {
@@ -703,8 +726,8 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls[2][0]).toMatchObject({ agent: "cursor-grok" });
     expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
     expect(performTurn.mock.calls[2][0].instruction).toContain("Reply by default");
-    expect(performTurn.mock.calls[2][0].instruction).toContain("concrete reason");
-    expect(performTurn.mock.calls[2][0].instruction).not.toContain("reply exactly NO_RESPONSE_NEEDED");
+    expect(performTurn.mock.calls[2][0].instruction).toContain("Silence is exceptional");
+    expect(performTurn.mock.calls[2][0].instruction).toContain("TURN_DISPOSITION");
   });
 
   it("preserves a mention follow-up when the concurrent target completes last", async () => {

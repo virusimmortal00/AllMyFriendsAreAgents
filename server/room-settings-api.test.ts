@@ -21,34 +21,40 @@ describe("room settings API", () => {
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
     const discovery = { discover: async () => ({ status: "available", discoveredAt: "2026-08-27T00:00:00.000Z", models: [{ providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", displayName: "Muse Spark 1.2 Contributor Free", provenance: "opencode-catalog", variants: [{ id: "minimal", displayName: "Minimal" }] }] }) } as unknown as ModelDiscoveryService;
     const app = express();
+    let promotionEligible = false;
     app.use(express.json());
     registerRoomSettingsRoutes({
       app, store, discovery, broadcast: () => undefined,
       authorizeView: () => true,
       authorizeEdit: (request, response) => request.header("x-edit") === "yes" ? "owner" : (response.status(403).json({ error: "Forbidden" }), undefined),
+      routingEvidence: async () => ({ recordedDecisions: 1, recordedAgents: 1, shadowSuppressions: 1, evaluatedShadowSuppressions: 1, falseSuppressions: 0, falseSuppressionRate: 0, firstShadowDecisionAt: "2026-08-20T00:00:00.000Z", shadowDaysRecorded: 7, promotionEligible, promotionEligibilityReasons: promotionEligible ? [] : ["minimum_shadow_window_not_reached"], outcomeTallies: { invoke: 0, suppress: 1, unavailable: 0 }, reasonTallies: { no_routing_signal: 1 }, dispositionTallies: { speak: 0, yield: 1 } }),
     });
     const server = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const put = (body: unknown, authorized = true) => fetch(`${base}/api/room/settings`, { method: "PUT", headers: { "Content-Type": "application/json", ...(authorized ? { "X-Edit": "yes" } : {}) }, body: JSON.stringify(body) });
     try {
-      const defaults = await (await fetch(`${base}/api/room/settings`)).json() as { settings: { basePromptText: string; basePromptRevision: number; summarizerModel: { modelId: string } } };
-      expect(defaults.settings).toMatchObject({ basePromptText: DEFAULT_ROOM_BASE_PROMPT, basePromptRevision: 0, summarizerModel: { modelId: "muse-spark-1.2-contributor-free" } });
+      const defaults = await (await fetch(`${base}/api/room/settings`)).json() as { settings: { basePromptText: string; basePromptRevision: number; summarizerModel: { modelId: string } }; routingEvidence: { promotionEligible: boolean } };
+      expect(defaults.settings).toMatchObject({ configurationRevision: 0, basePromptText: DEFAULT_ROOM_BASE_PROMPT, basePromptRevision: 0, preflightMode: "off", summarizerModel: { modelId: "muse-spark-1.2-contributor-free" } });
+      expect(defaults.routingEvidence.promotionEligible).toBe(false);
       expect((await put({ basePromptText: "x" }, false)).status).toBe(403);
       expect((await put({ basePromptText: "x".repeat(4_001) })).status).toBe(400);
       expect((await put({ summarizerModel: { providerId: "missing", modelId: "unknown" }, summarizerPromptText: "{{transcript}}" })).status).toBe(400);
-      const response = await put({ basePromptText: "Room-specific rule", summarizerModel: { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" }, summarizerPromptText: "Summarize exactly:\n{{transcript}}", featureFlags: { preflightInvocationGating: true } });
+      const response = await put({ basePromptText: "Room-specific rule", summarizerModel: { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" }, summarizerPromptText: "Summarize exactly:\n{{transcript}}", featureFlags: { preflightInvocationGating: false }, preflightMode: "shadow" });
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ settings: { basePromptRevision: 1, summarizerPromptRevision: 1, basePromptText: "Room-specific rule", featureFlags: { preflightInvocationGating: true } } });
+      expect(await response.json()).toMatchObject({ settings: { configurationRevision: 1, basePromptRevision: 1, summarizerPromptRevision: 1, basePromptText: "Room-specific rule", preflightMode: "shadow" } });
+      expect((await put({ preflightMode: "enforce" })).status).toBe(409);
+      promotionEligible = true;
+      expect((await put({ preflightMode: "enforce" })).status).toBe(200);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       store.close();
     }
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
-    expect(await reopened.getRoomConfiguration()).toMatchObject({ basePromptRevision: 1, summarizerPromptRevision: 1, basePromptText: "Room-specific rule" });
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 2, basePromptRevision: 1, summarizerPromptRevision: 1, basePromptText: "Room-specific rule", preflightMode: "enforce" });
     reopened.close();
     const database = new DatabaseSync(databasePath);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM room_settings_history").get()).toEqual({ count: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM room_settings_history").get()).toEqual({ count: 2 });
     expect(() => database.prepare("DELETE FROM room_settings_history").run()).toThrow(/append-only/);
     database.close();
   });

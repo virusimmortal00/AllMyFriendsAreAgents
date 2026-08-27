@@ -18,10 +18,25 @@ describe("room style persistence", () => {
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
     const configured = await store.updateRoomConfiguration({ basePromptText: null, summarizerPromptText: "Changed {{transcript}}" }, "owner");
-    expect(configured).toMatchObject({ basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
+    expect(configured).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
-    expect(await reopened.getRoomConfiguration()).toMatchObject({ basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1, preflightMode: "off" });
     expect(reopened.snapshot().roomConfigurationAudit).toHaveLength(1);
+  });
+
+  it("invalidates summary caches on every room-configuration change", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-config-cache-invalidation-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
+    const [first, last] = [store.snapshot().messages[0], store.snapshot().messages.at(-1)!];
+    const key = { agentId: "codex-sol" as const, spanStartId: first.id, spanEndId: last.id, configRevision: 0 };
+    await store.putAgentContextSummary(key, "stale summary");
+    expect(await store.getAgentContextSummary(key)).toBe("stale summary");
+    const updated = await store.updateRoomConfiguration({ preflightMode: "shadow" }, "owner");
+    expect(updated).toMatchObject({ configurationRevision: 1, preflightMode: "shadow" });
+    expect(await store.getAgentContextSummary(key)).toBeUndefined();
+    await store.putAgentContextSummary(key, "late stale summary");
+    expect(await store.getAgentContextSummary(key)).toBeUndefined();
   });
 
   it("persists JSON summary cache records and per-agent cursors across restart", async () => {
