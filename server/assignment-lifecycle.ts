@@ -52,6 +52,7 @@ export class AssignmentLifecycleService {
     private readonly singleWriter = true,
     private readonly processes?: { terminateScope(scope: string): Promise<void> },
     private readonly implementationConfinementAvailable = true,
+    private readonly operationLog?: (level: "info" | "error", event: string, fields: Record<string, unknown>) => Promise<unknown> | unknown,
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
@@ -130,7 +131,9 @@ export class AssignmentLifecycleService {
 
   private async reconcileLocked(): Promise<readonly AssignmentRecord[]> {
     const reconciled: AssignmentRecord[] = [];
-    for (const assignment of await this.records.listAssignments()) {
+    const persisted = await this.records.listAssignments();
+    await this.operationLog?.("info", "assignment.lifecycle.reconcile.started", { assignments: persisted.length, phase: "startup-or-refresh" });
+    for (const assignment of persisted) {
       if (assignment.lifecycleStatus === "CANCELLED" || assignment.lifecycleStatus === "DISPOSED") {
         reconciled.push(assignment); continue;
       }
@@ -154,6 +157,7 @@ export class AssignmentLifecycleService {
       await this.records.putAssignment(next);
       reconciled.push(next);
     }
+    await this.operationLog?.("info", "assignment.lifecycle.reconcile.completed", { assignments: reconciled.length, activeAssignments: reconciled.filter(reservesWriterSlot).length });
     return reconciled;
   }
 
@@ -310,20 +314,27 @@ export class AssignmentLifecycleService {
   }): Promise<AssignmentResult<{ repositoryBaseCommit: string; leaseExpiresAt: string }>> {
     const member = this.developers.latest(memberId);
     if (!member || member.revision !== memberRevision || !member.capabilities.includes("ASSIGNMENT_WRITE")) {
+      await this.operationLog?.("info", "assignment.tool.decision", { toolPolicy: "assignment-write", result: "denied", reason: "developer-capability-invalid", manifestRevision: input.manifestRevision, fencingToken: input.fencingToken });
       return { kind: "rejected", reason: "Developer-team identity or assignment capability changed" };
     }
     const improvement = await this.rooms.getImprovement(input.improvementId);
-    if (!improvement) return { kind: "not_found" };
+    if (!improvement) { await this.operationLog?.("info", "assignment.manifest.decision", { result: "denied", manifestStatus: "improvement-not-found", manifestRevision: input.manifestRevision }); return { kind: "not_found" }; }
     const claim = improvement.workClaim;
     const manifest = claim.manifests.at(-1);
     if (claim.status !== "ACTIVE" || claim.holderMemberId !== memberId || claim.fencingToken !== input.fencingToken
       || !claim.leaseExpiresAt || Date.parse(claim.leaseExpiresAt) <= Date.parse(this.now())) {
+      await this.operationLog?.("info", "assignment.lease.decision", { result: "denied", leaseStatus: claim.status, fencingToken: input.fencingToken });
       return { kind: "rejected", reason: "An active, unexpired, correctly fenced work claim is required" };
     }
     if (!manifest || manifest.revision !== input.manifestRevision || manifest.memberId !== memberId || manifest.memberConfigRevision !== memberRevision
       || manifest.effectiveToolGrants.some((grant) => PROHIBITED_GRANT.test(grant))) {
+      await this.operationLog?.("info", "assignment.manifest.decision", { result: "denied", manifestStatus: manifest ? "invalid" : "missing", manifestRevision: input.manifestRevision });
+      await this.operationLog?.("info", "assignment.tool.decision", { toolPolicy: "non-publication", result: "denied", reason: "manifest-tool-grants-invalid", manifestRevision: input.manifestRevision });
       return { kind: "rejected", reason: "The execution manifest does not authorize this trusted, non-publication lifecycle" };
     }
+    await this.operationLog?.("info", "assignment.lease.decision", { result: "allowed", leaseStatus: "active", fencingToken: input.fencingToken });
+    await this.operationLog?.("info", "assignment.manifest.decision", { result: "allowed", manifestStatus: "valid", manifestRevision: input.manifestRevision });
+    await this.operationLog?.("info", "assignment.tool.decision", { toolPolicy: "non-publication", result: "allowed", manifestRevision: input.manifestRevision });
     return { kind: "ok", value: { repositoryBaseCommit: manifest.repositoryBaseCommit, leaseExpiresAt: claim.leaseExpiresAt } };
   }
 

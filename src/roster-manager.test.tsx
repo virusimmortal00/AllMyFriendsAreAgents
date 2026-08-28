@@ -12,6 +12,37 @@ const catalog = [
 ] as const;
 
 describe("roster manager", () => {
+  it("preserves a requested /gh grant while showing missing server configuration on narrow layouts", async () => {
+    const capabilityStatuses = { "codex-sol": { agentId: "codex-sol", policyRevision: 1, capabilities: {
+      conversation: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "Enable the agent." },
+      github_read: { configured: false, runtimeAvailable: false, effective: false, reason: "not_configured", guidance: "Configure the server-only GitHub read token.", contract: "read-only" },
+      project_write: { configured: false, runtimeAvailable: false, effective: false, reason: "governed_worker_only", guidance: "Use a governed implementation worker." },
+    }, effectiveCommands: ["help"], commands: { gh: { featureCompiled: true, requiredConfigPresent: false, serverCeiling: false, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, lease: { status: "missing", issuedAt: null, expiresAt: null }, lastManifestIssuance: null, lastRejection: null, effective: false, exclusions: ["missing-server-config"] } } } };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: ["gh"] } }] }, catalog, capabilityStatuses }), { status: 200 })));
+    window.innerWidth = 390;
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    expect(await screen.findByRole("region", { name: "Effective capabilities for Sol" })).toBeTruthy();
+    expect(screen.getByText(/Requested: granted · Effective: unavailable/)).toBeTruthy();
+    expect(screen.getByText(/missing-server-config\. Configure the server-only GitHub read token/)).toBeTruthy();
+    const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective off/ }) as HTMLInputElement;
+    expect(grant.checked).toBe(true);
+    expect(grant.disabled).toBe(false);
+  });
+
+  it("shows a preserved requested /gh grant becoming effective after server configuration", async () => {
+    const capabilityStatuses = { "codex-sol": { agentId: "codex-sol", policyRevision: 1, capabilities: {
+      conversation: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "Enable the agent." },
+      github_read: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "Configure the server-only GitHub read token.", contract: "read-only" },
+      project_write: { configured: false, runtimeAvailable: false, effective: false, reason: "governed_worker_only", guidance: "Use a governed implementation worker." },
+    }, effectiveCommands: ["help", "gh"], commands: { gh: { featureCompiled: true, requiredConfigPresent: true, serverCeiling: true, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, lease: { status: "active", issuedAt: new Date(0).toISOString(), expiresAt: new Date(1).toISOString() }, lastManifestIssuance: { revision: 1, issuedAt: new Date(0).toISOString() }, lastRejection: null, effective: true, exclusions: [] } } } };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: ["gh"], catalogRevision: 2 } }] }, catalog, capabilityStatuses }), { status: 200 })));
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    expect(await screen.findByText(/Requested: granted · Effective: available/)).toBeTruthy();
+    const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective on/ }) as HTMLInputElement;
+    expect(grant.checked).toBe(true);
+    expect(grant.disabled).toBe(false);
+  });
+
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
 

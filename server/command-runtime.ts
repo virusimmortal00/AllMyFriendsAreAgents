@@ -60,6 +60,8 @@ export interface CommandRuntimeDependencies {
   readonly clock?: CommandClock;
   readonly stage1Ms?: number;
   readonly stage2Ms?: number;
+  readonly capabilityAudit?: (event: { agentId: string; capability: "github_read"; outcome: "attempted" | "allowed" | "denied" | "failed" | "completed"; correlationId?: string; reason?: string }) => Promise<unknown>;
+  readonly operationLog?: (level: "info" | "error", event: string, fields: Record<string, unknown>) => Promise<unknown> | unknown;
 }
 
 export type CommandResponse =
@@ -139,8 +141,9 @@ export class CommandRuntime {
     await this.dependencies.store.compactCommandRecords(this.roomId,timestamp(this.clock));
     const parsed = this.parseInput(input);
     if (parsed.kind !== "command") return parsed.kind === "private-error" ? parsed : { kind: "private-error", message: "No command was provided." };
+    if(parsed.invocation.command==="gh")await this.dependencies.capabilityAudit?.({agentId:invoker.id,capability:"github_read",outcome:"attempted",correlationId:clientSubmissionId});
     const allowed = this.allowed(invoker);
-    if (!allowed.includes(parsed.invocation.command)) return { kind: "private-error", message: "That command is not available to this participant." };
+    if (!allowed.includes(parsed.invocation.command)) { if(parsed.invocation.command==="gh")await this.dependencies.capabilityAudit?.({agentId:invoker.id,capability:"github_read",outcome:"denied",reason:"permission-not-granted"}); return { kind: "private-error", message: "That command is not available to this participant." }; }
     const canonical = this.canonicalInvocation(parsed.invocation);
     if (canonical.kind === "private-error") return canonical;
     const createdAt = timestamp(this.clock);
@@ -246,8 +249,9 @@ export class CommandRuntime {
       return { kind: "accepted", submissionId: submission.submissionId, duplicate: false };
     }
     if(invocation.command==="gh"){
-      if(!this.dependencies.githubRead||!this.dependencies.publishGhResult)return{kind:"private-error",message:"GitHub reads are not configured."};
-      if(!this.authorized(submission))return{kind:"private-error",message:"Command permission changed before dispatch."};
+      if(!this.dependencies.githubRead||!this.dependencies.publishGhResult){await this.dependencies.capabilityAudit?.({agentId:submission.invoker.id,capability:"github_read",outcome:"denied",correlationId:submission.submissionId,reason:"missing-server-config"});return{kind:"private-error",message:"GitHub reads are not configured."};}
+      if(!this.authorized(submission)){await this.dependencies.capabilityAudit?.({agentId:submission.invoker.id,capability:"github_read",outcome:"denied",correlationId:submission.submissionId,reason:"permission-not-granted"});return{kind:"private-error",message:"Command permission changed before dispatch."};}
+      await this.dependencies.capabilityAudit?.({agentId:submission.invoker.id,capability:"github_read",outcome:"allowed",correlationId:submission.submissionId});
       const now=timestamp(this.clock);const execution:CommandGhExecution={executionId:stableId(submission.submissionId,"gh-execution"),roomId:this.roomId,submissionId:submission.submissionId,status:"queued",deliveryStatus:"pending",projection:null,renderedText:null,failureKind:null,diagnostics:[],createdAt:now,updatedAt:now};const audit=this.auditRecord(submission,[]);const accepted=await this.dependencies.store.acceptCommand({submission,audit,ghExecution:execution});if(accepted.kind==="duplicate")return this.replay(accepted.submission);if(accepted.kind==="compacted-duplicate")return{kind:"accepted",submissionId:accepted.tombstone.submissionId,duplicate:true};if(accepted.kind==="conflict")throw new Error("Unexpected GitHub acceptance conflict.");await this.dependencies.store.createGhExecution(execution);await this.publishAuditObserved(submission,audit);return this.executeGh(execution,submission,false);
     }
     if (invocation.command !== "task") return { kind: "private-error", message: "Unsupported command." };
@@ -261,8 +265,8 @@ export class CommandRuntime {
   private authorized(submission:CommandSubmission){return this.allowed(submission.invoker).includes(submission.command);}
   private auditRecord(submission:CommandSubmission,targets:readonly ActiveAgentId[]){return{auditId:stableId(submission.submissionId,"audit"),roomId:this.roomId,submissionId:submission.submissionId,command:submission.command,invokerKind:submission.invoker.kind,invokerId:submission.invoker.id,targetAgentIds:targets,createdAt:timestamp(this.clock)} as const;}
   private async publishAudit(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){let text=this.auditText(submission,audit.targetAgentIds);if(submission.command==="poll"){const invocation=submission.invocation as Extract<CommandInvocation,{command:"poll"}>;text=`— ${safeLabel(submission.invoker.displayName)} ran /poll — Options: ${invocation.options.map((option,index)=>`${index+1}. ${safeLabel(option)}`).join(" · ")}`;}else if(submission.command==="gh")text=`— ${safeLabel(submission.invoker.displayName)} ran /gh — Read-only repository query`;await this.dependencies.publishStatus(audit.auditId,text);}
-  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){console.error("Command audit publication failed; durable recovery will retry it.",error);}}
-  private async publishPollClosed(poll:CommandPoll){if(poll.state!=="CLOSED"||!poll.finalTallies)return;const summary=poll.options.map((option,index)=>`${safeLabel(option)}: ${poll.finalTallies![index]||0}`).join(" · ");try{await this.dependencies.publishStatus(`poll-closed:${poll.pollId}`,`— Poll closed — ${summary}`);}catch(error){console.error("Poll result publication failed; durable recovery will retry it.",error);}}
+  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){await this.dependencies.operationLog?.("error","command.audit-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
+  private async publishPollClosed(poll:CommandPoll){if(poll.state!=="CLOSED"||!poll.finalTallies)return;const summary=poll.options.map((option,index)=>`${safeLabel(option)}: ${poll.finalTallies![index]||0}`).join(" · ");try{await this.dependencies.publishStatus(`poll-closed:${poll.pollId}`,`— Poll closed — ${summary}`);}catch(error){await this.dependencies.operationLog?.("error","command.poll-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
 
   private async resumeAcceptedWork(submission: CommandSubmission) {
     if(submission.command==="gh"){const execution=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(execution?.status==="queued")void this.executeGh(execution,submission);return;}
@@ -283,8 +287,8 @@ export class CommandRuntime {
     if(!this.dependencies.githubRead||!this.dependencies.publishGhResult)return this.terminalizeGh(execution,submission,"configuration","GitHub reads are no longer configured.");
     const current=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(!current)return{kind:"private-error",message:"GitHub execution metadata is unavailable."};if(current.status!=="queued"){await this.deliverGhResult(current).catch(()=>undefined);return{kind:"accepted",submissionId:submission.submissionId,duplicate:true,...(current.projection?{github:current.projection}:{}),...(current.renderedText?{resultText:current.renderedText}:{})};}
     let terminal:CommandGhExecution;
-    try{const result=await this.dependencies.githubRead.execute((submission.invocation as Extract<CommandInvocation,{command:"gh"}>).selector);terminal={...current,status:"completed",deliveryStatus:"pending",projection:result.projection,renderedText:result.renderedText,failureKind:null,diagnostics:result.diagnostics,updatedAt:timestamp(this.clock,current.updatedAt)};}
-    catch(error){const failed=this.dependencies.githubRead.failure(error);terminal={...current,status:"failed",deliveryStatus:"pending",projection:null,renderedText:failed.text.slice(0,MAX_COMMAND_DELIVERY_MESSAGE),failureKind:failed.kind,diagnostics:[failed.diagnostic],updatedAt:timestamp(this.clock,current.updatedAt)};}
+    try{const result=await this.dependencies.githubRead.execute((submission.invocation as Extract<CommandInvocation,{command:"gh"}>).selector);terminal={...current,status:"completed",deliveryStatus:"pending",projection:result.projection,renderedText:result.renderedText,failureKind:null,diagnostics:result.diagnostics,updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.capabilityAudit?.({agentId:submission.invoker.id,capability:"github_read",outcome:"completed",correlationId:submission.submissionId});}
+    catch(error){const failed=this.dependencies.githubRead.failure(error);terminal={...current,status:"failed",deliveryStatus:"pending",projection:null,renderedText:failed.text.slice(0,MAX_COMMAND_DELIVERY_MESSAGE),failureKind:failed.kind,diagnostics:[failed.diagnostic],updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.capabilityAudit?.({agentId:submission.invoker.id,capability:"github_read",outcome:"failed",correlationId:submission.submissionId,reason:failed.kind});}
     const saved=await this.dependencies.store.compareAndSetGhExecution(current.updatedAt,terminal);const durable=saved.kind==="accepted"?saved.execution:await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(!durable||durable.status==="queued")return{kind:"private-error",message:"GitHub execution changed concurrently; retry with the same request ID."};await this.deliverGhResult(durable).catch(()=>undefined);return{kind:"accepted",submissionId:submission.submissionId,duplicate,...(durable.projection?{github:durable.projection}:{}),...(durable.renderedText?{resultText:durable.renderedText}:{})};
   }
 

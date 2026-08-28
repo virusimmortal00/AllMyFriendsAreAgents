@@ -9,6 +9,7 @@ import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { DiagnosticRecord } from "./diagnostics";
+import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -117,6 +118,7 @@ export interface RosterResponse {
   readonly catalog: readonly RosterCatalogEntry[];
   readonly modelDiscovery?: ModelDiscoveryResult;
   readonly participantAvailability?: Partial<Record<ActiveAgentId, ModelAvailability>>;
+  readonly capabilityStatuses?: Readonly<Record<string, AgentCapabilityStatus>>;
 }
 
 export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
@@ -250,6 +252,16 @@ export async function loadDiagnostic(token: string, agentId: string, recordId: s
   const query = new URLSearchParams({ agentId });
   return request(`/api/developer/diagnostics/${encodeURIComponent(recordId)}?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
     .then((response) => response.json() as Promise<DiagnosticRecord>);
+}
+
+export interface CapabilityDiagnosticsResponse {
+  readonly policyRevision: 1;
+  readonly agents: Readonly<Record<string, AgentCapabilityStatus>>;
+  readonly audit: readonly { id: string; timestamp: string; agentId: string; capability: string; outcome: string; correlationId?: string; reason?: string }[];
+}
+
+export async function loadOwnerCapabilityDiagnostics(): Promise<CapabilityDiagnosticsResponse> {
+  return request("/api/control/capabilities?limit=100", { method: "GET", cache: "no-store" }).then((response) => response.json());
 }
 
 export async function voteOnPoll(pollId: string, optionIndex: number) {

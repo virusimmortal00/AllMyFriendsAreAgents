@@ -40,6 +40,7 @@ export interface AgentContextRuntime {
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
+  readonly operationLog?: (level: "info" | "error", event: string, fields: Record<string, unknown>) => Promise<unknown> | unknown;
 }
 
 interface ProcessResult {
@@ -345,7 +346,10 @@ function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
     const normalizedName = name.toUpperCase();
     return !normalizedName.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
       && !normalizedName.startsWith("AGENTWIRE_")
-      && normalizedName !== "DATABASE_URL";
+      && normalizedName !== "DATABASE_URL"
+      && !/(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)(?:$|_)/.test(normalizedName)
+      && normalizedName !== "GITHUB_AUTH"
+      && normalizedName !== "GH_ENTERPRISE_TOKEN";
   }));
 }
 
@@ -651,6 +655,7 @@ export async function runAgent(
     storedSessionEpoch: storedSession?.codeEpoch,
     sessionId: storedSession?.id,
   });
+  await context?.operationLog?.("info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -720,6 +725,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
+    await context?.operationLog?.("info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
     return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
@@ -752,6 +758,7 @@ export async function runAgent(
         cliStderr: error.process.stderr,
       } : {}),
     });
+    await context?.operationLog?.("error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
     throw error;
   } finally {
     lifecycle?.finish(generationId);

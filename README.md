@@ -91,6 +91,8 @@ ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
 
 **Room participants converse and inspect; implementation workers change source.** Ordinary room turns and reviews are always read-only against project files. Durable source work begins only through an explicit governed implementation handoff to a separate worker/job identity and session in an assignment-owned worktree.
 
+Agent capability resolution, the read-only `/gh` contract, credential boundaries, audit records, trace correlation, rotation, launchd configuration, and troubleshooting are documented in [Capabilities, audit, and structured logging](docs/operations/capabilities-and-logging.md). This implementation is tracked by [issue #126](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/126).
+
 Agent Settings reports a bounded, server-derived implementation-handoff status. It never exposes provider sessions, worktree paths, broker grants, or governance records, and it is not a permission toggle. OpenCode plan/build selection is an internal runtime detail; humans do not need to switch modes.
 
 These are boundaries around capability—not commands to answer or agree. Issue creation, publication, merge, and deployment remain separately authorized actions. The room, transcript, sessions, styles, and diagnostics remain local and resumable.

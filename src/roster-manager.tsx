@@ -21,6 +21,7 @@ import { RichModelPicker } from "./model-picker";
 import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
+import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
   initialRoster: RoomAgentRoster;
@@ -57,6 +58,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const [controlPassword, setControlPassword] = useState("");
   const [bootstrapSecret, setBootstrapSecret] = useState("");
   const [setupInstruction, setSetupInstruction] = useState("");
+  const [capabilityStatuses, setCapabilityStatuses] = useState<Readonly<Record<string, AgentCapabilityStatus>>>({});
   const closed = useRef(false);
   const detailPaneRef = useRef<HTMLElement>(null);
   const newNameInputRef = useRef<HTMLInputElement>(null);
@@ -79,6 +81,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
       setSelectedAgentId((current) => current && response.roster.entries.some((entry) => entry.agentId === current) ? current : response.roster.entries[0]?.agentId || null);
       setCatalog(response.catalog);
       setModelDiscovery(response.modelDiscovery);
+      setCapabilityStatuses(response.capabilityStatuses || {});
       setError("");
     }).catch((reason) => {
       if (closed.current) return;
@@ -132,6 +135,9 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const selectedModel = selectedReference ? discoveredModels.find((model) => model.modelId === selectedReference.modelId && (model.providerId || "") === (selectedReference.providerId || "")) : undefined;
   const selectedModelAvailable = Boolean(modelDiscovery && selectedReference?.modelId && selectedModelAvailability(selectedReference, modelDiscovery).available);
   const selectedCommandPermissions = selectedEntry ? normalizeCommandPermissions(selectedEntry.commandPermissions) : undefined;
+  const selectedCapabilityStatus = selectedEntry ? capabilityStatuses[selectedEntry.agentId] : undefined;
+  const selectedGhGate = selectedCapabilityStatus?.commands?.gh;
+  const selectedGhRequested = Boolean(selectedCommandPermissions && (selectedCommandPermissions.allowAll && selectedCommandPermissions.catalogRevision === COMMAND_CATALOG_REVISION || selectedCommandPermissions.allowed.includes("gh")));
   const controlAuthenticationReady = Boolean(controlStatus && controlUsername && controlPassword.length >= 12 && (controlStatus.claimed || bootstrapSecret));
 
   function replaceAt(index: number, entry: RoomAgentRosterEntry) {
@@ -160,6 +166,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     setSavedEntries([...conflict.roster.entries]);
     setCatalog(conflict.catalog);
     setModelDiscovery(conflict.modelDiscovery);
+    setCapabilityStatuses(conflict.capabilityStatuses || {});
     setSelectedAgentId(conflict.roster.entries[0]?.agentId || null);
     setChangingModelForAgentId(null);
     setConflict(null);
@@ -204,6 +211,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
       setSelectedAgentId(response.roster.entries[0]?.agentId || null);
       setCatalog(response.catalog);
       setModelDiscovery(response.modelDiscovery);
+      setCapabilityStatuses(response.capabilityStatuses || {});
       setControlStatus(null);
       setControlPassword("");
       setBootstrapSecret("");
@@ -308,6 +316,10 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
                       </section>
                       <div className="roster-model-options"><label>Variant / reasoning effort<select value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => { const { reasoningEffort: _legacyEffort, ...entry } = selectedEntry; replaceAt(selectedIndex, { ...entry, variant: event.target.value || undefined }); }}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
+                      <section className="roster-capabilities" aria-label={`Effective capabilities for ${selectedName}`}>
+                        <h4>Effective capabilities</h4>
+                        {!selectedCapabilityStatus ? <p>Capability diagnostics are not available from this server version.</p> : Object.entries(selectedCapabilityStatus.capabilities).map(([name, status]) => { const github = name === "github_read"; const exclusion = github ? selectedGhGate?.exclusions[0] : undefined; return <div className={`roster-capability roster-capability--${status.effective ? "available" : "disabled"}`} key={name}><span><strong>{github ? "GitHub /gh" : name === "project_write" ? "Project writes" : "Conversation"}</strong><small>{github ? `Requested: ${selectedGhRequested ? "granted" : "not granted"} · Effective: ${status.effective ? "available" : "unavailable"}` : status.effective ? "Available" : "Unavailable"}{status.contract ? ` · ${status.contract}` : ""}</small></span><p>{status.effective ? "Configured and available at runtime." : `${(exclusion || status.reason).replaceAll("_", " ")}. ${status.guidance}`}</p></div>; })}
+                      </section>
                       <fieldset className="roster-command-permissions">
                         <legend>Agent commands</legend>
                         <p>Choose which slash commands this agent may invoke. Human commands are controlled by the room server.</p>
@@ -315,11 +327,12 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         <div className="roster-command-list" aria-label={`Command permissions for ${selectedName}`}>
                           {ROOM_COMMANDS.map((command) => {
                             const currentAllowAll=selectedCommandPermissions?.allowAll===true&&selectedCommandPermissions.catalogRevision===COMMAND_CATALOG_REVISION;const checked = currentAllowAll || selectedCommandPermissions?.allowed.includes(command);
-                            return <label key={command}><input type="checkbox" checked={checked} disabled={saving || currentAllowAll} onChange={(event) => {
+                            const capabilityDisabled = command === "gh" && selectedGhGate?.featureCompiled === false;
+                            return <label key={command}><input type="checkbox" checked={checked} disabled={saving || currentAllowAll || capabilityDisabled} aria-label={command === "gh" ? `/gh requested ${checked ? "on" : "off"}; effective ${selectedGhGate?.effective ? "on" : "off"}` : undefined} aria-describedby={capabilityDisabled ? `capability-gh-${selectedEntry.agentId}` : undefined} onChange={(event) => {
                               const allowed = new Set(selectedCommandPermissions?.allowed || []);
                               if (event.target.checked) allowed.add(command); else allowed.delete(command);
                               replaceAt(selectedIndex, { ...selectedEntry, commandPermissions: { allowAll: false, allowed: [...allowed] as RoomCommandName[], catalogRevision: COMMAND_CATALOG_REVISION } });
-                            }} /> /{command}</label>;
+                            }} /> /{command}{command === "gh" ? <small id={`capability-gh-${selectedEntry.agentId}`}>{capabilityDisabled ? " feature unavailable in this server build" : ` requested ${checked ? "on" : "off"}; effective ${selectedGhGate?.effective ? "on" : "off"}`}</small> : null}</label>;
                           })}
                         </div>
                       </fieldset>

@@ -302,6 +302,10 @@ describe("OpenCode runtime safety", () => {
       AGENTWIRE_PORT: "53147",
       Database_Url: "postgres://mixed-case-live",
       All_My_Friends_Are_Agents_Data_Dir: "/mixed-case-live",
+      GH_TOKEN: "gh-secret",
+      GITHUB_TOKEN: "github-secret",
+      OPENAI_API_KEY: "provider-secret",
+      SOME_PASSWORD: "password-secret",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
   });
 

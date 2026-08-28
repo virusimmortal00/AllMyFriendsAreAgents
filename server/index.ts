@@ -27,7 +27,7 @@ import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-ap
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
@@ -52,7 +52,7 @@ import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
-import { ControlError, ControlPlaneStore } from "./control-plane.js";
+import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import { OpenCodeContextSummarizer } from "./context-summarizer.js";
 import { registerRoomHistoryRoutes } from "./room-history-api.js";
@@ -60,7 +60,7 @@ import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
-import { effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
+import { COMMAND_CATALOG_REVISION, effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
@@ -74,6 +74,11 @@ import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
 import { GitHubReadStore } from "./github-read-store.js";
 import { GitHubReadService } from "./github-read-service.js";
+import { selectedModelAvailability } from "../shared/model-discovery.js";
+import type { AgentCapabilityStatus } from "../shared/capabilities.js";
+import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
+import { CapabilityAuditStore } from "./capability-audit.js";
+import { StructuredLogger, traceMiddleware } from "./structured-logger.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -103,10 +108,17 @@ if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICAT
 }
 const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
+const structuredLogger = new StructuredLogger(path.join(storageConfiguration.dataDirectory, "server.jsonl"), configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BYTES") || 5 * 1024 * 1024, 3, undefined, isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true", { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" });
+setControlRouteErrorReporter((error) => { void structuredLogger.log("error", "control-plane.request.failed", { error, outcome: "failed", reason: "internal-error" }); });
+app.use(traceMiddleware(structuredLogger));
+await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
+await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
+await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
 const store = await openRoomRepository(projectRoot, storageConfiguration);
+structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
-const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory);
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }));
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
@@ -136,7 +148,28 @@ const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REP
 const githubReadParts=githubReadRepository?.split("/")||[];
 const fakeSha="0123456789abcdef0123456789abcdef01234567";
 const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
-const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch)),githubReadRepository!):undefined;
+const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch),{operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event})}),githubReadRepository!):undefined;
+const capabilityAudit = await CapabilityAuditStore.open(storageConfiguration.dataDirectory, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_CAPABILITY_AUDIT_LIMIT") || 500);
+let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object.fromEntries(normalizeRoomAgentRoster(store.snapshot().roster).entries.map((entry) => {
+  const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
+  return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
+}));
+async function refreshAgentCapabilities() {
+  const roster = normalizeRoomAgentRoster(store.snapshot().roster);
+  const [catalog, runtime] = await Promise.all([modelDiscovery.discover(), cliAvailability(enabledRoomAgentIds(roster))]);
+  const previous = capabilityStatuses;
+  const next = Object.fromEntries(roster.entries.map((entry) => {
+    const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    return [entry.agentId, status];
+  }));
+  capabilityStatuses = next;
+  for (const status of Object.values(next)) for (const [name, resolved] of Object.entries(status.capabilities)) {
+    const prior = previous[status.agentId]?.capabilities[name as import("../shared/capabilities.js").AgentCapabilityName];
+    if (!prior || prior.effective !== resolved.effective || prior.reason !== resolved.reason) await capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
+  }
+}
+for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
 const githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
@@ -156,6 +189,9 @@ const contributionExecutor = githubContributionBroker && githubClient && githubR
 const contributionService = contributionRecords && githubRepository
   ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository)
   : undefined;
+await structuredLogger.log("info", "github.store.initialized", { readStoreConfigured: Boolean(githubReadService), contributionStoreConfigured: Boolean(githubContributionStore) });
+await structuredLogger.log("info", "github.adapter.policy", { githubReadConfigured: Boolean(githubReadService), githubContributionConfigured: Boolean(githubContributionBroker), toolPolicy: "fixed-read-selectors" });
+await structuredLogger.log("info", "github.read-cache.snapshot", { configured: Boolean(githubReadService), status: githubReadService ? "ready" : "disabled" });
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
@@ -166,8 +202,13 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   true,
   agentProcesses,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION,
+  (level, event, fields) => structuredLogger.log(level, event, fields),
 );
 await assignmentLifecycle.reconcile();
+const startupAssignments = await assignmentLifecycle.list();
+await structuredLogger.log("info", "assignment.manifest.snapshot", { manifestStatus: "startup-observed", assignments: startupAssignments.length });
+await structuredLogger.log("info", "assignment.lease.snapshot", { leaseStatus: "startup-observed", assignments: startupAssignments.length });
+await structuredLogger.log("info", "agent.tool-policy.snapshot", { agents: Object.keys(capabilityStatuses).length, githubReadConfigured: Boolean(githubReadService), toolPolicy: "server-capability-policy-v1" });
 const initialImplementationCapabilitySnapshot = await assignmentLifecycle.implementationCapabilitySnapshot(currentEnabledAgents());
 let implementationCapabilities: Partial<Record<AgentId, ImplementationCapability>> = initialImplementationCapabilitySnapshot.capabilities;
 let implementationCapabilityRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -193,7 +234,7 @@ const coordinatorHeartbeat = new CoordinatorHeartbeat(
     maxDispatchedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED"),
     maxAttempts: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_ATTEMPTS"),
     timeBudgetMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_TIME_BUDGET_MS"),
-    onError: (error) => console.error("Coordinator heartbeat failed", error),
+    onError: (error) => { void structuredLogger.log("error", "coordinator.heartbeat.failed", { error }); },
   },
 );
 const continuationExecutorUrl = process.env.ALL_MY_FRIENDS_ARE_AGENTS_CONTINUATION_EXECUTOR_URL?.trim() || "http://127.0.0.1/continuation-executor-not-configured";
@@ -219,7 +260,7 @@ const investigationService = new InvestigationService(investigationStore, store,
   maxConcurrentGlobal: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY"),
   defaultTokenLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT"),
   emergencyStopped: () => coordinatorHeartbeat.status().runtime.emergencyStopped,
-  onTransition: () => broadcast(), onError: (error) => console.error("Investigation lifecycle failed", error),
+  onTransition: () => broadcast(), onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
 });
 await investigationService.initialize();
 
@@ -312,7 +353,7 @@ async function refreshImplementationCapabilitiesAndBroadcast() {
     await refreshImplementationCapabilities();
     broadcast();
   } catch (error) {
-    console.error("Implementation capability refresh failed", error);
+    void structuredLogger.log("error", "implementation-capability.refresh.failed", { error });
   }
 }
 
@@ -328,7 +369,8 @@ function roomEventStream(humanId: string) {
 
 function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
   const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
-  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS) : [];
+  const ceiling = capabilityEnabled(capabilityStatuses[agent], "github_read") ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS;
+  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), ceiling) : [];
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
@@ -470,6 +512,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         summarizer: contextSummarizer,
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
+        operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
         commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
@@ -482,7 +525,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (isAgentGenerationCancelledError(error)) return { cancelled: true };
     if (!activeAgent) throw error;
     await agentHealth.recordFailure(activeAgent, error);
-    console.error(`Agent command failed for ${agent}`, error);
+    void structuredLogger.log("error", "agent.command.failed", { agentId: agent, error });
     broadcast();
     return { failed: true };
   } finally {
@@ -691,7 +734,7 @@ async function runJob(job: () => Promise<void>, propagateFailure = false) {
     await store.setStatus("idle");
   } catch (error) {
     roomActivity.interrupt();
-    console.error("Agent command failed", error);
+    void structuredLogger.log("error", "agent.command.failed", { error });
     await store.addMessage("system", "An agent command failed. Check the server log for details.", "status");
     await store.setStatus("error", undefined, "An agent command failed.");
     if (propagateFailure) throw error;
@@ -718,7 +761,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before) },
+      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
     if (await agentHealth.recordSuccess(agent)) broadcast();
@@ -741,6 +784,8 @@ const commandRuntime = new CommandRuntime({
   roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
   stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
+  capabilityAudit: async (event) => { await capabilityAudit.append(event); await structuredLogger.log(event.outcome === "failed" ? "error" : "info", "github.read.decision", event); },
+  operationLog: (level,event,fields)=>structuredLogger.log(level,event,fields),
   executeTask: performCommandTask,
   executePov: async (agent, prompt, signal) => {
     const reservation=activeGenerations.reserve(agent,agentConcurrency);
@@ -769,7 +814,7 @@ const commandRuntime = new CommandRuntime({
   githubRead:githubReadService,
   publishGhResult:async(executionId,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",text);broadcast();},
 });
-const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null);
+const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
 await commandRuntime.initialize();
 
@@ -817,7 +862,7 @@ const consultationRunner = new ConsultationRunner(
     },
   },
   undefined,
-  (error) => console.error("Consultation lifecycle failed", error),
+  (error) => { void structuredLogger.log("error", "consultation.lifecycle.failed", { error }); },
 );
 await consultationRunner.reconcile(CANONICAL_ROOM_ID);
 const roomMcp = registerRoomMcpRoutes({
@@ -857,7 +902,7 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
   if (!accepted) presenceConversationScheduled = false;
 }
 
-const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresence);
+const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresence, undefined, (error,event)=>{void structuredLogger.log("error","human-presence.announcement.failed",{error,outcome:"failed",reason:event});});
 
 app.get("/api/state", async (request, response) => {
   const viewerHumanId = sessionHuman(request, humans, humanSessions)?.id;
@@ -979,7 +1024,14 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, broadcast: () => { void refreshImplementationCapabilitiesAndBroadcast(); } });
+app.get("/api/control/capabilities", async (request, response) => {
+  try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }
+  catch (error) { return response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." }); }
+  await refreshAgentCapabilities().catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error }));
+  const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
+  return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
+});
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: () => { void Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]).then(() => broadcast()).catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error })); } });
 registerRoomSettingsRoutes({
   app,
   store,
@@ -1242,12 +1294,14 @@ app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
 const httpServer = app.listen(port, host, () => {
-  console.log(`AllMyFriendsAreAgents API listening on ${host}:${port}`);
-  console.log(`Developer team bridge: ${developerTeam.roster().length} configured member(s)`);
+  void structuredLogger.log("info", "server.listening", { host, port });
+  void structuredLogger.log("info", "developer-team.configured", { members: developerTeam.roster().length });
+  void refreshAgentCapabilities().then(() => broadcast()).catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error }));
+  void structuredLogger.log("info", "server.startup.completed", { phase: "listening" });
 });
 
 if (coordinatorHeartbeat.start()) {
-  console.log("Bounded coordinator heartbeat enabled");
+  void structuredLogger.log("info", "coordinator.heartbeat.enabled");
 }
 
 function configuredPositiveInteger(name: string) {
@@ -1261,6 +1315,7 @@ let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  await structuredLogger.log("info", "server.shutdown.started", { signal, phase: "draining" });
   jobs.close();
   await commandRuntime.close();
   roomActivity.interrupt();
@@ -1270,7 +1325,7 @@ async function shutdown(signal: string) {
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
   const closeServer = new Promise<void>((resolve) => httpServer.close((error) => {
-    if (error) console.error(`Server shutdown after ${signal} failed`, error);
+    if (error) void structuredLogger.log("error", "server.shutdown.failed", { signal, error });
     if (error) process.exitCode = 1;
     resolve();
   }));
@@ -1278,6 +1333,8 @@ async function shutdown(signal: string) {
   consultationRunner.close();
   if ("close" in consultationRepository && typeof consultationRepository.close === "function") consultationRepository.close();
   await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
+  await structuredLogger.log("info", "server.shutdown.completed", { signal, phase: "closed" });
+  await structuredLogger.flush();
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

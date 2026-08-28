@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { CommandRuntime } from "./command-runtime.js";
 import { RoomStore } from "./room-store.js";
-import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
+import { registerRoomCommandToolRoute, RoomCommandToolBroker, type CommandToolLeaseEvent } from "./room-command-tool.js";
 
 const roots:string[]=[];afterEach(async()=>Promise.all(roots.splice(0).map((root)=>rm(root,{recursive:true,force:true}))));
 
@@ -18,6 +18,37 @@ async function fixture() {
 }
 
 describe("server-owned room_command broker",()=>{
+  it("projects safe command-family lease audit without duplicate or argument records",async()=>{
+    const api=await fixture();let now=Date.parse("2026-08-27T00:00:00.000Z");let session:string|null="session-a";const observed:CommandToolLeaseEvent[]=[];
+    const broker=new RoomCommandToolBroker(api.runtime,()=>now,()=>session,(event)=>observed.push(event));
+    const token=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-a",allowedCommands:["help"]});
+    expect(observed[0]).toMatchObject({outcome:"issued",reason:"lease-issued",command:null,selectorFamily:null});
+    expect(broker.snapshot("codex-sol")).toMatchObject({present:true,status:"active",providerSessionFresh:true,effectiveCommands:["help"],lastManifestIssuance:{revision:1}});
+    expect(JSON.stringify(broker.snapshot("codex-sol"))).not.toContain("session-a");expect(JSON.stringify(broker.snapshot("codex-sol"))).not.toContain(token);
+    const request={invocation:{command:"help" as const},clientSubmissionId:"lease-help-request-01"};await broker.execute(token,request);await broker.execute(token,request);
+    expect(observed.filter(({outcome,reason})=>outcome==="accepted"&&reason==="tool-call-accepted")).toHaveLength(1);
+    expect(observed.find(({outcome})=>outcome==="accepted")).toMatchObject({command:"help",selectorFamily:null});
+    await broker.execute(token,{invocation:{command:"polls"},clientSubmissionId:"lease-polls-denied-01"});await broker.execute(token,{invocation:{command:"polls"},clientSubmissionId:"lease-polls-denied-01"});
+    expect(observed.filter(({outcome,reason})=>outcome==="rejected"&&reason==="permission-not-granted")).toHaveLength(1);
+    expect(observed.find(({outcome})=>outcome==="rejected")).toMatchObject({command:"poll",selectorFamily:null});
+    const ghToken=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-a",allowedCommands:["gh"]});
+    await broker.execute(ghToken,{invocation:{command:"gh",selector:{kind:"pr",number:987654}},clientSubmissionId:"lease-gh-request-01"});
+    await broker.execute(ghToken,{invocation:{command:"gh",selector:{kind:"recent"}},clientSubmissionId:"lease-gh-request-02"});
+    await broker.execute(ghToken,{invocation:{command:"gh",selector:{kind:"issue",number:456789}},clientSubmissionId:"lease-gh-request-03"});
+    await broker.execute(ghToken,{invocation:{command:"gh",selector:{kind:"ci",number:345678}},clientSubmissionId:"lease-gh-request-04"});
+    expect(observed.filter(({command})=>command==="gh").map(({selectorFamily})=>selectorFamily)).toEqual(["pr","recent","issue","ci"]);
+    expect(JSON.stringify(observed)).not.toContain("987654");
+    expect(JSON.stringify(observed)).not.toContain("456789");
+    expect(JSON.stringify(observed)).not.toContain("345678");
+    const refreshed=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-a",allowedCommands:["help"]});expect(observed.some(({outcome})=>outcome==="refreshed")).toBe(true);
+    session="session-b";expect(broker.snapshot("codex-sol")).toMatchObject({present:false,status:"revoked",providerSessionFresh:false,effectiveCommands:[]});expect(await broker.execute(refreshed,request)).toBeUndefined();
+    expect(observed.filter(({outcome,reason})=>outcome==="revoked"&&reason==="provider-session-stale")).toHaveLength(1);
+    broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-b",allowedCommands:["help"]});now+=10*60_000;expect(broker.snapshot("codex-sol")).toMatchObject({present:false,status:"expired",effectiveCommands:[]});
+    expect(observed.filter(({outcome,reason})=>outcome==="expired"&&reason==="lease-expired")).toHaveLength(1);
+    expect(observed.filter(({outcome})=>outcome==="rejected").every(({reason})=>["invalid-request-id","request-id-substitution","bounded-call-limit","permission-not-granted"].includes(reason))).toBe(true);
+    expect(broker.audit()).toEqual(observed);
+  });
+
   it("binds identity and request IDs, supports only exact transport replay, and rechecks revocation",async()=>{const api=await fixture();const input={invocation:{command:"help" as const},clientSubmissionId:"agent-tool-help-01"};const first=await api.broker.execute(api.token,input);expect(first).toMatchObject({kind:"private-help",commands:["poll","help"],duplicate:false});expect(await api.broker.execute(api.token,input)).toEqual(first);expect(await api.broker.execute(api.token,{invocation:{command:"poll",question:"Substituted",options:["A","B"]},clientSubmissionId:"agent-tool-help-01"})).toEqual({kind:"private-error",message:"That request ID is already bound to a different room command."});expect(await api.broker.execute(api.token,{invocation:{command:"poll",question:"Different",options:["A","B"]},clientSubmissionId:"agent-tool-poll-01"})).toMatchObject({kind:"accepted",duplicate:false});expect(await api.broker.execute(api.token,{invocation:{command:"polls"},clientSubmissionId:"short"})).toEqual({kind:"private-error",message:"A valid command request ID is required."});
     const next=api.store.snapshot().roster!.entries.map((entry)=>entry.agentId==="codex-sol"?{...entry,commandPermissions:{allowAll:false,allowed:["help" as const]}}:entry);await api.store.updateRoster(2,next);const revokedToken=api.broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-bound",allowedCommands:["help","poll"]});expect(await api.broker.execute(revokedToken,{invocation:{command:"poll",question:"No",options:["A","B"]},clientSubmissionId:"agent-tool-poll-02"})).toEqual({kind:"private-error",message:"That command is not available to this participant."});
   });

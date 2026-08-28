@@ -16,9 +16,7 @@ export class HumanPresenceAnnouncements {
   constructor(
     private readonly announce: (human: PresenceHuman, event: HumanPresenceEvent) => Promise<void>,
     private readonly graceMs = HUMAN_DEPARTURE_GRACE_MS,
-    private readonly onError: (error: unknown, event: HumanPresenceEvent) => void = (error, event) => {
-      console.error(`Failed to announce room ${event === "joined" ? "arrival" : "departure"}`, error);
-    },
+    private readonly onError: (error: unknown, event: HumanPresenceEvent) => void = () => undefined,
   ) {}
 
   arrival(human: PresenceHuman, becamePresent: boolean) {
