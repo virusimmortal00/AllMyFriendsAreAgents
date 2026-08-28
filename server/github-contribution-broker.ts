@@ -39,6 +39,7 @@ export class GitHubContributionBroker {
     private readonly repository: string,
     private readonly baseBranch = "main",
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly repositoryAuthority?: () => Promise<string | null>,
   ) {
     if (!REPOSITORY.test(repository) || !baseBranch || baseBranch.startsWith("-") || baseBranch.includes("..")) throw new Error("A canonical GitHub repository and base branch are required");
   }
@@ -96,6 +97,10 @@ export class GitHubContributionBroker {
     await requireReconciledSourceWork(this.rooms, "github-broker", request.idempotencyKey);
     await requireReconciledSourceWork(this.rooms, "assignment", request.assignmentId);
     if (Object.keys(request).some((field) => !REQUEST_FIELDS.has(field))) throw new Error("Request contains a field outside the GitHub broker contract");
+    if (!["READ_ISSUE", "READ_PULL_REQUEST", "READ_CHECKS"].includes(request.operation)) {
+      const authority = await this.repositoryAuthority?.();
+      if (authority) throw new Error(`Repository connection authority is unavailable (${authority})`);
+    }
     const latestMember = this.developers.latest(auth.member.memberId);
     const capability = GITHUB_OPERATION_CAPABILITY[request.operation];
     if (!latestMember || latestMember.revision !== auth.member.revision || !latestMember.capabilities.includes(capability)) throw new Error("Developer identity or operation capability changed");

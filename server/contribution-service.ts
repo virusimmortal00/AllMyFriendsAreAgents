@@ -32,6 +32,7 @@ export class ContributionService {
     private readonly assignments: AssignmentRecordStore, private readonly rooms: RoomRepository, private readonly developers: DeveloperTeamRegistry,
     private readonly records: ContributionStore, private readonly external: ContributionExternalExecutor, private readonly repositoryPath: string,
     private readonly repository: string, private readonly source = new ReadonlySourceControlAdapter(), private readonly now: () => string = () => new Date().toISOString(),
+    private readonly repositoryAuthority?: () => Promise<string | null>,
   ) {}
 
   list() { return this.records.list(); }
@@ -58,6 +59,7 @@ export class ContributionService {
   private async createLocked(auth: AuthenticatedDeveloper, input: CreateHandoffInput): Promise<ContributionResult> {
     try {
       if (!this.currentCapability(auth, "CONTRIBUTION_HANDOFF")) return { kind: "rejected", reason: "Developer identity or handoff capability changed" };
+      const authority = await this.repositoryAuthority?.(); if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority})` };
       validateCreateShape(input); const requestDigest = contributionDigest(input); const existing = this.records.list().find((record) => record.source.authorId === auth.member.memberId && record.handoffKey === input.idempotencyKey);
       if (existing) { const blocker=await sourceWorkReconciliationBlocker(this.rooms,"contribution",existing.contributionId);if(blocker)return{kind:"rejected",reason:`Contribution provenance requires reconciliation (${blocker})`};return existing.handoffRequestDigest === requestDigest ? { kind: "ok", value: existing } : { kind: "rejected", reason: "Handoff idempotency key was already used for another request" };}
       const { assignment, task, improvement, manifest } = await this.deriveSource(auth.member.memberId, auth.member.revision, input);
@@ -79,6 +81,7 @@ export class ContributionService {
 
   private async reviewLocked(auth: AuthenticatedDeveloper, id: string, expectedRevision: number, decision: "ACCEPTED" | "REJECTED", summary: string): Promise<ContributionResult> {
     const record = this.records.get(id); if (!record) return { kind: "not_found" }; if (record.revision !== expectedRevision) return conflict(record);
+    const authority = await this.repositoryAuthority?.(); if (authority) return this.reject(record, auth.member.memberId, "REVIEW_REJECTED", `Repository connection authority is unavailable (${authority})`);
     if (!this.currentCapability(auth, "CONTRIBUTION_REVIEW") || auth.member.memberId === record.source.authorId) return this.reject(record, auth.member.memberId, "REVIEW_REJECTED", "An independent current reviewer is required");
     if (record.stage !== "REVIEW_PENDING") return this.reject(record, auth.member.memberId, "REVIEW_REJECTED", "Contribution is not awaiting review");
     const current = await this.revalidate(record); if (current) return this.block(record, auth.member.memberId, "REVIEW_STALE", current);
@@ -97,6 +100,7 @@ export class ContributionService {
 
   private async approveLocked(actorId: string, id: string, expectedRevision: number, kind: "PUBLICATION" | "MERGE" | "DEPLOYMENT", input: { environment?: string; artifactDigest?: string }): Promise<ContributionResult> {
     const record = this.records.get(id); if (!record) return { kind: "not_found" }; if (record.revision !== expectedRevision) return conflict(record);
+    const authority = await this.repositoryAuthority?.(); if (authority) return this.reject(record, actorId, `${kind}_APPROVAL_REJECTED`, `Repository connection authority is unavailable (${authority})`);
     const expectedStage = kind === "PUBLICATION" ? "REVIEW_ACCEPTED" : kind === "MERGE" ? "PR_PUBLISHED" : "MERGED";
     if (record.stage !== expectedStage) return this.reject(record, actorId, `${kind}_APPROVAL_REJECTED`, `${kind} approval is out of order`);
     const stale = await this.revalidate(record); if (stale) return this.block(record, actorId, `${kind}_APPROVAL_STALE`, stale);
@@ -113,6 +117,7 @@ export class ContributionService {
 
   private async executeLocked(actorId: string, id: string, expectedRevision: number, kind: "PUBLICATION" | "MERGE" | "DEPLOYMENT"): Promise<ContributionResult> {
     const record = this.records.get(id); if (!record) return { kind: "not_found" }; if (record.revision !== expectedRevision) return conflict(record);
+    const authority = await this.repositoryAuthority?.(); if (authority) return this.reject(record, actorId, `${kind}_EXECUTION_REJECTED`, `Repository connection authority is unavailable (${authority})`);
     const approval = record.approvals.findLast((value) => value.kind === kind && !value.consumedAt);
     if (!approval || approval.revision >= record.revision) return this.reject(record, actorId, `${kind}_EXECUTION_REJECTED`, `A prior exact unused ${kind.toLowerCase()} approval is required`);
     const stage = kind === "PUBLICATION" ? "REVIEW_ACCEPTED" : kind === "MERGE" ? "PR_PUBLISHED" : "MERGED";
