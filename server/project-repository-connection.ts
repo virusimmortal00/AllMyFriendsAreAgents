@@ -4,6 +4,11 @@ import { chmod, mkdir, readFile, realpath, rename, stat, writeFile } from "node:
 import path from "node:path";
 import { promisify } from "node:util";
 
+export {
+  LegacyPatGitHubCredentialProvider,
+  LegacyPatGitHubCredentialProvider as ServerHeldRepositoryCredentials,
+} from "./github-credential-provider.js";
+
 const execFileAsync = promisify(execFile);
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_BRANCH = /^(?![-./])(?!.*(?:\.\.|\/\/|@\{|\\|\s|[~^:?*\[]))[A-Za-z0-9._/-]{1,240}$/;
@@ -279,18 +284,6 @@ export class ProjectRepositoryServiceRegistry<T> {
     const scope = { projectId, connection, services: this.create(projectId, connection), writerSlot: new Set<string>(), brokerAudit: audit };
     this.scopes.set(projectId, scope); return scope;
   }
-}
-
-/** Secrets remain memory-only; persisted records and projections contain only opaque references. */
-export class ServerHeldRepositoryCredentials {
-  private readonly values = new Map<string, string>();
-  register(projectId: string, reference: string, credential: string) {
-    if (!SAFE_ID.test(projectId) || !SAFE_ID.test(reference) || !credential) throw new Error("A canonical project, credential reference, and server-held credential are required.");
-    const key = `${projectId}\0${reference}`; if (this.values.has(key)) throw new Error("Credential reference is already registered.");
-    this.values.set(key, credential);
-  }
-  available(projectId: string, reference: string) { return this.values.has(`${projectId}\0${reference}`); }
-  forServerOperation(projectId: string, reference: string) { return this.values.get(`${projectId}\0${reference}`); }
 }
 
 export function publicRepositoryConnectionStatus(connection?: ProjectRepositoryConnection): PublicRepositoryConnectionStatus {

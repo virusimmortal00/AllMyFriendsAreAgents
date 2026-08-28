@@ -3,7 +3,8 @@ import type { GhSelector } from "../shared/command-domain.js";
 import { GitHubReadAdapter, GitHubReadFailure, type GitHubEndpointFamily, type GitHubReadFetch } from "./github-read-adapter.js";
 import { GitHubReadService, githubReadFailureText } from "./github-read-service.js";
 import { GitHubReadStore, type GitHubReadCacheEvent } from "./github-read-store.js";
-import type { ProjectRepositoryConnection, ProjectRepositoryConnectionService, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
+import type { GitHubCredentialProvider } from "./github-credential-provider.js";
+import type { ProjectRepositoryConnection, ProjectRepositoryConnectionService } from "./project-repository-connection.js";
 import type { IdentityRepository } from "./storage/identity-domain.js";
 
 export interface RoomBoundGitHubReadOptions {
@@ -25,7 +26,7 @@ export class RoomBoundGitHubReadService {
   constructor(
     private readonly identities: GitHubIdentityReader|((roomId:string)=>GitHubIdentityReader|Promise<GitHubIdentityReader>),
     private readonly connectionForProject: (projectId: string) => ProjectRepositoryConnectionService,
-    private readonly credentials: ServerHeldRepositoryCredentials,
+    private readonly credentials: GitHubCredentialProvider,
     private readonly options: RoomBoundGitHubReadOptions = {},
   ) { this.store = new GitHubReadStore(undefined, { ttlMs: options.ttlMs, maxEntries: options.maxEntries, maxActive: options.maxActive,
     maxQueued: options.maxQueued, operationLog: options.operationLog }); }
@@ -88,13 +89,20 @@ export class RoomBoundGitHubReadService {
       || latest.remote.canonical !== connection.remote.canonical
       || verified.connection.connectionId !== connection.connectionId || verified.connection.revision !== connection.revision
       || verified.connection.remote.canonical !== connection.remote.canonical) throw new GitHubReadFailure("connection-stale", "none");
-    const token = this.credentials.forServerOperation(project.projectId, connection.credentialReference);
-    if (!token) throw new GitHubReadFailure("credential-missing", "none");
+    const credential = await this.credentials.resolve({
+      projectId: project.projectId,
+      credentialReference: connection.credentialReference,
+      connectionId: connection.connectionId,
+      connectionRevision: connection.revision,
+      repository: connection.remote.canonical,
+    });
+    if (!credential) throw new GitHubReadFailure("credential-missing", "none");
     const cacheScope = `${project.projectId}:${connection.connectionId}:${connection.revision}:${connection.remote.canonical}`;
     const authorizationLease=`sha256:${createHash("sha256").update(JSON.stringify({serverId:scope.serverId,roomId:scope.roomId,roomAttachmentRevision:scope.roomAttachmentRevision??0,
       projectId:project.projectId,projectRevision:project.revision,connectionId:connection.connectionId,connectionRevision:connection.revision,
-      repository:connection.remote.canonical,identityDigest:connection.identityDigest,credentialReference:connection.credentialReference})).digest("hex")}`;
-    return { cacheScope, authorizationLease, connection, token };
+      repository:connection.remote.canonical,identityDigest:connection.identityDigest,credentialReference:connection.credentialReference,
+      credentialProvider:credential.provider,credentialAuthorityRevision:credential.authorityRevision})).digest("hex")}`;
+    return { cacheScope, authorizationLease, connection, token:credential.token };
   }
 
   private async validateBinding(roomId:string,binding:AuthorizedBinding){const current=await this.resolve(roomId);if(current.authorizationLease!==binding.authorizationLease||current.cacheScope!==binding.cacheScope)throw new GitHubReadFailure("connection-stale","none");}
