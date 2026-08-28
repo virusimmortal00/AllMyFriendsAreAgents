@@ -1,54 +1,67 @@
-import { useState } from "react";
-import { ApiRequestError, loadDiagnostic, loadDiagnostics, loadOwnerCapabilityDiagnostics, type CapabilityDiagnosticsResponse } from "./api";
-import type { ActiveAgentId } from "../shared/participants";
+import { useMemo, useState } from "react";
+import { ApiRequestError, loadOwnerCapabilityDiagnostics, queryOwnerDiagnostics, type CapabilityDiagnosticsResponse, type OwnerDiagnosticChunk, type OwnerDiagnosticRecord, type OwnerDiagnosticsResult } from "./api";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction";
 
-export interface DiagnosticRecord {
-  readonly recordId: string;
-  readonly agentId: string;
-  readonly attemptId: string;
-  readonly generationId: string | null;
-  readonly promptFingerprint: string;
-  readonly reason: string;
-  readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
-  readonly diagnosticText: string | null;
-  readonly createdAt: string;
+const streams = ["server-service-lifecycle", "opencode-harness", "openrouter-provider", "generations", "capability-decisions", "security-audit"] as const;
+const scopes = ["self", "room", "project", "operator"] as const;
+type StreamChoice = "all" | (typeof streams)[number];
+type ScopeChoice = (typeof scopes)[number];
+interface QueryContext { readonly from: string; readonly to: string; readonly scope: ScopeChoice; readonly stream: StreamChoice; readonly correlation: string; }
+
+const safeFailure = (error: unknown) => error instanceof ApiRequestError && [401, 403, 404].includes(error.status || 0) ? "Diagnostics are unavailable. Sign in as the owner on the server host." : "The diagnostics query could not be completed.";
+const safe = (value: unknown) => redactDiagnosticSecrets(typeof value === "string" ? value : JSON.stringify(value, null, 2));
+
+function combinePages(previous: OwnerDiagnosticsResult | null, next: OwnerDiagnosticsResult, append: boolean): OwnerDiagnosticsResult {
+  if (!append || !previous) return next;
+  return { ...next, records: [...previous.records, ...next.records], chunks: [...previous.chunks, ...next.chunks], scannedBytes: previous.scannedBytes + next.scannedBytes, serializedBytes: previous.serializedBytes + next.serializedBytes, malformedRecords: previous.malformedRecords + next.malformedRecords, scanLimitReached: previous.scanLimitReached || next.scanLimitReached };
 }
 
-function safeFailure(error: unknown) {
-  if (error instanceof ApiRequestError && [401, 403, 404].includes(error.status || 0)) return "Diagnostics are unavailable. Check your diagnostic-read authorization.";
-  return "The diagnostic request could not be completed. Try again when you are ready.";
+function decodeBase64(value: string) { return Uint8Array.from(atob(value), (character) => character.charCodeAt(0)); }
+
+export function assembleDiagnosticChunks(chunks: readonly OwnerDiagnosticChunk[]): OwnerDiagnosticRecord[] {
+  const grouped = new Map<string, OwnerDiagnosticChunk[]>();
+  for (const chunk of chunks) grouped.set(chunk.recordId, [...(grouped.get(chunk.recordId) ?? []), chunk]);
+  const records: OwnerDiagnosticRecord[] = [];
+  for (const recordChunks of grouped.values()) {
+    const ordered = [...recordChunks].sort((left, right) => left.offset - right.offset);
+    const parts: Uint8Array[] = []; let offset = 0;
+    for (const chunk of ordered) {
+      if (chunk.offset !== offset || chunk.encoding !== "base64-json-utf8") { parts.length = 0; break; }
+      const part = decodeBase64(chunk.data); parts.push(part); offset += part.length;
+    }
+    if (!parts.length || !ordered.at(-1)?.final || offset !== ordered[0].totalBytes) continue;
+    const bytes = new Uint8Array(offset); let position = 0;
+    for (const part of parts) { bytes.set(part, position); position += part.length; }
+    try { records.push(JSON.parse(new TextDecoder().decode(bytes)) as OwnerDiagnosticRecord); }
+    catch { /* A malformed assembled record remains safely unrendered. */ }
+  }
+  return records;
 }
 
-function redact(value: string) {
-  return redactDiagnosticSecrets(value);
-}
-
-export function Diagnostics({ agents }: { agents: readonly ActiveAgentId[] }) {
-  const [token, setToken] = useState("");
-  const [agentId, setAgentId] = useState(agents[0] || "");
-  const [search, setSearch] = useState("");
-  const [items, setItems] = useState<DiagnosticRecord[] | null>(null);
-  const [selected, setSelected] = useState<DiagnosticRecord | null>(null);
+export function Diagnostics() {
+  const [scope, setScope] = useState<ScopeChoice>("operator");
+  const [stream, setStream] = useState<StreamChoice>("all");
+  const [correlation, setCorrelation] = useState("");
+  const [result, setResult] = useState<OwnerDiagnosticsResult | null>(null);
+  const [selected, setSelected] = useState<OwnerDiagnosticRecord | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [queryContext, setQueryContext] = useState<QueryContext | null>(null);
   const [capabilities, setCapabilities] = useState<CapabilityDiagnosticsResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
+  const visibleRecords = useMemo(() => result ? [...result.records, ...assembleDiagnosticChunks(result.chunks)] : [], [result]);
 
-  async function refresh() {
-    if (!token.trim() || !agentId) { setError("Enter a diagnostic-read token and select an agent."); return; }
-    setLoading(true); setError(""); setSelected(null);
-    try { setItems((await loadDiagnostics(token.trim(), agentId, search)).items); }
-    catch (failure) { setItems(null); setError(safeFailure(failure)); }
-    finally { setLoading(false); }
-  }
-  async function openDetail(recordId: string) {
-    if (!token.trim()) return;
+  async function load(cursor?: string, correlationOverride?: string, streamOverride: StreamChoice = stream) {
+    const context = cursor && queryContext ? queryContext : { from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), scope, stream: streamOverride, correlation: correlationOverride ?? correlation };
+    if (!cursor) { setQueryContext(context); setSelected(null); }
     setLoading(true); setError("");
-    try { setSelected(await loadDiagnostic(token.trim(), agentId, recordId)); }
-    catch (failure) { setSelected(null); setError(safeFailure(failure)); }
+    try {
+      const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.stream === "all" ? streams : [context.stream], correlation: context.correlation.trim() ? { correlationId: context.correlation.trim().slice(0, 200) } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
+      setResult((previous) => combinePages(previous, page, Boolean(cursor)));
+    } catch (failure) { setResult(null); setError(safeFailure(failure)); }
     finally { setLoading(false); }
   }
+
   async function refreshCapabilities() {
     setLoading(true); setCapabilityError("");
     try { setCapabilities(await loadOwnerCapabilityDiagnostics()); }
@@ -56,24 +69,28 @@ export function Diagnostics({ agents }: { agents: readonly ActiveAgentId[] }) {
     finally { setLoading(false); }
   }
 
-  return <section className="tasks-workspace diagnostics-workspace" aria-label="Authorized diagnostics">
-    <header className="tasks-header"><div><h2>Authorized diagnostics</h2><p>Private, bounded diagnostic records are requested only when you press Search or Refresh. They are never added to the room transcript.</p></div></header>
+  return <section className="tasks-workspace diagnostics-workspace" aria-label="Owner diagnostics">
+    <header className="tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
     <div className="diagnostics-controls">
-      <label>Diagnostic-read token <input className="classic-input" aria-label="Diagnostic-read token" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} /></label>
-      <label>Agent <select className="classic-select" aria-label="Diagnostic agent" value={agentId} onChange={(event) => setAgentId(event.target.value)}>{agents.map((agent) => <option key={agent} value={agent}>{agent}</option>)}</select></label>
-      <label>Search <input className="classic-input" aria-label="Search diagnostics" maxLength={200} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <button type="button" className="classic-button" disabled={loading} onClick={() => void refresh()}>{loading ? "Loading…" : "Search / Refresh"}</button>
+      <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label>Correlation ID <input className="classic-input" aria-label="Correlation ID" value={correlation} maxLength={200} onChange={(event) => setCorrelation(event.target.value)} /></label>
+      <button type="button" className="classic-button" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
     </div>
     {error ? <p className="diagnostics-error" role="alert">{error}</p> : null}
-    {items ? <div className="diagnostics-results" aria-live="polite">{items.length ? items.map((item) => <button type="button" key={item.recordId} onClick={() => void openDetail(item.recordId)}><strong>{item.reason}</strong><span>{new Date(item.createdAt).toLocaleString()} · {item.promptFingerprint}</span></button>) : <p>No matching diagnostic records.</p>}</div> : <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p>}
-    {selected ? <article className="diagnostic-detail"><h3>{selected.reason}</h3><p><small>{selected.agentId} · {selected.attemptId} · {selected.promptFingerprint}</small></p><pre>{redact(selected.diagnosticText || "No diagnostic text was retained.")}</pre><dl>{Object.entries(selected.metadata).slice(0, 20).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{redact(String(value))}</dd></div>)}</dl></article> : null}
+    {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <>
+      <p role="status">{visibleRecords.length} bounded records · {result.scannedBytes} bytes scanned{result.malformedRecords ? ` · ${result.malformedRecords} malformed records skipped` : ""}{result.scanLimitReached ? " · scan bound reached" : ""}</p>
+      <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} onClick={() => setSelected(item)}><strong>{item.event}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
+      {result.nextCursor ? <button type="button" className="classic-button" disabled={loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
+    </>}
+    {selected ? <article className="diagnostic-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><pre>{safe(selected.content)}</pre>{selected.correlationId ? <button type="button" className="classic-button" disabled={loading} onClick={() => { setCorrelation(selected.correlationId || ""); setStream("all"); void load(undefined, selected.correlationId, "all"); }}>Trace correlation across all streams</button> : null}</article> : null}
     <section className="diagnostic-detail capability-inspector" aria-label="Owner capability inspector">
-      <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested. Credentials and raw inputs are never returned.</p>
+      <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested.</p>
       <button type="button" className="classic-button" disabled={loading} onClick={() => void refreshCapabilities()}>Refresh capability diagnostics</button>
       {capabilityError ? <p className="diagnostics-error" role="alert">{capabilityError}</p> : null}
       {capabilities ? <><p><strong>Policy revision {capabilities.policyRevision}</strong> · {capabilities.audit.length} recent audit events</p>
-        <div className="diagnostics-results">{Object.values(capabilities.agents).map((agent) => <article key={agent.agentId}><strong>{agent.agentId}</strong><p>Effective commands: {agent.effectiveCommands.join(", ") || "none"}</p><ul>{Object.entries(agent.capabilities).map(([name, status]) => <li key={name}>{name}: {status.effective ? "effective" : `unavailable (${status.reason.replaceAll("_", " ")})`}{status.contract ? ` · ${status.contract}` : ""}</li>)}</ul><dl>{Object.entries(agent.commands).map(([name, command]) => <div key={name}><dt>{name}</dt><dd>{command.effective ? "effective" : `excluded: ${command.exclusions.join(", ") || "none"}`} · compiled {String(command.featureCompiled)} · config {String(command.requiredConfigPresent)} · ceiling {String(command.serverCeiling)} · roster {String(command.rosterEnabled)} · grant {String(command.requestedGrant)} · catalog {String(command.catalogRevisionCurrent)} · session fresh {String(command.providerSessionFresh)} · lease {command.lease.status}{command.lease.issuedAt ? ` issued ${command.lease.issuedAt}` : ""}{command.lease.expiresAt ? ` expires ${command.lease.expiresAt}` : ""}{command.lastManifestIssuance ? ` · manifest r${command.lastManifestIssuance.revision}` : ""}{command.lastRejection ? ` · last rejection ${command.lastRejection.reason}` : ""}</dd></div>)}</dl></article>)}</div>
-        <div className="diagnostics-results" role="region" aria-label="Capability audit events">{capabilities.audit.map((event) => <article key={event.id}><strong>{event.capability} · {event.outcome}</strong><span>{event.agentId} · {new Date(event.timestamp).toLocaleString()}{event.reason ? ` · ${redact(event.reason)}` : ""}</span></article>)}</div></> : null}
+        <div className="diagnostics-results">{Object.values(capabilities.agents).map((agent) => <article key={agent.agentId}><strong>{agent.agentId}</strong><p>Effective commands: {agent.effectiveCommands.join(", ") || "none"}</p><ul>{Object.entries(agent.capabilities).map(([name, status]) => <li key={name}>{name}: {status.effective ? "effective" : `unavailable (${status.reason.replaceAll("_", " ")})`}{status.contract ? ` · ${status.contract}` : ""}</li>)}</ul></article>)}</div>
+        <div className="diagnostics-results" role="region" aria-label="Capability audit events">{capabilities.audit.map((event) => <article key={event.id}><strong>{event.capability} · {event.outcome}</strong><span>{event.agentId} · {new Date(event.timestamp).toLocaleString()}{event.reason ? ` · ${safe(event.reason)}` : ""}</span></article>)}</div></> : null}
     </section>
   </section>;
 }

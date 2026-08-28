@@ -55,6 +55,14 @@ To disable or roll back, uncheck the roster `/gh` grant, remove the four `GITHUB
 
 ## Diagnostics and audit
 
+### Local owner diagnostics
+
+The Owner diagnostics view is a Wave 1, explicit-query surface. It uses the durable control-plane OWNER session and CSRF protection; it never asks for, stores, or sends a diagnostic bearer token. The server accepts `/api/control/diagnostics/query` only from a direct loopback transport peer and an authenticated OWNER. Forwarded, real-IP, host, and origin headers cannot turn a remote peer into a local one. Responses use `Cache-Control: no-store` and fail closed without returning diagnostic evidence.
+
+The view starts empty and queries through the same bounded diagnostics contract used by room tooling. An OWNER can inspect self-, room-, project-, and operator-visible records without impersonating another agent or joining every room; this operator override does not alter ordinary project membership, room membership, self identity, lease, capability, or record-visibility checks. Choose a visibility ceiling and one of the six authoritative streams, optionally enter a correlation ID, and explicitly query. The service retains the existing time, selector, result (max 200), scan (max 8 MiB), serialized-response (max 1 MiB), cursor, and fixed-file bounds. Pagination preserves the original query context, and oversized evidence is reassembled from bounded redacted chunks.
+
+Authorized content can include assembled prompts, raw and interpreted provider output, OpenCode stdout/stderr, tool outcomes, provider errors, usage, cost, routing, rate-limit, and cooldown evidence after centralized authentication-secret redaction. Ordinary model output is evidence and is never presented as hidden chain-of-thought. No remote, automatic, third-party, or Wave 2 diagnostics path is enabled by this surface.
+
 Manage Agents displays each effective state, the bounded reason, and remediation guidance. The existing Diagnostics screen contains an explicit-refresh Owner capability inspector. Only the durable control-plane owner can read `/api/control/capabilities?limit=100`; the limit is clamped to 1–200. The response contains policy revision, per-agent safe projections, and recent bounded audit events.
 
 Capability audit outcomes are `configured`, `attempted`, `allowed`, `denied`, `failed`, and `completed`. Records contain only an event ID, timestamp, agent/caller identifier, capability name, outcome, optional correlation ID, and a short redacted reason. Raw command input, selectors, prompts, responses, headers, credentials, and environment are excluded. The durable file retains only the configured maximum.

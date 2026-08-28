@@ -82,6 +82,7 @@ import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy
 import { CapabilityAuditStore } from "./capability-audit.js";
 import { traceMiddleware } from "./structured-logger.js";
 import { ApplicationLoggerFacade, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, type StreamRotationConfiguration } from "./authoritative-logging.js";
+import { registerOwnerDiagnosticsRoutes } from "./owner-diagnostics-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -1069,6 +1070,7 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
+registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
   try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }
   catch (error) { return response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." }); }

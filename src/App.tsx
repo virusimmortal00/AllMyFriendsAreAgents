@@ -827,7 +827,7 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics agents={enabledAgents} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
+          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
