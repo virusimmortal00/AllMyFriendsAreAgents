@@ -117,10 +117,12 @@ interface NormalizedQuery extends Omit<DiagnosticQuery, "streams" | "severities"
   maxSerializedBytes: number;
   after: OrderKey | null;
   chunkOffset: number;
+  scan: ScanPosition | null;
   fingerprint: string;
 }
 interface OrderKey { timestamp: string; stream: DiagnosticStream; recordId: string }
-interface CursorEnvelope { v: 1; fingerprint: string; after: OrderKey; chunkOffset?: number }
+interface ScanPosition { fileIndex: number; offset: number }
+interface CursorEnvelope { v: 1; fingerprint: string; after: OrderKey; chunkOffset?: number; scan?: ScanPosition }
 interface Candidate { record: DiagnosticRecord }
 
 const SEVERITIES = ["debug", "info", "warn", "error"] as const;
@@ -142,15 +144,27 @@ export class LocalFileDiagnosticsQueryService implements DiagnosticsQueryService
     let scannedBytes = 0;
     let malformedRecords = 0;
     let scanLimitReached = false;
+    const currentScan = query.scan || { fileIndex: 0, offset: 0 };
+    let nextScan: ScanPosition | null = null;
 
     // A bounded second listing closes the rename/create window of concurrent rotation.
-    for (let pass = 0; pass < 2 && scannedBytes < query.maxScannedBytes; pass++) {
-      for (const file of await this.resolveFiles(query.streams)) {
-        if (scannedBytes >= query.maxScannedBytes) { scanLimitReached = true; break; }
+    scanPasses: for (let pass = 0; pass < 2 && scannedBytes < query.maxScannedBytes; pass++) {
+      const files = await this.resolveFiles(query.streams);
+      for (let fileIndex = currentScan.fileIndex; fileIndex < files.length; fileIndex++) {
+        const file = files[fileIndex]!;
+        if (scannedBytes >= query.maxScannedBytes) {
+          scanLimitReached = true;
+          nextScan = { fileIndex, offset: fileIndex === currentScan.fileIndex ? currentScan.offset : 0 };
+          break scanPasses;
+        }
         const allowance = query.maxScannedBytes - scannedBytes;
-        const result = await readBoundedLines(file.filePath, allowance, scannedFiles);
+        const offset = fileIndex === currentScan.fileIndex ? currentScan.offset : 0;
+        const result = await readBoundedLines(file.filePath, allowance, scannedFiles, offset);
         scannedBytes += result.scannedBytes;
-        if (result.truncated) scanLimitReached = true;
+        if (result.truncated) {
+          scanLimitReached = true;
+          nextScan = { fileIndex, offset: result.nextOffset };
+        }
         for (const line of result.lines) {
           let value: unknown;
           try { value = JSON.parse(line); } catch { malformedRecords++; continue; }
@@ -162,6 +176,7 @@ export class LocalFileDiagnosticsQueryService implements DiagnosticsQueryService
           dedupe.add(dedupeKey);
           candidates.push({ record });
         }
+        if (result.truncated) break scanPasses;
       }
     }
 
@@ -198,9 +213,17 @@ export class LocalFileDiagnosticsQueryService implements DiagnosticsQueryService
       lastCompleted = key;
       completed++;
     }
-    const hasMore = continuation !== null || completed < eligible.length || scanLimitReached;
-    const cursorKey = continuation?.key || lastCompleted;
-    const nextCursor = hasMore && cursorKey ? encodeCursor({ v: 1, fingerprint: query.fingerprint, after: cursorKey, ...(continuation ? { chunkOffset: continuation.offset } : {}) }) : null;
+    const hasEligible = completed < eligible.length;
+    const hasMore = continuation !== null || hasEligible || scanLimitReached;
+    const cursorKey = continuation?.key || lastCompleted || query.after;
+    const cursorScan = continuation || hasEligible ? currentScan : nextScan;
+    const nextCursor = hasMore && cursorKey ? encodeCursor({
+      v: 1,
+      fingerprint: query.fingerprint,
+      after: cursorKey,
+      ...(continuation ? { chunkOffset: continuation.offset } : {}),
+      ...(cursorScan ? { scan: cursorScan } : {}),
+    }) : null;
     const result = { records, chunks, nextCursor, scannedBytes, serializedBytes: 0, malformedRecords, scanLimitReached };
     for (let index = 0; index < 4; index++) {
       const measured = Buffer.byteLength(JSON.stringify(result));
@@ -259,13 +282,15 @@ function normalizeQuery(input: DiagnosticQuery): NormalizedQuery {
   const fingerprint = digest(basis);
   let after: OrderKey | null = null;
   let chunkOffset = 0;
+  let scan: ScanPosition | null = null;
   if (input.cursor !== undefined) {
     const cursor = decodeCursor(input.cursor);
     if (cursor.fingerprint !== fingerprint) throw new DiagnosticsQueryError("invalid-cursor");
     after = cursor.after;
     chunkOffset = cursor.chunkOffset || 0;
+    scan = cursor.scan || null;
   }
-  return { ...basis, after, chunkOffset, fingerprint };
+  return { ...basis, after, chunkOffset, scan, fingerprint };
 }
 
 function authorizeScope(caller: DiagnosticCaller, query: NormalizedQuery, projectId: string) {
@@ -330,24 +355,30 @@ function normalizeRecord(value: unknown, stream: DiagnosticStream, projectId: st
 
 const ENVELOPE_KEYS = new Set(["envelopeVersion", "schemaVersion", "recordId", "id", "stream", "timestamp", "time", "severity", "level", "event", "type", "projectId", "project", "projectPath", "roomId", "agentId", "agent", "selfId", "operatorId", "generationId", "correlationId", "traceId", "spanId", "requestId", "visibility", "service", "serviceVersion", "instanceId", "deploymentCommit", "deploymentEpoch", "environment", "content"]);
 
-async function readBoundedLines(filePath: string, allowance: number, seen: Set<string>) {
+async function readBoundedLines(filePath: string, allowance: number, seen: Set<string>, offset = 0) {
   let handle;
   try {
     handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = await handle.stat();
-    if (!before.isFile()) return { lines: [] as string[], scannedBytes: 0, truncated: false };
-    const identity = `${before.dev}:${before.ino}:${before.size}:${before.mtimeMs}`;
-    if (seen.has(identity)) return { lines: [] as string[], scannedBytes: 0, truncated: false };
+    if (!before.isFile() || offset >= before.size) return { lines: [] as string[], scannedBytes: 0, truncated: false, nextOffset: before.size };
+    const identity = `${before.dev}:${before.ino}:${before.size}:${before.mtimeMs}:${offset}`;
+    if (seen.has(identity)) return { lines: [] as string[], scannedBytes: 0, truncated: false, nextOffset: offset };
     seen.add(identity);
-    const bytes = Math.min(before.size, allowance);
-    const start = Math.max(0, before.size - bytes);
+    const end = before.size - offset;
+    const bytes = Math.min(end, allowance);
+    const start = end - bytes;
     const buffer = Buffer.alloc(bytes);
     const { bytesRead } = await handle.read(buffer, 0, bytes, start);
     let text = buffer.subarray(0, bytesRead).toString("utf8");
-    if (start > 0) { const boundary = text.indexOf("\n"); text = boundary < 0 ? "" : text.slice(boundary + 1); }
-    if (before.size === 0 || buffer[bytesRead - 1] !== 0x0a) { const boundary = text.lastIndexOf("\n"); text = boundary < 0 ? "" : text.slice(0, boundary); }
-    return { lines: text.split("\n").filter(Boolean), scannedBytes: bytesRead, truncated: before.size > bytesRead };
-  } catch { return { lines: [] as string[], scannedBytes: 0, truncated: false }; }
+    let nextOffset = before.size - start;
+    if (start > 0) {
+      const boundary = text.indexOf("\n");
+      if (boundary < 0) text = "";
+      else { text = text.slice(boundary + 1); nextOffset = before.size - (start + boundary + 1); }
+    }
+    if (end < before.size || buffer[bytesRead - 1] !== 0x0a) { const boundary = text.lastIndexOf("\n"); text = boundary < 0 ? "" : text.slice(0, boundary); }
+    return { lines: text.split("\n").filter(Boolean), scannedBytes: bytesRead, truncated: start > 0, nextOffset };
+  } catch { return { lines: [] as string[], scannedBytes: 0, truncated: false, nextOffset: offset }; }
   finally { await handle?.close().catch(() => undefined); }
 }
 
@@ -365,7 +396,7 @@ function decodeCursor(value: string): CursorEnvelope {
   try {
     if (value.length > 2_000) throw new Error();
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as CursorEnvelope;
-    if (parsed.v !== 1 || typeof parsed.fingerprint !== "string" || !parsed.after || typeof parsed.after.timestamp !== "string" || !DIAGNOSTIC_STREAMS.includes(parsed.after.stream) || typeof parsed.after.recordId !== "string" || (parsed.chunkOffset !== undefined && (!Number.isSafeInteger(parsed.chunkOffset) || parsed.chunkOffset <= 0 || parsed.chunkOffset > DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes))) throw new Error();
+    if (parsed.v !== 1 || typeof parsed.fingerprint !== "string" || !parsed.after || typeof parsed.after.timestamp !== "string" || !DIAGNOSTIC_STREAMS.includes(parsed.after.stream) || typeof parsed.after.recordId !== "string" || (parsed.chunkOffset !== undefined && (!Number.isSafeInteger(parsed.chunkOffset) || parsed.chunkOffset <= 0 || parsed.chunkOffset > DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes)) || (parsed.scan !== undefined && (!isPlainObject(parsed.scan) || !Number.isSafeInteger(parsed.scan.fileIndex) || parsed.scan.fileIndex < 0 || parsed.scan.fileIndex >= DIAGNOSTICS_QUERY_LIMITS.maxDirectoryEntries || !Number.isSafeInteger(parsed.scan.offset) || parsed.scan.offset < 0))) throw new Error();
     return parsed;
   } catch { throw new DiagnosticsQueryError("invalid-cursor"); }
 }

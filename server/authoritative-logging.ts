@@ -36,6 +36,7 @@ interface Destination {
   end?(): void;
   destroy?(): void;
   on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  once?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
 export interface AuthoritativeLoggingOptions {
@@ -125,7 +126,7 @@ export class AuthoritativeLogging {
       const file = path.join(logging.logDirectory, `${stream}.jsonl`);
       const destination = options.sinkFactory
         ? await options.sinkFactory(stream, file, rotation)
-        : await buildRoll({ file, size: `${rotation.maxBytes}b`, frequency: rotation.frequencyMs, extension: ".jsonl", mode: 0o600, minLength: 0, maxLength: logging.maxBufferedBytes, limit: { count: rotation.retention, removeOtherLogFiles: true } });
+        : await buildRoll({ file, size: `${rotation.maxBytes}b`, frequency: rotation.frequencyMs, extension: ".jsonl", mode: 0o600, minLength: 0, limit: { count: rotation.retention, removeOtherLogFiles: true } });
       const metrics: LoggingMetrics = { dropped: 0, coalesced: 0, sinkFailures: 0, written: 0 };
       const state: StreamState = { destination, queue: [], queuedBytes: 0, draining: false, metrics, identical: new Map(), logger: undefined as unknown as PinoLogger };
       destination.on?.("error", () => { metrics.sinkFailures = Math.min(metrics.sinkFailures + 1, Number.MAX_SAFE_INTEGER); });
@@ -221,7 +222,10 @@ export class AuthoritativeLogging {
 
   private enqueue(state: StreamState, line: string) {
     const bytes = Buffer.byteLength(line);
-    if (bytes > this.maxBufferedBytes || state.queuedBytes + bytes > this.maxBufferedBytes) { state.metrics.dropped++; return; }
+    // Queue capacity bounds concurrent backlog, not the size of one complete
+    // evidence record. One oversized record may occupy an otherwise-empty
+    // queue so the logger never truncates or discards it solely due to size.
+    if (state.queue.length && state.queuedBytes + bytes > this.maxBufferedBytes) { state.metrics.dropped++; return; }
     state.queue.push(line); state.queuedBytes += bytes;
     if (!state.draining) { state.draining = true; queueMicrotask(() => void this.drain(state)); }
   }
@@ -231,7 +235,13 @@ export class AuthoritativeLogging {
     state.draining = true;
     while (state.queue.length) {
       const line = state.queue.shift()!; state.queuedBytes -= Buffer.byteLength(line);
-      try { state.destination.write(line); state.metrics.written++; }
+      try {
+        const writable = state.destination.write(line);
+        state.metrics.written++;
+        // Do not build an unbounded destination backlog. SonicBoom signals
+        // drain after it has accepted and persisted the complete logical line.
+        if (!writable && state.destination.once) await new Promise<void>((resolve) => state.destination.once!("drain", () => resolve()));
+      }
       catch { state.metrics.sinkFailures++; }
     }
     state.draining = false;

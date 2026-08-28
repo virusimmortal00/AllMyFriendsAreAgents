@@ -167,6 +167,35 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       await logging.close();
     });
 
+    it("continues scanning older evidence after chunking an oversized newest record", async () => {
+      const { service, write } = await make();
+      const target = record({ recordId: "older-target", timestamp: "2026-08-28T10:00:00.000Z", event: "generation.target", content: { marker: "must-reach" } });
+      const filler = Array.from({ length: 8 }, (_, index) => record({
+        recordId: `older-filler-${index}`,
+        timestamp: `2026-08-28T11:00:0${index}.000Z`,
+        event: "generation.filler",
+        content: { evidence: "f".repeat(24 * 1024) },
+      }));
+      const newest = record({ recordId: "oversized-newest", timestamp: "2026-08-28T12:00:00.000Z", event: "generation.oversized", content: { evidence: "x".repeat(600 * 1024) } });
+      await write("generations", [target, ...filler, newest]);
+
+      const found: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await service.query(projectCaller, {
+          ...baseQuery,
+          streams: ["generations"],
+          maxScannedBytes: 640 * 1024,
+          maxSerializedBytes: 64 * 1024,
+          ...(cursor ? { cursor } : {}),
+        });
+        found.push(...result.records.map(({ recordId }) => recordId));
+        cursor = result.nextCursor || undefined;
+        if (!cursor) break;
+      }
+      expect(found).toContain("older-target");
+    });
+
     it("deduplicates rotation overlap and keeps cursor pagination stable during rotation", async () => {
       const { service, write } = await make();
       const records = [4, 3, 2, 1].map((index) => record({ recordId: `page-${index}`, timestamp: `2026-08-28T12:00:0${index}.000Z` }));

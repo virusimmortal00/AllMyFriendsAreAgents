@@ -36,6 +36,9 @@ describe("structured logging helpers", () => {
       self: "[circular]",
     });
     expect(safeError(new Error("token=abcdef1234567890")).message).not.toContain("abcdef1234567890");
+    const prefixedCookies = sanitizeLogValue("request headers: Cookie: first=secret-one; second=secret-two") as string;
+    expect(prefixedCookies).toBe("request headers: Cookie: [REDACTED]");
+    expect(prefixedCookies).not.toMatch(/secret-one|secret-two/);
     expect(safeError(new Error("local failure"))).not.toHaveProperty("stack");
     expect(safeError(new Error("local failure"), true)).toHaveProperty("stack");
   });

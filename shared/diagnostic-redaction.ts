@@ -4,7 +4,7 @@ const CREDENTIAL = "(?:Bearer|Basic)\\s+[A-Za-z0-9._~+\\/=-]+";
 /** Defense-in-depth authentication-secret redaction for diagnostic text. Server callers remain authoritative. */
 export function redactDiagnosticSecrets(input: string) {
   return input
-    .replace(/((?:^|\n)(?:cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]")
+    .replace(/((?:^|[\s,;{[(])(?:cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]")
     .replace(new RegExp(`(["']?${SECRET_KEY}["']?\\s*[:=]\\s*)(["'])(?:\\\\.|[^"'])*?\\2`, "gi"), "$1$2[REDACTED]$2")
     .replace(new RegExp(`(${SECRET_KEY}\\s*[:=]\\s*)(?:${CREDENTIAL}|[^\\r\\n,;\\s}]+)`, "gi"), "$1[REDACTED]")
     .replace(new RegExp(`\\b${CREDENTIAL}`, "gi"), "[REDACTED CREDENTIAL]")

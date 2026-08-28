@@ -110,6 +110,18 @@ describe("authoritative logging foundation", () => {
     expect(JSON.stringify(record)).not.toContain("must-not-leak");
   });
 
+  it("preserves a record above the default 256 KiB queue capacity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-default-large-")); roots.push(root);
+    const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-1", projectPath: "/projects/one" });
+    const evidence = `begin:${"x".repeat(300 * 1024)}:end`;
+    logging.log("generations", "info", "generation.default-large-evidence", { rawResponse: evidence });
+    await logging.close();
+    const names = (await readdir(path.join(root, "logs", "authoritative-v1"))).filter((name) => name.startsWith("generations.") && name.endsWith(".jsonl"));
+    const persisted = (await Promise.all(names.map((name) => readFile(path.join(root, "logs", "authoritative-v1", name), "utf8")))).join("");
+    expect(JSON.parse(persisted).rawResponse).toBe(evidence);
+    expect(logging.metrics().generations).toMatchObject({ dropped: 0, written: 1 });
+  });
+
   it("routes generation, provider, tool, stdout, and stderr evidence with usable cross-stream correlation", async () => {
     const { destinations, logging } = await memoryFoundation();
     const journal = await GenerationJournal.open("/projects/one", undefined, undefined, logging);
