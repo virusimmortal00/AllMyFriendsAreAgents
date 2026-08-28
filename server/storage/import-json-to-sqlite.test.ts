@@ -39,6 +39,7 @@ describe("JSON to SQLite import", () => {
     const deployment = { schemaVersion: 1 as const, commitSha: "c".repeat(40), reference: { kind: "detached" as const }, worktree: "clean" as const, epoch: `deployment-v1:${"e".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
     await legacyStore.setDeployment(deployment);
     await legacyStore.setSession("codex-sol", "imported-session", "read-only", deployment.epoch);
+    await legacyStore.setSession("claude-sonnet", "legacy-writable-session", "writable", deployment.epoch);
     const assignment: AssignmentRecord = {
       assignmentId: "imported-assignment", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 1,
       agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/imported",
@@ -89,6 +90,7 @@ describe("JSON to SQLite import", () => {
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
     expect(importedStore.snapshot().deployment).toEqual(deployment);
     expect(importedStore.snapshot().sessions["codex-sol"]).toMatchObject({ id: "imported-session", codeEpoch: deployment.epoch });
+    expect(importedStore.snapshot().sessions["claude-sonnet"]).toBeUndefined();
     expect(importedStore.snapshot().sessions["codex-terra"]).toBeUndefined();
     expect(importedStore.snapshot().messages.find(({ speaker }) => speaker === "codex-terra")).toMatchObject({
       text: "Keep this historical speaker",
@@ -99,6 +101,8 @@ describe("JSON to SQLite import", () => {
       speakerName: "Importer",
     });
     expect(await importedStore.getAssignment("imported-assignment")).toEqual(assignment);
+    expect(await importedStore.identityMigrationEvidence()).toMatchObject({ sourceKind: "json-import", migrationVersion: "durable-identities/v1" });
+    expect(await importedStore.getSourceWorkBinding("assignment", "imported-assignment")).toMatchObject({ state: "needs-reconciliation", reasonCode: "legacy-missing-implementation-job-worker", implementationWorkerId: null });
     expect(await importedStore.getTask(taskIdentity)).toMatchObject({ revision: 2, description: "history survives" });
     expect((await importedStore.listTaskEvents(taskIdentity)).map(({ revision }) => revision)).toEqual([1, 2]);
     expect(await importedStore.getContinuation("imported-job")).toEqual(continuation);
@@ -107,6 +111,11 @@ describe("JSON to SQLite import", () => {
     expect(() => importedStore.importContinuations(continuationPolicy, [{ ...continuation, usage: { ...continuation.usage, tokens: -1 } }], [], [importedAudit])).toThrow(/job/);
     expect(await importedStore.getContinuation("imported-job")).toEqual(continuation); expect(await importedStore.listContinuationAudit("imported-job")).toEqual([importedAudit]);
     importedStore.close();
+    const importedDatabase = new DatabaseSync(databasePath);
+    expect(importedDatabase.prepare("SELECT lane,invalidated_at,invalidation_reason FROM agent_sessions WHERE agent_id='claude-sonnet'").get()).toEqual({
+      lane: "legacy-invalidated", invalidated_at: expect.any(String), invalidation_reason: "legacy-writable-session-invalidated",
+    });
+    importedDatabase.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(result);
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
@@ -137,7 +146,7 @@ describe("JSON to SQLite import", () => {
     destination.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
-      .rejects.toThrow("already contains a different default room");
+      .rejects.toThrow(/requires explicit overwrite authorization/i);
   });
 
   it("rejects a re-import whose only change is deployment provenance", async () => {
@@ -153,7 +162,7 @@ describe("JSON to SQLite import", () => {
 
     await source.setDeployment(changedDeployment);
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
-      .rejects.toThrow("already contains a different default room");
+      .rejects.toThrow(/source manifest changed/i);
     const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(persisted.snapshot().deployment).toEqual(firstDeployment);
     persisted.close();
@@ -176,6 +185,25 @@ describe("JSON to SQLite import", () => {
     persisted.close();
   });
 
+  it("rejects a sidecar-only change before replaying an already verified JSON import", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-sidecar-test-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    await RoomStore.open(projectRoot, sourceStateDirectory);
+    await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
+
+    await writeFile(path.join(sourceStateDirectory, "investigations.json"), JSON.stringify({
+      jobs: { "late-investigation": { investigationId: "late-investigation", status: "CHECKPOINTED", providerSessionId: "must-not-resume" } },
+    }));
+    await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
+      .rejects.toThrow(/source manifest changed/i);
+
+    const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await persisted.getSourceWorkBinding("investigation", "late-investigation")).toBeUndefined();
+    persisted.close();
+  });
+
   it("removes governed destination records before an explicit overwrite import", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-overwrite-test-"));
     temporaryDirectories.push(projectRoot);
@@ -185,16 +213,24 @@ describe("JSON to SQLite import", () => {
     const source = await RoomStore.open(projectRoot, sourceStateDirectory);
     await source.updateSettings({ roomName: "Replacement Room" });
     expect((await source.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "source-task", title: "Source task", actor, now: "2026-08-24T12:00:00.000Z" }))).kind).toBe("created");
+    await source.putAssignment({ assignmentId: "source-assignment", improvementId: "new", developerMemberId: "new-dev", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 2, manifestRevision: 1, pinnedBaseSha: "b".repeat(40), branch: "new-branch", observedHeadSha: "b".repeat(40), workspacePath: path.join(projectRoot, "new-worktree"), lifecycleStatus: "RECOVERABLE", recovery: { classification: "clean", reconciledAt: "2026-08-24T12:00:00.000Z", previousStatus: null, detail: "new" }, createdAt: "2026-08-24T12:00:00.000Z", updatedAt: "2026-08-24T12:00:00.000Z" });
 
     const destination = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect((await destination.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "destination-only-task", title: "Remove me", actor, now: "2026-08-24T11:00:00.000Z" }))).kind).toBe("created");
     await destination.putAssignment({ assignmentId: "destination-assignment", improvementId: "old", developerMemberId: "old-dev", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "old-branch", observedHeadSha: "a".repeat(40), workspacePath: path.join(projectRoot, "old-worktree"), lifecycleStatus: "RECOVERABLE", recovery: { classification: "clean", reconciledAt: "2026-08-24T11:00:00.000Z", previousStatus: null, detail: "old" }, createdAt: "2026-08-24T11:00:00.000Z", updatedAt: "2026-08-24T11:00:00.000Z" });
+    const destinationScope = (await destination.getStorageScope(DEFAULT_ROOM_ID))!;
+    await destination.putSourceWorkBinding({ schemaVersion: 1, kind: "assignment", workId: "destination-assignment", roomId: DEFAULT_ROOM_ID,
+      projectId: destinationScope.projectId, repositoryReferenceId: destinationScope.repositoryReferenceId, repositoryReferenceRevision: destinationScope.repositoryReferenceRevision,
+      originTaskId: null, originTaskRevision: null, implementationJobId: null, implementationWorkerId: null, state: "needs-reconciliation",
+      reasonCode: "stale-destination-binding", evidence: {}, revision: 1, createdAt: "2026-08-24T11:00:00.000Z", updatedAt: "2026-08-24T11:00:00.000Z" });
     destination.close();
 
     await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite: true });
     const replaced = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect((await replaced.listTasks()).items.map(({ taskId }) => taskId)).toEqual(["source-task"]);
-    expect(await replaced.listAssignments()).toEqual([]);
+    expect((await replaced.listAssignments()).map(({ assignmentId }) => assignmentId)).toEqual(["source-assignment"]);
+    expect(await replaced.getSourceWorkBinding("assignment", "destination-assignment")).toBeUndefined();
+    expect(await replaced.getSourceWorkBinding("assignment", "source-assignment")).toMatchObject({ state: "needs-reconciliation", reasonCode: "legacy-missing-implementation-job-worker" });
     replaced.close();
   });
 });

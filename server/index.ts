@@ -70,7 +70,7 @@ import { ConsultationRunner } from "./consultation-service.js";
 import { DurableConsultationMcpService } from "./consultation-mcp.js";
 import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
-import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
+import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
 import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
 import { GitHubReadStore } from "./github-read-store.js";
 import { GitHubReadService } from "./github-read-service.js";
@@ -79,13 +79,16 @@ import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
 import { CapabilityAuditStore } from "./capability-audit.js";
 import { StructuredLogger, traceMiddleware } from "./structured-logger.js";
+import { openJsonServerIdentity } from "./storage/json-server-identity.js";
+import type { IdentityRepository } from "./storage/identity-domain.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
-const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCOL_VERSION };
+const bootId = randomUUID();
+const serverIdentity: import("../shared/protocol.js").ServerIdentity = { instanceId: bootId, bootId, protocolVersion: ROOM_PROTOCOL_VERSION };
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
@@ -115,6 +118,10 @@ await structuredLogger.log("info", "server.startup.started", { phase: "configura
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
 const store = await openRoomRepository(projectRoot, storageConfiguration);
+const durableServer = storageConfiguration.backend === "sqlite"
+  ? await (store as RoomRepository & IdentityRepository).getDurableServer()
+  : await openJsonServerIdentity(storageConfiguration.dataDirectory);
+serverIdentity.serverId = durableServer.serverId;
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);

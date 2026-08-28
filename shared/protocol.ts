@@ -4,6 +4,7 @@ export type ImplementationUnavailableReason =
   | "participant-ineligible"
   | "no-active-assignment"
   | "assignment-owner-mismatch"
+  | "provenance-reconciliation-required"
   | "governance-invalid"
   | "confinement-unavailable";
 
@@ -14,6 +15,10 @@ export interface ImplementationCapability {
 }
 
 export interface ServerIdentity {
+  /** Durable process-independent identity. Older peers may omit it. */
+  serverId?: string;
+  /** Fresh process boot identity; instanceId remains its compatibility alias. */
+  bootId?: string;
   instanceId: string;
   protocolVersion: number;
 }

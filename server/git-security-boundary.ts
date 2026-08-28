@@ -7,6 +7,7 @@ import type { AssignmentRecord, AssignmentRecordStore } from "./assignment-recor
 import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId } from "./types.js";
+import { requireReconciledSourceWork } from "./storage/identity-domain.js";
 
 const execFileAsync = promisify(execFile);
 const SHA = /^[0-9a-f]{40}$/;
@@ -117,6 +118,7 @@ export class AssignmentGitBroker {
     }
     const claims = request.claims;
     if (claims.assignmentId !== this.assignmentId) throw new Error("Request targets another assignment broker");
+    await requireReconciledSourceWork(this.rooms, "assignment", claims.assignmentId);
     const assignment = await this.records.getAssignment(claims.assignmentId);
     if (!assignment || !sameAssignmentClaims(assignment, claims)) throw new Error("Assignment claims are stale or mismatched");
     if (assignment.lifecycleStatus !== "ACTIVE" && assignment.lifecycleStatus !== "RECOVERABLE") {

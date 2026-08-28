@@ -9,6 +9,7 @@ import {
 import { ContributionStore, contributionDigest } from "./contribution-store.js";
 import { GovernedSourceExecutor, ReadonlySourceControlAdapter } from "./source-control-adapter.js";
 import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
+import { authorizeSourceWorkForCurrentBoot, sourceWorkReconciliationBlocker } from "./storage/identity-domain.js";
 
 export interface ContributionExternalExecutor {
   publish(input: { contribution: ContributionRecord; approval: ExactContributionApproval }): Promise<{ number: number; url: string; resultId: string }>;
@@ -58,7 +59,7 @@ export class ContributionService {
     try {
       if (!this.currentCapability(auth, "CONTRIBUTION_HANDOFF")) return { kind: "rejected", reason: "Developer identity or handoff capability changed" };
       validateCreateShape(input); const requestDigest = contributionDigest(input); const existing = this.records.list().find((record) => record.source.authorId === auth.member.memberId && record.handoffKey === input.idempotencyKey);
-      if (existing) return existing.handoffRequestDigest === requestDigest ? { kind: "ok", value: existing } : { kind: "rejected", reason: "Handoff idempotency key was already used for another request" };
+      if (existing) { const blocker=await sourceWorkReconciliationBlocker(this.rooms,"contribution",existing.contributionId);if(blocker)return{kind:"rejected",reason:`Contribution provenance requires reconciliation (${blocker})`};return existing.handoffRequestDigest === requestDigest ? { kind: "ok", value: existing } : { kind: "rejected", reason: "Handoff idempotency key was already used for another request" };}
       const { assignment, task, improvement, manifest } = await this.deriveSource(auth.member.memberId, auth.member.revision, input);
       const timestamp = this.now(); const record: ContributionRecord = {
         schemaVersion: 1, contributionId: randomUUID(), handoffKey: input.idempotencyKey, handoffRequestDigest: requestDigest, revision: 1, stage: "REVIEW_PENDING",
@@ -70,7 +71,9 @@ export class ContributionService {
         testEvidence: validTests(input.testEvidence), unresolvedFindings: validFindings(input.unresolvedFindings), review: null, pullRequest: null, merged: null, deployed: null,
         approvals: [], blockedReason: null, createdAt: timestamp, updatedAt: timestamp,
       };
-      return { kind: "ok", value: await this.records.transact({ record, action: "HANDOFF_CREATED", actorId: auth.member.memberId, detail: "Immutable contribution handoff created" }) };
+      const created = await this.records.transact({ record, action: "HANDOFF_CREATED", actorId: auth.member.memberId, detail: "Immutable contribution handoff created" });
+      authorizeSourceWorkForCurrentBoot(this.rooms, "contribution", created.contributionId);
+      return { kind: "ok", value: created };
     } catch (error) { return { kind: "rejected", reason: message(error) }; }
   }
 
@@ -134,6 +137,8 @@ export class ContributionService {
 
   private async deriveSource(memberId: string, memberRevision: number, input: CreateHandoffInput) {
     if (input.expectedPolicyRevision !== CONTRIBUTION_POLICY_REVISION) throw new Error("Contribution policy revision changed");
+    const provenanceBlocker = await sourceWorkReconciliationBlocker(this.rooms, "assignment", input.assignmentId);
+    if (provenanceBlocker) throw new Error(`Assignment provenance requires reconciliation (${provenanceBlocker})`);
     const task = await this.rooms.getTask({ roomId: CANONICAL_ROOM_ID, taskId: input.taskId }); if (!task || task.revision !== input.expectedTaskRevision || !["active", "blocked"].includes(task.state)) throw new Error("Task is missing, stale, or not active");
     if (!task.references.some((reference) => reference.kind === "assignment" && reference.targetId === input.assignmentId)) throw new Error("Task is not linked to the assignment");
     const assignment = await this.assignments.getAssignment(input.assignmentId); if (!assignment || assignment.developerMemberId !== memberId || assignment.developerMemberConfigRevision !== memberRevision
@@ -147,6 +152,7 @@ export class ContributionService {
   }
 
   private async revalidate(record: ContributionRecord) {
+    const provenanceBlocker = await sourceWorkReconciliationBlocker(this.rooms, "contribution", record.contributionId); if (provenanceBlocker) return `Contribution provenance requires reconciliation (${provenanceBlocker})`;
     const member = this.developers.latest(record.source.authorId); if (!member || member.revision !== record.source.authorRevision) return "Author identity revision changed";
     if (record.review?.decision === "ACCEPTED") { const reviewer = this.developers.latest(record.review.reviewerId); if (!reviewer || reviewer.revision !== record.review.reviewerRevision || !reviewer.capabilities.includes("CONTRIBUTION_REVIEW")) return "Independent reviewer identity or capability changed"; }
     try { const value = await this.deriveSource(record.source.authorId, record.source.authorRevision, {
