@@ -171,7 +171,7 @@ pnpm run storage:import:sqlite -- \
 
 The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. Runtime storage backends are JSON and SQLite; PostgreSQL is not configurable until a complete room repository is available.
 
-Every generation is recorded in the independently rotated `.allmyfriendsareagents/logs/authoritative-v1/generation-provider-exchanges.*.jsonl` stream with its prompt, raw output, timing, parsed messages, and delivery outcome. Related tool outcomes, provider errors, and OpenCode stdout/stderr have separate streams in the same directory. These files may contain room history and worktree diffs, so treat the directory as sensitive.
+Every generation is recorded in the independently rotated `.allmyfriendsareagents/logs/authoritative-v1/generations.*.jsonl` stream with its prompt, raw output, timing, parsed messages, and delivery outcome. Correlated OpenCode harness and provider evidence is owned by the `opencode-harness` and `openrouter-provider` streams in the same directory. These files may contain room history and worktree diffs, so treat the directory as sensitive.
 
 ```bash
 pnpm run logs:agents

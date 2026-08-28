@@ -14,7 +14,7 @@ export interface GenerationJournalEvent {
 export class GenerationJournal {
   readonly path: string;
   private constructor(readonly logging: AuthoritativeLogging) {
-    this.path = path.join(logging.logDirectory, "generation-provider-exchanges.jsonl");
+    this.path = path.join(logging.logDirectory, "generations.jsonl");
   }
 
   static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), onError?: (error: unknown) => unknown, logging?: AuthoritativeLogging) {
@@ -29,28 +29,34 @@ export class GenerationJournal {
 
   async append(event: GenerationJournalEvent) {
     try {
-      const { cliStdout, cliStderr, providerErrors, toolOutcomes, ...exchange } = event;
-      const context = { generationId: event.generationId, selfId: event.agent };
-      this.logging.log("generation-provider-exchanges", event.type === "generation.failed" ? "error" : "info", event.type, exchange, context);
+      const {
+        cliStdout, cliStderr, providerErrors, providerUsage, providerCostUsd,
+        routing, rateLimit, cooldown, toolOutcomes, toolCalls, toolFailures, error,
+        ...generation
+      } = event;
+      const context = { generationId: event.generationId, correlationId: event.generationId, agentId: event.agent, selfId: event.agent, visibility: "project" as const };
+      this.logging.log("generations", event.type === "generation.failed" ? "error" : "info", event.type, generation, context);
       if (cliStdout !== undefined) {
-        this.logging.log("opencode-stdout", "info", "opencode.stdout", { output: cliStdout, generationEvent: event.type }, context);
+        this.logging.log("opencode-harness", "info", "opencode.stdout", { output: cliStdout, generationEvent: event.type }, context);
         for (const line of String(cliStdout).split("\n")) {
           if (!line.trim()) continue;
           try {
             const parsed = JSON.parse(line) as { type?: string; part?: { type?: string; state?: unknown; tool?: string; callID?: string; id?: string } };
-            if (parsed.type === "tool_use" || parsed.part?.type === "tool") this.logging.log("tool-outcomes", "info", "opencode.tool.outcome", { raw: line, interpreted: parsed }, context);
-            if (parsed.type === "error") this.logging.log("provider-errors", "error", "opencode.provider.error", { raw: line, interpreted: parsed }, context);
+            if (parsed.type === "tool_use" || parsed.part?.type === "tool") this.logging.log("opencode-harness", "info", "opencode.tool.outcome", { interpreted: parsed }, context);
           } catch {
             // The complete malformed line remains preserved in the stdout stream.
           }
         }
       }
-      if (cliStderr !== undefined) this.logging.log("opencode-stderr", "warn", "opencode.stderr", { output: cliStderr, generationEvent: event.type }, context);
-      if (providerErrors !== undefined || event.type === "generation.failed") {
-        this.logging.log("provider-errors", "error", "provider.exchange.failed", { errors: providerErrors, error: event.error, routing: event.routing, rateLimit: event.rateLimit, cooldown: event.cooldown }, context);
+      if (cliStderr !== undefined) this.logging.log("opencode-harness", "warn", "opencode.stderr", { output: cliStderr, generationEvent: event.type }, context);
+      if (providerErrors !== undefined || providerUsage !== undefined || providerCostUsd !== undefined || routing !== undefined || rateLimit !== undefined || cooldown !== undefined || error !== undefined || event.type === "generation.failed") {
+        this.logging.log("openrouter-provider", providerErrors !== undefined || event.type === "generation.failed" ? "error" : "info", providerErrors !== undefined || event.type === "generation.failed" ? "provider.exchange.failed" : "provider.exchange.observed", {
+          errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
+          routing, rateLimit, cooldown, error,
+        }, context);
       }
-      if (toolOutcomes !== undefined) this.logging.log("tool-outcomes", "info", "tool.outcomes", { outcomes: toolOutcomes }, context);
-      else if (event.toolCalls !== undefined) this.logging.log("tool-outcomes", "info", "tool.outcomes.summary", { toolCalls: event.toolCalls, toolFailures: event.toolFailures, generationEvent: event.type }, context);
+      if (toolOutcomes !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes", { outcomes: toolOutcomes }, context);
+      else if (toolCalls !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes.summary", { toolCalls, toolFailures, generationEvent: event.type }, context);
     } catch {
       // Logging is diagnostic infrastructure and never fails the served generation.
     }

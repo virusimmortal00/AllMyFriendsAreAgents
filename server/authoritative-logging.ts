@@ -6,28 +6,28 @@ import buildRoll from "pino-roll";
 import { currentLogContext, sanitizeLogValue, type LogContext, type LogVisibility, type StructuredLogIdentity } from "./structured-logger.js";
 
 export const AUTHORITATIVE_STREAMS = [
-  "application-events",
-  "generation-provider-exchanges",
-  "tool-outcomes",
-  "provider-errors",
-  "opencode-stdout",
-  "opencode-stderr",
+  "server-service-lifecycle",
+  "opencode-harness",
+  "openrouter-provider",
+  "generations",
+  "capability-decisions",
+  "security-audit",
 ] as const;
 export type AuthoritativeStream = typeof AUTHORITATIVE_STREAMS[number];
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-export interface StreamRotation { maxBytes: number; retention: number }
+export interface StreamRotation { maxBytes: number; frequencyMs: number; retention: number }
 export type StreamRotationConfiguration = Record<AuthoritativeStream, StreamRotation>;
 export interface LoggingMetrics { dropped: number; coalesced: number; sinkFailures: number; written: number }
 export type LoggingMetricsSnapshot = Record<AuthoritativeStream, LoggingMetrics>;
 
 export const DEFAULT_STREAM_ROTATION: StreamRotationConfiguration = {
-  "application-events": { maxBytes: 5 * 1024 * 1024, retention: 3 },
-  "generation-provider-exchanges": { maxBytes: 16 * 1024 * 1024, retention: 8 },
-  "tool-outcomes": { maxBytes: 8 * 1024 * 1024, retention: 6 },
-  "provider-errors": { maxBytes: 8 * 1024 * 1024, retention: 12 },
-  "opencode-stdout": { maxBytes: 24 * 1024 * 1024, retention: 4 },
-  "opencode-stderr": { maxBytes: 12 * 1024 * 1024, retention: 8 },
+  "server-service-lifecycle": { maxBytes: 5 * 1024 * 1024, frequencyMs: 24 * 60 * 60 * 1000, retention: 7 },
+  "opencode-harness": { maxBytes: 24 * 1024 * 1024, frequencyMs: 6 * 60 * 60 * 1000, retention: 8 },
+  "openrouter-provider": { maxBytes: 12 * 1024 * 1024, frequencyMs: 60 * 60 * 1000, retention: 24 },
+  "generations": { maxBytes: 16 * 1024 * 1024, frequencyMs: 12 * 60 * 60 * 1000, retention: 14 },
+  "capability-decisions": { maxBytes: 8 * 1024 * 1024, frequencyMs: 24 * 60 * 60 * 1000, retention: 14 },
+  "security-audit": { maxBytes: 8 * 1024 * 1024, frequencyMs: 24 * 60 * 60 * 1000, retention: 30 },
 };
 
 interface Destination {
@@ -125,7 +125,7 @@ export class AuthoritativeLogging {
       const file = path.join(logging.logDirectory, `${stream}.jsonl`);
       const destination = options.sinkFactory
         ? await options.sinkFactory(stream, file, rotation)
-        : await buildRoll({ file, size: `${rotation.maxBytes}b`, extension: ".jsonl", mode: 0o600, minLength: 0, maxLength: logging.maxBufferedBytes, limit: { count: rotation.retention, removeOtherLogFiles: true } });
+        : await buildRoll({ file, size: `${rotation.maxBytes}b`, frequency: rotation.frequencyMs, extension: ".jsonl", mode: 0o600, minLength: 0, maxLength: logging.maxBufferedBytes, limit: { count: rotation.retention, removeOtherLogFiles: true } });
       const metrics: LoggingMetrics = { dropped: 0, coalesced: 0, sinkFailures: 0, written: 0 };
       const state: StreamState = { destination, queue: [], queuedBytes: 0, draining: false, metrics, identical: new Map(), logger: undefined as unknown as PinoLogger };
       destination.on?.("error", () => { metrics.sinkFailures = Math.min(metrics.sinkFailures + 1, Number.MAX_SAFE_INTEGER); });
@@ -159,6 +159,14 @@ export class AuthoritativeLogging {
       operationId: context.operationId || (typeof safeFields.operationId === "string" ? safeFields.operationId : null),
       generationId: context.generationId || (typeof safeFields.generationId === "string" ? safeFields.generationId : null),
     };
+    const correlationId = context.correlationId
+      || (typeof safeFields.correlationId === "string" ? safeFields.correlationId : null)
+      || correlation.operationId || correlation.requestId || correlation.generationId || correlation.traceId;
+    const agentId = context.agentId || context.selfId
+      || (typeof safeFields.agentId === "string" ? safeFields.agentId : null)
+      || (typeof safeFields.agent === "string" ? safeFields.agent : null);
+    const outcome = typeof safeFields.outcome === "string" ? safeFields.outcome.slice(0, 120) : null;
+    const reason = typeof safeFields.reason === "string" ? safeFields.reason.slice(0, 500) : null;
     const envelope = {
       envelopeVersion: 1,
       timestamp,
@@ -167,13 +175,17 @@ export class AuthoritativeLogging {
       projectId: context.projectId || this.projectId,
       projectPath: context.projectPath || this.projectPath,
       ...correlation,
+      correlationId,
       visibility,
-      selfId: context.selfId || context.agentId || (typeof safeFields.agentId === "string" ? safeFields.agentId : null),
+      agentId,
+      selfId: context.selfId || agentId,
       roomId: context.roomId || this.options.roomId || null,
       operatorId: context.operatorId || null,
+      outcome,
+      reason,
       ...this.identity,
     };
-    for (const key of ["timestamp", "event", "stream", "projectId", "projectPath", "traceId", "spanId", "requestId", "operationId", "generationId", "visibility", "selfId", "roomId", "operatorId", "severity", "envelopeVersion"]) delete safeFields[key];
+    for (const key of ["timestamp", "event", "stream", "projectId", "projectPath", "traceId", "spanId", "requestId", "operationId", "generationId", "correlationId", "visibility", "agentId", "selfId", "roomId", "operatorId", "outcome", "reason", "severity", "envelopeVersion"]) delete safeFields[key];
     const signature = createHash("sha256").update(JSON.stringify({ level, event: boundedEvent, scope: { projectId: envelope.projectId, visibility, selfId: envelope.selfId, roomId: envelope.roomId, operatorId: envelope.operatorId }, fields: safeFields })).digest("hex");
     const now = this.now();
     let identical = state.identical.get(signature);
@@ -190,7 +202,7 @@ export class AuthoritativeLogging {
     this.write(state, level, { ...safeFields, ...envelope });
   }
 
-  application(level: LogLevel, event: string, fields: Record<string, unknown> = {}) { this.log("application-events", level, event, fields); }
+  application(level: LogLevel, event: string, fields: Record<string, unknown> = {}) { this.log("server-service-lifecycle", level, event, fields); }
   metrics(): LoggingMetricsSnapshot { return Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream) => [stream, cloneMetrics(this.states.get(stream)!.metrics)])) as LoggingMetricsSnapshot; }
 
   async flush() {
@@ -228,7 +240,19 @@ export class AuthoritativeLogging {
 
 export class ApplicationLoggerFacade {
   constructor(readonly foundation: AuthoritativeLogging) {}
-  log(level: LogLevel, event: string, fields: Record<string, unknown> = {}) { this.foundation.application(level, event, fields); return Promise.resolve(); }
+  log(level: LogLevel, event: string, fields: Record<string, unknown> = {}) {
+    const stream: AuthoritativeStream = /(?:^|[.-])(?:capability|tool-policy)(?:[.-]|$)/.test(event)
+      ? "capability-decisions"
+      : /(?:^|[.-])(?:security|audit|auth|lease|manifest|control-plane|room-command-tool|github)(?:[.-]|$)/.test(event)
+        ? "security-audit"
+        : /(?:^|[.-])(?:openrouter|provider)(?:[.-]|$)/.test(event)
+          ? "openrouter-provider"
+          : /(?:^|[.-])opencode(?:[.-]|$)/.test(event)
+            ? "opencode-harness"
+            : "server-service-lifecycle";
+    this.foundation.log(stream, level, event, fields);
+    return Promise.resolve();
+  }
   setDeployment(commit: string | null, epoch: string | null) { this.foundation.setDeployment(commit, epoch); }
   setProject(projectId: string, projectPath: string) { this.foundation.setProject(projectId, projectPath); }
   flush() { return this.foundation.flush(); }

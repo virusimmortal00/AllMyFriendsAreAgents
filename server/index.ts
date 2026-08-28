@@ -111,7 +111,7 @@ const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
 const streamRotation = Object.fromEntries(Object.entries(DEFAULT_STREAM_ROTATION).map(([stream, defaults]) => {
   const prefix = `ALL_MY_FRIENDS_ARE_AGENTS_LOG_${stream.replaceAll("-", "_").toUpperCase()}`;
-  return [stream, { maxBytes: configuredPositiveInteger(`${prefix}_MAX_BYTES`) || defaults.maxBytes, retention: configuredPositiveInteger(`${prefix}_RETENTION`) || defaults.retention }];
+  return [stream, { maxBytes: configuredPositiveInteger(`${prefix}_MAX_BYTES`) || defaults.maxBytes, frequencyMs: configuredPositiveInteger(`${prefix}_FREQUENCY_MS`) || defaults.frequencyMs, retention: configuredPositiveInteger(`${prefix}_RETENTION`) || defaults.retention }];
 })) as StreamRotationConfiguration;
 const loggingFoundation = await AuthoritativeLogging.open({
   dataDirectory: storageConfiguration.dataDirectory,

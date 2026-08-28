@@ -2,7 +2,8 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 interface JournalEntry {
-  type: string;
+  type?: string;
+  event?: string;
   generationId: string;
   agent: string;
   timestamp: string;
@@ -16,7 +17,7 @@ const journalDirectory = path.join(process.cwd(), ".allmyfriendsareagents", "log
 
 let contents: string;
 try {
-  const files = (await readdir(journalDirectory)).filter((name) => name.startsWith("generation-provider-exchanges.") && name.endsWith(".jsonl")).sort();
+  const files = (await readdir(journalDirectory)).filter((name) => /^(?:generations|openrouter-provider|opencode-harness)\./.test(name) && name.endsWith(".jsonl")).sort();
   contents = (await Promise.all(files.map((name) => readFile(path.join(journalDirectory, name), "utf8")))).join("");
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -45,13 +46,17 @@ console.log(`Agent generation exchange stream: ${journalDirectory}`);
 console.log(`Showing ${generations.length} of ${grouped.size} generations (newest first).`);
 
 for (const generation of generations) {
-  const started = generation.find(({ type }) => type === "generation.started");
-  const completed = generation.find(({ type }) => type === "generation.completed");
-  const cancelled = generation.find(({ type }) => type === "generation.cancelled");
-  const failed = generation.find(({ type }) => type === "generation.failed");
-  const interpreted = generation.find(({ type }) => type === "generation.interpreted");
-  const delivery = generation.find(({ type }) => type === "generation.delivery");
-  const retries = generation.filter(({ type }) => type === "generation.retry").length;
+  const kind = (entry: JournalEntry) => entry.type || entry.event;
+  const started = generation.find((entry) => kind(entry) === "generation.started");
+  const completed = generation.find((entry) => kind(entry) === "generation.completed");
+  const cancelled = generation.find((entry) => kind(entry) === "generation.cancelled");
+  const failed = generation.find((entry) => kind(entry) === "generation.failed");
+  const interpreted = generation.find((entry) => kind(entry) === "generation.interpreted");
+  const delivery = generation.find((entry) => kind(entry) === "generation.delivery");
+  const provider = generation.find((entry) => kind(entry)?.startsWith("provider.exchange."));
+  const stdout = generation.find((entry) => kind(entry) === "opencode.stdout");
+  const stderr = generation.find((entry) => kind(entry) === "opencode.stderr");
+  const retries = generation.filter((entry) => kind(entry) === "generation.retry").length;
   const status = cancelled ? "CANCELLED" : failed ? "FAILED" : String(delivery?.outcome || (completed ? "generated" : "started"));
   const duration = completed?.durationMs ?? cancelled?.durationMs ?? failed?.durationMs ?? "?";
 
@@ -60,14 +65,13 @@ for (const generation of generations) {
   const variant = started?.variant ? ` variant=${started.variant}` : "";
   console.log(`\n${started?.timestamp || generation[0]?.timestamp}  ${generation[0]?.agent}  model=${selection}${variant}  ${status}  generation=${duration}ms  retries=${retries}`);
   console.log(`id=${generation[0]?.generationId}  prompt=${started?.promptCharacters ?? "?"} chars  raw=${completed?.responseCharacters ?? "?"} chars  visible=${interpreted?.visibleMessageCount ?? "?"}  removed/protocol=${interpreted?.removedOrProtocolCharacters ?? "?"} chars`);
-  const provider = cancelled || failed || completed;
-  const usage = provider?.providerUsage as Record<string, unknown> | undefined;
-  if (usage) console.log(`usage=${usage.totalTokens ?? "?"} tokens (${usage.inputTokens ?? "?"} in, ${usage.outputTokens ?? "?"} out, ${usage.reasoningTokens ?? "?"} reasoning, ${usage.cacheReadTokens ?? "?"} cache read, ${usage.cacheWriteTokens ?? "?"} cache write)  cost=$${Number(provider?.providerCostUsd || 0).toFixed(6)}  tools=${provider?.toolCalls ?? 0} (${provider?.toolFailures ?? 0} failed)  steps=${provider?.providerSteps ?? 0}${provider?.providerFinishReason ? `  finish=${provider.providerFinishReason}` : ""}`);
-  if (failed?.error) console.log(`error: ${failed.error}`);
+  const usage = provider?.usage as Record<string, unknown> | undefined;
+  if (usage) console.log(`usage=${usage.totalTokens ?? "?"} tokens (${usage.inputTokens ?? "?"} in, ${usage.outputTokens ?? "?"} out, ${usage.reasoningTokens ?? "?"} reasoning, ${usage.cacheReadTokens ?? "?"} cache read, ${usage.cacheWriteTokens ?? "?"} cache write)  cost=$${Number(provider?.costUsd || 0).toFixed(6)}`);
+  if (provider?.error) console.log(`error: ${provider.error}`);
   if (cancelled?.reason) console.log(`cancelled: ${cancelled.reason}`);
   if (completed?.rawResponse) console.log(`raw response:\n${completed.rawResponse}`);
   if (interpreted?.visibleMessages) console.log(`visible messages:\n${JSON.stringify(interpreted.visibleMessages, null, 2)}`);
   if (verbose && started?.prompt) console.log(`prompt:\n${started.prompt}`);
-  if (verbose && completed?.cliStdout) console.log(`CLI stdout:\n${completed.cliStdout}`);
-  if (verbose && completed?.cliStderr) console.log(`CLI stderr:\n${completed.cliStderr}`);
+  if (verbose && stdout?.output) console.log(`CLI stdout:\n${stdout.output}`);
+  if (verbose && stderr?.output) console.log(`CLI stderr:\n${stderr.output}`);
 }

@@ -5,7 +5,7 @@ import path from "node:path";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { AUTHORITATIVE_STREAMS, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, migrateLegacyLogs, type AuthoritativeStream } from "./authoritative-logging.js";
+import { ApplicationLoggerFacade, AUTHORITATIVE_STREAMS, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, migrateLegacyLogs, type AuthoritativeStream } from "./authoritative-logging.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { traceMiddleware, withLogContext } from "./structured-logger.js";
 
@@ -36,12 +36,12 @@ function records(destination: MemoryDestination) { return destination.lines.map(
 describe("authoritative logging foundation", () => {
   it("defines exactly six independently configured Pino/pino-roll streams", () => {
     expect(AUTHORITATIVE_STREAMS).toEqual([
-      "application-events", "generation-provider-exchanges", "tool-outcomes",
-      "provider-errors", "opencode-stdout", "opencode-stderr",
+      "server-service-lifecycle", "opencode-harness", "openrouter-provider",
+      "generations", "capability-decisions", "security-audit",
     ]);
     expect(Object.keys(DEFAULT_STREAM_ROTATION)).toEqual(AUTHORITATIVE_STREAMS);
-    for (const value of Object.values(DEFAULT_STREAM_ROTATION)) expect(value).toMatchObject({ maxBytes: expect.any(Number), retention: expect.any(Number) });
-    expect(new Set(Object.values(DEFAULT_STREAM_ROTATION).map(({ maxBytes, retention }) => `${maxBytes}:${retention}`)).size).toBe(6);
+    for (const value of Object.values(DEFAULT_STREAM_ROTATION)) expect(value).toMatchObject({ maxBytes: expect.any(Number), frequencyMs: expect.any(Number), retention: expect.any(Number) });
+    expect(new Set(Object.values(DEFAULT_STREAM_ROTATION).map(({ maxBytes, frequencyMs, retention }) => `${maxBytes}:${frequencyMs}:${retention}`)).size).toBe(6);
   });
 
   it("preserves diagnostic evidence with a scoped shared envelope while redacting authentication secrets and malformed values", async () => {
@@ -49,7 +49,8 @@ describe("authoritative logging foundation", () => {
     const cyclic: Record<string, unknown> = { retained: "surrounding evidence" }; cyclic.self = cyclic;
     Object.defineProperty(cyclic, "broken", { enumerable: true, get() { throw new Error("Bearer getter-secret"); } });
     await withLogContext({ traceId: "a".repeat(32), spanId: "b".repeat(16), requestId: "request-1", operationId: "operation-1", generationId: "generation-1", visibility: "room", selfId: "agent-1", roomId: "room-1", operatorId: "operator-1" }, () => {
-      logging.log("generation-provider-exchanges", "info", "generation.completed", {
+      logging.log("generations", "info", "generation.completed", {
+        outcome: "completed", reason: "provider-finished",
         prompt: "assembled prompt: ordinary model output mentioning chain of thought",
         rawResponse: "raw provider output", interpretedOutput: { text: "visible answer" },
         usage: { inputTokens: 10 }, cost: { usd: 0.001 }, routing: { provider: "example" },
@@ -58,12 +59,12 @@ describe("authoritative logging foundation", () => {
       });
     });
     await logging.flush();
-    const [record] = records(destinations.get("generation-provider-exchanges")!);
+    const [record] = records(destinations.get("generations")!);
     expect(record).toMatchObject({
-      envelopeVersion: 1, severity: "info", event: "generation.completed", stream: "generation-provider-exchanges",
+      envelopeVersion: 1, severity: "info", event: "generation.completed", stream: "generations",
       projectId: "project-1", projectPath: "/projects/one", traceId: "a".repeat(32), spanId: "b".repeat(16),
-      requestId: "request-1", operationId: "operation-1", generationId: "generation-1", visibility: "room",
-      selfId: "agent-1", roomId: "room-1", operatorId: "operator-1",
+      requestId: "request-1", operationId: "operation-1", generationId: "generation-1", correlationId: "operation-1", visibility: "room",
+      agentId: "agent-1", selfId: "agent-1", roomId: "room-1", operatorId: "operator-1", outcome: "completed", reason: "provider-finished",
       prompt: expect.stringContaining("chain of thought"), rawResponse: "raw provider output",
       interpretedOutput: { text: "visible answer" }, usage: { inputTokens: 10 }, cost: { usd: 0.001 },
       routing: { provider: "example" }, rateLimit: { remaining: 3 }, cooldown: { until: "later" },
@@ -86,16 +87,23 @@ describe("authoritative logging foundation", () => {
       cliStderr: "OpenCode stderr evidence",
     }));
     await logging.flush();
-    for (const stream of AUTHORITATIVE_STREAMS.slice(1)) {
+    for (const stream of ["generations", "openrouter-provider", "opencode-harness"] as const) {
       const streamRecords = records(destinations.get(stream)!);
       expect(streamRecords.length, stream).toBeGreaterThan(0);
       for (const record of streamRecords) expect(record).toMatchObject({ traceId: "c".repeat(32), requestId: "request-2", operationId: "operation-2", generationId: "generation-2" });
     }
-    const generation = records(destinations.get("generation-provider-exchanges")!)[0];
-    expect(generation).toMatchObject({ prompt: "full assembled prompt", rawResponse: "partial provider response", visibleMessages: ["interpreted output"], providerUsage: { totalTokens: 12 }, providerCostUsd: 0.02 });
-    expect(records(destinations.get("tool-outcomes")!)[0]).toMatchObject({ interpreted: { part: { state: { output: "tool evidence" } } } });
-    expect(records(destinations.get("opencode-stdout")!)[0].output).toContain("provider raw error");
-    expect(records(destinations.get("opencode-stderr")!)[0].output).toBe("OpenCode stderr evidence");
+    const generation = records(destinations.get("generations")!)[0];
+    expect(generation).toMatchObject({ prompt: "full assembled prompt", rawResponse: "partial provider response", visibleMessages: ["interpreted output"] });
+    expect(generation).not.toHaveProperty("providerUsage");
+    const provider = records(destinations.get("openrouter-provider")!)[0];
+    expect(provider).toMatchObject({ usage: { totalTokens: 12 }, costUsd: 0.02, errors: [{ message: "provider said no" }], routing: { route: "primary" }, rateLimit: { resetMs: 10 }, cooldown: { retryAt: 20 } });
+    const harness = records(destinations.get("opencode-harness")!);
+    expect(harness.find(({ event }) => event === "opencode.tool.outcome")).toMatchObject({ interpreted: { part: { state: { output: "tool evidence" } } } });
+    expect(harness.find(({ event }) => event === "opencode.stdout")?.output).toContain("provider raw error");
+    expect(harness.find(({ event }) => event === "opencode.stderr")?.output).toBe("OpenCode stderr evidence");
+    expect(records(destinations.get("server-service-lifecycle")!)).toHaveLength(0);
+    expect(records(destinations.get("capability-decisions")!)).toHaveLength(0);
+    expect(records(destinations.get("security-audit")!)).toHaveLength(0);
   });
 
   it("propagates HTTP traceparent and request context into downstream generation streams", async () => {
@@ -108,7 +116,7 @@ describe("authoritative logging foundation", () => {
       const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/generate`, { headers: { traceparent: `00-${"e".repeat(32)}-${"f".repeat(16)}-01`, "x-request-id": "http-request" } });
       expect(response.headers.get("traceparent")).toMatch(new RegExp(`^00-${"e".repeat(32)}-[0-9a-f]{16}-01$`));
       await new Promise((resolve) => setTimeout(resolve, 0)); await logging.flush();
-      const correlated = [...records(destinations.get("application-events")!), ...records(destinations.get("generation-provider-exchanges")!), ...records(destinations.get("opencode-stdout")!)];
+      const correlated = [...records(destinations.get("server-service-lifecycle")!), ...records(destinations.get("generations")!), ...records(destinations.get("opencode-harness")!)];
       expect(correlated.length).toBeGreaterThanOrEqual(3);
       expect(correlated.every((record) => record.traceId === "e".repeat(32) && record.requestId === "http-request")).toBe(true);
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
@@ -116,22 +124,22 @@ describe("authoritative logging foundation", () => {
 
   it("exposes bounded-buffer drops, coalescing, and sink failures without recursive payload logs", async () => {
     let now = 1_000;
-    const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 1024, maxIdentical: 1, identicalWindowMs: 100, now: () => now }, ["provider-errors"]);
-    for (let index = 0; index < 10; index++) logging.log("opencode-stdout", "info", `stdout.${index}`, { output: "x".repeat(700) });
+    const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 1024, maxIdentical: 1, identicalWindowMs: 100, now: () => now }, ["openrouter-provider"]);
+    for (let index = 0; index < 10; index++) logging.log("opencode-harness", "info", `stdout.${index}`, { output: "x".repeat(700) });
     for (let index = 0; index < 4; index++) logging.application("warn", "same.event", { outcome: "same" });
     now += 100; logging.application("warn", "same.event", { outcome: "same" });
-    logging.log("provider-errors", "error", "provider.failed", { raw: "payload must not recur" });
+    logging.log("openrouter-provider", "error", "provider.failed", { raw: "payload must not recur" });
     await logging.flush();
     const metrics = logging.metrics();
-    expect(metrics["opencode-stdout"].dropped).toBeGreaterThan(0);
-    expect(metrics["application-events"].coalesced).toBe(3);
-    expect(metrics["provider-errors"].sinkFailures).toBeGreaterThan(0);
-    expect(JSON.stringify(records(destinations.get("application-events")!))).not.toContain("payload must not recur");
+    expect(metrics["opencode-harness"].dropped).toBeGreaterThan(0);
+    expect(metrics["server-service-lifecycle"].coalesced).toBe(3);
+    expect(metrics["openrouter-provider"].sinkFailures).toBeGreaterThan(0);
+    expect(JSON.stringify(records(destinations.get("server-service-lifecycle")!))).not.toContain("payload must not recur");
   });
 
   it("rotates each real pino-roll stream independently and enforces directory and file permissions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-real-")); roots.push(root);
-    const rotation = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream, index) => [stream, { maxBytes: 900 + index * 137, retention: index + 1 }])) as Record<AuthoritativeStream, { maxBytes: number; retention: number }>;
+    const rotation = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream, index) => [stream, { maxBytes: 900 + index * 137, frequencyMs: 60_000 + index * 1_000, retention: index + 1 }])) as Record<AuthoritativeStream, { maxBytes: number; frequencyMs: number; retention: number }>;
     const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "p", projectPath: root, rotation, maxBufferedBytes: 1024 * 1024 });
     for (const stream of AUTHORITATIVE_STREAMS) for (let index = 0; index < 40; index++) logging.log(stream, "info", `${stream}.${index}`, { evidence: "x".repeat(300) });
     await logging.flush(); await new Promise((resolve) => setTimeout(resolve, 100)); await logging.flush();
@@ -145,6 +153,36 @@ describe("authoritative logging foundation", () => {
       for (const name of matching) expect((await stat(path.join(logging.logDirectory, name))).mode & 0o777).toBe(0o600);
     }
     await logging.close();
+  });
+
+  it("assigns application events to one subsystem owner and rotates on an independent time bound", async () => {
+    const { destinations, logging } = await memoryFoundation();
+    const facade = new ApplicationLoggerFacade(logging);
+    await facade.log("info", "server.startup.completed", { outcome: "ready" });
+    await facade.log("info", "agent.tool-policy.snapshot", { outcome: "configured" });
+    await facade.log("warn", "room-command-tool.lease", { outcome: "rejected", reason: "expired" });
+    await facade.log("warn", "openrouter.provider.rate-limited", { outcome: "deferred" });
+    await facade.log("info", "opencode.harness.started", { outcome: "started" });
+    await logging.flush();
+    expect(records(destinations.get("server-service-lifecycle")!).map(({ event }) => event)).toEqual(["server.startup.completed"]);
+    expect(records(destinations.get("capability-decisions")!).map(({ event }) => event)).toEqual(["agent.tool-policy.snapshot"]);
+    expect(records(destinations.get("security-audit")!).map(({ event }) => event)).toEqual(["room-command-tool.lease"]);
+    expect(records(destinations.get("openrouter-provider")!).map(({ event }) => event)).toEqual(["openrouter.provider.rate-limited"]);
+    expect(records(destinations.get("opencode-harness")!).map(({ event }) => event)).toEqual(["opencode.harness.started"]);
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-time-")); roots.push(root);
+    const rotation = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream, index) => [stream, { maxBytes: 10 * 1024 * 1024, frequencyMs: 40 + index, retention: 4 }])) as Record<AuthoritativeStream, { maxBytes: number; frequencyMs: number; retention: number }>;
+    const real = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "p", projectPath: root, rotation });
+    for (const stream of AUTHORITATIVE_STREAMS) real.log(stream, "info", "before.time-bound");
+    await real.flush();
+    const beforeNames = await readdir(real.logDirectory);
+    const before = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream) => [stream, Math.max(...beforeNames.filter((name) => name.startsWith(`${stream}.`)).map((name) => Number(name.match(/\.(\d+)\.jsonl$/)?.[1] || 0)))]));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    for (const stream of AUTHORITATIVE_STREAMS) real.log(stream, "info", "after.time-bound");
+    await real.flush();
+    const names = await readdir(real.logDirectory);
+    for (const stream of AUTHORITATIVE_STREAMS) expect(Math.max(...names.filter((name) => name.startsWith(`${stream}.`)).map((name) => Number(name.match(/\.(\d+)\.jsonl$/)?.[1] || 0)))).toBeGreaterThan(Number(before[stream]));
+    await real.close();
   });
 
   it("deterministically retires former sinks without leaving competing authoritative paths", async () => {

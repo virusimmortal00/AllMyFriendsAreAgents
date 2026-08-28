@@ -25,7 +25,7 @@ describe("GenerationJournal", () => {
 
     await journal.logging.flush();
     const logDirectory = path.dirname(journal.path);
-    const generationFiles = (await readdir(logDirectory)).filter((name) => name.startsWith("generation-provider-exchanges.") && name.endsWith(".jsonl"));
+    const generationFiles = (await readdir(logDirectory)).filter((name) => name.startsWith("generations.") && name.endsWith(".jsonl"));
     const entries = (await Promise.all(generationFiles.map((name) => readFile(path.join(logDirectory, name), "utf8"))))
       .join("").trim().split("\n")
       .map((line) => JSON.parse(line));

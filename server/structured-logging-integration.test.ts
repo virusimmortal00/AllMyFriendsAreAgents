@@ -19,10 +19,16 @@ describe("server structured logging facade", () => {
     expect((await fetch(`${base}/api/ready`)).ok).toBe(true);
     child.kill("SIGTERM"); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error("server did not stop")), 5_000); child.once("exit", () => { clearTimeout(timer); resolve(); }); });
     const logDirectory = path.join(directory, "logs", "authoritative-v1");
-    const applicationFiles = (await readdir(logDirectory)).filter((name) => name.startsWith("application-events.") && name.endsWith(".jsonl"));
-    const records = (await Promise.all(applicationFiles.map((name) => readFile(path.join(logDirectory, name), "utf8")))).join("").trim().split("\n").map((line) => JSON.parse(line)); const events = records.map((record) => record.event);
-    for (const record of records) expect(record).toMatchObject({ envelopeVersion: 1, stream: "application-events", schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/), environment: expect.any(String) });
+    const logFiles = (await readdir(logDirectory)).filter((name) => name.endsWith(".jsonl"));
+    const records = (await Promise.all(logFiles.map((name) => readFile(path.join(logDirectory, name), "utf8")))).join("").trim().split("\n").map((line) => JSON.parse(line)); const events = records.map((record) => record.event);
+    for (const record of records) {
+      expect(record).toMatchObject({ envelopeVersion: 1, stream: expect.stringMatching(/^(server-service-lifecycle|opencode-harness|openrouter-provider|generations|capability-decisions|security-audit)$/), schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/), correlationId: expect.any(String), agentId: null, environment: expect.any(String) });
+      expect(Object.hasOwn(record, "outcome") && Object.hasOwn(record, "reason")).toBe(true);
+    }
     expect(records.every((record) => Object.hasOwn(record, "deploymentCommit") && Object.hasOwn(record, "deploymentEpoch"))).toBe(true);
     expect(events).toEqual(expect.arrayContaining(["server.startup.started", "storage.configuration.resolved", "storage.migration.checked", "github.store.initialized", "github.adapter.policy", "github.read-cache.snapshot", "assignment.lifecycle.reconcile.started", "assignment.lifecycle.reconcile.completed", "assignment.manifest.snapshot", "assignment.lease.snapshot", "agent.tool-policy.snapshot", "server.startup.completed", "http.request.completed", "server.shutdown.started", "server.shutdown.completed"]));
+    const owners = new Map<string, Set<string>>();
+    for (const record of records) { const streams = owners.get(record.event) || new Set<string>(); streams.add(record.stream); owners.set(record.event, streams); }
+    expect([...owners.values()].every((streams) => streams.size === 1)).toBe(true);
   }, 10_000);
 });
