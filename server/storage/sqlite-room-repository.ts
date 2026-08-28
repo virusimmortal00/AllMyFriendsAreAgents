@@ -310,13 +310,14 @@ export class SqliteRoomRepository implements RoomRepository {
     return evidence;
   }
 
-  verifyJsonImportManifest(sourceDigest: string) {
+  verifyJsonImportManifest(sourceDigest: string, allowOverwrite = false) {
     const existing = this.database.prepare("SELECT source_kind FROM storage_identity_migrations WHERE migration_version='durable-identities/v1'").get() as { source_kind: string } | undefined;
     if (!existing) return;
     if (this.database.prepare("SELECT 1 FROM storage_import_manifests WHERE source_digest=?").get(sourceDigest)) return;
     if (existing.source_kind === "json-import") {
       throw new Error("JSON import source manifest changed after the verified migration; restore the original source or use an explicit reviewed migration.");
     }
+    if (!allowOverwrite) throw new Error(`Durable identity storage was initialized from ${existing.source_kind}; importing JSON requires explicit overwrite authorization.`);
   }
 
   async getDurableServer(): Promise<DurableServerRecord> {
@@ -368,25 +369,34 @@ export class SqliteRoomRepository implements RoomRepository {
       if (!repository || repository.projectId !== binding.projectId || repository.revision !== binding.repositoryReferenceRevision) throw new Error("Source-work repository reference is missing or stale.");
       if (binding.state === "bound" && repository.state === "unverified-legacy-placeholder") throw new Error("An unverified legacy repository placeholder cannot grant source-work authority.");
     }
-    const current = await this.getSourceWorkBinding(binding.kind, binding.workId);
-    if (current && binding.revision !== current.revision + 1) throw new Error(`Source-work binding revision conflict for ${binding.kind}/${binding.workId}.`);
-    if (!current && binding.revision !== 1) throw new Error(`A new source-work binding must begin at revision 1.`);
     const timestamp = new Date().toISOString();
-    const values = [binding.roomId, binding.projectId, binding.repositoryReferenceId, binding.repositoryReferenceRevision,
-      binding.originTaskId, binding.originTaskRevision, binding.implementationJobId, binding.implementationWorkerId,
-      binding.state, binding.reasonCode, JSON.stringify(binding.evidence), binding.revision, current?.createdAt || binding.createdAt || timestamp,
-      binding.updatedAt || timestamp, binding.kind, binding.workId];
-    this.database.prepare(`INSERT INTO source_work_bindings(
-      room_id,project_id,repository_reference_id,repository_reference_revision,origin_task_id,origin_task_revision,
-      implementation_job_id,implementation_worker_id,reconciliation_state,reason_code,evidence_json,revision,created_at,updated_at,work_kind,work_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(room_id,work_kind,work_id) DO UPDATE SET
-      project_id=excluded.project_id,repository_reference_id=excluded.repository_reference_id,
-      repository_reference_revision=excluded.repository_reference_revision,origin_task_id=excluded.origin_task_id,
-      origin_task_revision=excluded.origin_task_revision,implementation_job_id=excluded.implementation_job_id,
-      implementation_worker_id=excluded.implementation_worker_id,reconciliation_state=excluded.reconciliation_state,
-      reason_code=excluded.reason_code,evidence_json=excluded.evidence_json,revision=excluded.revision,updated_at=excluded.updated_at
-    `).run(...values);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.database.prepare("SELECT revision,created_at FROM source_work_bindings WHERE room_id=? AND work_kind=? AND work_id=?")
+        .get(this.roomId, binding.kind, binding.workId) as { revision: number; created_at: string } | undefined;
+      if (current && binding.revision !== current.revision + 1) throw new Error(`Source-work binding revision conflict for ${binding.kind}/${binding.workId}.`);
+      if (!current && binding.revision !== 1) throw new Error(`A new source-work binding must begin at revision 1.`);
+      const values = [binding.roomId, binding.projectId, binding.repositoryReferenceId, binding.repositoryReferenceRevision,
+        binding.originTaskId, binding.originTaskRevision, binding.implementationJobId, binding.implementationWorkerId,
+        binding.state, binding.reasonCode, JSON.stringify(binding.evidence), binding.revision, current?.created_at || binding.createdAt || timestamp,
+        binding.updatedAt || timestamp, binding.kind, binding.workId];
+      const written = this.database.prepare(`INSERT INTO source_work_bindings(
+        room_id,project_id,repository_reference_id,repository_reference_revision,origin_task_id,origin_task_revision,
+        implementation_job_id,implementation_worker_id,reconciliation_state,reason_code,evidence_json,revision,created_at,updated_at,work_kind,work_id
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(room_id,work_kind,work_id) DO UPDATE SET
+        project_id=excluded.project_id,repository_reference_id=excluded.repository_reference_id,
+        repository_reference_revision=excluded.repository_reference_revision,origin_task_id=excluded.origin_task_id,
+        origin_task_revision=excluded.origin_task_revision,implementation_job_id=excluded.implementation_job_id,
+        implementation_worker_id=excluded.implementation_worker_id,reconciliation_state=excluded.reconciliation_state,
+        reason_code=excluded.reason_code,evidence_json=excluded.evidence_json,revision=excluded.revision,updated_at=excluded.updated_at
+      WHERE source_work_bindings.revision=excluded.revision-1`).run(...values);
+      if (written.changes !== 1) throw new Error(`Source-work binding revision conflict for ${binding.kind}/${binding.workId}.`);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async identityMigrationEvidence(): Promise<IdentityMigrationEvidence | undefined> {

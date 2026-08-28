@@ -146,7 +146,7 @@ describe("JSON to SQLite import", () => {
     destination.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
-      .rejects.toThrow("already contains a different default room");
+      .rejects.toThrow(/requires explicit overwrite authorization/i);
   });
 
   it("rejects a re-import whose only change is deployment provenance", async () => {

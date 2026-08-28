@@ -73,6 +73,16 @@ describe("durable identity migration", () => {
     await second.putSourceWorkBinding(binding(secondScope));
     expect((await first.getSourceWorkBinding("assignment", "same-work-id"))?.roomId).toBe(CANONICAL_ROOM_ID);
     expect((await second.getSourceWorkBinding("assignment", "same-work-id"))?.roomId).toBe(roomId);
+    const firstPeer = await SqliteRoomRepository.open(root, databasePath, { roomId: CANONICAL_ROOM_ID });
+    const current = (await first.getSourceWorkBinding("assignment", "same-work-id"))!;
+    const competing = await Promise.allSettled([
+      first.putSourceWorkBinding({ ...current, revision: 2, reasonCode: "first-writer", updatedAt: "2026-08-28T12:01:00.000Z" }),
+      firstPeer.putSourceWorkBinding({ ...current, revision: 2, reasonCode: "second-writer", updatedAt: "2026-08-28T12:01:01.000Z" }),
+    ]);
+    expect(competing.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(competing.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect((await first.getSourceWorkBinding("assignment", "same-work-id"))?.revision).toBe(2);
+    firstPeer.close();
     first.close();
     second.close();
   });

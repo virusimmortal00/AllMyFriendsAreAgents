@@ -12,9 +12,9 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 describe("durable identity domain", () => {
   it("keeps a process-independent JSON compatibility identity with private permissions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-server-identity-")); roots.push(root);
-    const first = await openJsonServerIdentity(root);
-    const second = await openJsonServerIdentity(root);
-    expect(second).toEqual(first);
+    const identities = await Promise.all(Array.from({ length: 12 }, () => openJsonServerIdentity(root)));
+    expect(new Set(identities.map(({ serverId }) => serverId)).size).toBe(1);
+    expect(identities.every((identity) => JSON.stringify(identity) === JSON.stringify(identities[0]))).toBe(true);
     expect((await stat(path.join(root, "server-identity.json"))).mode & 0o777).toBe(0o600);
   });
 

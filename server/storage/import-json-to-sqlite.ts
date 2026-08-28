@@ -41,7 +41,7 @@ export async function importJsonRoomToSqlite(options: JsonToSqliteImportOptions)
       deferIdentityMigration: true,
     });
     try {
-      sqliteStore.verifyJsonImportManifest(jsonImportManifest.sourceDigest);
+      sqliteStore.verifyJsonImportManifest(jsonImportManifest.sourceDigest, options.overwrite === true);
       await sqliteStore.importRoomData({ state, assignments, tasks, taskEvents, continuationPolicy, continuations, continuationInbox, continuationAudit, overwrite: options.overwrite });
       await sqliteStore.migrateDurableIdentities(null, "json-import", options.sourceStateDirectory, jsonImportManifest, options.overwrite === true);
     } finally {

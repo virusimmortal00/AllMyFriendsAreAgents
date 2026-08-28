@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DurableServerRecord } from "./identity-domain.js";
 
@@ -20,10 +20,15 @@ export async function openJsonServerIdentity(stateDirectory: string): Promise<Du
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const timestamp = new Date().toISOString();
     const value: DurableServerRecord = { schemaVersion: 1, serverId: randomUUID(), revision: 1, createdAt: timestamp, updatedAt: timestamp };
-    const temporary = `${filePath}.${process.pid}.tmp`;
+    const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, filePath);
-    await chmod(filePath, 0o600);
-    return value;
+    try {
+      await link(temporary, filePath);
+    } catch (linkError) {
+      if ((linkError as NodeJS.ErrnoException).code !== "EEXIST") throw linkError;
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
+    return openJsonServerIdentity(stateDirectory);
   }
 }
