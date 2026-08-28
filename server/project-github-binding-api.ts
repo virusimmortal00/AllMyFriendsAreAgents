@@ -9,21 +9,22 @@ export function registerProjectGitHubBindingRoutes(input: {
   readonly control: ControlPlaneStore;
   readonly bindings: ProjectBindings;
   readonly projectExists?: (projectId: string) => boolean | Promise<boolean>;
+  readonly currentProjectId?: string;
+  readonly defaultsForProject?: (projectId: string) => { readonly checkoutPath: string; readonly worktreeRoot: string; readonly policyRevision: number } | undefined;
 }) {
-  const { app, control, bindings, projectExists = () => true } = input;
+  const { app, control, bindings, projectExists = () => true, currentProjectId, defaultsForProject = () => undefined } = input;
 
-  app.get("/api/control/projects/:projectId/repository", controlRoute(async (request, response) => {
+  const inspect = async (request: express.Request, response: express.Response, projectId: string) => {
     control.require(request, "INTEGRATION_VIEW");
-    const projectId = String(request.params.projectId);
     if (!await projectExists(projectId)) throw new ControlError(404, "Project repository configuration was not found.");
     const status = bindings.inspect(projectId);
     if (!status) throw new ControlError(404, "Project repository configuration was not found.");
-    response.set("Cache-Control", "no-store").json(status);
-  }));
+    const defaults = defaultsForProject(projectId);
+    response.set("Cache-Control", "no-store").json({ ...status, ...(defaults ? { defaults } : {}) });
+  };
 
-  app.put("/api/control/projects/:projectId/repository", controlRoute(async (request, response) => {
+  const configure = async (request: express.Request, response: express.Response, projectId: string) => {
     const actor = control.require(request, "PROJECT_REPOSITORY_CONFIGURE", true).principal;
-    const projectId = String(request.params.projectId);
     if (!await projectExists(projectId)) throw new ControlError(404, "Project repository configuration was not found.");
     const result = await bindings.configure({
       projectId,
@@ -51,5 +52,16 @@ export function registerProjectGitHubBindingRoutes(input: {
       nextRevision: result.value.repository.revision ?? 0,
     });
     response.set("Cache-Control", "no-store").json(result.value);
+  };
+
+  app.get("/api/control/projects/current/repository", controlRoute(async (request, response) => {
+    if (!currentProjectId) throw new ControlError(404, "Current project repository configuration is unavailable.");
+    return inspect(request, response, currentProjectId);
   }));
+  app.put("/api/control/projects/current/repository", controlRoute(async (request, response) => {
+    if (!currentProjectId) throw new ControlError(404, "Current project repository configuration is unavailable.");
+    return configure(request, response, currentProjectId);
+  }));
+  app.get("/api/control/projects/:projectId/repository", controlRoute((request, response) => inspect(request, response, String(request.params.projectId))));
+  app.put("/api/control/projects/:projectId/repository", controlRoute((request, response) => configure(request, response, String(request.params.projectId))));
 }

@@ -29,6 +29,9 @@ describe("project GitHub binding control API", () => {
       repository: { configured: true, revision: 1, state: "verified" as const, repository: "github.com/example/one" } };
     const bindings = { inspect: () => status, configure: vi.fn(async (input: ConfigureProjectGitHubRepositoryInput) => { received = input; return { kind: "ok" as const, value: status }; }) };
     const app = express(); app.use(express.json()); registerProjectGitHubBindingRoutes({ app, control, bindings: bindings as unknown as ProjectGitHubBindingService,
+      currentProjectId: "project-one", defaultsForProject: (projectId) => projectId === "project-one"
+        ? { checkoutPath: "/srv/project-one", worktreeRoot: "/srv/worktrees/project-one", policyRevision: 7 }
+        : undefined,
       projectExists: async (projectId) => projectId === "project-one" });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
@@ -38,6 +41,10 @@ describe("project GitHub binding control API", () => {
 
     expect((await call("/api/control/projects/project-one/repository")).status).toBe(401);
     expect((await call("/api/control/projects/project-one/repository", {}, viewerCookie)).status).toBe(200);
+    const current = await call("/api/control/projects/current/repository", {}, viewerCookie);
+    expect(current.status).toBe(200);
+    expect(await current.json()).toMatchObject({ binding: { projectId: "project-one" }, defaults: { checkoutPath: "/srv/project-one",
+      worktreeRoot: "/srv/worktrees/project-one", policyRevision: 7 } });
     expect((await call("/api/control/projects/project-other/repository", {}, viewerCookie)).status).toBe(404);
     const body = JSON.stringify({ githubConnectionId: "github-server-one", githubRepositoryId: 201, expectedBindingRevision: 0,
       expectedRepositoryRevision: 0, checkoutPath: "/srv/project-one", worktreeRoot: "/srv/worktrees/project-one", policyRevision: 7,

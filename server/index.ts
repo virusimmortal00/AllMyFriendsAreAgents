@@ -1280,6 +1280,10 @@ registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscove
 if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
   authorizations: githubIntegrationRuntime.authorizations, catalogs: githubIntegrationRuntime.catalogs, configuration: githubIntegrationRuntime.configuration });
 if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: controlPlane, bindings: projectGitHubBindings,
+  currentProjectId,
+  defaultsForProject: (projectId) => projectId === currentProjectId
+    ? { checkoutPath: projectRepositoryPath, worktreeRoot: assignmentWorktreesDirectory, policyRevision: 1 }
+    : undefined,
   projectExists: async (projectId) => Boolean(identityRepository ? await identityRepository.getDurableProject(projectId) : projectId === currentProjectId) });
 registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
