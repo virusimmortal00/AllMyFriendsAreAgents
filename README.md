@@ -309,7 +309,14 @@ pnpm run test
 pnpm run build
 ```
 
-Issues and pull requests are welcome. The interface follows the original [design concept](docs/design/all-my-friends-are-agents-concept.png), and the [retro smiley source sheet](docs/design/retro-smileys-source.png) is preserved alongside it.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the contribution workflow and public-context guidelines. Report suspected
+vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue.
+
+The interface follows the original
+[design concept](docs/design/all-my-friends-are-agents-concept.png), and the
+[retro smiley source sheet](docs/design/retro-smileys-source.png) is preserved
+alongside it.
 
 ## License
 
