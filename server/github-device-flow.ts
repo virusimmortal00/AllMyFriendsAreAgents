@@ -42,6 +42,12 @@ export type GitHubDevicePollResult =
 
 export type GitHubDeviceFlowFailureKind = "invalid-config" | "upstream" | "invalid-response" | "disabled";
 
+export interface GitHubDeviceFlowTransport {
+  start(): Promise<GitHubDeviceAuthorization>;
+  poll(deviceCode: string, intervalSeconds: number): Promise<GitHubDevicePollResult>;
+  refresh(refreshToken: string): Promise<GitHubDeviceUserToken>;
+}
+
 /** Safe error that never embeds an upstream body, device code, or token. */
 export class GitHubDeviceFlowFailure extends Error {
   constructor(readonly kind: GitHubDeviceFlowFailureKind) {
@@ -51,7 +57,7 @@ export class GitHubDeviceFlowFailure extends Error {
 }
 
 /** Fixed-origin GitHub App device-flow transport. It does not persist credentials. */
-export class GitHubDeviceFlowClient {
+export class GitHubDeviceFlowClient implements GitHubDeviceFlowTransport {
   constructor(private readonly clientId: string, private readonly fetcher: GitHubOAuthFetch = fetch) {
     if (!CLIENT_ID.test(clientId)) throw new GitHubDeviceFlowFailure("invalid-config");
   }
@@ -175,4 +181,3 @@ function optionalIntegerField(payload: Record<string, unknown>, field: string) {
 function boundedSeconds(value: number, minimum: number, maximum: number) {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
-
