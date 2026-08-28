@@ -13,6 +13,7 @@ import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWrit
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import { deploymentPromptContext, type DeploymentProvenance } from "./deployment-provenance.js";
+import { logOperationSafely, type OperationLog } from "./operation-log.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -40,7 +41,7 @@ export interface AgentContextRuntime {
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
-  readonly operationLog?: (level: "info" | "error", event: string, fields: Record<string, unknown>) => Promise<unknown> | unknown;
+  readonly operationLog?: OperationLog;
 }
 
 interface ProcessResult {
@@ -349,7 +350,8 @@ function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
       && normalizedName !== "DATABASE_URL"
       && !/(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)(?:$|_)/.test(normalizedName)
       && normalizedName !== "GITHUB_AUTH"
-      && normalizedName !== "GH_ENTERPRISE_TOKEN";
+      && normalizedName !== "GH_ENTERPRISE_TOKEN"
+      && !["PGPASSWORD", "PGPASSFILE", "MYSQL_PWD"].includes(normalizedName);
   }));
 }
 
@@ -655,7 +657,7 @@ export async function runAgent(
     storedSessionEpoch: storedSession?.codeEpoch,
     sessionId: storedSession?.id,
   });
-  await context?.operationLog?.("info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
+  await logOperationSafely(context?.operationLog, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -725,7 +727,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    await context?.operationLog?.("info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
+    await logOperationSafely(context?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
     return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
@@ -758,7 +760,7 @@ export async function runAgent(
         cliStderr: error.process.stderr,
       } : {}),
     });
-    await context?.operationLog?.("error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
+    await logOperationSafely(context?.operationLog, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
     throw error;
   } finally {
     lifecycle?.finish(generationId);

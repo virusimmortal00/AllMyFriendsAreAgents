@@ -1031,7 +1031,7 @@ app.get("/api/control/capabilities", async (request, response) => {
   const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
   return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
 });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: () => { void Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]).then(() => broadcast()).catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error })); } });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
 registerRoomSettingsRoutes({
   app,
   store,

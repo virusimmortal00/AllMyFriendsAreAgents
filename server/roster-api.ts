@@ -20,7 +20,7 @@ export function registerRosterRoutes(input: {
   sessions: HumanSessions;
   processes: AgentProcessSupervisor;
   generations: ActiveGenerationTracker;
-  broadcast: () => void;
+  broadcast: () => void | Promise<void>;
   discovery?: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
   control?: ControlPlaneStore;
@@ -132,7 +132,7 @@ export function registerRosterRoutes(input: {
         if (!previous || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions))) await control.recordAudit(authenticated.principal.id, "COMMAND_PERMISSIONS_CHANGED", entry.agentId, { allowAll: normalizeCommandPermissions(entry.commandPermissions).allowAll, allowedCommands: normalizeCommandPermissions(entry.commandPermissions).allowed.join(",") });
       }
     }
-    broadcast();
+    await broadcast();
     return response.json(await projection());
   });
 }

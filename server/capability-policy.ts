@@ -35,7 +35,6 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
   const { entry } = input;
   const conversationReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !input.model.available ? "model_unavailable" : !input.runtimeAvailable ? "runtime_unavailable" : "available";
   const ghConfigured = input.githubReadConfigured && input.githubReadGranted;
-  const ghReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !ghConfigured ? "not_configured" : !input.runtimeAvailable ? "runtime_unavailable" : !input.model.available ? "model_unavailable" : "available";
   const selectedWriter = input.exclusiveWritableAgent === entry.agentId;
   const writeReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !selectedWriter && input.exclusiveWritableAgent !== "nobody" ? "exclusive_writer_elsewhere" : "governed_worker_only";
   const ceiling = input.serverCeiling || (input.githubReadConfigured ? ROOM_COMMANDS : ROOM_COMMANDS.filter((command) => command !== "gh"));
@@ -44,7 +43,13 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
   const commands = Object.fromEntries(ROOM_COMMANDS.map((command) => [command, resolveCommandCapability({ ...common, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false })]));
   const projectWrite = resolveCommandCapability({ ...common, featureCompiled: false, requiredConfigPresent: entry.supportsProjectWrites === true, serverCeiling: selectedWriter, requestedGrant: selectedWriter, catalogRevisionCurrent: true, lease: input.lease || { status: "missing", issuedAt: null, expiresAt: null }, requiresLease: true, requiresProviderSession: false, modelAvailable: true });
   commands.project_write = projectWrite;
-  const githubCapability = capability(ghConfigured, input.runtimeAvailable && input.model.available, ghReason, "github_read", "read-only");
+  const ghCommand = commands.gh;
+  const effectiveGhReason: EffectiveCapability["reason"] = ghCommand.effective ? "available"
+    : ghCommand.exclusions.includes("agent-disabled") ? "agent_disabled"
+      : ghCommand.exclusions.includes("model-unavailable") ? "model_unavailable"
+        : ghCommand.exclusions.some((reason) => reason === "runtime-unavailable" || reason === "provider-session-stale" || reason === "lease-expired") ? "runtime_unavailable"
+          : "not_configured";
+  const githubCapability = capability(ghConfigured, input.runtimeAvailable && input.model.available, effectiveGhReason, "github_read", "read-only");
   return {
     agentId: entry.agentId,
     policyRevision: 1,

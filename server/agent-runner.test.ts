@@ -306,6 +306,9 @@ describe("OpenCode runtime safety", () => {
       GITHUB_TOKEN: "github-secret",
       OPENAI_API_KEY: "provider-secret",
       SOME_PASSWORD: "password-secret",
+      PGPASSWORD: "postgres-secret",
+      PgPassFile: "/private/postgres-password-file",
+      MYSQL_PWD: "mysql-secret",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
   });
 

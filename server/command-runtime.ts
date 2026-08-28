@@ -7,6 +7,7 @@ import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 import { MAX_COMMAND_DELIVERY_MESSAGE, MAX_DIAGNOSTIC_PROMPT_HEAD, MAX_DIAGNOSTIC_TEXT, publicPollProjection, type CommandAttempt, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandRecordStore, type CommandSubmission, type DiagnosticRecord, type GhProjection, type PublicPollProjection } from "./command-record.js";
 import type { GitHubReadService } from "./github-read-service.js";
 import type { GitHubEndpointFamily, GitHubFailureKind } from "./github-read-adapter.js";
+import { logOperationSafely, type OperationLog } from "./operation-log.js";
 
 export const DEFAULT_COMMAND_STAGE_1_MS = 12_000;
 export const DEFAULT_COMMAND_STAGE_2_MS = 75_000;
@@ -61,7 +62,7 @@ export interface CommandRuntimeDependencies {
   readonly stage1Ms?: number;
   readonly stage2Ms?: number;
   readonly capabilityAudit?: (event: { agentId: string; capability: "github_read"; outcome: "attempted" | "allowed" | "denied" | "failed" | "completed"; correlationId?: string; reason?: string }) => Promise<unknown>;
-  readonly operationLog?: (level: "info" | "error", event: string, fields: Record<string, unknown>) => Promise<unknown> | unknown;
+  readonly operationLog?: OperationLog;
 }
 
 export type CommandResponse =
@@ -265,8 +266,8 @@ export class CommandRuntime {
   private authorized(submission:CommandSubmission){return this.allowed(submission.invoker).includes(submission.command);}
   private auditRecord(submission:CommandSubmission,targets:readonly ActiveAgentId[]){return{auditId:stableId(submission.submissionId,"audit"),roomId:this.roomId,submissionId:submission.submissionId,command:submission.command,invokerKind:submission.invoker.kind,invokerId:submission.invoker.id,targetAgentIds:targets,createdAt:timestamp(this.clock)} as const;}
   private async publishAudit(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){let text=this.auditText(submission,audit.targetAgentIds);if(submission.command==="poll"){const invocation=submission.invocation as Extract<CommandInvocation,{command:"poll"}>;text=`— ${safeLabel(submission.invoker.displayName)} ran /poll — Options: ${invocation.options.map((option,index)=>`${index+1}. ${safeLabel(option)}`).join(" · ")}`;}else if(submission.command==="gh")text=`— ${safeLabel(submission.invoker.displayName)} ran /gh — Read-only repository query`;await this.dependencies.publishStatus(audit.auditId,text);}
-  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){await this.dependencies.operationLog?.("error","command.audit-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
-  private async publishPollClosed(poll:CommandPoll){if(poll.state!=="CLOSED"||!poll.finalTallies)return;const summary=poll.options.map((option,index)=>`${safeLabel(option)}: ${poll.finalTallies![index]||0}`).join(" · ");try{await this.dependencies.publishStatus(`poll-closed:${poll.pollId}`,`— Poll closed — ${summary}`);}catch(error){await this.dependencies.operationLog?.("error","command.poll-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
+  private async publishAuditObserved(submission:CommandSubmission,audit:import("./command-record.js").CommandAuditIdentity){if(submission.command==="help")return;try{await this.publishAudit(submission,audit);}catch(error){await logOperationSafely(this.dependencies.operationLog,"error","command.audit-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
+  private async publishPollClosed(poll:CommandPoll){if(poll.state!=="CLOSED"||!poll.finalTallies)return;const summary=poll.options.map((option,index)=>`${safeLabel(option)}: ${poll.finalTallies![index]||0}`).join(" · ");try{await this.dependencies.publishStatus(`poll-closed:${poll.pollId}`,`— Poll closed — ${summary}`);}catch(error){await logOperationSafely(this.dependencies.operationLog,"error","command.poll-publication.failed",{error,outcome:"failed",reason:"durable-recovery-will-retry"});}}
 
   private async resumeAcceptedWork(submission: CommandSubmission) {
     if(submission.command==="gh"){const execution=await this.dependencies.store.getGhExecution(this.roomId,submission.submissionId);if(execution?.status==="queued")void this.executeGh(execution,submission);return;}

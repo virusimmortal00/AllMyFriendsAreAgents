@@ -78,7 +78,7 @@ export class StructuredLogger {
   }
   async flush() { await this.queue.catch(() => undefined); }
   private emit(level: "debug" | "info" | "warn" | "error", event: string, context: Record<string, unknown>, fields: Record<string, unknown>, now: number) {
-    const line = JSON.stringify({ ...this.identity, timestamp: new Date(now).toISOString(), level, event, ...context, ...fields });
+    const line = JSON.stringify({ ...fields, ...context, ...this.identity, timestamp: new Date(now).toISOString(), level, event });
     try { this.consoleSink(line); } catch {}
     if (!this.filePath) return;
     this.queue = this.queue.catch(() => undefined).then(async () => { await mkdir(path.dirname(this.filePath!), { recursive: true, mode: 0o700 }); await this.rotateIfNeeded(Buffer.byteLength(line) + 1); await appendFile(this.filePath!, `${line}\n`, { mode: 0o600 }); }).catch(() => undefined);

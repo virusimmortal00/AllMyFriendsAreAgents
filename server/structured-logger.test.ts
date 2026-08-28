@@ -4,7 +4,7 @@ import path from "node:path";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseOrCreateTraceparent, safeError, sanitizeLogValue, StructuredLogger, traceMiddleware } from "./structured-logger.js";
+import { parseOrCreateTraceparent, safeError, sanitizeLogValue, StructuredLogger, traceMiddleware, withLogContext } from "./structured-logger.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -32,6 +32,24 @@ describe("structured logging", () => {
     expect(sanitizeLogValue({ arbitrary: "must-not-pass", method: "GET", prompt: "private prompt", rawResponse: "private response", sessionId: "provider-session", providerErrors: [{ message: "provider detail" }] })).toEqual({ method: "GET" });
     expect(await readdir(root)).toContain("server.jsonl.1");
     expect(await readFile(file, "utf8")).toContain('"event":"test.rotate"');
+  });
+
+  it("keeps canonical envelope fields authoritative over caller fields", async () => {
+    const lines: string[] = [];
+    const logger = new StructuredLogger(undefined, 1_000, 1, (line) => lines.push(line), false, {
+      schemaVersion: 1, service: "trusted-service", serviceVersion: "1.2.3", instanceId: "trusted-instance",
+      deploymentCommit: "trusted-commit", deploymentEpoch: "trusted-epoch", environment: "test",
+    }, { now: () => Date.parse("2026-08-27T00:00:00.000Z") });
+    await withLogContext({ traceId: "a".repeat(32), spanId: "b".repeat(16), requestId: "trusted-request" }, () => logger.log("info", "trusted.event", {
+      timestamp: "forged", level: "error", event: "forged.event", traceId: "caller-trace",
+      requestId: "forged-request", deploymentEpoch: "forged-epoch",
+    }));
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      schemaVersion: 1, service: "trusted-service", serviceVersion: "1.2.3", instanceId: "trusted-instance",
+      deploymentCommit: "trusted-commit", deploymentEpoch: "trusted-epoch", environment: "test",
+      timestamp: "2026-08-27T00:00:00.000Z", level: "info", event: "trusted.event",
+      traceId: "a".repeat(32), spanId: "b".repeat(16), requestId: "trusted-request",
+    });
   });
 
   it("swallows console and file failures, recovers the file queue, and leaves logging non-blocking", async () => {
