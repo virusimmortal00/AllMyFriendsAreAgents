@@ -39,6 +39,7 @@ describe("JSON to SQLite import", () => {
     const deployment = { schemaVersion: 1 as const, commitSha: "c".repeat(40), reference: { kind: "detached" as const }, worktree: "clean" as const, epoch: `deployment-v1:${"e".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
     await legacyStore.setDeployment(deployment);
     await legacyStore.setSession("codex-sol", "imported-session", "read-only", deployment.epoch);
+    await legacyStore.setSession("claude-sonnet", "legacy-writable-session", "writable", deployment.epoch);
     const assignment: AssignmentRecord = {
       assignmentId: "imported-assignment", improvementId: "imp-1", developerMemberId: "builder", developerMemberConfigRevision: 1,
       agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "amfaa/imported",
@@ -89,6 +90,7 @@ describe("JSON to SQLite import", () => {
     expect(importedStore.snapshot().settings.roomName).toBe("Imported Room");
     expect(importedStore.snapshot().deployment).toEqual(deployment);
     expect(importedStore.snapshot().sessions["codex-sol"]).toMatchObject({ id: "imported-session", codeEpoch: deployment.epoch });
+    expect(importedStore.snapshot().sessions["claude-sonnet"]).toBeUndefined();
     expect(importedStore.snapshot().sessions["codex-terra"]).toBeUndefined();
     expect(importedStore.snapshot().messages.find(({ speaker }) => speaker === "codex-terra")).toMatchObject({
       text: "Keep this historical speaker",
@@ -99,6 +101,8 @@ describe("JSON to SQLite import", () => {
       speakerName: "Importer",
     });
     expect(await importedStore.getAssignment("imported-assignment")).toEqual(assignment);
+    expect(await importedStore.identityMigrationEvidence()).toMatchObject({ sourceKind: "json-import", migrationVersion: "durable-identities/v1" });
+    expect(await importedStore.getSourceWorkBinding("assignment", "imported-assignment")).toMatchObject({ state: "needs-reconciliation", reasonCode: "legacy-missing-implementation-job-worker", implementationWorkerId: null });
     expect(await importedStore.getTask(taskIdentity)).toMatchObject({ revision: 2, description: "history survives" });
     expect((await importedStore.listTaskEvents(taskIdentity)).map(({ revision }) => revision)).toEqual([1, 2]);
     expect(await importedStore.getContinuation("imported-job")).toEqual(continuation);
@@ -107,6 +111,11 @@ describe("JSON to SQLite import", () => {
     expect(() => importedStore.importContinuations(continuationPolicy, [{ ...continuation, usage: { ...continuation.usage, tokens: -1 } }], [], [importedAudit])).toThrow(/job/);
     expect(await importedStore.getContinuation("imported-job")).toEqual(continuation); expect(await importedStore.listContinuationAudit("imported-job")).toEqual([importedAudit]);
     importedStore.close();
+    const importedDatabase = new DatabaseSync(databasePath);
+    expect(importedDatabase.prepare("SELECT lane,invalidated_at,invalidation_reason FROM agent_sessions WHERE agent_id='claude-sonnet'").get()).toEqual({
+      lane: "legacy-invalidated", invalidated_at: expect.any(String), invalidation_reason: "legacy-writable-session-invalidated",
+    });
+    importedDatabase.close();
 
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(result);
     expect(await readFile(sourcePath, "utf8")).toBe(sourceBefore);
@@ -153,7 +162,7 @@ describe("JSON to SQLite import", () => {
 
     await source.setDeployment(changedDeployment);
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
-      .rejects.toThrow("already contains a different default room");
+      .rejects.toThrow(/source manifest changed/i);
     const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(persisted.snapshot().deployment).toEqual(firstDeployment);
     persisted.close();
@@ -173,6 +182,25 @@ describe("JSON to SQLite import", () => {
     await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath })).resolves.toEqual(imported);
     const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(persisted.snapshot().deployment).toEqual(deployment);
+    persisted.close();
+  });
+
+  it("rejects a sidecar-only change before replaying an already verified JSON import", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-sidecar-test-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    await RoomStore.open(projectRoot, sourceStateDirectory);
+    await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
+
+    await writeFile(path.join(sourceStateDirectory, "investigations.json"), JSON.stringify({
+      jobs: { "late-investigation": { investigationId: "late-investigation", status: "CHECKPOINTED", providerSessionId: "must-not-resume" } },
+    }));
+    await expect(importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath }))
+      .rejects.toThrow(/source manifest changed/i);
+
+    const persisted = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await persisted.getSourceWorkBinding("investigation", "late-investigation")).toBeUndefined();
     persisted.close();
   });
 

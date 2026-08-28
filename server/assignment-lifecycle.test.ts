@@ -110,6 +110,12 @@ describe("assignment record persistence", () => {
 });
 
 describe("trusted single-writer assignment lifecycle", () => {
+  it("does not let an unverified migrated repository placeholder create Git authority", async () => {
+    const { service } = await repositoryFixture("sqlite");
+    await expect(service.create(`Bearer ${token}`, { assignmentId: "unverified-repository", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 }))
+      .resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("repository-reference-unverified") });
+  });
+
   it("keeps lifecycle and governance outcomes independent of logging failures", async () => {
     const { service } = await repositoryFixture("json", true, async () => { throw new Error("logging unavailable"); });
     const created = await service.create(`Bearer ${token}`, { assignmentId: "logging-independent", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });

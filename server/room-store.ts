@@ -55,6 +55,7 @@ import type { AgentContextSummaryKey } from "./transcript.js";
 import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
 import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validGhExecution, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
 import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_OPEN_POLLS_PER_ROOM, MAX_RECENT_POLLS, parseCommandPollCursor, type AcceptCommandResult, type CloseCommandPollResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
+import type { SourceWorkKind } from "./storage/identity-domain.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -80,7 +81,9 @@ function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), stor
     const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
     const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
       || !session?.configurationFingerprint && rawHarness === "opencode";
-    if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
+    // Legacy writable sessions are authority-bearing and cannot survive the
+    // durable-identity boundary. A trusted server flow must create a fresh one.
+    if (agent && entry && portableOpenCodeSession && session?.id && session.permission === "read-only" && entry.modelId !== "configured") {
       const codeEpoch = normalizeDeploymentEpoch(session.codeEpoch);
       sessions[agent] = {
         id: session.id,
@@ -149,6 +152,12 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
 }
 
 export class RoomStore implements RoomRepository {
+  readonly roomId = CANONICAL_ROOM_ID;
+  private readonly bootSourceWork = new Set<string>();
+  /** JSON remains a migration source and cannot attest source-work authority. */
+  async getSourceWorkBinding(_kind: SourceWorkKind, _workId: string) { return undefined; }
+  authorizeSourceWorkForCurrentBoot(kind: SourceWorkKind, workId: string) { this.bootSourceWork.add(`${kind}\0${workId}`); }
+  sourceWorkAuthorizedForCurrentBoot(kind: SourceWorkKind, workId: string) { return this.bootSourceWork.has(`${kind}\0${workId}`); }
   readonly stateDirectory: string;
   readonly statePath: string;
   readonly improvementsPath: string;
@@ -908,10 +917,12 @@ export class RoomStore implements RoomRepository {
   }
 
   async createCommandSubmission(submission: CommandSubmission) {
+    assertJsonSingleRoom(submission.roomId);
     if (!validSubmission(submission)) throw new Error("Invalid command submission");
     return this.mutateCommands<CreateCommandSubmissionResult>((state) => { const duplicate = state.submissions.find((item) => item.roomId === submission.roomId && (item.submissionId === submission.submissionId || item.clientSubmissionId === submission.clientSubmissionId)); return duplicate ? { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } } : { next: { ...state, submissions: [...state.submissions, structuredClone(submission)] }, result: { kind: "created" as const, submission: structuredClone(submission) } }; });
   }
   async acceptCommand(acceptance: CommandAcceptance): Promise<AcceptCommandResult> {
+    assertJsonSingleRoom(acceptance.submission.roomId);
     if (!validCommandAcceptance(acceptance)) throw new Error("Invalid command acceptance");
     return this.mutateCommands<AcceptCommandResult>((state) => {
       const duplicate = state.submissions.find((item) => item.roomId === acceptance.submission.roomId && (item.submissionId === acceptance.submission.submissionId || item.clientSubmissionId === acceptance.submission.clientSubmissionId));
@@ -927,6 +938,7 @@ export class RoomStore implements RoomRepository {
     });
   }
   async reassignCommandAttempt(value: CommandReassignment) {
+    assertJsonSingleRoom(value.current.roomId); assertJsonSingleRoom(value.next.roomId);
     if (!validCommandReassignment(value)) throw new Error("Invalid command reassignment");
     return this.mutateCommands<{ kind: "accepted"; current: CommandAttempt; next: CommandAttempt } | { kind: "conflict" | "not-found" }>((state) => {
       const current = state.attempts.find((item) => item.roomId === value.current.roomId && item.attemptId === value.current.attemptId);
@@ -1040,7 +1052,21 @@ export class RoomStore implements RoomRepository {
   private async mutateCommands<T>(mutation: (state: JsonCommandState) => { next?: JsonCommandState; result: T }): Promise<T> {
     let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
     const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
-    const operation = this.commandQueue.then(async () => { try { const changed = mutation(this.commandState); if (changed.next) { const next = normalizeJsonCommandState(changed.next); const temporaryPath = `${this.commandsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.commandsPath); await chmod(this.commandsPath, 0o600); this.commandState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    const operation = this.commandQueue.then(async () => {
+      try {
+        const changed = mutation(this.commandState);
+        if (changed.next) {
+          const next = normalizeJsonCommandState(changed.next);
+          assertJsonCommandStateSingleRoom(next);
+          const temporaryPath = `${this.commandsPath}.tmp`;
+          await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+          await rename(temporaryPath, this.commandsPath);
+          await chmod(this.commandsPath, 0o600);
+          this.commandState = next;
+        }
+        resolveResult(changed.result);
+      } catch (error) { rejectResult(error); throw error; }
+    });
     this.commandQueue = operation.catch(() => undefined); return result;
   }
 
@@ -1054,6 +1080,15 @@ export class RoomStore implements RoomRepository {
     this.saveQueue = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function assertJsonSingleRoom(roomId: string) {
+  if (roomId !== CANONICAL_ROOM_ID) throw new Error(`JSON storage is single-room compatibility mode and cannot mutate ${roomId}; run pnpm storage:import:sqlite before using additional rooms.`);
+}
+
+function assertJsonCommandStateSingleRoom(state: JsonCommandState) {
+  const records = [state.submissions, state.tombstones, state.roundRobin, state.attempts, state.povExecutions, state.ghExecutions, state.polls, state.votes, state.audits, state.diagnostics].flat();
+  for (const record of records) assertJsonSingleRoom(record.roomId);
 }
 
 function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }
