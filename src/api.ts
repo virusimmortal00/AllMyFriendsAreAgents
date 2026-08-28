@@ -8,7 +8,6 @@ import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashbo
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
-import type { DiagnosticRecord } from "./diagnostics";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -258,18 +257,18 @@ export async function loadPolls() {
   return request("/api/polls", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: import("./types").PublicPollProjection[] }>);
 }
 
-/** Diagnostics are intentionally never fetched as part of room state or SSE. */
-export async function loadDiagnostics(token: string, agentId: string, search = ""): Promise<{ items: DiagnosticRecord[] }> {
-  const query = new URLSearchParams({ agentId, limit: "50" });
-  if (search.trim()) query.set("search", search.trim().slice(0, 200));
-  return request(`/api/developer/diagnostics?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
-    .then((response) => response.json() as Promise<{ items: DiagnosticRecord[] }>);
-}
-
-export async function loadDiagnostic(token: string, agentId: string, recordId: string): Promise<DiagnosticRecord> {
-  const query = new URLSearchParams({ agentId });
-  return request(`/api/developer/diagnostics/${encodeURIComponent(recordId)}?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
-    .then((response) => response.json() as Promise<DiagnosticRecord>);
+/** Owner diagnostics are intentionally never fetched as part of room state or SSE. */
+export interface OwnerDiagnosticRecord { recordId: string; stream: string; timestamp: string; severity: string; event: string; correlationId?: string; requestId?: string; traceId?: string; content: Record<string, unknown>; }
+export interface OwnerDiagnosticChunk { kind: "record-chunk"; recordId: string; stream: string; offset: number; totalBytes: number; encoding: "base64-json-utf8"; data: string; final: boolean; }
+export interface OwnerDiagnosticsResult { records: OwnerDiagnosticRecord[]; chunks: OwnerDiagnosticChunk[]; nextCursor: string | null; scannedBytes: number; serializedBytes: number; malformedRecords: number; scanLimitReached: boolean; }
+export async function queryOwnerDiagnostics(query: Record<string, unknown>): Promise<OwnerDiagnosticsResult> {
+  const send = () => request("/api/control/diagnostics/query", { method: "POST", cache: "no-store", headers: controlCsrfToken ? { "X-AMFAA-CSRF": controlCsrfToken } : {}, body: JSON.stringify(query) }).then((response) => response.json() as Promise<OwnerDiagnosticsResult>);
+  try { return await send(); }
+  catch (error) {
+    if (!(error instanceof ApiRequestError) || error.status !== 403) throw error;
+    await loadControlMe();
+    return send();
+  }
 }
 
 export interface CapabilityDiagnosticsResponse {

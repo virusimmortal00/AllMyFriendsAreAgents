@@ -18,6 +18,7 @@
     "control:owner": "tsx scripts/control-plane.ts",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
+    "service:start": "zsh scripts/run-application-service.zsh",
     "storage:import:sqlite": "tsx server/storage/import-json-to-sqlite.ts",
     "start": "tsx server/index.ts",
     "test": "vitest run"
@@ -27,6 +28,8 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@vitejs/plugin-react": "5.0.4",
     "express": "5.1.0",
+    "pino": "10.3.1",
+    "pino-roll": "4.0.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "vite": "7.3.6",

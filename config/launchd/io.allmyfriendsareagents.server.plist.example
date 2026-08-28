@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.allmyfriendsareagents.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/absolute/path/to/pnpm</string>
+    <string>service:start</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/absolute/path/to/AllMyFriendsAreAgents</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AMFAA_PNPM_BIN</key>
+    <string>/absolute/path/to/pnpm</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>

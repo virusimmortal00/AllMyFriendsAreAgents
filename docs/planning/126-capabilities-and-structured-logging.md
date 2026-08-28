@@ -21,8 +21,10 @@ One server-owned policy resolves configured, runtime-available, and effective ca
 
 ## Current state
 
-Implementation is isolated on `codex/3-32-capabilities-logging`. No live-service mutation or PR publication is part of this work unit.
+Completed by merged PR [#128](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/128). Deployment-specific credentials and live-service canaries are not acceptance gates for this repository work.
 
 ## Evidence
 
-Final command results and immutable commit are reported to the coordinating task after verification.
+- Merge commit `1547cb49173215b4e566f38160f32aff981296ba`.
+- PR #128 records the focused and full tests, TypeScript checks, production build, planning-doc guard, and final privacy review.
+- Follow-up work is separately tracked by [#131](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/131) and [#132](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/132).

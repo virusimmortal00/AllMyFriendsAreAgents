@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -18,9 +18,18 @@ describe("server structured logging facade", () => {
     for (let attempt = 0; attempt < 120; attempt++) { try { if ((await fetch(`${base}/api/ready`)).ok) break; } catch {} await new Promise((resolve) => setTimeout(resolve, 25)); }
     expect((await fetch(`${base}/api/ready`)).ok).toBe(true);
     child.kill("SIGTERM"); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error("server did not stop")), 5_000); child.once("exit", () => { clearTimeout(timer); resolve(); }); });
-    const records = (await readFile(path.join(directory, "server.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line)); const events = records.map((record) => record.event);
-    for (const record of records) expect(record).toMatchObject({ schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/), environment: expect.any(String) });
+    const logDirectory = path.join(directory, "logs", "authoritative-v1");
+    const logFiles = (await readdir(logDirectory)).filter((name) => name.endsWith(".jsonl"));
+    const contents = await Promise.all(logFiles.map((name) => readFile(path.join(logDirectory, name), "utf8")));
+    const records = contents.flatMap((content) => content.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line))); const events = records.map((record) => record.event);
+    for (const record of records) {
+      expect(record).toMatchObject({ envelopeVersion: 1, stream: expect.stringMatching(/^(server-service-lifecycle|opencode-harness|openrouter-provider|generations|capability-decisions|security-audit)$/), schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/), correlationId: expect.any(String), agentId: null, environment: expect.any(String) });
+      expect(Object.hasOwn(record, "outcome") && Object.hasOwn(record, "reason")).toBe(true);
+    }
     expect(records.every((record) => Object.hasOwn(record, "deploymentCommit") && Object.hasOwn(record, "deploymentEpoch"))).toBe(true);
     expect(events).toEqual(expect.arrayContaining(["server.startup.started", "storage.configuration.resolved", "storage.migration.checked", "github.store.initialized", "github.adapter.policy", "github.read-cache.snapshot", "assignment.lifecycle.reconcile.started", "assignment.lifecycle.reconcile.completed", "assignment.manifest.snapshot", "assignment.lease.snapshot", "agent.tool-policy.snapshot", "server.startup.completed", "http.request.completed", "server.shutdown.started", "server.shutdown.completed"]));
+    const owners = new Map<string, Set<string>>();
+    for (const record of records) { const streams = owners.get(record.event) || new Set<string>(); streams.add(record.stream); owners.set(record.event, streams); }
+    expect([...owners.values()].every((streams) => streams.size === 1)).toBe(true);
   }, 10_000);
 });

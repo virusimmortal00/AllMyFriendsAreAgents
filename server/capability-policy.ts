@@ -5,6 +5,7 @@ import { ROOM_COMMANDS } from "../shared/command-domain.js";
 
 const guidance = {
   conversation: "Enable the agent and select a model currently available through OpenCode.",
+  room_diagnostics: "Enable the participant with an available model and the server-owned diagnostics query service.",
   github_read: "Configure the server-only GitHub read token and owner/repository, then grant /gh to the agent.",
   project_write: "Project writes require the exclusive governed implementation-worker handoff; room agents stay read-only.",
 } satisfies Record<AgentCapabilityName, string>;
@@ -15,6 +16,7 @@ export interface CapabilityPolicyInput {
   readonly runtimeAvailable: boolean;
   readonly githubReadConfigured: boolean;
   readonly githubReadGranted: boolean;
+  readonly diagnosticsConfigured?: boolean;
   readonly exclusiveWritableAgent: string;
   readonly featureCompiled?: boolean;
   readonly serverCeiling?: readonly string[];
@@ -34,6 +36,7 @@ function capability(configured: boolean, runtimeAvailable: boolean, reason: Effe
 export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCapabilityStatus {
   const { entry } = input;
   const conversationReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !input.model.available ? "model_unavailable" : !input.runtimeAvailable ? "runtime_unavailable" : "available";
+  const diagnosticsReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !input.diagnosticsConfigured ? "not_configured" : !input.model.available ? "model_unavailable" : !input.runtimeAvailable ? "runtime_unavailable" : "available";
   const ghConfigured = input.githubReadConfigured && input.githubReadGranted;
   const selectedWriter = input.exclusiveWritableAgent === entry.agentId;
   const writeReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !selectedWriter && input.exclusiveWritableAgent !== "nobody" ? "exclusive_writer_elsewhere" : "governed_worker_only";
@@ -55,6 +58,7 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
     policyRevision: 1,
     capabilities: {
       conversation: capability(entry.enabled, input.runtimeAvailable && input.model.available, conversationReason, "conversation"),
+      room_diagnostics: capability(input.diagnosticsConfigured === true, input.runtimeAvailable && input.model.available, diagnosticsReason, "room_diagnostics", "read-only"),
       github_read: { ...githubCapability, effective: commands.gh.effective },
       project_write: capability(selectedWriter && entry.supportsProjectWrites === true, false, writeReason, "project_write"),
     },
