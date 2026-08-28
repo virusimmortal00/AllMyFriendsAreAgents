@@ -23,23 +23,28 @@ export class GitHubReadStore {
   private readonly queue:QueueItem[]=[];
   private readonly ttlMs:number; private readonly maxEntries:number; private readonly maxActive:number; private readonly maxQueued:number;
   private active=0; private touches=0; private sequence=0;
-  constructor(private readonly adapter:GitHubReadAdapter, options:{ttlMs?:number;maxEntries?:number;maxActive?:number;maxQueued?:number;clock?:MonotonicClock;operationLog?:(event:GitHubReadCacheEvent)=>Promise<unknown>|unknown}={}){this.ttlMs=positive(options.ttlMs,DEFAULT_GITHUB_READ_TTL_MS,1,3_600_000);this.maxEntries=positive(options.maxEntries,DEFAULT_GITHUB_READ_MAX_ENTRIES,1,10_000);this.maxActive=positive(options.maxActive,DEFAULT_GITHUB_READ_MAX_ACTIVE,1,64);this.maxQueued=positive(options.maxQueued,DEFAULT_GITHUB_READ_MAX_QUEUED,0,1_000);this.clock=options.clock||performanceClock;this.operationLog=options.operationLog;}
+  constructor(private readonly adapter:GitHubReadAdapter|undefined, options:{ttlMs?:number;maxEntries?:number;maxActive?:number;maxQueued?:number;clock?:MonotonicClock;operationLog?:(event:GitHubReadCacheEvent)=>Promise<unknown>|unknown}={}){this.ttlMs=positive(options.ttlMs,DEFAULT_GITHUB_READ_TTL_MS,1,3_600_000);this.maxEntries=positive(options.maxEntries,DEFAULT_GITHUB_READ_MAX_ENTRIES,1,10_000);this.maxActive=positive(options.maxActive,DEFAULT_GITHUB_READ_MAX_ACTIVE,1,64);this.maxQueued=positive(options.maxQueued,DEFAULT_GITHUB_READ_MAX_QUEUED,0,1_000);this.clock=options.clock||performanceClock;this.operationLog=options.operationLog;}
   private readonly clock:MonotonicClock;
   private readonly operationLog?: (event:GitHubReadCacheEvent)=>Promise<unknown>|unknown;
-  key(query:GitHubReadQuery){return `${query.family}\0${this.adapter.normalizedQuery(query)}`;}
+  key(query:GitHubReadQuery,scope="",adapter=this.adapter){if(!adapter)throw new GitHubReadFailure("configuration","none");return `${scope}\0${query.family}\0${adapter.normalizedQuery(query)}`;}
 
   async get(query:GitHubReadQuery):Promise<GitHubReadOutcome>{
-    const key=this.key(query);const now=this.clock.now();const existing=this.entries.get(key);const live=this.pending.get(key);const cache=existing&&now<existing.expiresAt?"hit":existing?"refresh":"miss";
+    if(!this.adapter)throw new GitHubReadFailure("configuration","none");return this.getScoped("",this.adapter,query);
+  }
+
+  async getScoped(scope:string,adapter:GitHubReadAdapter,query:GitHubReadQuery):Promise<GitHubReadOutcome>{
+    if(scope.length>1_000||scope.includes("\0"))throw new GitHubReadFailure("configuration","none");
+    const key=this.key(query,scope,adapter);const now=this.clock.now();const existing=this.entries.get(key);const live=this.pending.get(key);const cache=existing&&now<existing.expiresAt?"hit":existing?"refresh":"miss";
     if(existing&&now<existing.expiresAt){existing.touched=++this.touches;const outcome={value:structuredClone(existing.value),diagnostic:{family:query.family,cache:"hit" as const,queueDelayMs:0,rateLimited:false,truncated:Boolean("truncated" in existing.value&&existing.value.truncated),failureKind:null,statusClass:"none" as const,correlationId:correlation(query.family,++this.sequence)}};this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}
     if(live){const outcome=await live.promise;const coalesced={value:structuredClone(outcome.value),diagnostic:{...outcome.diagnostic,cache:"coalesced" as const,correlationId:correlation(query.family,++this.sequence)}};this.report({...coalesced.diagnostic,outcome:"completed"});return coalesced;}
-    const pending=this.schedule(query,cache==="refresh");this.pending.set(key,{promise:pending,refresh:cache==="refresh"});
+    const pending=this.schedule(key,adapter,query,cache==="refresh");this.pending.set(key,{promise:pending,refresh:cache==="refresh"});
     try{const outcome=await pending;this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}catch(error){const failure=error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none");this.report({family:query.family,cache,queueDelayMs:0,rateLimited:failure.kind==="rate-limited",truncated:false,failureKind:failure.kind,statusClass:failure.statusClass,correlationId:correlation(query.family,++this.sequence),outcome:"failed"});throw error;}finally{this.pending.delete(key);}
   }
 
-  private schedule(query:GitHubReadQuery,refresh:boolean):Promise<GitHubReadOutcome>{
+  private schedule(key:string,adapter:GitHubReadAdapter,query:GitHubReadQuery,refresh:boolean):Promise<GitHubReadOutcome>{
     const enqueuedAt=this.clock.now();const id=correlation(query.family,++this.sequence);
     if(this.active>=this.maxActive&&this.queue.length>=this.maxQueued)return Promise.reject(new GitHubReadFailure("saturated","none"));
-    return new Promise((resolve,reject)=>{const start=()=>{this.active++;const queueDelayMs=Math.max(0,this.clock.now()-enqueuedAt);void this.adapter.read(query).then((value)=>{const key=this.key(query);this.entries.set(key,{value:structuredClone(value),expiresAt:this.clock.now()+this.ttlMs,touched:++this.touches});this.evict();resolve({value:structuredClone(value),diagnostic:{family:query.family,cache:refresh?"refresh":"miss",queueDelayMs,rateLimited:false,truncated:Boolean("truncated" in value&&value.truncated),failureKind:null,statusClass:"none",correlationId:id}});},(error)=>reject(error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none"))).finally(()=>{this.active--;this.drain();});};if(this.active<this.maxActive)start();else this.queue.push({start,enqueuedAt});});
+    return new Promise((resolve,reject)=>{const start=()=>{this.active++;const queueDelayMs=Math.max(0,this.clock.now()-enqueuedAt);void adapter.read(query).then((value)=>{this.entries.set(key,{value:structuredClone(value),expiresAt:this.clock.now()+this.ttlMs,touched:++this.touches});this.evict();resolve({value:structuredClone(value),diagnostic:{family:query.family,cache:refresh?"refresh":"miss",queueDelayMs,rateLimited:false,truncated:Boolean("truncated" in value&&value.truncated),failureKind:null,statusClass:"none",correlationId:id}});},(error)=>reject(error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none"))).finally(()=>{this.active--;this.drain();});};if(this.active<this.maxActive)start();else this.queue.push({start,enqueuedAt});});
   }
   private drain(){while(this.active<this.maxActive&&this.queue.length)this.queue.shift()!.start();}
   private evict(){while(this.entries.size>this.maxEntries){let candidate:string|undefined;let touched=Number.POSITIVE_INFINITY;for(const [key,entry] of this.entries)if(entry.touched<touched){candidate=key;touched=entry.touched;}if(candidate===undefined)return;this.entries.delete(candidate);}}

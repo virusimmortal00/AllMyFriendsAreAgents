@@ -72,9 +72,8 @@ import { DurableConsultationMcpService } from "./consultation-mcp.js";
 import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
 import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
-import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
-import { GitHubReadStore } from "./github-read-store.js";
-import { GitHubReadService } from "./github-read-service.js";
+import type { GitHubReadFetch } from "./github-read-adapter.js";
+import { RoomBoundGitHubReadService } from "./room-bound-github-read.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
@@ -177,10 +176,13 @@ const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataD
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
-const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_CONNECTION_REFERENCE?.trim()
-  || (githubToken ? `github-connection:${createHash("sha256").update(githubToken).digest("hex").slice(0, 24)}` : undefined);
+const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
+const repositoryCredential=githubReadToken||githubToken;
+const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_CONNECTION_REFERENCE?.trim()
+  || process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_CONNECTION_REFERENCE?.trim()
+  || (repositoryCredential ? `github-connection:${createHash("sha256").update(repositoryCredential).digest("hex").slice(0, 24)}` : undefined);
 const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
-if (githubToken && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, githubToken);
+if (repositoryCredential && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, repositoryCredential);
 let contributionRecords: ContributionStore | undefined;
 let githubContributionStore: GitHubContributionStore | undefined;
 const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
@@ -209,12 +211,14 @@ const verifyProjectRepositoryAuthority = async () => {
   const result = await projectRepositoryScope.connection.revalidateAuthority(connection.revision);
   return result.kind === "ok" ? null : result.reason;
 };
-const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
-const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
-const githubReadParts=githubReadRepository?.split("/")||[];
 const fakeSha="0123456789abcdef0123456789abcdef01234567";
 const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
-const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch),{operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event})}),githubReadRepository!):undefined;
+const identityRepository=typeof (store as Partial<IdentityRepository>).getStorageScope==="function"&&typeof (store as Partial<IdentityRepository>).getDurableProject==="function"&&typeof (store as Partial<IdentityRepository>).getRepositoryReference==="function"
+  ? store as RoomRepository&IdentityRepository : undefined;
+const githubReadService=identityRepository?new RoomBoundGitHubReadService(identityRepository,(projectId)=>projectRepositoryRegistry.forProject(projectId).connection,serverHeldRepositoryCredentials,{
+  fetcher:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch,
+  operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event}),
+}):undefined;
 const capabilityAudit = await CapabilityAuditStore.open(storageConfiguration.dataDirectory, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_CAPABILITY_AUDIT_LIMIT") || 500);
 let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object.fromEntries(normalizeRoomAgentRoster(store.snapshot().roster).entries.map((entry) => {
   const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
@@ -258,6 +262,7 @@ const contributionService = contributionRecords && githubRepository
 await structuredLogger.log("info", "github.store.initialized", { readStoreConfigured: Boolean(githubReadService), contributionStoreConfigured: Boolean(githubContributionStore) });
 await structuredLogger.log("info", "github.adapter.policy", { githubReadConfigured: Boolean(githubReadService), githubContributionConfigured: Boolean(githubContributionBroker), toolPolicy: "fixed-read-selectors" });
 await structuredLogger.log("info", "github.read-cache.snapshot", { configured: Boolean(githubReadService), status: githubReadService ? "ready" : "disabled" });
+if(process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim())await structuredLogger.log("warn","github.read.legacy-configuration",{outcome:"reconciliation-required",reason:"ambient-repository-ignored; connect and verify the room project's repository"});
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
@@ -1095,6 +1100,7 @@ app.get("/api/events", async (request, response) => {
 app.post("/api/humans", (request, response) => {
   try {
     const human = joinHumanWithSession(request, response, humans, humanSessions);
+    roomLifecycle?.ensureCanonicalMembership(human.id);
     broadcast();
     response.status(201).json(human);
   } catch (error) {
@@ -1136,7 +1142,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -1195,7 +1201,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
