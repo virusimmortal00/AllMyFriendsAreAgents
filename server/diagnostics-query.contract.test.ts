@@ -71,7 +71,10 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       await expect(service.query(projectCaller, { ...range, scope: "room", identity: { roomId: "room-two" } })).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query(projectCaller, { ...range, scope: "operator" })).rejects.toMatchObject({ code: "forbidden" });
       const operator = { ...projectCaller, operator: true, operatorId: "operator-one" };
-      expect((await service.query(operator, { ...range, scope: "operator" })).records).toHaveLength(4);
+      expect((await service.query(operator, { ...range, scope: "self" })).records.map(({ recordId }) => recordId).sort()).toEqual(["self-own", "self-peer"]);
+      expect((await service.query(operator, { ...range, scope: "room" })).records.map(({ recordId }) => recordId).sort()).toEqual(["room-other", "room-own", "self-own", "self-peer"]);
+      expect((await service.query(operator, { ...range, scope: "project" })).records.map(({ recordId }) => recordId).sort()).toEqual(["project", "room-other", "room-own", "self-own", "self-peer"]);
+      expect((await service.query(operator, { ...range, scope: "operator" })).records).toHaveLength(6);
     });
 
     it("rejects project, identity, selector, cursor, path, backend, and window escapes", async () => {
@@ -79,6 +82,9 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       const outside = { ...projectCaller, projectIds: ["project-two"] };
       await expect(service.query(outside, baseQuery)).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query(projectCaller, { ...range, scope: "self", identity: { selfId: "agent-two" } })).rejects.toMatchObject({ code: "forbidden" });
+      await expect(service.query({ ...projectCaller, selfId: undefined }, { ...range, scope: "self" })).rejects.toMatchObject({ code: "forbidden" });
+      await expect(service.query({ ...projectCaller, roomIds: [] }, { ...range, scope: "room", identity: { roomId: "room-one" } })).rejects.toMatchObject({ code: "forbidden" });
+      await expect(service.query({ ...projectCaller, projectIds: [] }, baseQuery)).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query(projectCaller, { ...baseQuery, streams: ["unknown" as never] })).rejects.toMatchObject({ code: "invalid-query" });
       await expect(service.query(projectCaller, { ...baseQuery, cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "invalid-cursor" });
       await expect(service.query(projectCaller, { ...baseQuery, repository: "other/repository" } as DiagnosticQuery)).rejects.toMatchObject({ code: "invalid-query" });

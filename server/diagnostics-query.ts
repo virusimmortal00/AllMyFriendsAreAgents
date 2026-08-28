@@ -270,6 +270,10 @@ function normalizeQuery(input: DiagnosticQuery): NormalizedQuery {
 
 function authorizeScope(caller: DiagnosticCaller, query: NormalizedQuery, projectId: string) {
   if (!validCaller(caller)) throw new DiagnosticsQueryError("forbidden");
+  if (caller.operator) {
+    if (query.identity?.operatorId && query.identity.operatorId !== caller.operatorId) throw new DiagnosticsQueryError("forbidden");
+    return;
+  }
   if (query.scope === "self" && !caller.selfId) throw new DiagnosticsQueryError("forbidden");
   if (query.scope === "room" && (!query.identity?.roomId || !caller.roomIds.includes(query.identity.roomId))) throw new DiagnosticsQueryError("forbidden");
   if (query.scope === "project" && !caller.projectIds.includes(projectId)) throw new DiagnosticsQueryError("forbidden");
@@ -282,6 +286,9 @@ function authorizeScope(caller: DiagnosticCaller, query: NormalizedQuery, projec
 function recordVisibleTo(record: DiagnosticRecord, caller: DiagnosticCaller, requested: DiagnosticVisibility, projectId: string) {
   if (record.projectId !== projectId) return false;
   if (VISIBILITIES.indexOf(record.visibility) > VISIBILITIES.indexOf(requested)) return false;
+  // A server-local operator may inspect collaborative evidence at any lower
+  // visibility without pretending to be each agent or joining every room.
+  if (caller.operator) return true;
   if (record.visibility === "self") return Boolean(record.selfId && record.selfId === caller.selfId);
   if (record.visibility === "room") return Boolean(record.roomId && caller.roomIds.includes(record.roomId));
   if (record.visibility === "project") return caller.projectIds.includes(projectId);
