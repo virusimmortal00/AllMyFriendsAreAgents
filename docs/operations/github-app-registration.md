@@ -6,6 +6,9 @@ install that same public App and authorize their own server through device flow;
 they do not create an App, client secret, private key, callback service, PAT, or
 per-room credential.
 
+The canonical App is now available at
+[`github.com/apps/all-my-friends-are-agents`](https://github.com/apps/all-my-friends-are-agents).
+
 ## Generate the prefilled registration form
 
 The reviewed source template is
@@ -45,7 +48,7 @@ After creation, copy the App name, slug, and Client ID from GitHub into
   "schemaVersion": 1,
   "appName": "All My Friends Are Agents",
   "appSlug": "all-my-friends-are-agents",
-  "clientId": "Iv1.REPLACE_WITH_GITHUB_CLIENT_ID"
+  "clientId": "Iv23li898TJhWtSah9Vx"
 }
 ```
 

@@ -293,11 +293,12 @@ A later mutation design must decide:
   and CSRF protection, forwards only an explicit allowlist of non-secret fields,
   returns no binding/credential reference, and audits failures without repository
   names or local paths.
-- A canonical registration template requests only read-only Actions, Checks,
-  Issues, Pull requests, and mandatory Metadata permissions, with webhooks and
-  install-time OAuth disabled. Production opens the durable App integration only
-  when an exact-field public App configuration is present; the loader rejects
-  bundled secrets.
+- The reusable public App is registered from the canonical template. Its
+  effective GitHub settings have been browser-verified as public, device-flow
+  enabled, webhook-free, install-time-OAuth-free, and limited to read-only
+  Actions, Checks, Issues, Pull requests, and mandatory Metadata permissions.
+  Production opens the durable App integration from its exact-field public
+  configuration; the loader rejects bundled secrets.
 - Production registers the integration/project routes and resolves room reads
   through the binding-aware provider before the environment-backed compatibility
   provider. The fallback remains for incremental migration. Refresh transport
@@ -311,10 +312,9 @@ A later mutation design must decide:
 
 ## Next action
 
-Register the public App from the reviewed template, bundle its generated Client
-ID, and run a live installation/device-flow canary. Then resolve the canonical
-room-principal prerequisite, build the settings UI, and add scheduled refresh plus
-rebind/deselection invalidation. Use
+Run a live installation/device-flow canary with a disposable private repository.
+Then resolve the canonical room-principal prerequisite, build the settings UI,
+and add scheduled refresh plus rebind/deselection invalidation. Use
 [the delivery plan](github-integration-delivery-plan.md) to open narrowly scoped
 issues with security acceptance checks copied into each slice.
 

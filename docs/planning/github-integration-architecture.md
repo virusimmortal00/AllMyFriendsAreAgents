@@ -315,10 +315,11 @@ variables or OAuth details.
   forwards caller-supplied binding, credential, installation, remote, or default
   branch authority, and project-binding audit metadata contains only stable
   outcomes and revisions.
-- A reviewed registration template and GitHub-supported prefilled registration
-  URL define the reusable public App. The bundled configuration contains only
+- The reusable public App is registered from the reviewed template and its
+  GitHub-generated public Client ID is bundled. The configuration contains only
   the public App name, slug, and Client ID; its exact-field loader rejects
-  secret-shaped additions.
+  secret-shaped additions. The effective GitHub settings have been browser-
+  verified as public, device-flow enabled, webhook-free, and read-only.
 - When that public configuration exists, production startup opens the durable
   metadata store and encrypted vault, registers the integration and project
   binding control routes, and exposes the public App identity in the sanitized
@@ -337,10 +338,9 @@ variables or OAuth details.
 
 ## Next action
 
-Register the reusable public GitHub App from the reviewed template, bundle its
-generated public client ID, and run a live installation/device-flow canary. The
-next product slice is the server/project settings UI; the next runtime slice is
-scheduled refresh and authority invalidation. Promote accepted slices from
+Run a live installation/device-flow canary with a disposable private repository.
+The next product slice is the server/project settings UI; the next runtime slice
+is scheduled refresh and authority invalidation. Promote accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence

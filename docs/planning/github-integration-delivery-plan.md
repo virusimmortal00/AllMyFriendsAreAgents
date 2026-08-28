@@ -208,16 +208,17 @@ project-binding backend now derives repository,
 installation, default-branch, and opaque credential authority from the current
 catalog, verifies the local checkout, compensates a failed repository commit by
 revoking the binding, and exposes a CSRF-protected request-allowlisted control API.
-The real public App/client ID, live GitHub canary, scheduled token refresh,
-project binding UI, canonical room-principal binding, and rebind impact/cache
-invalidation remain unimplemented; none of these temporary notes is a substitute
-for accepted Issues.
+The public App is now registered and its GitHub-generated Client ID is bundled.
+The effective GitHub configuration is public, device-flow enabled, webhook-free,
+and limited to the planned read-only repository permissions. A live GitHub
+canary, scheduled token refresh, project binding UI, canonical room-principal
+binding, and rebind impact/cache invalidation remain unimplemented; none of
+these temporary notes is a substitute for accepted Issues.
 
 ## Next action
 
-Register the reusable public GitHub App from the reviewed template, bundle its
-generated public client ID, and run a live installation/device-flow canary. The
-next product slice should build the server/project settings UI on the redacted
+Run a live installation/device-flow canary with a disposable private repository.
+The next product slice should build the server/project settings UI on the redacted
 catalog and project endpoints; the next runtime slice should schedule refresh and
 invalidate authority on rebind or catalog removal.
 
