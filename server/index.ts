@@ -2,6 +2,7 @@ import express from "express";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
@@ -84,6 +85,8 @@ import type { IdentityRepository } from "./storage/identity-domain.js";
 import { RoomLifecycleStore } from "./room-lifecycle.js";
 import { RoomGenerationCapacity, RoomRuntimeRegistry } from "./room-runtime-registry.js";
 import { registerRoomLifecycleRoutes } from "./room-lifecycle-api.js";
+import { ProjectRepositoryConnectionStore, ProjectRepositoryServiceRegistry, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
+import { registerProjectRepositoryRoutes } from "./project-repository-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -128,6 +131,10 @@ serverIdentity.serverId = durableServer.serverId;
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
+const storageScope = typeof (store as Partial<IdentityRepository>).getStorageScope === "function"
+  ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
+  : undefined;
+const currentProjectId = storageScope?.projectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }));
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -170,6 +177,38 @@ const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataD
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
+const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_CONNECTION_REFERENCE?.trim()
+  || (githubToken ? `github-connection:${createHash("sha256").update(githubToken).digest("hex").slice(0, 24)}` : undefined);
+const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
+if (githubToken && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, githubToken);
+let contributionRecords: ContributionStore | undefined;
+let githubContributionStore: GitHubContributionStore | undefined;
+const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
+const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRepositoryConnectionStore, () => ({}), async (projectId) => {
+  if (projectId !== currentProjectId) return [];
+  const [assignments, continuations] = await Promise.all([store.listAssignments(), store.listContinuations()]);
+  const assignmentReferences = assignments.map((assignment) => ({ kind: "assignment" as const, id: assignment.assignmentId,
+    terminal: ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycleStatus), reconciled: assignment.recovery.classification !== "missing" }));
+  const jobReferences = continuations.map((job) => ({ kind: "job" as const, id: job.jobId,
+    terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
+  const contributionReferences = (contributionRecords?.list() || []).map((record) => ({ kind: (record.stage === "MERGED" || record.stage === "DEPLOYED" ? "deployment" : "contribution") as "deployment" | "contribution",
+    id: record.contributionId, terminal: record.stage === "DEPLOYED" || record.stage === "BLOCKED", reconciled: record.blockedReason === null }));
+  const brokerReferences = (githubContributionStore?.records() || []).filter((record) => record.outcome === "PENDING")
+    .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
+  return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
+}, (projectId, reference) => serverHeldRepositoryCredentials.available(projectId, reference));
+const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);
+Object.defineProperty(store, "getVerifiedRepositoryConnection", {
+  configurable: false,
+  enumerable: false,
+  value: (projectId: string) => projectId === currentProjectId ? projectRepositoryScope.connection.inspectServer() : undefined,
+});
+const verifyProjectRepositoryAuthority = async () => {
+  const connection = projectRepositoryScope.connection.inspectServer();
+  if (!connection) return "project-repository-connection-missing";
+  const result = await projectRepositoryScope.connection.revalidateAuthority(connection.revision);
+  return result.kind === "ok" ? null : result.reason;
+};
 const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
 const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
 const githubReadParts=githubReadRepository?.split("/")||[];
@@ -197,24 +236,24 @@ async function refreshAgentCapabilities() {
   }
 }
 for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
-const githubContributionStore = githubToken && githubRepository
+githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
 const githubClient = githubToken ? new GitHubRestClient(githubToken) : undefined;
 const githubContributionBroker = githubContributionStore && githubToken && githubRepository
   ? new GitHubContributionBroker(
     store, store, developerTeam, githubContributionStore, githubClient!, projectRepositoryPath,
-    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main",
+    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", undefined, verifyProjectRepositoryAuthority,
   )
   : undefined;
-const contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
+contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
 const contributionExecutor = githubContributionBroker && githubClient && githubRepository
   ? new GovernedContributionExecutor(githubContributionBroker, githubClient, developerTeam, githubRepository,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL?.trim(),
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN}` : undefined)
   : new UnavailableContributionExecutor();
 const contributionService = contributionRecords && githubRepository
-  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository)
+  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository, undefined, undefined, verifyProjectRepositoryAuthority)
   : undefined;
 await structuredLogger.log("info", "github.store.initialized", { readStoreConfigured: Boolean(githubReadService), contributionStoreConfigured: Boolean(githubContributionStore) });
 await structuredLogger.log("info", "github.adapter.policy", { githubReadConfigured: Boolean(githubReadService), githubContributionConfigured: Boolean(githubContributionBroker), toolPolicy: "fixed-read-selectors" });
@@ -230,6 +269,7 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   agentProcesses,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION,
   (level, event, fields) => structuredLogger.log(level, event, fields),
+  verifyProjectRepositoryAuthority,
 );
 await assignmentLifecycle.reconcile();
 const startupAssignments = await assignmentLifecycle.list();
@@ -310,6 +350,7 @@ registerRoomHistoryRoutes({
 });
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
 registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
+registerProjectRepositoryRoutes({ app, developers: developerTeam, service: projectRepositoryScope.connection });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
