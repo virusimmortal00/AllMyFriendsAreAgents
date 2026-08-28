@@ -75,6 +75,41 @@ describe("authoritative logging foundation", () => {
     expect(JSON.stringify(record)).not.toMatch(/auth-secret|1234567890abcdef|getter-secret/);
   });
 
+  it("preserves authorized evidence beyond every former serializer cap", async () => {
+    const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 8 * 1024 * 1024, includeStacks: true });
+    const prompt = "p".repeat(1_000_050);
+    const providerError = new Error("e".repeat(700));
+    providerError.stack = Array.from({ length: 20 }, (_, index) => `stack-line-${index}`).join("\n");
+    const toolOutcomes = Array.from({ length: 10_050 }, (_, index) => ({ index }));
+    const interpretedOutput = Object.fromEntries(Array.from({ length: 10_050 }, (_, index) => [`field-${index}`, index]));
+    const nested: Record<string, unknown> = {};
+    let cursor = nested;
+    for (let depth = 0; depth < 20; depth++) { const child: Record<string, unknown> = {}; cursor.child = child; cursor = child; }
+    cursor.evidence = "deep provider evidence";
+
+    logging.log("generations", "error", "generation.full-evidence", {
+      prompt,
+      rawResponse: "raw output",
+      interpretedOutput,
+      toolOutcomes,
+      providerError,
+      nested,
+      authorization: "Bearer must-not-leak",
+    });
+    await logging.flush();
+    const [record] = records(destinations.get("generations")!);
+    expect(record.prompt).toBe(prompt);
+    expect(record.interpretedOutput["field-10049"]).toBe(10_049);
+    expect(record.toolOutcomes).toHaveLength(10_050);
+    expect(record.providerError.message).toBe("e".repeat(700));
+    expect(record.providerError.stack.split("\n")).toHaveLength(20);
+    let nestedRecord = record.nested;
+    for (let depth = 0; depth < 20; depth++) nestedRecord = nestedRecord.child;
+    expect(nestedRecord.evidence).toBe("deep provider evidence");
+    expect(record.authorization).toBe("[REDACTED]");
+    expect(JSON.stringify(record)).not.toContain("must-not-leak");
+  });
+
   it("routes generation, provider, tool, stdout, and stderr evidence with usable cross-stream correlation", async () => {
     const { destinations, logging } = await memoryFoundation();
     const journal = await GenerationJournal.open("/projects/one", undefined, undefined, logging);
@@ -153,6 +188,34 @@ describe("authoritative logging foundation", () => {
       for (const name of matching) expect((await stat(path.join(logging.logDirectory, name))).mode & 0o777).toBe(0o600);
     }
     await logging.close();
+  });
+
+  it("reopens after restart without losing earlier authoritative records", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-reopen-")); roots.push(root);
+    const options = { dataDirectory: root, projectId: "project-reopen", projectPath: root, maxBufferedBytes: 1024 * 1024 };
+    const first = await AuthoritativeLogging.open(options);
+    first.log("generations", "info", "generation.before-restart", { generationId: "before" });
+    await first.close();
+    const second = await AuthoritativeLogging.open(options);
+    second.log("generations", "info", "generation.after-restart", { generationId: "after" });
+    await second.close();
+
+    const names = (await readdir(second.logDirectory)).filter((name) => name.startsWith("generations.") && name.endsWith(".jsonl"));
+    const persisted = (await Promise.all(names.map((name) => readFile(path.join(second.logDirectory, name), "utf8")))).join("\n");
+    expect(persisted).toContain('"event":"generation.before-restart"');
+    expect(persisted).toContain('"event":"generation.after-restart"');
+  });
+
+  it("serializes concurrent producers without record loss or corruption", async () => {
+    const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 4 * 1024 * 1024, maxIdentical: 500 });
+    await Promise.all(Array.from({ length: 250 }, (_, producer) => Promise.resolve().then(() => {
+      logging.log("opencode-harness", "info", "opencode.concurrent-output", { producer, output: `output-${producer}` });
+    })));
+    await logging.flush();
+    const concurrent = records(destinations.get("opencode-harness")!);
+    expect(concurrent).toHaveLength(250);
+    expect(new Set(concurrent.map(({ producer }) => producer)).size).toBe(250);
+    expect(logging.metrics()["opencode-harness"]).toMatchObject({ dropped: 0, sinkFailures: 0, written: 250 });
   });
 
   it("assigns application events to one subsystem owner and rotates on an independent time bound", async () => {

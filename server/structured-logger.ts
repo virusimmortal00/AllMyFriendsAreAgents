@@ -23,7 +23,20 @@ const storage = new AsyncLocalStorage<LogContext>();
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-0[01]$/;
 export function parseOrCreateTraceparent(value?: string) { const match = value?.toLowerCase().match(TRACEPARENT); const traceId = match?.[1] || randomBytes(16).toString("hex"); const parentSpanId = match?.[2]; const spanId = randomBytes(8).toString("hex"); return { traceId, spanId, ...(parentSpanId ? { parentSpanId } : {}), traceparent: `00-${traceId}-${spanId}-01` }; }
 
-export function safeError(error: unknown, includeStack = false) { if (!(error instanceof Error)) return { name: "Error", message: redactDiagnosticSecrets(String(error)).slice(0, 500) }; return { name: error.name.slice(0, 100), message: redactDiagnosticSecrets(error.message).slice(0, 500), ...(includeStack && error.stack ? { stack: redactDiagnosticSecrets(error.stack).split("\n").slice(0, 12).join("\n") } : {}) }; }
+export function safeError(error: unknown, includeStack = false) {
+  if (!(error instanceof Error)) {
+    try { return { name: "Error", message: redactDiagnosticSecrets(String(error)) }; }
+    catch { return { name: "Error", message: "[unprintable diagnostic error]" }; }
+  }
+  const read = (key: "name" | "message" | "stack") => {
+    try { return redactDiagnosticSecrets(String(error[key] || "")); }
+    catch { return `[unreadable error ${key}]`; }
+  };
+  const name = read("name");
+  const message = read("message");
+  const stack = includeStack ? read("stack") : "";
+  return { name, message, ...(stack ? { stack } : {}) };
+}
 
 const SECRET_FIELD = /(?:^|[-_])(?:authorization|proxy[-_]?authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|auth[-_]?token|token|secret|password|passwd|cookie|set[-_]?cookie|credential|private[-_]?key)(?:$|[-_])/i;
 function isSecretField(key: string) {
@@ -32,40 +45,59 @@ function isSecretField(key: string) {
     || /(?:provider|service|client|auth|access)key$/.test(compact);
 }
 
-/** Evidence-preserving serializer with recursive authentication-secret redaction. */
-export function sanitizeLogValue(value: unknown, depth = 0, includeStack = false, seen = new WeakSet<object>()): unknown {
-  if (depth > 12) return "[bounded-depth]";
-  if (value instanceof Error) {
-    const error = safeError(value, includeStack) as Record<string, unknown>;
-    const cause = "cause" in value ? sanitizeLogValue(value.cause, depth + 1, includeStack, seen) : undefined;
-    return cause === undefined ? error : { ...error, cause };
-  }
-  if (typeof value === "string") return redactDiagnosticSecrets(value).slice(0, 1_000_000);
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "symbol" || typeof value === "function") return `[${typeof value}]`;
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return "[circular]";
-    seen.add(value);
-    const result = value.slice(0, 10_000).map((item) => sanitizeLogValue(item, depth + 1, includeStack, seen));
-    seen.delete(value);
-    return result;
-  }
-  if (value && typeof value === "object") {
-    if (seen.has(value)) return "[circular]";
-    seen.add(value);
-    const result: Record<string, unknown> = {};
-    let keys: string[];
-    try { keys = Object.keys(value as Record<string, unknown>).slice(0, 10_000); }
-    catch (error) { seen.delete(value); return { serializationError: safeError(error) }; }
-    for (const key of keys) {
-      if (isSecretField(key)) { result[key] = "[REDACTED]"; continue; }
-      try { result[key] = sanitizeLogValue((value as Record<string, unknown>)[key], depth + 1, includeStack, seen); }
-      catch (error) { result[key] = { serializationError: safeError(error) }; }
+/** Evidence-preserving serializer with authentication-only redaction and iterative cycle handling. */
+export function sanitizeLogValue(value: unknown, _depth = 0, includeStack = false, _seen = new WeakSet<object>()): unknown {
+  const root: { value?: unknown } = {};
+  type Task =
+    | { type: "visit"; value: unknown; parent: Record<string, unknown> | unknown[] | { value?: unknown }; key: string | number }
+    | { type: "property"; source: Record<string | number, unknown>; parent: Record<string, unknown> | unknown[]; key: string | number }
+    | { type: "exit"; value: object };
+  const active = new WeakSet<object>();
+  const tasks: Task[] = [{ type: "visit", value, parent: root, key: "value" }];
+  const assign = (parent: Record<string, unknown> | unknown[] | { value?: unknown }, key: string | number, next: unknown) => {
+    (parent as Record<string | number, unknown>)[key] = next;
+  };
+
+  while (tasks.length) {
+    const task = tasks.pop()!;
+    if (task.type === "exit") { active.delete(task.value); continue; }
+    if (task.type === "property") {
+      if (typeof task.key === "string" && isSecretField(task.key)) { assign(task.parent, task.key, "[REDACTED]"); continue; }
+      try { tasks.push({ type: "visit", value: task.source[task.key], parent: task.parent, key: task.key }); }
+      catch (error) { assign(task.parent, task.key, { serializationError: safeError(error) }); }
+      continue;
     }
-    seen.delete(value);
-    return result;
+
+    const current = task.value;
+    if (typeof current === "string") { assign(task.parent, task.key, redactDiagnosticSecrets(current)); continue; }
+    if (typeof current === "bigint") { assign(task.parent, task.key, current.toString()); continue; }
+    if (typeof current === "symbol" || typeof current === "function") { assign(task.parent, task.key, `[${typeof current}]`); continue; }
+    if (!current || typeof current !== "object") { assign(task.parent, task.key, current); continue; }
+    if (active.has(current)) { assign(task.parent, task.key, "[circular]"); continue; }
+
+    active.add(current);
+    tasks.push({ type: "exit", value: current });
+    if (current instanceof Error) {
+      const result = safeError(current, includeStack) as Record<string, unknown>;
+      assign(task.parent, task.key, result);
+      if ("cause" in current) tasks.push({ type: "property", source: current as unknown as Record<string, unknown>, parent: result, key: "cause" });
+      continue;
+    }
+    if (Array.isArray(current)) {
+      const result = new Array<unknown>(current.length);
+      assign(task.parent, task.key, result);
+      for (let index = current.length - 1; index >= 0; index--) tasks.push({ type: "property", source: current as unknown as Record<number, unknown>, parent: result, key: index });
+      continue;
+    }
+
+    const result: Record<string, unknown> = {};
+    assign(task.parent, task.key, result);
+    let keys: string[];
+    try { keys = Object.keys(current); }
+    catch (error) { assign(task.parent, task.key, { serializationError: safeError(error) }); continue; }
+    for (let index = keys.length - 1; index >= 0; index--) tasks.push({ type: "property", source: current as Record<string, unknown>, parent: result, key: keys[index]! });
   }
-  return value;
+  return root.value;
 }
 
 export function currentLogContext() { return storage.getStore(); }
