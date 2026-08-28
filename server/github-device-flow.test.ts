@@ -98,4 +98,3 @@ describe("GitHub App device-flow transport", () => {
     }
   });
 });
-

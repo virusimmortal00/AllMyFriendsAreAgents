@@ -63,4 +63,3 @@ describe("GitHub installation repository discovery", () => {
     }
   });
 });
-
