@@ -14,21 +14,24 @@ function connection(projectId:string,connectionId:string,owner:string,repository
   validatedAt:"2026-08-28T00:00:00.000Z",disabledAt:null,createdAt:"2026-08-28T00:00:00.000Z",updatedAt:"2026-08-28T00:00:00.000Z",
 };}
 
-function fixture(options:{maxEntries?:number}={}){
+function fixture(options:{maxEntries?:number;fetcher?:GitHubReadFetch}={}){
   const rooms=new Map<string,string|null>([["room-a","project-one"],["room-b","project-one"],["room-c","project-two"],["room-general",null],["room-missing-project","project-missing"],["room-unverified","project-unverified"],["room-stale","project-stale"]]);
+  const attachmentRevisions=new Map([...rooms.keys()].map((roomId)=>[roomId,1]));
   const records=new Map<string,ProjectRepositoryConnection>([["project-one",connection("project-one","connection-one","owner","one","credential-one")],["project-two",connection("project-two","connection-two","owner","two","credential-two")]]);
   const credentials=new ServerHeldRepositoryCredentials();credentials.register("project-one","credential-one",secretOne);credentials.register("project-two","credential-two",secretTwo);
+  let scopeCalls=0;let pauseAt=Number.POSITIVE_INFINITY;let reached:undefined|(()=>void);let release:undefined|(()=>void);
   const identities={
-    async getStorageScope(roomId:string){if(!rooms.has(roomId))return undefined;const projectId=rooms.get(roomId)!;return{schemaVersion:1 as const,serverId:"server-one",roomId,projectId,repositoryReferenceId:null,repositoryReferenceRevision:null};},
+    async getStorageScope(roomId:string){scopeCalls++;if(scopeCalls===pauseAt){reached?.();await new Promise<void>((resolve)=>{release=resolve;});}if(!rooms.has(roomId))return undefined;const projectId=rooms.get(roomId)!;return{schemaVersion:1 as const,serverId:"server-one",roomId,projectId,roomAttachmentRevision:attachmentRevisions.get(roomId),repositoryReferenceId:null,repositoryReferenceRevision:null};},
     async getDurableProject(projectId:string){if(![...rooms.values()].includes(projectId)||projectId==="project-missing")return undefined;return{schemaVersion:1 as const,projectId,serverId:"server-one",revision:1,name:projectId,repositoryCapacity:1 as const,repositoryReferenceId:projectId==="project-unverified"?"legacy-ref":projectId==="project-stale"?"stale-ref":null,createdAt:"2026-08-28T00:00:00.000Z",updatedAt:"2026-08-28T00:00:00.000Z"};},
     async getRepositoryReference(repositoryReferenceId:string){return repositoryReferenceId==="legacy-ref"?{schemaVersion:1 as const,repositoryReferenceId,projectId:"project-unverified",revision:1,state:"unverified-legacy-placeholder" as const,localPath:"/legacy",sanitizedRemoteIdentity:"github.com/owner/legacy",createdAt:"2026-08-28T00:00:00.000Z",updatedAt:"2026-08-28T00:00:00.000Z"}:undefined;},
   };
-  const fetcher:GitHubReadFetch=vi.fn(async(input)=>response(new URL(input)));
+  const fetcher:GitHubReadFetch=options.fetcher||vi.fn(async(input)=>response(new URL(input)));
   const service=new RoomBoundGitHubReadService(identities,(projectId)=>({
     inspectServer:()=>records.get(projectId),
     revalidateAuthority:async(expectedRevision:number)=>{const current=records.get(projectId);return current?.state==="verified"&&current.revision===expectedRevision?{kind:"ok" as const,connection:structuredClone(current)}:{kind:"rejected" as const,reason:current?.revision!==expectedRevision?"Repository connection revision is stale.":"Repository identity drift."};},
-  }) as never,credentials,{fetcher,...options});
-  return{service,fetcher,records,rooms};
+  }) as never,credentials,{fetcher,maxEntries:options.maxEntries});
+  const pauseBeforeNextValidation=()=>{pauseAt=scopeCalls+2;const waiting=new Promise<void>((resolve)=>{reached=resolve;});return{waiting,release:()=>release?.()};};
+  return{service,fetcher,records,rooms,attachmentRevisions,pauseBeforeNextValidation};
 }
 
 describe("room-bound read-only GitHub resolution",()=>{
@@ -56,6 +59,25 @@ describe("room-bound read-only GitHub resolution",()=>{
     f.records.set("project-one",{...rebound,state:"identity-drift",revision:5});await expectFailure(f.service.authorize("room-a"),"connection-drift");
     f.records.set("project-one",{...rebound,revision:6,credentialReference:"credential-gone"});await expectFailure(f.service.authorize("room-a"),"credential-missing");
     expect(f.fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a warmed cache hit when the room attachment is rebound after resolution",async()=>{
+    const f=fixture();await f.service.execute("room-a",{kind:"pr",number:7});const paused=f.pauseBeforeNextValidation();
+    const pending=f.service.execute("room-a",{kind:"pr",number:7});await paused.waiting;f.rooms.set("room-a","project-two");f.attachmentRevisions.set("room-a",2);paused.release();
+    await expectFailure(pending,"connection-stale");expect(f.fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start an upstream request when the repository connection is rebound after resolution",async()=>{
+    const f=fixture();const paused=f.pauseBeforeNextValidation();const pending=f.service.execute("room-a",{kind:"issue",number:9});await paused.waiting;
+    const previous=f.records.get("project-one")!;f.records.set("project-one",{...previous,connectionId:"connection-rebound",revision:2,remote:{provider:"github",owner:"owner",repository:"rebound",canonical:"github.com/owner/rebound"}});paused.release();
+    await expectFailure(pending,"connection-stale");expect(f.fetcher).not.toHaveBeenCalled();
+  });
+
+  it("discards an upstream response when the repository connection changes in flight",async()=>{
+    let releaseFetch:()=>void=()=>undefined;const fetchGate=new Promise<void>((resolve)=>{releaseFetch=resolve;});let fetchStarted:undefined|(()=>void);const started=new Promise<void>((resolve)=>{fetchStarted=resolve;});
+    const fetcher=vi.fn(async(input:string|URL)=>{fetchStarted?.();await fetchGate;return response(new URL(input));});const f=fixture({fetcher});
+    const pending=f.service.execute("room-a",{kind:"issue",number:9});await started;const previous=f.records.get("project-one")!;f.records.set("project-one",{...previous,revision:2});releaseFetch?.();
+    await expectFailure(pending,"connection-stale");expect(fetcher).toHaveBeenCalledTimes(1);expect(f.service.inspect()).toMatchObject({entries:0,pending:0});
   });
 
   it.each([["unknown-room","room-not-found"],["room-general","general-room"],["room-missing-project","project-not-found"],["room-unverified","connection-unverified"],["room-stale","connection-stale"]] as const)("fails closed for %s before upstream access",async(roomId,reason)=>{

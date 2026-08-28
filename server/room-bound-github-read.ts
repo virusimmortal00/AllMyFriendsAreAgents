@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GhSelector } from "../shared/command-domain.js";
 import { GitHubReadAdapter, GitHubReadFailure, type GitHubEndpointFamily, type GitHubReadFetch } from "./github-read-adapter.js";
 import { GitHubReadService, githubReadFailureText } from "./github-read-service.js";
@@ -14,28 +15,38 @@ export interface RoomBoundGitHubReadOptions {
   readonly maxQueued?: number;
 }
 
-interface AuthorizedBinding { readonly scopeKey: string; readonly connection: ProjectRepositoryConnection; readonly token: string }
+type GitHubIdentityReader=Pick<IdentityRepository,"getStorageScope"|"getDurableProject"|"getRepositoryReference">;
+
+interface AuthorizedBinding { readonly cacheScope: string; readonly authorizationLease: string; readonly connection: ProjectRepositoryConnection; readonly token: string }
 
 /** Resolves every read from server-owned room state before reaching the shared sanitized cache. */
 export class RoomBoundGitHubReadService {
   private readonly store: GitHubReadStore;
   constructor(
-    private readonly identities: Pick<IdentityRepository, "getStorageScope" | "getDurableProject" | "getRepositoryReference">,
+    private readonly identities: GitHubIdentityReader|((roomId:string)=>GitHubIdentityReader|Promise<GitHubIdentityReader>),
     private readonly connectionForProject: (projectId: string) => ProjectRepositoryConnectionService,
     private readonly credentials: ServerHeldRepositoryCredentials,
     private readonly options: RoomBoundGitHubReadOptions = {},
   ) { this.store = new GitHubReadStore(undefined, { ttlMs: options.ttlMs, maxEntries: options.maxEntries, maxActive: options.maxActive,
     maxQueued: options.maxQueued, operationLog: options.operationLog }); }
 
-  async authorize(roomId: string) { return this.resolve(roomId); }
+  async authorize(roomId: string) { return (await this.resolve(roomId)).authorizationLease; }
 
-  async execute(roomId: string, selector: GhSelector) {
+  async validateLease(roomId:string,authorizationLease:string|null|undefined){
+    if(!authorizationLease||authorizationLease==="legacy-static")throw new GitHubReadFailure("connection-stale","none");
+    const current=await this.resolve(roomId);if(current.authorizationLease!==authorizationLease)throw new GitHubReadFailure("connection-stale","none");
+  }
+
+  async execute(roomId: string, selector: GhSelector, authorizationLease?:string|null) {
     const binding = await this.resolve(roomId);
+    if(authorizationLease&&binding.authorizationLease!==authorizationLease)throw new GitHubReadFailure("connection-stale","none");
+    const validate=()=>this.validateBinding(roomId,binding);
+    await validate();
     const connection = binding.connection;
     const adapter = new GitHubReadAdapter({ owner: connection.remote.owner, repository: connection.remote.repository,
       defaultBranch: connection.defaultBranch, token: binding.token }, this.options.fetcher);
-    const service = new GitHubReadService({ get: (query) => this.store.getScoped(binding.scopeKey, adapter, query) }, `${connection.remote.owner}/${connection.remote.repository}`);
-    return service.execute(selector);
+    const service = new GitHubReadService({ get: (query) => this.store.getScoped(binding.cacheScope, adapter, query, validate) }, `${connection.remote.owner}/${connection.remote.repository}`);
+    const result=await service.execute(selector);await validate();return Object.defineProperty({...result},"authorizationLease",{value:binding.authorizationLease,enumerable:false}) as typeof result&{authorizationLease:string};
   }
 
   failure(error: unknown, fallbackFamily: GitHubEndpointFamily = "recent-pulls") {
@@ -48,16 +59,17 @@ export class RoomBoundGitHubReadService {
   inspect() { return this.store.inspect(); }
 
   private async resolve(roomId: string): Promise<AuthorizedBinding> {
-    const scope = await this.identities.getStorageScope(roomId);
+    const identities=typeof this.identities==="function"?await this.identities(roomId):this.identities;
+    const scope = await identities.getStorageScope(roomId);
     if (!scope || scope.roomId !== roomId) throw new GitHubReadFailure("room-not-found", "none");
     if (!scope.projectId) throw new GitHubReadFailure("general-room", "none");
-    const project = await this.identities.getDurableProject(scope.projectId);
+    const project = await identities.getDurableProject(scope.projectId);
     if (!project || project.projectId !== scope.projectId || project.serverId !== scope.serverId) throw new GitHubReadFailure("project-not-found", "none");
     const service = this.connectionForProject(project.projectId);
     const connection = service.inspectServer();
     if (!connection) {
       if (!project.repositoryReferenceId) throw new GitHubReadFailure("connection-missing", "none");
-      const reference = await this.identities.getRepositoryReference(project.repositoryReferenceId);
+      const reference = await identities.getRepositoryReference(project.repositoryReferenceId);
       if (!reference || reference.projectId !== project.projectId) throw new GitHubReadFailure("connection-stale", "none");
       throw new GitHubReadFailure("connection-unverified", "none");
     }
@@ -78,7 +90,12 @@ export class RoomBoundGitHubReadService {
       || verified.connection.remote.canonical !== connection.remote.canonical) throw new GitHubReadFailure("connection-stale", "none");
     const token = this.credentials.forServerOperation(project.projectId, connection.credentialReference);
     if (!token) throw new GitHubReadFailure("credential-missing", "none");
-    const scopeKey = `${project.projectId}:${connection.connectionId}:${connection.revision}:${connection.remote.canonical}`;
-    return { scopeKey, connection, token };
+    const cacheScope = `${project.projectId}:${connection.connectionId}:${connection.revision}:${connection.remote.canonical}`;
+    const authorizationLease=`sha256:${createHash("sha256").update(JSON.stringify({serverId:scope.serverId,roomId:scope.roomId,roomAttachmentRevision:scope.roomAttachmentRevision??0,
+      projectId:project.projectId,projectRevision:project.revision,connectionId:connection.connectionId,connectionRevision:connection.revision,
+      repository:connection.remote.canonical,identityDigest:connection.identityDigest,credentialReference:connection.credentialReference})).digest("hex")}`;
+    return { cacheScope, authorizationLease, connection, token };
   }
+
+  private async validateBinding(roomId:string,binding:AuthorizedBinding){const current=await this.resolve(roomId);if(current.authorizationLease!==binding.authorizationLease||current.cacheScope!==binding.cacheScope)throw new GitHubReadFailure("connection-stale","none");}
 }

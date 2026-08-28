@@ -87,6 +87,8 @@ export interface StorageScope {
   readonly schemaVersion: 1;
   readonly serverId: string;
   readonly roomId: string;
+  /** Monotonic server-owned attachment epoch; absent only on pre-#129 compatibility stores. */
+  readonly roomAttachmentRevision?: number;
   readonly projectId: string | null;
   readonly repositoryReferenceId: string | null;
   readonly repositoryReferenceRevision: number | null;

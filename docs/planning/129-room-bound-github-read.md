@@ -12,7 +12,9 @@ Tracking issue: [#129](https://github.com/virusimmortal00/AllMyFriendsAreAgents/
 
 The delivered `/gh` grammar now resolves GitHub authority exclusively from the authenticated invocation's server-owned room, current durable project attachment, current verified repository connection revision, and that connection's server-held credential reference. The process-global repository selector is no longer an execution authority.
 
-Authorization and current binding validation precede cache, replay, recovery, and upstream access. Sanitized cache entries are shared only within an immutable project, connection, revision, and canonical repository scope; room rebinds, connection revisions, disablement, verification loss, identity drift, and missing credentials fail closed with stable private reasons and cannot reach prior entries.
+Authorization and a versioned room/repository lease are revalidated before cache access, immediately before and after upstream access, before durable caching, replay, recovery, and publication. Sanitized cache entries are shared only within an immutable project, connection, revision, and canonical repository scope; room rebinds, connection revisions, disablement, verification loss, identity drift, and missing credentials fail closed with stable private reasons and cannot reach prior entries.
+
+Lifecycle room message routes intercept slash text before transcript persistence and dispatch through a short-lived, serialized `CommandRuntime` bound to the authenticated member's acquired SQLite room repository. The runtime is closed after each operation, while the sanitized GitHub cache remains process-global for independently authorized same-project reuse.
 
 ## Acceptance checks
 
