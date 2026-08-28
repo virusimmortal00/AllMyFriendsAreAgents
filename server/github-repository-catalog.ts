@@ -52,7 +52,7 @@ export class GitHubRepositoryCatalogClient {
     const repositories: GitHubRepositoryCatalogEntry[] = [];
     for (const installation of installations) {
       const payloads = await this.pages(`/user/installations/${installation.installationId}/repositories`, "repositories", accessToken, MAX_REPOSITORY_PAGES);
-      repositories.push(...payloads.map((payload) => repositoryFrom(payload, installation.installationId)));
+      repositories.push(...payloads.map((payload) => repositoryFrom(payload, installation)));
     }
     if (new Set(repositories.map((entry) => entry.githubRepositoryId)).size !== repositories.length
       || new Set(repositories.map((entry) => entry.canonical)).size !== repositories.length) throw new GitHubRepositoryCatalogFailure("invalid-response");
@@ -106,16 +106,17 @@ function installationFrom(value: unknown): GitHubInstallationCatalogEntry {
     type: account.type as "User" | "Organization" }, repositorySelection: item.repository_selection as "all" | "selected" };
 }
 
-function repositoryFrom(value: unknown, installationId: number): GitHubRepositoryCatalogEntry {
+function repositoryFrom(value: unknown, installation: GitHubInstallationCatalogEntry): GitHubRepositoryCatalogEntry {
   if (!value || typeof value !== "object") throw new GitHubRepositoryCatalogFailure("invalid-response");
   const item = value as { id?: unknown; name?: unknown; full_name?: unknown; owner?: unknown; visibility?: unknown; default_branch?: unknown };
   const owner = item.owner as { login?: unknown } | undefined;
   if (!Number.isSafeInteger(item.id) || (item.id as number) < 1 || typeof item.name !== "string" || !GITHUB_REPOSITORY_NAME.test(item.name)
-    || !owner || typeof owner.login !== "string" || !GITHUB_LOGIN.test(owner.login) || typeof item.full_name !== "string"
+    || !owner || typeof owner.login !== "string" || !GITHUB_LOGIN.test(owner.login)
+    || owner.login.toLowerCase() !== installation.account.login.toLowerCase() || typeof item.full_name !== "string"
     || item.full_name.toLowerCase() !== `${owner.login}/${item.name}`.toLowerCase() || !["public", "private", "internal"].includes(String(item.visibility))
     || typeof item.default_branch !== "string" || !GITHUB_BRANCH.test(item.default_branch)) throw new GitHubRepositoryCatalogFailure("invalid-response");
   const canonicalOwner = owner.login.toLowerCase(); const canonicalName = item.name.toLowerCase();
-  return { githubRepositoryId: item.id as number, installationId, owner: canonicalOwner, name: canonicalName,
+  return { githubRepositoryId: item.id as number, installationId: installation.installationId, owner: canonicalOwner, name: canonicalName,
     canonical: `github.com/${canonicalOwner}/${canonicalName}`, visibility: item.visibility as "public" | "private" | "internal", defaultBranch: item.default_branch };
 }
 

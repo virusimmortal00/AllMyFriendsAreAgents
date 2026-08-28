@@ -9,12 +9,15 @@ import type {
   ResolvedGitHubCredential,
   SecretVaultReader,
 } from "./github-credential-provider.js";
+import type { GitHubInstallationCatalogEntry, GitHubRepositoryCatalogDiscovery, GitHubRepositoryCatalogEntry } from "./github-repository-catalog.js";
 
 export type { SecretVaultReader } from "./github-credential-provider.js";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const GITHUB_REPOSITORY = /^github\.com\/[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9_.-]{1,100}$/;
+const GITHUB_REPOSITORY_NAME = /^[a-z0-9_.-]{1,100}$/;
+const GITHUB_BRANCH = /^(?![-./])(?!.*(?:\.\.|\/\/|@\{|\\|\s|[~^:?*\[]))[A-Za-z0-9._/-]{1,240}$/;
 
 export type ServerGitHubConnectionState = "ready" | "degraded" | "revoked";
 export type ServerGitHubAuthMode = Extract<GitHubCredentialProviderKind, "github-device-user" | "github-app-installation">;
@@ -51,15 +54,27 @@ export interface ProjectGitHubBinding {
   readonly revision: number;
   readonly connectionId: string;
   readonly installationId: number;
+  readonly githubRepositoryId: number;
   readonly repository: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface GitHubRepositoryCatalogSnapshot {
+  readonly schemaVersion: 1;
+  readonly connectionId: string;
+  readonly revision: number;
+  readonly connectionRevision: number;
+  readonly observedAt: string;
+  readonly installations: readonly GitHubInstallationCatalogEntry[];
+  readonly repositories: readonly GitHubRepositoryCatalogEntry[];
 }
 
 interface GitHubIntegrationState {
   readonly schemaVersion: 1;
   readonly connections: readonly ServerGitHubConnection[];
   readonly bindings: readonly ProjectGitHubBinding[];
+  readonly catalogs: readonly GitHubRepositoryCatalogSnapshot[];
 }
 
 export type GitHubIntegrationMutationResult<T> =
@@ -83,10 +98,18 @@ export interface BindProjectToGitHubInput {
   readonly projectId: string;
   readonly connectionId: string;
   readonly installationId: number;
+  readonly githubRepositoryId: number;
   readonly repository: string;
 }
 
-const EMPTY: GitHubIntegrationState = { schemaVersion: 1, connections: [], bindings: [] };
+export interface ReplaceGitHubRepositoryCatalogInput {
+  readonly expectedRevision: number;
+  readonly connectionId: string;
+  readonly connectionRevision: number;
+  readonly discovery: GitHubRepositoryCatalogDiscovery;
+}
+
+const EMPTY: GitHubIntegrationState = { schemaVersion: 1, connections: [], bindings: [], catalogs: [] };
 
 /** Persists non-secret server connection metadata and project-to-repository bindings. */
 export class GitHubIntegrationStore {
@@ -127,6 +150,33 @@ export class GitHubIntegrationStore {
     return structuredClone(this.state.bindings);
   }
 
+  catalog(connectionId: string) {
+    const value = this.state.catalogs.find((record) => record.connectionId === connectionId);
+    return value ? structuredClone(value) : undefined;
+  }
+
+  replaceCatalog(input: ReplaceGitHubRepositoryCatalogInput): Promise<GitHubIntegrationMutationResult<GitHubRepositoryCatalogSnapshot>> {
+    return this.mutate(async () => {
+      const current = this.state.catalogs.find((record) => record.connectionId === input.connectionId);
+      if (!validExpectedRevision(input.expectedRevision)) return { kind: "rejected", reason: "Expected revision must be a non-negative integer." };
+      if ((current?.revision ?? 0) !== input.expectedRevision) return { kind: "conflict", actualRevision: current?.revision ?? 0 };
+      const connection = this.state.connections.find((record) => record.connectionId === input.connectionId);
+      if (!connection || connection.state !== "ready" || connection.revision !== input.connectionRevision) {
+        return { kind: "rejected", reason: "A current ready server GitHub connection is required." };
+      }
+      const candidate: GitHubRepositoryCatalogSnapshot = { schemaVersion: 1, connectionId: input.connectionId,
+        revision: input.expectedRevision + 1, connectionRevision: input.connectionRevision, observedAt: input.discovery.observedAt,
+        installations: structuredClone(input.discovery.installations), repositories: structuredClone(input.discovery.repositories) };
+      if (!normalizeCatalog(candidate)) return { kind: "rejected", reason: "GitHub repository catalog is not canonical." };
+      if (current && Date.parse(candidate.observedAt) <= Date.parse(current.observedAt)) {
+        return { kind: "rejected", reason: "GitHub repository catalog observation must advance." };
+      }
+      const state = { ...this.state, catalogs: [...this.state.catalogs.filter((record) => record.connectionId !== input.connectionId), candidate] };
+      await this.persist(state);
+      return { kind: "ok", value: structuredClone(candidate) };
+    });
+  }
+
   saveConnection(input: SaveServerGitHubConnectionInput): Promise<GitHubIntegrationMutationResult<ServerGitHubConnection>> {
     return this.mutate(async () => {
       const current = this.state.connections.find((record) => record.connectionId === input.connectionId);
@@ -164,6 +214,10 @@ export class GitHubIntegrationStore {
       if ((current?.revision ?? 0) !== input.expectedRevision) return { kind: "conflict", actualRevision: current?.revision ?? 0 };
       const connection = this.state.connections.find((record) => record.connectionId === input.connectionId);
       if (!connection || connection.state !== "ready") return { kind: "rejected", reason: "A ready server GitHub connection is required." };
+      const catalog = this.state.catalogs.find((record) => record.connectionId === input.connectionId);
+      if (!catalog || catalog.connectionRevision !== connection.revision) return { kind: "rejected", reason: "A current repository catalog is required." };
+      if (!catalog.repositories.some((record) => record.githubRepositoryId === input.githubRepositoryId && record.installationId === input.installationId
+        && record.canonical === input.repository)) return { kind: "rejected", reason: "Repository is not present in the current server catalog." };
       const timestamp = new Date().toISOString();
       const candidate: ProjectGitHubBinding = {
         schemaVersion: 1,
@@ -172,6 +226,7 @@ export class GitHubIntegrationStore {
         revision: input.expectedRevision + 1,
         connectionId: input.connectionId,
         installationId: input.installationId,
+        githubRepositoryId: input.githubRepositoryId,
         repository: input.repository,
         createdAt: current?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -215,7 +270,10 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
     const binding = this.#integrations.bindingForProject(projectId);
     if (!binding || binding.bindingId !== credentialReference) return false;
     const connection = this.#integrations.connection(binding.connectionId);
-    return connection?.state === "ready" && this.#vault.available(connection.secretReference);
+    const catalog = this.#integrations.catalog(binding.connectionId);
+    return connection?.state === "ready" && catalog?.connectionRevision === connection.revision
+      && catalog.repositories.some((record) => record.githubRepositoryId === binding.githubRepositoryId && record.installationId === binding.installationId
+        && record.canonical === binding.repository) && this.#vault.available(connection.secretReference);
   }
 
   health(projectId: string, credentialReference: string): GitHubCredentialHealth {
@@ -225,6 +283,11 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
     if (!connection) return { state: "missing", reason: "connection-missing" };
     if (connection.state === "revoked") return { state: "revoked", provider: connection.authMode, reason: "connection-revoked" };
     if (connection.state === "degraded") return { state: "degraded", provider: connection.authMode, reason: "connection-degraded" };
+    const catalog = this.#integrations.catalog(binding.connectionId);
+    if (!catalog || catalog.connectionRevision !== connection.revision || !catalog.repositories.some((record) => record.githubRepositoryId === binding.githubRepositoryId
+      && record.installationId === binding.installationId && record.canonical === binding.repository)) {
+      return { state: "degraded", provider: connection.authMode, reason: "catalog-stale" };
+    }
     if (!this.#vault.available(connection.secretReference)) return { state: "missing", provider: connection.authMode, reason: "credential-missing" };
     return { state: "ready", provider: connection.authMode, reason: "ready" };
   }
@@ -235,6 +298,9 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
     if (!binding || binding.bindingId !== request.credentialReference || binding.repository !== request.repository) return undefined;
     const connection = this.#integrations.connection(binding.connectionId);
     if (!connection || connection.state !== "ready") return undefined;
+    const catalog = this.#integrations.catalog(binding.connectionId);
+    if (!catalog || catalog.connectionRevision !== connection.revision || !catalog.repositories.some((record) => record.githubRepositoryId === binding.githubRepositoryId
+      && record.installationId === binding.installationId && record.canonical === binding.repository)) return undefined;
     const secret = await this.#vault.read(connection.secretReference);
     if (!secret?.token || secret.provider !== connection.authMode) return undefined;
     return {
@@ -253,17 +319,22 @@ function publicConnection(connection: ServerGitHubConnection): PublicServerGitHu
 function normalizeState(value: unknown): GitHubIntegrationState | undefined {
   if (!value || typeof value !== "object") return undefined;
   const state = value as Partial<GitHubIntegrationState>;
-  if (state.schemaVersion !== 1 || !Array.isArray(state.connections) || !Array.isArray(state.bindings)) return undefined;
+  if (state.schemaVersion !== 1 || !Array.isArray(state.connections) || !Array.isArray(state.bindings)
+    || (state.catalogs !== undefined && !Array.isArray(state.catalogs))) return undefined;
   const connections = state.connections.map(normalizeConnection);
   const bindings = state.bindings.map(normalizeBinding);
-  if (connections.some((record) => !record) || bindings.some((record) => !record)) return undefined;
+  const catalogs = (state.catalogs ?? []).map(normalizeCatalog);
+  if (connections.some((record) => !record) || bindings.some((record) => !record) || catalogs.some((record) => !record)) return undefined;
   const canonicalConnections = connections as ServerGitHubConnection[];
   const canonicalBindings = bindings as ProjectGitHubBinding[];
+  const canonicalCatalogs = catalogs as GitHubRepositoryCatalogSnapshot[];
   if (new Set(canonicalConnections.map((record) => record.connectionId)).size !== canonicalConnections.length
     || new Set(canonicalBindings.map((record) => record.projectId)).size !== canonicalBindings.length
     || new Set(canonicalBindings.map((record) => record.bindingId)).size !== canonicalBindings.length
-    || canonicalBindings.some((binding) => !canonicalConnections.some((connection) => connection.connectionId === binding.connectionId))) return undefined;
-  return { schemaVersion: 1, connections: canonicalConnections, bindings: canonicalBindings };
+    || new Set(canonicalCatalogs.map((record) => record.connectionId)).size !== canonicalCatalogs.length
+    || canonicalBindings.some((binding) => !canonicalConnections.some((connection) => connection.connectionId === binding.connectionId))
+    || canonicalCatalogs.some((catalog) => !canonicalConnections.some((connection) => connection.connectionId === catalog.connectionId))) return undefined;
+  return { schemaVersion: 1, connections: canonicalConnections, bindings: canonicalBindings, catalogs: canonicalCatalogs };
 }
 
 function normalizeConnection(value: unknown): ServerGitHubConnection | undefined {
@@ -283,9 +354,49 @@ function normalizeBinding(value: unknown): ProjectGitHubBinding | undefined {
   const record = value as ProjectGitHubBinding;
   if (record.schemaVersion !== 1 || !SAFE_ID.test(record.bindingId) || !SAFE_ID.test(record.projectId)
     || !Number.isSafeInteger(record.revision) || record.revision < 1 || !SAFE_ID.test(record.connectionId)
-    || !Number.isSafeInteger(record.installationId) || record.installationId < 1 || !GITHUB_REPOSITORY.test(record.repository)
+    || !Number.isSafeInteger(record.installationId) || record.installationId < 1 || !Number.isSafeInteger(record.githubRepositoryId)
+    || record.githubRepositoryId < 1 || !GITHUB_REPOSITORY.test(record.repository)
     || !validTimestamp(record.createdAt) || !validTimestamp(record.updatedAt)) return undefined;
   return structuredClone(record);
+}
+
+function normalizeCatalog(value: unknown): GitHubRepositoryCatalogSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as GitHubRepositoryCatalogSnapshot;
+  if (record.schemaVersion !== 1 || !SAFE_ID.test(record.connectionId) || !Number.isSafeInteger(record.revision) || record.revision < 1
+    || !Number.isSafeInteger(record.connectionRevision) || record.connectionRevision < 1 || !validTimestamp(record.observedAt)
+    || !Array.isArray(record.installations) || !Array.isArray(record.repositories)) return undefined;
+  const installations = record.installations.map(normalizeInstallation);
+  const repositories = record.repositories.map(normalizeCatalogRepository);
+  if (installations.some((entry) => !entry) || repositories.some((entry) => !entry)) return undefined;
+  const canonicalInstallations = installations as GitHubInstallationCatalogEntry[];
+  const canonicalRepositories = repositories as GitHubRepositoryCatalogEntry[];
+  if (new Set(canonicalInstallations.map((entry) => entry.installationId)).size !== canonicalInstallations.length
+    || new Set(canonicalRepositories.map((entry) => entry.githubRepositoryId)).size !== canonicalRepositories.length
+    || new Set(canonicalRepositories.map((entry) => entry.canonical)).size !== canonicalRepositories.length
+    || canonicalRepositories.some((entry) => !canonicalInstallations.some((installation) => installation.installationId === entry.installationId
+      && installation.account.login.toLowerCase() === entry.owner))) return undefined;
+  return { ...structuredClone(record), installations: canonicalInstallations, repositories: canonicalRepositories };
+}
+
+function normalizeInstallation(value: unknown): GitHubInstallationCatalogEntry | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const entry = value as GitHubInstallationCatalogEntry;
+  if (!Number.isSafeInteger(entry.installationId) || entry.installationId < 1 || !entry.account || !Number.isSafeInteger(entry.account.id)
+    || entry.account.id < 1 || !GITHUB_LOGIN.test(entry.account.login) || !["User", "Organization"].includes(entry.account.type)
+    || !["all", "selected"].includes(entry.repositorySelection)) return undefined;
+  return structuredClone(entry);
+}
+
+function normalizeCatalogRepository(value: unknown): GitHubRepositoryCatalogEntry | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const entry = value as GitHubRepositoryCatalogEntry;
+  if (!Number.isSafeInteger(entry.githubRepositoryId) || entry.githubRepositoryId < 1 || !Number.isSafeInteger(entry.installationId)
+    || entry.installationId < 1 || !GITHUB_LOGIN.test(entry.owner) || entry.owner !== entry.owner.toLowerCase()
+    || !GITHUB_REPOSITORY_NAME.test(entry.name) || entry.name !== entry.name.toLowerCase()
+    || entry.canonical !== `github.com/${entry.owner}/${entry.name}` || !["public", "private", "internal"].includes(entry.visibility)
+    || !GITHUB_BRANCH.test(entry.defaultBranch)) return undefined;
+  return structuredClone(entry);
 }
 
 function validExpectedRevision(value: number) {

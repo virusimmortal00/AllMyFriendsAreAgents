@@ -34,6 +34,15 @@ async function readyConnection(store: GitHubIntegrationStore) {
   });
 }
 
+async function readyCatalog(store: GitHubIntegrationStore) {
+  return store.replaceCatalog({ expectedRevision: 0, connectionId: "github-server-one", connectionRevision: 1, discovery: { observedAt: timestamp,
+    installations: [{ installationId: 101, account: { id: 501, login: "Example", type: "Organization" }, repositorySelection: "selected" }],
+    repositories: [
+      { githubRepositoryId: 201, installationId: 101, owner: "example", name: "one", canonical: "github.com/example/one", visibility: "private", defaultBranch: "main" },
+      { githubRepositoryId: 202, installationId: 101, owner: "example", name: "two", canonical: "github.com/example/two", visibility: "private", defaultBranch: "main" },
+    ] } });
+}
+
 function vault(): SecretVaultReader {
   return {
     available: (reference) => reference === "vault-secret-one",
@@ -61,9 +70,9 @@ describe("server GitHub integration metadata", () => {
   });
 
   it("gives two projects unique bindings to one server connection and resolves through one vault secret", async () => {
-    const f = await fixture(); await readyConnection(f.store);
-    const one = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101, repository: "github.com/example/one" });
-    const two = await f.store.bindProject({ expectedRevision: 0, projectId: "project-two", connectionId: "github-server-one", installationId: 101, repository: "github.com/example/two" });
+    const f = await fixture(); await readyConnection(f.store); await readyCatalog(f.store);
+    const one = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101, githubRepositoryId: 201, repository: "github.com/example/one" });
+    const two = await f.store.bindProject({ expectedRevision: 0, projectId: "project-two", connectionId: "github-server-one", installationId: 101, githubRepositoryId: 202, repository: "github.com/example/two" });
     expect(one).toMatchObject({ kind: "ok", value: { projectId: "project-one", repository: "github.com/example/one" } });
     expect(two).toMatchObject({ kind: "ok", value: { projectId: "project-two", repository: "github.com/example/two" } });
     if (one.kind !== "ok" || two.kind !== "ok") throw new Error("expected project bindings");
@@ -80,10 +89,10 @@ describe("server GitHub integration metadata", () => {
   });
 
   it("fails closed for stale revisions, repository substitution, missing vault data, and revocation", async () => {
-    const f = await fixture(); await readyConnection(f.store);
-    const bound = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101, repository: "github.com/example/one" });
+    const f = await fixture(); await readyConnection(f.store); await readyCatalog(f.store);
+    const bound = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101, githubRepositoryId: 201, repository: "github.com/example/one" });
     if (bound.kind !== "ok") throw new Error("expected project binding");
-    await expect(f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101,
+    await expect(f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101, githubRepositoryId: 202,
       repository: "github.com/example/other" })).resolves.toEqual({ kind: "conflict", actualRevision: 1 });
 
     const provider = new BoundGitHubCredentialProvider(f.store, vault());
@@ -100,6 +109,21 @@ describe("server GitHub integration metadata", () => {
     expect(provider.health("project-one", bound.value.bindingId)).toMatchObject({ state: "revoked", reason: "connection-revoked" });
     await expect(provider.resolve({ projectId: "project-one", credentialReference: bound.value.bindingId, connectionId: "repository-connection-one", connectionRevision: 1,
       repository: "github.com/example/one" })).resolves.toBeUndefined();
+  });
+
+  it("requires an exact current catalog entry before binding a project", async () => {
+    const f = await fixture(); await readyConnection(f.store);
+    const input = { expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101,
+      githubRepositoryId: 201, repository: "github.com/example/one" };
+    await expect(f.store.bindProject(input)).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("catalog") });
+    await readyCatalog(f.store);
+    await expect(f.store.bindProject({ ...input, githubRepositoryId: 999 })).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("not present") });
+    await expect(f.store.bindProject(input)).resolves.toMatchObject({ kind: "ok" });
+    await f.store.saveConnection({ expectedRevision: 1, connectionId: "github-server-one", authMode: "github-device-user", state: "ready",
+      githubUser: { id: 7, login: "octocat" }, secretReference: "vault-secret-one", connectedAt: timestamp,
+      lastValidatedAt: "2026-08-28T12:01:00.000Z" });
+    const binding = f.store.bindingForProject("project-one")!;
+    expect(new BoundGitHubCredentialProvider(f.store, vault()).health("project-one", binding.bindingId)).toMatchObject({ state: "degraded", reason: "catalog-stale" });
   });
 
   it("rejects corrupt persisted integration metadata on restart", async () => {
