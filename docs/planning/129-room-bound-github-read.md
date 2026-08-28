@@ -16,6 +16,8 @@ Authorization and a versioned room/repository lease are revalidated before cache
 
 Lifecycle room message routes intercept slash text before transcript persistence and dispatch through a short-lived, serialized `CommandRuntime` bound to the authenticated member's acquired SQLite room repository. The runtime is closed after each operation, while the sanitized GitHub cache remains process-global for independently authorized same-project reuse.
 
+Room-route snapshots retain the server protocol identity required for reconnect reconciliation, expose only a sanitized diagnostic readiness state, and keep invoker-scoped GitHub diagnostics addressable through the authenticated room. The room poll projection is also served from the same room repository so reconnect polling cannot escape scope or fall through to unrelated routes.
+
 ## Acceptance checks
 
 - Human text and agent `room_command` paths retain the five #98 forms and converge on one `CommandRuntime` room-bound executor.

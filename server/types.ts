@@ -81,4 +81,5 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   server?: ServerIdentity;
   preflightEvidence?: PreflightEvidence;
+  githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
 }

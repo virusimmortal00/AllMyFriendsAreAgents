@@ -920,7 +920,7 @@ const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>
   capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
   operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
 })):undefined;
-if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,commands:roomCommandDispatcher});
+if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!serverHeldRepositoryCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
 const consultationRunner = new ConsultationRunner(
