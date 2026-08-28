@@ -93,6 +93,42 @@ describe("lease-bound room_diagnostics broker", () => {
     expect(api.query).toHaveBeenCalledTimes(8);
   });
 
+  it("preserves the original bounded time range across cursor calls", async () => {
+    const api = fixture();
+    api.query.mockResolvedValueOnce({ ...emptyResult(), nextCursor: "cursor-one" });
+    await api.broker.execute(api.token, api.input);
+    api.setNow(api.getNow() + 5_000);
+    await api.broker.execute(api.token, {
+      ...api.input,
+      requestId: "diagnostic-request-02",
+      query: { ...api.input.query, cursor: "cursor-one" },
+    });
+    expect(api.query).toHaveBeenCalledTimes(2);
+    expect(api.query.mock.calls[1][1].from).toBe(api.query.mock.calls[0][1].from);
+    expect(api.query.mock.calls[1][1].to).toBe(api.query.mock.calls[0][1].to);
+  });
+
+  it("distinguishes audit events from separate leases and absorbs operation-log failures", async () => {
+    let now = Date.parse("2026-08-28T12:00:00.000Z");
+    const binding: RoomDiagnosticsCapabilityBinding = {
+      effective: true, participantId: "codex-sol", providerSessionId: "session", roomId: "room-one", projectId: "project-one", manifestRevision: 7,
+      caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false }, allowedScopes: ["room"],
+    };
+    const operationLog = vi.fn(async () => { throw new Error("audit sink unavailable"); });
+    const broker = new RoomDiagnosticsToolBroker({ query: async () => emptyResult() }, () => binding, () => now, operationLog);
+    const first = broker.issue("codex-sol")!;
+    await broker.execute(first, { requestId: "diagnostic-request-01", query: { window: "last-hour", scope: "room" } });
+    expect(broker.revoke("codex-sol")).toBe(true);
+    now += 1;
+    const second = broker.issue("codex-sol")!;
+    await broker.execute(second, { requestId: "diagnostic-request-01", query: { window: "last-hour", scope: "room" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const accepted = broker.audit().filter(({ outcome }) => outcome === "accepted");
+    expect(accepted).toHaveLength(2);
+    expect(new Set(accepted.map(({ id }) => id)).size).toBe(2);
+    expect(operationLog).toHaveBeenCalled();
+  });
+
   it("accepts only closed bounded selectors and never caller-selected paths, backends, credentials, text searches, identities, or times", async () => {
     const forbidden = [
       { path: "/private/log" }, { backend: "loki" }, { credential: "secret" }, { search: "unrestricted text" },

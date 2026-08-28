@@ -11,6 +11,7 @@ import type { DeveloperTeamRegistry } from "./developer-team.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import type { AgentId } from "./types.js";
 import { logOperationSafely, type OperationLog } from "./operation-log.js";
+import { authorizeSourceWorkForCurrentBoot, repositoryAuthorityBlocker, sourceWorkReconciliationBlocker } from "./storage/identity-domain.js";
 
 const execFileAsync = promisify(execFile);
 const PROHIBITED_GRANT = /(^|[._:/-])(push|merge|deploy|publish)([._:/-]|$)/i;
@@ -54,6 +55,7 @@ export class AssignmentLifecycleService {
     private readonly processes?: { terminateScope(scope: string): Promise<void> },
     private readonly implementationConfinementAvailable = true,
     private readonly operationLog?: OperationLog,
+    private readonly repositoryAuthority?: () => Promise<string | null>,
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
@@ -65,6 +67,8 @@ export class AssignmentLifecycleService {
   private async createLocked(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
     const authenticated = this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR");
     if (!authenticated) return { kind: "unauthorized" };
+    const authority = await this.repositoryAuthority?.();
+    if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority}).` };
     if (!validId(input.assignmentId) || !validId(input.improvementId) || !isAgentId(input.agent)
       || !Number.isSafeInteger(input.fencingToken) || !Number.isSafeInteger(input.manifestRevision)) {
       return { kind: "rejected", reason: "Valid assignment, improvement, agent, fencing-token, and manifest-revision fields are required" };
@@ -72,6 +76,8 @@ export class AssignmentLifecycleService {
     if (!this.participantEligible(input.agent)) {
       return { kind: "rejected", reason: "The implementation assignment participant is not enabled or eligible" };
     }
+    const repositoryBlocker = await repositoryAuthorityBlocker(this.rooms, this.rooms.roomId);
+    if (repositoryBlocker) return { kind: "rejected", reason: `Assignment repository authority is unavailable (${repositoryBlocker}).` };
     const governed = await this.validateGovernance(authenticated.member.memberId, authenticated.member.revision, input);
     if (governed.kind !== "ok") return governed;
     const assignments = await this.records.listAssignments();
@@ -119,6 +125,7 @@ export class AssignmentLifecycleService {
       updatedAt: timestamp,
     };
     await this.records.putAssignment(assignment);
+    authorizeSourceWorkForCurrentBoot(this.rooms, "assignment", assignment.assignmentId);
     return { kind: "ok", value: assignment };
   }
 
@@ -170,6 +177,7 @@ export class AssignmentLifecycleService {
     const assignments = await this.reconcile();
     const assignment = assignments.find((candidate) => candidate.agent === agent && isWritableAssignment(candidate));
     if (!assignment || !this.participantEligible(agent)) return undefined;
+    if (await sourceWorkReconciliationBlocker(this.rooms, "assignment", assignment.assignmentId)) return undefined;
     const governed = await this.validateGovernance(assignment.developerMemberId, assignment.developerMemberConfigRevision, assignment);
     if (governed.kind !== "ok") return undefined;
     return assignment;
@@ -199,6 +207,10 @@ export class AssignmentLifecycleService {
         capabilities[agent] = unavailable(true, current.length ? "assignment-owner-mismatch" : "no-active-assignment");
         continue;
       }
+      if (await sourceWorkReconciliationBlocker(this.rooms, "assignment", assignment.assignmentId)) {
+        capabilities[agent] = unavailable(true, "provenance-reconciliation-required");
+        continue;
+      }
       if (assignment.lifecycleStatus === "MISSING" || !this.implementationConfinementAvailable) {
         capabilities[agent] = unavailable(true, "confinement-unavailable");
         continue;
@@ -221,6 +233,8 @@ export class AssignmentLifecycleService {
 
   /** Revalidates the exact immutable assignment epoch before every durable dispatch. */
   async authorityForContinuation(assignmentId: string, agent: AgentId): Promise<{ kind: "ok"; assignment: AssignmentRecord; workspace: string } | { kind: "revoked"; reason: string }> {
+    const provenanceBlocker = await sourceWorkReconciliationBlocker(this.rooms, "assignment", assignmentId);
+    if (provenanceBlocker) return { kind: "revoked", reason: `Assignment provenance requires reconciliation (${provenanceBlocker}).` };
     const assignments = await this.reconcile();
     const assignment = assignments.find((candidate) => candidate.assignmentId === assignmentId && candidate.agent === agent);
     if (!assignment || assignment.agent !== agent) return { kind: "revoked", reason: "Assignment is missing or belongs to another agent." };
@@ -289,6 +303,8 @@ export class AssignmentLifecycleService {
 
   private async disposeLocked(authorization: string | undefined, input: DisposeAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
     if (!this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR")) return { kind: "unauthorized" };
+    const authority = await this.repositoryAuthority?.();
+    if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority}).` };
     if (!validMutation(input) || input.confirmDisposable !== true) return { kind: "rejected", reason: "Explicit disposable confirmation is required" };
     const assignment = await this.records.getAssignment(input.assignmentId);
     if (!assignment) return { kind: "not_found" };

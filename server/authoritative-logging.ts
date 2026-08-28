@@ -48,6 +48,7 @@ export interface AuthoritativeLoggingOptions {
   rotation?: Partial<StreamRotationConfiguration>;
   maxBufferedBytes?: number;
   maxIdentical?: number;
+  maxIdenticalSignatures?: number;
   identicalWindowMs?: number;
   includeStacks?: boolean;
   now?: () => number;
@@ -97,6 +98,7 @@ export class AuthoritativeLogging {
   private readonly now: () => number;
   private readonly maxBufferedBytes: number;
   private readonly maxIdentical: number;
+  private readonly maxIdenticalSignatures: number;
   private readonly identicalWindowMs: number;
   private readonly includeStacks: boolean;
   private readonly identity: StructuredLogIdentity;
@@ -107,6 +109,7 @@ export class AuthoritativeLogging {
     this.now = options.now || Date.now;
     this.maxBufferedBytes = Math.max(1024, options.maxBufferedBytes ?? 256 * 1024);
     this.maxIdentical = Math.max(1, options.maxIdentical ?? 20);
+    this.maxIdenticalSignatures = Math.max(1, options.maxIdenticalSignatures ?? 500);
     this.identicalWindowMs = Math.max(100, options.identicalWindowMs ?? 10_000);
     this.includeStacks = Boolean(options.includeStacks);
     this.projectId = options.projectId;
@@ -189,15 +192,29 @@ export class AuthoritativeLogging {
     for (const key of ["timestamp", "event", "stream", "projectId", "projectPath", "traceId", "spanId", "requestId", "operationId", "generationId", "correlationId", "visibility", "agentId", "selfId", "roomId", "operatorId", "outcome", "reason", "severity", "envelopeVersion"]) delete safeFields[key];
     const signature = createHash("sha256").update(JSON.stringify({ level, event: boundedEvent, scope: { projectId: envelope.projectId, visibility, selfId: envelope.selfId, roomId: envelope.roomId, operatorId: envelope.operatorId }, fields: safeFields })).digest("hex");
     const now = this.now();
+    for (const [key, candidate] of state.identical) {
+      if (key === signature || now - candidate.since < this.identicalWindowMs) continue;
+      state.metrics.coalesced += candidate.suppressed;
+      state.identical.delete(key);
+    }
     let identical = state.identical.get(signature);
     if (identical && now - identical.since >= this.identicalWindowMs) {
       if (identical.suppressed) {
         state.metrics.coalesced += identical.suppressed;
         this.write(state, "info", { ...envelope, timestamp, event: "logging.identical.coalesced", coalescedEvent: boundedEvent, suppressedCount: identical.suppressed, windowMs: this.identicalWindowMs });
       }
+      state.identical.delete(signature);
       identical = undefined;
     }
-    if (!identical) { identical = { since: now, emitted: 0, suppressed: 0 }; state.identical.set(signature, identical); }
+    if (!identical) {
+      if (state.identical.size >= this.maxIdenticalSignatures) {
+        const oldestKey = state.identical.keys().next().value!;
+        state.metrics.coalesced += state.identical.get(oldestKey)?.suppressed ?? 0;
+        state.identical.delete(oldestKey);
+      }
+      identical = { since: now, emitted: 0, suppressed: 0 };
+      state.identical.set(signature, identical);
+    }
     if (identical.emitted >= this.maxIdentical) { identical.suppressed++; return; }
     identical.emitted++;
     this.write(state, level, { ...safeFields, ...envelope });

@@ -11,6 +11,11 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/absolute/path/to/AllMyFriendsAreAgents</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AMFAA_PNPM_BIN</key>
+    <string>/absolute/path/to/pnpm</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

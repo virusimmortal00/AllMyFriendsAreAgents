@@ -67,7 +67,7 @@ for (const generation of generations) {
   console.log(`id=${generation[0]?.generationId}  prompt=${started?.promptCharacters ?? "?"} chars  raw=${completed?.responseCharacters ?? "?"} chars  visible=${interpreted?.visibleMessageCount ?? "?"}  removed/protocol=${interpreted?.removedOrProtocolCharacters ?? "?"} chars`);
   const usage = provider?.usage as Record<string, unknown> | undefined;
   if (usage) console.log(`usage=${usage.totalTokens ?? "?"} tokens (${usage.inputTokens ?? "?"} in, ${usage.outputTokens ?? "?"} out, ${usage.reasoningTokens ?? "?"} reasoning, ${usage.cacheReadTokens ?? "?"} cache read, ${usage.cacheWriteTokens ?? "?"} cache write)  cost=$${Number(provider?.costUsd || 0).toFixed(6)}`);
-  if (provider?.error) console.log(`error: ${provider.error}`);
+  if (provider?.error || failed?.error) console.log(`error: ${provider?.error ?? failed?.error}`);
   if (cancelled?.reason) console.log(`cancelled: ${cancelled.reason}`);
   if (completed?.rawResponse) console.log(`raw response:\n${completed.rawResponse}`);
   if (interpreted?.visibleMessages) console.log(`visible messages:\n${JSON.stringify(interpreted.visibleMessages, null, 2)}`);

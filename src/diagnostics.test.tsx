@@ -55,6 +55,18 @@ describe("owner diagnostic dashboard", () => {
     expect(screen.getByRole("button", { name: /generation.completed/ })).toBeTruthy();
   });
 
+  it("preserves loaded records when a later bounded page fails", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => response(page({ nextCursor: "cursor-one" })))
+      .mockImplementationOnce(() => response({ error: "unavailable" }, 500));
+    render(<Diagnostics />);
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await screen.findByRole("button", { name: /generation.completed/ });
+    fireEvent.click(screen.getByRole("button", { name: "Load next bounded page" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: /generation.completed/ })).toBeTruthy();
+  });
+
   it("renders preserved evidence only after selection and redacts authentication secrets", async () => {
     const sensitive = { ...record, content: { prompt: "peer prompt", rawOutput: "provider output", stdout: "OpenCode stdout", stderr: "OpenCode stderr", toolOutcome: "completed", providerError: "bounded failure", usage: 21, cost: 0.04, routing: "provider/model", rateLimit: "clear", cooldown: "none", authorization: "Bearer bearer-secret", password: "unsafe" } };
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [sensitive] })));
@@ -84,6 +96,12 @@ describe("owner diagnostic dashboard", () => {
       { kind: "record-chunk", recordId: record.recordId, stream: record.stream, offset: 0, totalBytes: bytes.length, encoding: "base64-json-utf8", data: bytes.subarray(0, split).toString("base64"), final: false },
       { kind: "record-chunk", recordId: record.recordId, stream: record.stream, offset: split, totalBytes: bytes.length, encoding: "base64-json-utf8", data: bytes.subarray(split).toString("base64"), final: true },
     ])).toEqual([record]);
+  });
+
+  it("skips a chunk with malformed base64 without interrupting rendering", () => {
+    expect(assembleDiagnosticChunks([
+      { kind: "record-chunk", recordId: record.recordId, stream: record.stream, offset: 0, totalBytes: 3, encoding: "base64-json-utf8", data: "%%%", final: true },
+    ])).toEqual([]);
   });
 
   it("preserves the explicit owner capability inspector", async () => {

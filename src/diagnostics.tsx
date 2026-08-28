@@ -25,14 +25,16 @@ export function assembleDiagnosticChunks(chunks: readonly OwnerDiagnosticChunk[]
   for (const recordChunks of grouped.values()) {
     const ordered = [...recordChunks].sort((left, right) => left.offset - right.offset);
     const parts: Uint8Array[] = []; let offset = 0;
-    for (const chunk of ordered) {
-      if (chunk.offset !== offset || chunk.encoding !== "base64-json-utf8") { parts.length = 0; break; }
-      const part = decodeBase64(chunk.data); parts.push(part); offset += part.length;
+    try {
+      for (const chunk of ordered) {
+        if (chunk.offset !== offset || chunk.encoding !== "base64-json-utf8") { parts.length = 0; break; }
+        const part = decodeBase64(chunk.data); parts.push(part); offset += part.length;
+      }
+      if (!parts.length || !ordered.at(-1)?.final || offset !== ordered[0].totalBytes) continue;
+      const bytes = new Uint8Array(offset); let position = 0;
+      for (const part of parts) { bytes.set(part, position); position += part.length; }
+      records.push(JSON.parse(new TextDecoder().decode(bytes)) as OwnerDiagnosticRecord);
     }
-    if (!parts.length || !ordered.at(-1)?.final || offset !== ordered[0].totalBytes) continue;
-    const bytes = new Uint8Array(offset); let position = 0;
-    for (const part of parts) { bytes.set(part, position); position += part.length; }
-    try { records.push(JSON.parse(new TextDecoder().decode(bytes)) as OwnerDiagnosticRecord); }
     catch { /* A malformed assembled record remains safely unrendered. */ }
   }
   return records;
@@ -58,7 +60,7 @@ export function Diagnostics() {
     try {
       const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.stream === "all" ? streams : [context.stream], correlation: context.correlation.trim() ? { correlationId: context.correlation.trim().slice(0, 200) } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
       setResult((previous) => combinePages(previous, page, Boolean(cursor)));
-    } catch (failure) { setResult(null); setError(safeFailure(failure)); }
+    } catch (failure) { if (!cursor) setResult(null); setError(safeFailure(failure)); }
     finally { setLoading(false); }
   }
 

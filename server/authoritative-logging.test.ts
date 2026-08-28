@@ -184,6 +184,18 @@ describe("authoritative logging foundation", () => {
     expect(JSON.stringify(records(destinations.get("server-service-lifecycle")!))).not.toContain("payload must not recur");
   });
 
+  it("bounds high-cardinality identical-signature state", async () => {
+    const { destinations, logging } = await memoryFoundation({ maxIdentical: 1, maxIdenticalSignatures: 2, identicalWindowMs: 60_000 });
+    logging.application("info", "signature.one", { value: 1 });
+    logging.application("info", "signature.two", { value: 2 });
+    logging.application("info", "signature.three", { value: 3 });
+    logging.application("info", "signature.one", { value: 1 });
+    await logging.flush();
+    expect(records(destinations.get("server-service-lifecycle")!).map(({ event }) => event)).toEqual([
+      "signature.one", "signature.two", "signature.three", "signature.one",
+    ]);
+  });
+
   it("rotates each real pino-roll stream independently and enforces directory and file permissions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-real-")); roots.push(root);
     const rotation = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream, index) => [stream, { maxBytes: 900 + index * 137, frequencyMs: 60_000 + index * 1_000, retention: index + 1 }])) as Record<AuthoritativeStream, { maxBytes: number; frequencyMs: number; retention: number }>;

@@ -196,6 +196,39 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       expect(found).toContain("older-target");
     });
 
+    it("returns a scan cursor when a bounded page contains no matching records", async () => {
+      const { service, write } = await make();
+      const target = record({ recordId: "older-match", timestamp: "2026-08-28T10:00:00.000Z", event: "generation.target" });
+      const unrelated = Array.from({ length: 30 }, (_, index) => record({
+        recordId: `newer-unrelated-${index}`,
+        timestamp: `2026-08-28T11:00:${String(index).padStart(2, "0")}.000Z`,
+        event: "generation.unrelated",
+        content: { evidence: "x".repeat(512) },
+      }));
+      await write("generations", [target, ...unrelated]);
+
+      const found: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 40; page++) {
+        const result = await service.query(projectCaller, {
+          ...baseQuery,
+          streams: ["generations"],
+          events: ["generation.target"],
+          maxScannedBytes: 2_048,
+          ...(cursor ? { cursor } : {}),
+        });
+        if (page === 0) {
+          expect(result.records).toHaveLength(0);
+          expect(result.scanLimitReached).toBe(true);
+          expect(result.nextCursor).toBeTruthy();
+        }
+        found.push(...result.records.map(({ recordId }) => recordId));
+        cursor = result.nextCursor || undefined;
+        if (!cursor) break;
+      }
+      expect(found).toContain("older-match");
+    });
+
     it("deduplicates rotation overlap and keeps cursor pagination stable during rotation", async () => {
       const { service, write } = await make();
       const records = [4, 3, 2, 1].map((index) => record({ recordId: `page-${index}`, timestamp: `2026-08-28T12:00:0${index}.000Z` }));

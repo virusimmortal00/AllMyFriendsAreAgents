@@ -50,6 +50,7 @@ interface DiagnosticsLease extends RoomDiagnosticsCapabilityBinding {
   readonly issuedAt: number;
   readonly expiresAt: number;
   readonly requests: Map<string, { readonly fingerprint: string; readonly result: Promise<DiagnosticQueryResult> }>;
+  readonly cursorRanges: Map<string, { readonly from: string; readonly to: string }>;
 }
 
 export type RoomDiagnosticsLeaseOutcome = "issued" | "refreshed" | "accepted" | "replayed" | "rejected" | "expired" | "revoked";
@@ -125,8 +126,9 @@ export class RoomDiagnosticsToolBroker {
     if (existing) this.leases.delete(existing[0]);
     const token = `${randomUUID()}${randomUUID()}`;
     const issuedAt = this.now();
-    this.leases.set(digest(token).toString("hex"), { ...binding, digest: digest(token), issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, requests: new Map() });
-    this.record(binding, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", null, null, null, null, null, `${binding.manifestRevision}:issue:${issuedAt}`);
+    const lease: DiagnosticsLease = { ...binding, digest: digest(token), issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, requests: new Map(), cursorRanges: new Map() };
+    this.leases.set(digest(token).toString("hex"), lease);
+    this.record(lease, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", null, null, null, null, null, `${binding.manifestRevision}:issue`);
     return token;
   }
 
@@ -177,17 +179,25 @@ export class RoomDiagnosticsToolBroker {
 
   audit(limit = 100) { return this.events.slice(-Math.max(1, Math.min(limit, 200))); }
 
-  private query(lease: DiagnosticsLease, selector: RoomDiagnosticsSelector) {
-    const to = this.now();
+  private async query(lease: DiagnosticsLease, selector: RoomDiagnosticsSelector) {
+    const inheritedRange = selector.cursor ? lease.cursorRanges.get(selector.cursor) : undefined;
+    if (selector.cursor && !inheritedRange) throw new DiagnosticsQueryError("invalid-cursor");
+    const to = inheritedRange?.to ?? new Date(this.now()).toISOString();
+    const from = inheritedRange?.from ?? new Date(Date.parse(to) - WINDOWS[selector.window]).toISOString();
     const identity = { ...selector.identity, ...(selector.scope === "room" ? { roomId: lease.roomId } : {}), ...(selector.scope === "self" ? { selfId: lease.caller.selfId || lease.participantId } : {}) };
     const query: DiagnosticQuery = {
-      from: new Date(to - WINDOWS[selector.window]).toISOString(), to: new Date(to).toISOString(), scope: selector.scope,
+      from, to, scope: selector.scope,
       ...(selector.streams ? { streams: selector.streams } : {}), ...(selector.severities ? { severities: selector.severities } : {}),
       ...(Object.keys(identity).length ? { identity } : {}), ...(selector.correlation ? { correlation: selector.correlation } : {}),
       limit: selector.limit || RESULT_LIMIT, maxScannedBytes: SCANNED_BYTE_LIMIT, maxSerializedBytes: SERIALIZED_BYTE_LIMIT,
       ...(selector.cursor ? { cursor: selector.cursor } : {}),
     };
-    return this.service.query(lease.caller, query);
+    const result = await this.service.query(lease.caller, query);
+    if (result.nextCursor) {
+      lease.cursorRanges.set(result.nextCursor, { from, to });
+      if (lease.cursorRanges.size > CALL_LIMIT) lease.cursorRanges.delete(lease.cursorRanges.keys().next().value!);
+    }
+    return result;
   }
 
   private prune() {
@@ -195,13 +205,20 @@ export class RoomDiagnosticsToolBroker {
     for (const [key, lease] of this.leases) if (lease.expiresAt <= now) { this.leases.delete(key); this.record(lease, "expired", "lease-expired", null, null, null, null, null, `${lease.manifestRevision}:expired:${lease.expiresAt}`); }
   }
 
-  private record(binding: Pick<RoomDiagnosticsCapabilityBinding, "participantId" | "manifestRevision">, outcome: RoomDiagnosticsLeaseOutcome, reason: RoomDiagnosticsLeaseReason, requestId: string | null, scope: DiagnosticVisibility | null, window: RoomDiagnosticsWindow | null, resultCount: number | null, resultBytes: number | null, dedupe: string) {
-    const id = fingerprint(dedupe);
+  private record(binding: Pick<RoomDiagnosticsCapabilityBinding, "participantId" | "manifestRevision"> & Partial<Pick<DiagnosticsLease, "issuedAt">>, outcome: RoomDiagnosticsLeaseOutcome, reason: RoomDiagnosticsLeaseReason, requestId: string | null, scope: DiagnosticVisibility | null, window: RoomDiagnosticsWindow | null, resultCount: number | null, resultBytes: number | null, dedupe: string) {
+    const id = fingerprint(`${binding.participantId}:${binding.issuedAt ?? "unissued"}:${dedupe}`);
     if (this.recorded.has(id)) return;
     this.recorded.add(id); if (this.recorded.size > 1_000) this.recorded.delete(this.recorded.values().next().value!);
     const event = { id: id.slice(0, 24), at: new Date(this.now()).toISOString(), participantId: binding.participantId, outcome, reason, requestIdDigest: requestId === null ? null : requestDigest(requestId), scope, window, resultCount, resultBytes, manifestRevision: binding.manifestRevision } satisfies RoomDiagnosticsLeaseEvent;
     this.events.push(event); if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
-    void this.operationLog?.(event);
+    try {
+      const logged = this.operationLog?.(event);
+      if (logged && typeof (logged as PromiseLike<unknown>).then === "function") {
+        void Promise.resolve(logged).catch(() => undefined);
+      }
+    } catch {
+      // Diagnostics audit logging must never disrupt lease issuance or use.
+    }
   }
 }
 

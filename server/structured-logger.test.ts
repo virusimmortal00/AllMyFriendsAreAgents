@@ -1,6 +1,6 @@
 import express from "express";
 import type { AddressInfo } from "node:net";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   currentLogContext,
   parseOrCreateTraceparent,
@@ -84,5 +84,16 @@ describe("structured logging helpers", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("absorbs asynchronous completion-log failures", async () => {
+    const logger = { log: vi.fn(async () => { throw new Error("sink unavailable"); }) };
+    const app = express(); app.use(traceMiddleware(logger)); app.get("/ok", (_request, response) => response.json({ ok: true }));
+    const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
+    try {
+      expect((await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ok`)).ok).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(logger.log).toHaveBeenCalledWith("info", "http.request.completed", expect.objectContaining({ statusCode: 200 }));
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 });

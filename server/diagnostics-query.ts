@@ -122,7 +122,7 @@ interface NormalizedQuery extends Omit<DiagnosticQuery, "streams" | "severities"
 }
 interface OrderKey { timestamp: string; stream: DiagnosticStream; recordId: string }
 interface ScanPosition { fileIndex: number; offset: number }
-interface CursorEnvelope { v: 1; fingerprint: string; after: OrderKey; chunkOffset?: number; scan?: ScanPosition }
+interface CursorEnvelope { v: 1; fingerprint: string; after: OrderKey | null; chunkOffset?: number; scan?: ScanPosition }
 interface Candidate { record: DiagnosticRecord }
 
 const SEVERITIES = ["debug", "info", "warn", "error"] as const;
@@ -217,7 +217,7 @@ export class LocalFileDiagnosticsQueryService implements DiagnosticsQueryService
     const hasMore = continuation !== null || hasEligible || scanLimitReached;
     const cursorKey = continuation?.key || lastCompleted || query.after;
     const cursorScan = continuation || hasEligible ? currentScan : nextScan;
-    const nextCursor = hasMore && cursorKey ? encodeCursor({
+    const nextCursor = hasMore && (cursorKey || cursorScan) ? encodeCursor({
       v: 1,
       fingerprint: query.fingerprint,
       after: cursorKey,
@@ -396,7 +396,10 @@ function decodeCursor(value: string): CursorEnvelope {
   try {
     if (value.length > 2_000) throw new Error();
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as CursorEnvelope;
-    if (parsed.v !== 1 || typeof parsed.fingerprint !== "string" || !parsed.after || typeof parsed.after.timestamp !== "string" || !DIAGNOSTIC_STREAMS.includes(parsed.after.stream) || typeof parsed.after.recordId !== "string" || (parsed.chunkOffset !== undefined && (!Number.isSafeInteger(parsed.chunkOffset) || parsed.chunkOffset <= 0 || parsed.chunkOffset > DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes)) || (parsed.scan !== undefined && (!isPlainObject(parsed.scan) || !Number.isSafeInteger(parsed.scan.fileIndex) || parsed.scan.fileIndex < 0 || parsed.scan.fileIndex >= DIAGNOSTICS_QUERY_LIMITS.maxDirectoryEntries || !Number.isSafeInteger(parsed.scan.offset) || parsed.scan.offset < 0))) throw new Error();
+    const validAfter = parsed.after === null || Boolean(parsed.after && typeof parsed.after.timestamp === "string" && DIAGNOSTIC_STREAMS.includes(parsed.after.stream) && typeof parsed.after.recordId === "string");
+    const validScan = parsed.scan === undefined || Boolean(isPlainObject(parsed.scan) && Number.isSafeInteger(parsed.scan.fileIndex) && parsed.scan.fileIndex >= 0 && parsed.scan.fileIndex < DIAGNOSTICS_QUERY_LIMITS.maxDirectoryEntries && Number.isSafeInteger(parsed.scan.offset) && parsed.scan.offset >= 0);
+    const validChunk = parsed.chunkOffset === undefined || Boolean(parsed.after && Number.isSafeInteger(parsed.chunkOffset) && parsed.chunkOffset > 0 && parsed.chunkOffset <= DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes);
+    if (parsed.v !== 1 || typeof parsed.fingerprint !== "string" || !validAfter || !validScan || !validChunk || (parsed.after === null && parsed.scan === undefined)) throw new Error();
     return parsed;
   } catch { throw new DiagnosticsQueryError("invalid-cursor"); }
 }

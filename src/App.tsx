@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
@@ -267,7 +267,7 @@ export default function App() {
     const connectEvents = () => {
       if (cancelled) return;
       events?.close();
-      const source = new EventSource("/api/events");
+      const source = new EventSource(roomEventsPath());
       events = source;
       lastEventAt = Date.now();
       source.addEventListener("heartbeat", () => {
@@ -387,7 +387,7 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability }));
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
@@ -882,6 +882,7 @@ export default function App() {
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
+          {room.githubReadStatus ? <div className="status-cell" aria-label="Room GitHub read status">GitHub read: {room.githubReadStatus.state === "ready" ? "Ready for this room" : room.githubReadStatus.reason.replaceAll("-", " ")}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>

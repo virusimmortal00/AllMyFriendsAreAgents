@@ -10,9 +10,10 @@ describe("bounded application service launch", () => {
     const script = await readFile(scriptPath, "utf8");
     const launchd = await readFile(path.join(root, "config", "launchd", "io.allmyfriendsareagents.server.plist.example"), "utf8");
     expect(packageManifest.scripts["service:start"]).toBe("zsh scripts/run-application-service.zsh");
-    expect(script).toContain("pnpm start </dev/null >/dev/null 2>&1");
+    expect(script).toContain('exec "${AMFAA_PNPM_BIN:-pnpm}" start </dev/null >/dev/null 2>&1');
     expect((await stat(scriptPath)).mode & 0o111).not.toBe(0);
     expect(launchd.match(/<key>Standard(?:Out|Error)Path<\/key>\s*<string>\/dev\/null<\/string>/g)).toHaveLength(2);
+    expect(launchd).toMatch(/<key>AMFAA_PNPM_BIN<\/key>\s*<string>\/absolute\/path\/to\/pnpm<\/string>/);
     expect(`${script}\n${launchd}`).not.toContain("live-dev.log");
   });
 });

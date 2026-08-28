@@ -20,7 +20,8 @@ describe("server structured logging facade", () => {
     child.kill("SIGTERM"); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error("server did not stop")), 5_000); child.once("exit", () => { clearTimeout(timer); resolve(); }); });
     const logDirectory = path.join(directory, "logs", "authoritative-v1");
     const logFiles = (await readdir(logDirectory)).filter((name) => name.endsWith(".jsonl"));
-    const records = (await Promise.all(logFiles.map((name) => readFile(path.join(logDirectory, name), "utf8")))).join("").trim().split("\n").map((line) => JSON.parse(line)); const events = records.map((record) => record.event);
+    const contents = await Promise.all(logFiles.map((name) => readFile(path.join(logDirectory, name), "utf8")));
+    const records = contents.flatMap((content) => content.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line))); const events = records.map((record) => record.event);
     for (const record of records) {
       expect(record).toMatchObject({ envelopeVersion: 1, stream: expect.stringMatching(/^(server-service-lifecycle|opencode-harness|openrouter-provider|generations|capability-decisions|security-audit)$/), schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/), correlationId: expect.any(String), agentId: null, environment: expect.any(String) });
       expect(Object.hasOwn(record, "outcome") && Object.hasOwn(record, "reason")).toBe(true);

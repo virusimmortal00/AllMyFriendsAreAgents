@@ -2,6 +2,7 @@ import express from "express";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
@@ -72,10 +73,9 @@ import { ConsultationRunner } from "./consultation-service.js";
 import { DurableConsultationMcpService } from "./consultation-mcp.js";
 import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
-import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
-import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
-import { GitHubReadStore } from "./github-read-store.js";
-import { GitHubReadService } from "./github-read-service.js";
+import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
+import type { GitHubReadFetch } from "./github-read-adapter.js";
+import { RoomBoundGitHubReadService } from "./room-bound-github-read.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
@@ -83,13 +83,22 @@ import { CapabilityAuditStore } from "./capability-audit.js";
 import { traceMiddleware } from "./structured-logger.js";
 import { ApplicationLoggerFacade, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, type StreamRotationConfiguration } from "./authoritative-logging.js";
 import { registerOwnerDiagnosticsRoutes } from "./owner-diagnostics-api.js";
+import { openJsonServerIdentity } from "./storage/json-server-identity.js";
+import type { IdentityRepository } from "./storage/identity-domain.js";
+import { RoomLifecycleStore } from "./room-lifecycle.js";
+import { RoomGenerationCapacity, RoomRuntimeRegistry } from "./room-runtime-registry.js";
+import { registerRoomLifecycleRoutes } from "./room-lifecycle-api.js";
+import { RoomCommandDispatcher } from "./room-command-dispatcher.js";
+import { ProjectRepositoryConnectionStore, ProjectRepositoryServiceRegistry, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
+import { registerProjectRepositoryRoutes } from "./project-repository-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
-const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCOL_VERSION };
+const bootId = randomUUID();
+const serverIdentity: import("../shared/protocol.js").ServerIdentity = { instanceId: bootId, bootId, protocolVersion: ROOM_PROTOCOL_VERSION };
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
@@ -133,12 +142,20 @@ await structuredLogger.log("info", "server.startup.started", { phase: "configura
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
 const store = await openRoomRepository(projectRoot, storageConfiguration);
+const durableServer = storageConfiguration.backend === "sqlite"
+  ? await (store as RoomRepository & IdentityRepository).getDurableServer()
+  : await openJsonServerIdentity(storageConfiguration.dataDirectory);
+serverIdentity.serverId = durableServer.serverId;
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
 const diagnosticsProjectId = path.basename(projectRepositoryPath);
 const diagnosticsQueryService = new LocalFileDiagnosticsQueryService(storageConfiguration.dataDirectory, diagnosticsProjectId);
 structuredLogger.setProject(path.basename(projectRepositoryPath), projectRepositoryPath);
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
+const storageScope = typeof (store as Partial<IdentityRepository>).getStorageScope === "function"
+  ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
+  : undefined;
+const currentProjectId = storageScope?.projectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -160,16 +177,70 @@ const roomHistoryTool = {
 const controlPlane = await ControlPlaneStore.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const humanSessions = new HumanSessions();
+const roomLifecycle = storageConfiguration.backend === "sqlite" ? await RoomLifecycleStore.open(storageConfiguration.databasePath, projectRoot) : undefined;
+const roomGenerationCapacity = new RoomGenerationCapacity({
+  perRoomLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_CONCURRENCY") || agentConcurrency,
+  globalLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_GLOBAL_CONCURRENCY") || Math.max(agentConcurrency, 6),
+  providerLimits: { openai: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_OPENAI_CONCURRENCY") || 4, anthropic: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ANTHROPIC_CONCURRENCY") || 4 },
+});
+const roomRuntimes = storageConfiguration.backend === "sqlite" ? new RoomRuntimeRegistry(async (roomId) => {
+  const { SqliteRoomRepository } = await import("./storage/sqlite-room-repository.js");
+  return SqliteRoomRepository.open(projectRoot, storageConfiguration.databasePath, { seedImprovements: false, roomId });
+}, {
+  perRoomLimit: agentConcurrency,
+  globalLimit: Math.max(agentConcurrency, 6),
+  providerLimits: {},
+  dormantAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_DORMANT_MS") || 60_000,
+}, roomGenerationCapacity) : undefined;
+const dormantRoomTimer = roomRuntimes ? setInterval(() => roomRuntimes.releaseDormant(), Math.min(30_000, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_DORMANT_MS") || 60_000)) : undefined;
+dormantRoomTimer?.unref();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
 const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
-const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
-const githubReadParts=githubReadRepository?.split("/")||[];
+const repositoryCredential=githubReadToken||githubToken;
+const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_CONNECTION_REFERENCE?.trim()
+  || process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_CONNECTION_REFERENCE?.trim()
+  || (repositoryCredential ? `github-connection:${createHash("sha256").update(repositoryCredential).digest("hex").slice(0, 24)}` : undefined);
+const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
+if (repositoryCredential && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, repositoryCredential);
+let contributionRecords: ContributionStore | undefined;
+let githubContributionStore: GitHubContributionStore | undefined;
+const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
+const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRepositoryConnectionStore, () => ({}), async (projectId) => {
+  if (projectId !== currentProjectId) return [];
+  const [assignments, continuations] = await Promise.all([store.listAssignments(), store.listContinuations()]);
+  const assignmentReferences = assignments.map((assignment) => ({ kind: "assignment" as const, id: assignment.assignmentId,
+    terminal: ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycleStatus), reconciled: assignment.recovery.classification !== "missing" }));
+  const jobReferences = continuations.map((job) => ({ kind: "job" as const, id: job.jobId,
+    terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
+  const contributionReferences = (contributionRecords?.list() || []).map((record) => ({ kind: (record.stage === "MERGED" || record.stage === "DEPLOYED" ? "deployment" : "contribution") as "deployment" | "contribution",
+    id: record.contributionId, terminal: record.stage === "DEPLOYED" || record.stage === "BLOCKED", reconciled: record.blockedReason === null }));
+  const brokerReferences = (githubContributionStore?.records() || []).filter((record) => record.outcome === "PENDING")
+    .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
+  return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
+}, (projectId, reference) => serverHeldRepositoryCredentials.available(projectId, reference));
+const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);
+Object.defineProperty(store, "getVerifiedRepositoryConnection", {
+  configurable: false,
+  enumerable: false,
+  value: (projectId: string) => projectId === currentProjectId ? projectRepositoryScope.connection.inspectServer() : undefined,
+});
+const verifyProjectRepositoryAuthority = async () => {
+  const connection = projectRepositoryScope.connection.inspectServer();
+  if (!connection) return "project-repository-connection-missing";
+  const result = await projectRepositoryScope.connection.revalidateAuthority(connection.revision);
+  return result.kind === "ok" ? null : result.reason;
+};
 const fakeSha="0123456789abcdef0123456789abcdef01234567";
 const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
-const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch),{operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event})}),githubReadRepository!):undefined;
+const identityRepository=typeof (store as Partial<IdentityRepository>).getStorageScope==="function"&&typeof (store as Partial<IdentityRepository>).getDurableProject==="function"&&typeof (store as Partial<IdentityRepository>).getRepositoryReference==="function"
+  ? store as RoomRepository&IdentityRepository : undefined;
+const githubReadService=identityRepository?new RoomBoundGitHubReadService(async(roomId)=>roomId===store.roomId?identityRepository:(await roomRuntimes!.acquire(roomId)).repository as RoomRepository&IdentityRepository,(projectId)=>projectRepositoryRegistry.forProject(projectId).connection,serverHeldRepositoryCredentials,{
+  fetcher:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch,
+  operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event}),
+}):undefined;
 const capabilityAudit = await CapabilityAuditStore.open(storageConfiguration.dataDirectory, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_CAPABILITY_AUDIT_LIMIT") || 500);
 let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object.fromEntries(normalizeRoomAgentRoster(store.snapshot().roster).entries.map((entry) => {
   const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
@@ -191,28 +262,29 @@ async function refreshAgentCapabilities() {
   }
 }
 for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
-const githubContributionStore = githubToken && githubRepository
+githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
 const githubClient = githubToken ? new GitHubRestClient(githubToken) : undefined;
 const githubContributionBroker = githubContributionStore && githubToken && githubRepository
   ? new GitHubContributionBroker(
     store, store, developerTeam, githubContributionStore, githubClient!, projectRepositoryPath,
-    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main",
+    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", undefined, verifyProjectRepositoryAuthority,
   )
   : undefined;
-const contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
+contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
 const contributionExecutor = githubContributionBroker && githubClient && githubRepository
   ? new GovernedContributionExecutor(githubContributionBroker, githubClient, developerTeam, githubRepository,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL?.trim(),
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN}` : undefined)
   : new UnavailableContributionExecutor();
 const contributionService = contributionRecords && githubRepository
-  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository)
+  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository, undefined, undefined, verifyProjectRepositoryAuthority)
   : undefined;
 await structuredLogger.log("info", "github.store.initialized", { readStoreConfigured: Boolean(githubReadService), contributionStoreConfigured: Boolean(githubContributionStore) });
 await structuredLogger.log("info", "github.adapter.policy", { githubReadConfigured: Boolean(githubReadService), githubContributionConfigured: Boolean(githubContributionBroker), toolPolicy: "fixed-read-selectors" });
 await structuredLogger.log("info", "github.read-cache.snapshot", { configured: Boolean(githubReadService), status: githubReadService ? "ready" : "disabled" });
+if(process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim())await structuredLogger.log("warn","github.read.legacy-configuration",{outcome:"reconciliation-required",reason:"ambient-repository-ignored; connect and verify the room project's repository"});
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
@@ -224,6 +296,7 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   agentProcesses,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION,
   (level, event, fields) => structuredLogger.log(level, event, fields),
+  verifyProjectRepositoryAuthority,
 );
 await assignmentLifecycle.reconcile();
 const startupAssignments = await assignmentLifecycle.list();
@@ -303,6 +376,7 @@ registerRoomHistoryRoutes({
 });
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
 registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
+registerProjectRepositoryRoutes({ app, developers: developerTeam, service: projectRepositoryScope.connection });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
@@ -310,6 +384,19 @@ function roomSnapshot() {
 
 function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
+}
+
+function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+  const capacity = roomGenerationCapacity.reserve(CANONICAL_ROOM_ID, entry?.providerId || "opencode");
+  if (!capacity) return undefined;
+  const active = activeGenerations.reserve(agent, agentConcurrency);
+  if (!active) { capacity.release(); return undefined; }
+  let released = false;
+  return {
+    activate: (generationId: string) => active.activate(generationId),
+    release: () => { if (released) return false; released = true; const activeReleased = active.release(); capacity.release(); return activeReleased; },
+  };
 }
 
 function publicRoomSnapshot(viewerHumanId?: string) {
@@ -395,7 +482,7 @@ function commandToolContext(agent: import("../shared/participants.js").ActiveAge
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
-    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands }),
+    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands, roomId:CANONICAL_ROOM_ID }),
     allowedCommands,
     guide: roomCommandGuide(allowedCommands),
   };
@@ -526,7 +613,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     return { cancelled: true };
   }
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
-  const sharedReservation = activeAgent ? activeGenerations.reserve(activeAgent, agentConcurrency) : undefined;
+  const sharedReservation = activeAgent ? reserveCanonicalGeneration(activeAgent) : undefined;
   if (activeAgent && !sharedReservation) return { failed: true };
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
@@ -823,7 +910,7 @@ const commandRuntime = new CommandRuntime({
   ceiling:githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS,
   roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
   canLaunch: commandAgentAvailable,
-  reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
+  reserveLaunch: reserveCanonicalGeneration,
   roomEpoch: () => String(roomActivity.current()),
   roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
@@ -832,7 +919,7 @@ const commandRuntime = new CommandRuntime({
   operationLog: (level,event,fields)=>structuredLogger.log(level,event,fields),
   executeTask: performCommandTask,
   executePov: async (agent, prompt, signal) => {
-    const reservation=activeGenerations.reserve(agent,agentConcurrency);
+    const reservation=reserveCanonicalGeneration(agent);
     if(!reservation)throw new Error("Shared generation capacity is unavailable for POV execution.");
     try{return await performCommandTask(agent,prompt,{signal,partial:()=>undefined,active:async(generationId)=>reservation.activate(generationId)});}
     finally{reservation.release();}
@@ -863,6 +950,23 @@ registerRoomCommandToolRoute(app, roomCommandToolBroker);
 const roomDiagnosticsToolBroker = new RoomDiagnosticsToolBroker(diagnosticsQueryService, diagnosticsCapabilityBinding, Date.now, (event) => structuredLogger.log(event.outcome === "rejected" || event.outcome === "revoked" || event.outcome === "expired" ? "warn" : "info", "room-diagnostics-tool.lease", { ...event }));
 registerRoomDiagnosticsToolRoute(app, roomDiagnosticsToolBroker);
 await commandRuntime.initialize();
+const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>new CommandRuntime({
+  store:room.repository,
+  roomId:room.roomId,
+  ceiling:githubReadService?["help","gh"]:["help"],
+  roster:()=>normalizeRoomAgentRoster(room.repository.snapshot().roster),
+  canLaunch:()=>false,
+  executeTask:async()=>{throw new Error("Agent task commands are unavailable in this room runtime.");},
+  executePov:async()=>{throw new Error("Agent POV commands are unavailable in this room runtime.");},
+  deliverPov:async()=>undefined,
+  deliverTask:async()=>undefined,
+  publishStatus:async(auditId,text)=>{await room.repository.addCommandAuditMessageOnce(auditId,text);},
+  githubRead:githubReadService,
+  publishGhResult:async(executionId,text)=>{await room.repository.addCommandDeliveryMessageOnce(executionId,0,"system",text);},
+  capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
+  operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
+})):undefined;
+if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!serverHeldRepositoryCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
 const consultationRunner = new ConsultationRunner(
@@ -871,7 +975,7 @@ const consultationRunner = new ConsultationRunner(
     synthesize: async (input) => {
       const agent = currentEnabledAgents()[0];
       if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
-      const reservation = activeGenerations.reserve(agent, agentConcurrency);
+      const reservation = reserveCanonicalGeneration(agent);
       if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation synthesis.");
       const prior = input.turns.map(({ participantId, duty, response, dissent }) => ({ participantId, duty, response, dissent }));
       let result;
@@ -894,7 +998,7 @@ const consultationRunner = new ConsultationRunner(
   {
     performTurn: async (input) => {
       if (!isActiveAgentId(input.participantId)) throw new Error(`Consultation participant ${input.participantId} is unavailable.`);
-      const reservation = activeGenerations.reserve(input.participantId, agentConcurrency);
+      const reservation = reserveCanonicalGeneration(input.participantId);
       if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation dialogue.");
       let result;
       try {
@@ -1059,6 +1163,7 @@ app.get("/api/events", async (request, response) => {
 app.post("/api/humans", (request, response) => {
   try {
     const human = joinHumanWithSession(request, response, humans, humanSessions);
+    roomLifecycle?.ensureCanonicalMembership(human.id);
     broadcast();
     response.status(201).json(human);
   } catch (error) {
@@ -1101,7 +1206,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -1160,7 +1265,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
@@ -1371,6 +1476,10 @@ async function shutdown(signal: string) {
   continuationService.shutdown();
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
+  if (dormantRoomTimer) clearInterval(dormantRoomTimer);
+  await roomCommandDispatcher?.close();
+  roomRuntimes?.close();
+  roomLifecycle?.close();
   const closeServer = new Promise<void>((resolve) => httpServer.close((error) => {
     if (error) void structuredLogger.log("error", "server.shutdown.failed", { signal, error });
     if (error) process.exitCode = 1;

@@ -55,6 +55,7 @@ import type { AgentContextSummaryKey } from "./transcript.js";
 import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
 import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validGhExecution, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
 import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_OPEN_POLLS_PER_ROOM, MAX_RECENT_POLLS, parseCommandPollCursor, type AcceptCommandResult, type CloseCommandPollResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
+import type { SourceWorkKind } from "./storage/identity-domain.js";
 
 export const DEFAULT_ROOM_TOPIC = "Open conversation";
 export const DEFAULT_ROOM_NAME = "The Agent Room";
@@ -80,7 +81,9 @@ function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), stor
     const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
     const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
       || !session?.configurationFingerprint && rawHarness === "opencode";
-    if (agent && entry && portableOpenCodeSession && session?.id && (session.permission === "read-only" || session.permission === "writable") && entry.modelId !== "configured") {
+    // Legacy writable sessions are authority-bearing and cannot survive the
+    // durable-identity boundary. A trusted server flow must create a fresh one.
+    if (agent && entry && portableOpenCodeSession && session?.id && session.permission === "read-only" && entry.modelId !== "configured") {
       const codeEpoch = normalizeDeploymentEpoch(session.codeEpoch);
       sessions[agent] = {
         id: session.id,
@@ -149,6 +152,12 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
 }
 
 export class RoomStore implements RoomRepository {
+  readonly roomId = CANONICAL_ROOM_ID;
+  private readonly bootSourceWork = new Set<string>();
+  /** JSON remains a migration source and cannot attest source-work authority. */
+  async getSourceWorkBinding(_kind: SourceWorkKind, _workId: string) { return undefined; }
+  authorizeSourceWorkForCurrentBoot(kind: SourceWorkKind, workId: string) { this.bootSourceWork.add(`${kind}\0${workId}`); }
+  sourceWorkAuthorizedForCurrentBoot(kind: SourceWorkKind, workId: string) { return this.bootSourceWork.has(`${kind}\0${workId}`); }
   readonly stateDirectory: string;
   readonly statePath: string;
   readonly improvementsPath: string;
@@ -908,10 +917,12 @@ export class RoomStore implements RoomRepository {
   }
 
   async createCommandSubmission(submission: CommandSubmission) {
+    assertJsonSingleRoom(submission.roomId);
     if (!validSubmission(submission)) throw new Error("Invalid command submission");
     return this.mutateCommands<CreateCommandSubmissionResult>((state) => { const duplicate = state.submissions.find((item) => item.roomId === submission.roomId && (item.submissionId === submission.submissionId || item.clientSubmissionId === submission.clientSubmissionId)); return duplicate ? { result: { kind: "duplicate" as const, submission: structuredClone(duplicate) } } : { next: { ...state, submissions: [...state.submissions, structuredClone(submission)] }, result: { kind: "created" as const, submission: structuredClone(submission) } }; });
   }
   async acceptCommand(acceptance: CommandAcceptance): Promise<AcceptCommandResult> {
+    assertJsonSingleRoom(acceptance.submission.roomId);
     if (!validCommandAcceptance(acceptance)) throw new Error("Invalid command acceptance");
     return this.mutateCommands<AcceptCommandResult>((state) => {
       const duplicate = state.submissions.find((item) => item.roomId === acceptance.submission.roomId && (item.submissionId === acceptance.submission.submissionId || item.clientSubmissionId === acceptance.submission.clientSubmissionId));
@@ -927,6 +938,7 @@ export class RoomStore implements RoomRepository {
     });
   }
   async reassignCommandAttempt(value: CommandReassignment) {
+    assertJsonSingleRoom(value.current.roomId); assertJsonSingleRoom(value.next.roomId);
     if (!validCommandReassignment(value)) throw new Error("Invalid command reassignment");
     return this.mutateCommands<{ kind: "accepted"; current: CommandAttempt; next: CommandAttempt } | { kind: "conflict" | "not-found" }>((state) => {
       const current = state.attempts.find((item) => item.roomId === value.current.roomId && item.attemptId === value.current.attemptId);
@@ -973,7 +985,8 @@ export class RoomStore implements RoomRepository {
   async getGhExecution(roomId:string,submissionId:string){await this.commandQueue;const value=this.commandState.ghExecutions.find((item)=>item.roomId===roomId&&item.submissionId===submissionId);return value?structuredClone(value):undefined;}
   async createGhExecution(execution:CommandGhExecution){if(!validGhExecution(execution))throw new Error("Invalid GitHub execution");return this.mutateCommands<{kind:"created"|"duplicate";execution:CommandGhExecution}>((state)=>{const existing=state.ghExecutions.find((item)=>item.roomId===execution.roomId&&(item.executionId===execution.executionId||item.submissionId===execution.submissionId));return existing?{result:{kind:"duplicate" as const,execution:structuredClone(existing)}}:{next:{...state,ghExecutions:[...state.ghExecutions,structuredClone(execution)]},result:{kind:"created" as const,execution:structuredClone(execution)}};});}
   async listPendingGhExecutions(roomId:string){await this.commandQueue;return structuredClone(this.commandState.ghExecutions.filter((item)=>item.roomId===roomId&&(item.status==="queued"||item.deliveryStatus==="pending")).sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||a.executionId.localeCompare(b.executionId)));}
-  async compareAndSetGhExecution(expectedUpdatedAt:string,execution:CommandGhExecution){if(!validGhExecution(execution)||execution.updatedAt===expectedUpdatedAt)throw new Error("Invalid GitHub execution transition");return this.mutateCommands<{kind:"accepted";execution:CommandGhExecution}|{kind:"conflict"|"not-found"}>((state)=>{const current=state.ghExecutions.find((item)=>item.roomId===execution.roomId&&item.executionId===execution.executionId);if(!current)return{result:{kind:"not-found" as const}};if(current.updatedAt!==expectedUpdatedAt||current.status!=="queued"||execution.status==="queued"||current.submissionId!==execution.submissionId||current.createdAt!==execution.createdAt)return{result:{kind:"conflict" as const}};return{next:{...state,ghExecutions:state.ghExecutions.map((item)=>item.roomId===execution.roomId&&item.executionId===execution.executionId?structuredClone(execution):item)},result:{kind:"accepted" as const,execution:structuredClone(execution)}};});}
+  async adoptGhAuthorizationLease(roomId:string,executionId:string,expectedUpdatedAt:string,authorizationLease:string,updatedAt:string){if(!/^sha256:[a-f0-9]{64}$|^legacy-static$/.test(authorizationLease)||updatedAt===expectedUpdatedAt)throw new Error("Invalid GitHub authorization lease adoption");return this.mutateCommands<{kind:"accepted";execution:CommandGhExecution}|{kind:"conflict"|"not-found"}>((state)=>{const current=state.ghExecutions.find((item)=>item.roomId===roomId&&item.executionId===executionId);if(!current)return{result:{kind:"not-found" as const}};if(current.status!=="queued"||current.authorizationLease!=null||current.updatedAt!==expectedUpdatedAt)return{result:{kind:"conflict" as const}};const execution={...current,authorizationLease,updatedAt};return{next:{...state,ghExecutions:state.ghExecutions.map((item)=>item===current?execution:item)},result:{kind:"accepted" as const,execution:structuredClone(execution)}};});}
+  async compareAndSetGhExecution(expectedUpdatedAt:string,execution:CommandGhExecution){if(!validGhExecution(execution)||execution.updatedAt===expectedUpdatedAt)throw new Error("Invalid GitHub execution transition");return this.mutateCommands<{kind:"accepted";execution:CommandGhExecution}|{kind:"conflict"|"not-found"}>((state)=>{const current=state.ghExecutions.find((item)=>item.roomId===execution.roomId&&item.executionId===execution.executionId);if(!current)return{result:{kind:"not-found" as const}};if(current.updatedAt!==expectedUpdatedAt||current.status!=="queued"||execution.status==="queued"||current.submissionId!==execution.submissionId||current.createdAt!==execution.createdAt||(current.authorizationLease??null)!==execution.authorizationLease)return{result:{kind:"conflict" as const}};return{next:{...state,ghExecutions:state.ghExecutions.map((item)=>item.roomId===execution.roomId&&item.executionId===execution.executionId?structuredClone(execution):item)},result:{kind:"accepted" as const,execution:structuredClone(execution)}};});}
   async markGhExecutionDelivered(roomId:string,executionId:string,expectedUpdatedAt:string,updatedAt:string){if(!updatedAt||updatedAt===expectedUpdatedAt)throw new Error("Invalid GitHub delivery transition");return this.mutateCommands<{kind:"accepted";execution:CommandGhExecution}|{kind:"conflict"|"not-found"}>((state)=>{const current=state.ghExecutions.find((item)=>item.roomId===roomId&&item.executionId===executionId);if(!current)return{result:{kind:"not-found" as const}};if(current.updatedAt!==expectedUpdatedAt||current.status==="queued"||current.deliveryStatus!=="pending")return{result:{kind:"conflict" as const}};const execution={...current,deliveryStatus:"delivered" as const,updatedAt};return{next:{...state,ghExecutions:state.ghExecutions.map((item)=>item.roomId===roomId&&item.executionId===executionId?execution:item)},result:{kind:"accepted" as const,execution:structuredClone(execution)}};});}
   async appendDiagnostic(record: DiagnosticRecord) { if (!validDiagnostic(record)) throw new Error("Invalid diagnostic record"); return this.mutateCommands<{ kind: "created" | "duplicate"; record: DiagnosticRecord }>((state) => { const duplicate = state.diagnostics.find((item) => item.roomId === record.roomId && (item.recordId === record.recordId || item.correlationId === record.correlationId)); if (duplicate) return { result: { kind: "duplicate" as const, record: structuredClone(duplicate) } }; const cutoff = Date.now() - DIAGNOSTIC_RETENTION_MS; const retained = state.diagnostics.filter((item) => Date.parse(item.createdAt) >= cutoff); const peers = retained.filter((item) => item.roomId === record.roomId && item.agentId === record.agentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); const remove = new Set(peers.slice(0, Math.max(0, peers.length - MAX_DIAGNOSTICS_PER_ROOM_AGENT + 1)).map(({ recordId }) => recordId)); return { next: { ...state, diagnostics: [...retained.filter((item) => !remove.has(item.recordId)), structuredClone(record)] }, result: { kind: "created" as const, record: structuredClone(record) } }; }); }
   async getDiagnostic(roomId: string, agentId: AgentId, recordId: string) { await this.commandQueue; const record = this.commandState.diagnostics.find((item) => item.roomId === roomId && item.agentId === agentId && item.recordId === recordId); return record ? structuredClone(record) : undefined; }
@@ -1040,7 +1053,21 @@ export class RoomStore implements RoomRepository {
   private async mutateCommands<T>(mutation: (state: JsonCommandState) => { next?: JsonCommandState; result: T }): Promise<T> {
     let resolveResult!: (result: T) => void; let rejectResult!: (error: unknown) => void;
     const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
-    const operation = this.commandQueue.then(async () => { try { const changed = mutation(this.commandState); if (changed.next) { const next = normalizeJsonCommandState(changed.next); const temporaryPath = `${this.commandsPath}.tmp`; await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 }); await rename(temporaryPath, this.commandsPath); await chmod(this.commandsPath, 0o600); this.commandState = next; } resolveResult(changed.result); } catch (error) { rejectResult(error); throw error; } });
+    const operation = this.commandQueue.then(async () => {
+      try {
+        const changed = mutation(this.commandState);
+        if (changed.next) {
+          const next = normalizeJsonCommandState(changed.next);
+          assertJsonCommandStateSingleRoom(next);
+          const temporaryPath = `${this.commandsPath}.tmp`;
+          await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+          await rename(temporaryPath, this.commandsPath);
+          await chmod(this.commandsPath, 0o600);
+          this.commandState = next;
+        }
+        resolveResult(changed.result);
+      } catch (error) { rejectResult(error); throw error; }
+    });
     this.commandQueue = operation.catch(() => undefined); return result;
   }
 
@@ -1054,6 +1081,15 @@ export class RoomStore implements RoomRepository {
     this.saveQueue = operation.catch(() => undefined);
     await operation;
   }
+}
+
+function assertJsonSingleRoom(roomId: string) {
+  if (roomId !== CANONICAL_ROOM_ID) throw new Error(`JSON storage is single-room compatibility mode and cannot mutate ${roomId}; run pnpm storage:import:sqlite before using additional rooms.`);
+}
+
+function assertJsonCommandStateSingleRoom(state: JsonCommandState) {
+  const records = [state.submissions, state.tombstones, state.roundRobin, state.attempts, state.povExecutions, state.ghExecutions, state.polls, state.votes, state.audits, state.diagnostics].flat();
+  for (const record of records) assertJsonSingleRoom(record.roomId);
 }
 
 function taskKey(identity: TaskIdentity) { return `${identity.roomId}\u0000${identity.taskId}`; }

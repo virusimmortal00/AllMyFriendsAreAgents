@@ -13,4 +13,4 @@ fi
 
 # Pino's six bounded files are authoritative. Do not create an unbounded
 # supervisor stdout/stderr log alongside them.
-exec pnpm start </dev/null >/dev/null 2>&1
+exec "${AMFAA_PNPM_BIN:-pnpm}" start </dev/null >/dev/null 2>&1
