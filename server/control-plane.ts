@@ -26,7 +26,7 @@ export interface ControlAuditEvent {
   readonly id: string;
   readonly at: string;
   readonly actorPrincipalId: string | null;
-  readonly action: "OWNER_BOOTSTRAPPED" | "OWNER_TRANSFERRED" | "OWNER_RECOVERED" | "PRINCIPAL_CREATED" | "GRANTS_CHANGED" | "SESSION_REVOKED" | "PROVIDER_SETUP_INITIATED" | "PROVIDER_SETUP_COMPLETED" | "PROVIDER_SETUP_FAILED" | "MODEL_SELECTION_CHANGED" | "COMMAND_PERMISSIONS_CHANGED" | "CREDENTIAL_REVOCATION_SIGNAL" | "GITHUB_AUTHORIZATION_STARTED" | "GITHUB_AUTHORIZATION_COMPLETED" | "GITHUB_AUTHORIZATION_FAILED";
+  readonly action: "OWNER_BOOTSTRAPPED" | "OWNER_TRANSFERRED" | "OWNER_RECOVERED" | "PRINCIPAL_CREATED" | "GRANTS_CHANGED" | "SESSION_REVOKED" | "PROVIDER_SETUP_INITIATED" | "PROVIDER_SETUP_COMPLETED" | "PROVIDER_SETUP_FAILED" | "MODEL_SELECTION_CHANGED" | "COMMAND_PERMISSIONS_CHANGED" | "CREDENTIAL_REVOCATION_SIGNAL" | "GITHUB_AUTHORIZATION_STARTED" | "GITHUB_AUTHORIZATION_COMPLETED" | "GITHUB_AUTHORIZATION_FAILED" | "GITHUB_CATALOG_REFRESHED" | "GITHUB_CATALOG_REFRESH_FAILED";
   readonly targetId?: string;
   readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
 }
@@ -54,7 +54,7 @@ function publicPrincipal(principal: PrincipalRecord) { return { id: principal.id
 function effectiveCapabilities(principal: PrincipalRecord): readonly ControlCapability[] { return principal.role === "OWNER" ? ALL_CAPABILITIES : principal.role === "ADMIN" ? [...new Set([...ADMIN_DEFAULTS, ...principal.capabilities])] : principal.capabilities; }
 function parseCookie(header: string | undefined, name: string) { const encoded = header?.split(";").map((part) => part.trim().split("=")).find(([candidate]) => candidate === name)?.[1]; if (!encoded) return undefined; try { return decodeURIComponent(encoded); } catch { return undefined; } }
 function redactedMetadata(input: Record<string, unknown> = {}) {
-  const allowed = new Set(["runtime", "status", "state", "role", "capabilityCount", "reason", "previousRevision", "nextRevision", "mode", "allowAll", "allowedCommands"]);
+  const allowed = new Set(["runtime", "status", "state", "role", "capabilityCount", "repositoryCount", "installationCount", "reason", "previousRevision", "nextRevision", "mode", "allowAll", "allowedCommands"]);
   return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => allowed.has(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) ? [[key, typeof value === "string" ? value.slice(0, 200) : value]] : []));
 }
 

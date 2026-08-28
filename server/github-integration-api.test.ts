@@ -10,6 +10,8 @@ import { GitHubDeviceAuthorizationCoordinator } from "./github-device-authorizat
 import type { GitHubDeviceFlowTransport } from "./github-device-flow.js";
 import { registerGitHubIntegrationRoutes } from "./github-integration-api.js";
 import { GitHubIntegrationStore } from "./github-integration-store.js";
+import { GitHubRepositoryCatalogClient } from "./github-repository-catalog.js";
+import { GitHubRepositoryCatalogService } from "./github-repository-catalog-service.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => Promise.all(cleanups.splice(0).map((cleanup) => cleanup())));
@@ -29,7 +31,15 @@ describe("GitHub integration control-plane API", () => {
     };
     const authorizations = new GitHubDeviceAuthorizationCoordinator(flow, integrations, vault,
       async () => new Response(JSON.stringify({ id: 7, login: "octocat" }), { status: 200 }), () => now);
-    const app = express(); app.use(express.json()); registerGitHubIntegrationRoutes({ app, control, integrations, authorizations });
+    const catalogClient = new GitHubRepositoryCatalogClient(async (input) => {
+      const url = new URL(input);
+      if (url.pathname === "/user/installations") return new Response(JSON.stringify({ total_count: 1, installations: [{ id: 101,
+        account: { id: 501, login: "Example", type: "Organization" }, repository_selection: "selected" }] }), { status: 200 });
+      return new Response(JSON.stringify({ total_count: 1, repositories: [{ id: 201, name: "One", full_name: "Example/One", owner: { login: "Example" },
+        visibility: "private", default_branch: "main" }] }), { status: 200 });
+    }, () => new Date(now).toISOString());
+    const catalogs = new GitHubRepositoryCatalogService(integrations, vault, catalogClient);
+    const app = express(); app.use(express.json()); registerGitHubIntegrationRoutes({ app, control, integrations, authorizations, catalogs });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -61,8 +71,15 @@ describe("GitHub integration control-plane API", () => {
     expect(await completedResponse.json()).toMatchObject({ authorization: { state: "ready", connection: { githubUser: { login: "octocat" } } } });
     const listed = await (await call("/api/control/integrations/github", {}, ownerCookie)).text();
     expect(listed).toContain("octocat"); expect(listed).not.toMatch(/ghu_|ghr_|github-secret/);
+    const connectionId = (JSON.parse(listed) as { connections: Array<{ connectionId: string }> }).connections[0]!.connectionId;
+    expect((await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId, expectedRevision: 0 }) }, ownerCookie)).status).toBe(403);
+    const refreshed = await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId, expectedRevision: 0 }) }, ownerCookie, owner.csrfToken);
+    expect(refreshed.status).toBe(200); expect(await refreshed.json()).toMatchObject({ catalog: { revision: 1, repositories: [{ canonical: "github.com/example/one" }] } });
+    const repositories = await (await call(`/api/control/integrations/github/repositories?connectionId=${encodeURIComponent(connectionId)}`, {}, viewerCookie)).text();
+    expect(repositories).toContain("github.com/example/one"); expect(repositories).not.toMatch(/ghu_|ghr_|github-secret/);
     const audit = JSON.stringify(await control.audit(ownerActor));
     expect(audit).toContain("GITHUB_AUTHORIZATION_STARTED"); expect(audit).toContain("GITHUB_AUTHORIZATION_COMPLETED");
+    expect(audit).toContain("GITHUB_CATALOG_REFRESHED");
     expect(audit).not.toMatch(/device_code|ghu_|ghr_|github-secret|ABCD-EFGH/);
   });
 });
