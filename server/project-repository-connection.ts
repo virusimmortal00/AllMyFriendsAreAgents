@@ -86,6 +86,10 @@ export type RepositoryConnectionResult =
   | { readonly kind: "conflict"; readonly reason: string; readonly actualRevision: number }
   | { readonly kind: "rejected"; readonly reason: string };
 
+export type RepositoryCheckoutVerificationResult =
+  | { readonly kind: "ok"; readonly remote: CanonicalRemoteIdentity }
+  | { readonly kind: "rejected"; readonly reason: string };
+
 interface StoredConnections { readonly schemaVersion: 1; readonly connections: readonly ProjectRepositoryConnection[] }
 
 export class ProjectRepositoryConnectionStore {
@@ -292,6 +296,24 @@ export function publicRepositoryConnectionStatus(connection?: ProjectRepositoryC
     state: connection.state, repository: connection.remote.canonical, defaultBranch: connection.defaultBranch,
     protectedBranches: connection.protectedBranches, policyRevision: connection.policyRevision, checkoutMode: connection.checkoutMode,
     validatedAt: connection.validatedAt };
+}
+
+/** Preflights a local checkout against server-derived catalog identity before authority is persisted. */
+export async function verifyRepositoryCheckout(input: {
+  readonly checkoutPath: string;
+  readonly worktreeRoot: string;
+  readonly defaultBranch: string;
+  readonly expectedRepository: string;
+}): Promise<RepositoryCheckoutVerificationResult> {
+  try {
+    const evidence = await inspectCheckout(input.checkoutPath, input.worktreeRoot, input.defaultBranch);
+    if (evidence.remote.canonical !== input.expectedRepository) {
+      return { kind: "rejected", reason: "Local checkout remote does not match the selected GitHub repository." };
+    }
+    return { kind: "ok", remote: evidence.remote };
+  } catch (error) {
+    return { kind: "rejected", reason: safeError(error) };
+  }
 }
 
 /** Remove repository credentials and local authority paths before worker dispatch. */
