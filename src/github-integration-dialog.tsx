@@ -175,6 +175,7 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
           <section className="github-integration-card" aria-labelledby="github-server-heading">
             <h3 id="github-server-heading">Server connection</h3>
             {integration.app ? <p><strong>{integration.app.name}</strong> is the reusable public App for this server. No client secret, private key, PAT, or room environment variable is required.</p> : <p role="alert">This build does not contain a reviewed GitHub App identity.</p>}
+            {integration.app ? <a className="classic-button github-install-link" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Install or configure repositories</a> : null}
             {readyConnection ? <div className="github-status-row"><span><strong>Connected as {readyConnection.githubUser.login}</strong><small>Device-user token · encrypted locally · revision {readyConnection.revision}</small></span><span className="github-status-badge">Ready</span></div> : integration.app ? <button type="button" className="classic-button" disabled={working} onClick={() => void connect()}>{working ? "Starting…" : "Connect with GitHub"}</button> : null}
             {authorization?.state === "authorizing" && authorization.challenge ? <div className="github-device-challenge" role="status">
               <strong>Enter code {authorization.challenge.userCode}</strong>

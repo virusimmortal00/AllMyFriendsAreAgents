@@ -63,6 +63,7 @@ describe("GitHubIntegrationDialog", () => {
 
     expect(await screen.findByText("Connected as virusimmortal00")).toBeTruthy();
     expect(screen.getByText("No client secret, private key, PAT, or room environment variable is required.", { exact: false })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Install or configure repositories" }).getAttribute("href")).toBe("https://github.com/apps/all-my-friends-are-agents/installations/new");
     expect(screen.getByRole("option", { name: "virusimmortal00/AllMyFriendsAreAgents · private" })).toBeTruthy();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Use for this project" }));
