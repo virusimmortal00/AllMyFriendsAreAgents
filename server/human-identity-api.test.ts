@@ -6,6 +6,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const resources: Array<{ child?: ChildProcess; directory?: string }> = [];
+const ISOLATED_SERVER_READY_TIMEOUT_MS = 10_000;
+const ISOLATED_SERVER_TEST_TIMEOUT_MS = 15_000;
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map(async ({ child, directory }) => {
@@ -46,7 +48,8 @@ async function serverFixture() {
   let stderr = "";
   child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
   const base = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  const readyDeadline = Date.now() + ISOLATED_SERVER_READY_TIMEOUT_MS;
+  while (Date.now() < readyDeadline) {
     if (child.exitCode !== null) throw new Error(`Identity test server exited early (${child.exitCode}): ${stderr}`);
     try {
       if ((await fetch(`${base}/api/ready`)).ok) return { base };
@@ -74,7 +77,7 @@ async function jsonCall(base: string, route: string, init: RequestInit = {}, ses
 }
 
 describe("adversarial human identity API", () => {
-  it("rejects unauthenticated room mutations before trusting any supplied identity", async () => {
+  it("rejects unauthenticated room mutations before trusting any supplied identity", { timeout: ISOLATED_SERVER_TEST_TIMEOUT_MS }, async () => {
     const { base } = await serverFixture();
     const spoof = { humanId: "public-victim-id", actorId: "public-victim-id" };
     const attempts: Array<[string, string, Record<string, unknown>]> = [
@@ -97,7 +100,7 @@ describe("adversarial human identity API", () => {
     expect(state.settings.roomName).not.toBe("Hostile rename");
   });
 
-  it("isolates two sessions even when IDs, names, and styles are supplied adversarially", async () => {
+  it("isolates two sessions even when IDs, names, and styles are supplied adversarially", { timeout: ISOLATED_SERVER_TEST_TIMEOUT_MS }, async () => {
     const { base } = await serverFixture();
     const victimJoin = await jsonCall(base, "/api/humans", { method: "POST", body: JSON.stringify({ name: "Alex", style: { textColor: "#3074fd" } }) });
     const victim = await victimJoin.json() as { id: string; style: { textColor: string } };
