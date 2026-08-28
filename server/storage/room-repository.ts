@@ -119,6 +119,8 @@ export type EmergencyStopChangeResult =
   | RevisionConflict;
 
 export interface RoomRepository extends AssignmentRecordStore, ContinuationRecordStore, CommandRecordStore {
+  /** The only room this repository instance is authorized to read or mutate. */
+  readonly roomId: string;
   snapshot(): RoomState;
   addMessage(
     speaker: RoomMessage["speaker"],

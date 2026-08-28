@@ -9,6 +9,7 @@ import {
 } from "./continuation-record.js";
 import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
 import type { AgentId } from "./types.js";
+import { authorizeSourceWorkForCurrentBoot, sourceWorkReconciliationBlocker } from "./storage/identity-domain.js";
 
 export const DEFAULT_CONTINUATION_BUDGET: ContinuationBudget = Object.freeze({ timeMs: 60_000, tokenLimit: 8_000, toolCallLimit: 20, retryLimit: 1 });
 const MAX_BUDGET: ContinuationBudget = Object.freeze({ timeMs: 300_000, tokenLimit: 20_000, toolCallLimit: 50, retryLimit: 3 });
@@ -101,7 +102,11 @@ export class ContinuationService {
   async createFromRoom(input: { requestId: string; messageId: string; requestedBy: string; taskId: string; taskRevision: number; assignmentReferenceId: string; objective: string; budget?: Partial<ContinuationBudget> }): Promise<ContinuationResult<ContinuationRecord>> {
     const jobId = roomContinuationJobId(input.requestId);
     const replay = await this.records.getContinuation(jobId);
-    if (replay) return replay.roomOrigin?.requestId === input.requestId ? { kind: "ok", value: replay } : { kind: "conflict", reason: "Room request identity conflicts with an existing continuation." };
+    if (replay) {
+      if (replay.roomOrigin?.requestId !== input.requestId) return { kind: "conflict", reason: "Room request identity conflicts with an existing continuation." };
+      const validation = await this.revalidate(replay);
+      return "reason" in validation ? { kind: "rejected", reason: validation.reason! } : { kind: "ok", value: replay };
+    }
     if (this.closed) return { kind: "rejected", reason: "Server is shutting down." };
     const policy = await this.currentPolicy(); if ("reason" in policy) return { kind: "rejected", reason: policy.reason };
     if (await this.emergencyStopActive()) return { kind: "rejected", reason: "Emergency stop is active." };
@@ -132,9 +137,14 @@ export class ContinuationService {
     const created = await this.records.createContinuation(record, audit(record, null, "CREATED", now, roomOrigin ? "Queued by authorized room work request." : "Queued by authorized developer."));
     if (created.kind !== "accepted") {
       const replay = roomOrigin ? await this.records.getContinuation(jobId) : undefined;
-      if (replay && replay.roomOrigin?.requestId === roomOrigin?.requestId) return { kind: "ok", value: replay };
+      if (replay && replay.roomOrigin?.requestId === roomOrigin?.requestId) {
+        const validation = await this.revalidate(replay);
+        if (!("reason" in validation)) return { kind: "ok", value: replay };
+        return { kind: "rejected", reason: validation.reason! };
+      }
       return { kind: "conflict", reason: "This agent already has a nonterminal continuation." };
     }
+    authorizeSourceWorkForCurrentBoot(this.rooms, "continuation", record.jobId);
     this.changed(); this.scheduleRun(record.jobId); return { kind: "ok", value: created.value };
   }
 
@@ -273,6 +283,10 @@ export class ContinuationService {
     return { assignment: validated.assignment, workspace: validated.workspace };
   }
   private async revalidate(record: ContinuationRecord) {
+    const continuationBlocker = await sourceWorkReconciliationBlocker(this.rooms, "continuation", record.jobId);
+    if (continuationBlocker) return { reason: `Continuation provenance requires reconciliation (${continuationBlocker}).` };
+    const assignmentBlocker = await sourceWorkReconciliationBlocker(this.rooms, "assignment", record.authority.assignmentId);
+    if (assignmentBlocker) return { reason: `Assignment provenance requires reconciliation (${assignmentBlocker}).` };
     const policy = await this.currentPolicy(); if ("reason" in policy) return policy;
     if (record.policyVersion !== policy.policyVersion || record.policyRevision !== policy.revision) return { reason: "Continuation policy revision changed." };
     if (JSON.stringify(record.capabilities) !== JSON.stringify(SAFE_CAPABILITIES)) return { reason: "Continuation capability set changed." };

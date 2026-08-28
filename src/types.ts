@@ -14,11 +14,27 @@ export type { AgentId, SpeakerId } from "../shared/participants";
 
 export interface AgentHealth {
   status: "cooldown" | "unavailable";
-  reason: "rate_limit" | "authentication" | "timeout" | "configuration" | "provider_error";
+  reason: "rate_limit" | "authentication" | "timeout" | "transient_provider" | "configuration" | "provider_error";
   message: string;
   since: string;
   retryAt?: string;
+  retrySource?: "provider" | "policy";
 }
+
+interface ProviderHealthBase {
+  message: string;
+  since: string;
+}
+
+export type ProviderHealth = ProviderHealthBase & ({
+  status: "action_required";
+  reason: "usage_exhausted" | "usage_not_included";
+} | {
+  status: "cooldown";
+  reason: "account_rate_limit";
+  retryAt: string;
+  retrySource: "provider" | "policy";
+});
 
 export interface RoomMessage {
   id: string;
@@ -80,10 +96,12 @@ export interface RoomState {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  providerHealth?: Record<string, ProviderHealth>;
   server?: ServerIdentity;
   preflightEvidence?: PreflightEvidence;
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
+  githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
 }
 export interface WorkshopResponse extends GovernedImprovementDetail {
   kind: "found";

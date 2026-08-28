@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
+import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentModelReference, roomAgentProviderScope, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
   it("migrates missing command permissions to allow-all and rejects malformed updates", () => {
@@ -102,6 +102,14 @@ describe("room roster contract", () => {
     normalizeRoomAgentRoster({ schemaVersion: 3, revision: 1, entries: [{ agentId, conversationalName: "Before", providerId: "openai", modelId: "before", enabled: true }] });
     normalizeRoomAgentRoster({ schemaVersion: 3, revision: 2, entries: [{ agentId, conversationalName: "After", providerId: "anthropic", modelId: "after", enabled: true }] });
     expect(AGENT_PROFILES[agentId]).toMatchObject({ conversationalName: "After", modelId: "after", modelLabel: "anthropic/after" });
+  });
+
+  it("derives provider scope from the current dynamic roster configuration", () => {
+    const agentId = "agent-77777777-7777-4777-8777-777777777777";
+    const cursorRoster = normalizeRoomAgentRoster({ schemaVersion: 3, revision: 1, entries: [{ agentId, conversationalName: "Scout", providerId: "cursor", modelId: "composer-2.5", enabled: true }] });
+    const openaiRoster = normalizeRoomAgentRoster({ schemaVersion: 3, revision: 2, entries: [{ agentId, conversationalName: "Scout", providerId: "openai", modelId: "gpt-5.6", enabled: true }] });
+    expect(roomAgentProviderScope(cursorRoster, agentId)).toBe("cursor");
+    expect(roomAgentProviderScope(openaiRoster, agentId)).toBe("openai");
   });
 
   it("recognizes fingerprints from the previous OpenCode reference format only when the selection matches", () => {

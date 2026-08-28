@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
-import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -29,6 +29,10 @@ import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomConfigurationDialog } from "./room-configuration-dialog";
 import { Diagnostics } from "./diagnostics";
+import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
+import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
+
+type LocalWorkspaceName = Exclude<WorkspaceName, "Improvements">;
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -136,6 +140,9 @@ export default function App() {
   const [roomConfigurationOpen, setRoomConfigurationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
+  const [providerRecoveryPending, setProviderRecoveryPending] = useState(false);
+  const [providerRecoveryError, setProviderRecoveryError] = useState("");
   const [rosterOpen, setRosterOpen] = useState(false);
   const [rosterTrigger, setRosterTrigger] = useState<HTMLElement | null>(null);
   const [rosterSelectedAgentId, setRosterSelectedAgentId] = useState<ActiveAgentId | null>(null);
@@ -147,11 +154,7 @@ export default function App() {
   const [workshopError, setWorkshopError] = useState("");
   const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
-  const [tasksView, setTasksView] = useState(false);
-  const [continuationsView, setContinuationsView] = useState(false);
-  const [investigationsView, setInvestigationsView] = useState(false);
-  const [contributionsView, setContributionsView] = useState(false);
-  const [diagnosticsView, setDiagnosticsView] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<LocalWorkspaceName | null>(null);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -267,7 +270,7 @@ export default function App() {
     const connectEvents = () => {
       if (cancelled) return;
       events?.close();
-      const source = new EventSource("/api/events");
+      const source = new EventSource(roomEventsPath());
       events = source;
       lastEventAt = Date.now();
       source.addEventListener("heartbeat", () => {
@@ -387,7 +390,7 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability }));
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
@@ -476,6 +479,18 @@ export default function App() {
   async function saveRoomSettings(settings: RoomSettingsInput) {
     await updateSettings(settings);
     setRoom((current) => ({ ...current, settings: { ...current.settings, ...settings } }));
+  }
+
+  async function allowProviderRecovery(providerId: string) {
+    setProviderRecoveryPending(true);
+    setProviderRecoveryError("");
+    try {
+      await requestProviderRecovery(providerId);
+    } catch (error) {
+      setProviderRecoveryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderRecoveryPending(false);
+    }
   }
 
   function changeMyStyle(style: ChatStyle) {
@@ -691,11 +706,12 @@ export default function App() {
   }
 
   function showChat() {
-    setTasksView(false);
-    setContinuationsView(false);
-    setInvestigationsView(false);
-    setContributionsView(false);
-    setDiagnosticsView(false);
+    setWorkspaceView(null);
+    navigateImprovements(null);
+  }
+
+  function showWorkspace(name: LocalWorkspaceName) {
+    setWorkspaceView(name);
     navigateImprovements(null);
   }
 
@@ -706,9 +722,11 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  const chatActive = !improvementsView && !tasksView && !continuationsView && !investigationsView && !contributionsView && !diagnosticsView;
+  const activeWorkspaceName: WorkspaceName | null = improvementsView ? "Improvements" : workspaceView;
+  const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
+  const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
   const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
   const openRoster = useCallback((trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => {
@@ -738,6 +756,12 @@ export default function App() {
     setWorkshopId((current) => nextWorkshopId(current, { type: "open", id }));
   }, []);
 
+  // Application menu contract:
+  // - You changes the current member's profile.
+  // - Room changes this room or invokes room-scoped actions.
+  // - View changes the presentation of the current workspace; it never navigates.
+  // - Window switches between whole-workspace destinations.
+  // - Help contains documentation and support entry points.
   const menus: ClassicMenuDefinition[] = [
     {
       id: "you",
@@ -756,40 +780,27 @@ export default function App() {
         { label: "Room settings...", accessKey: "S", onSelect: openRoomConfiguration },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
-        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("continue", "all"); } },
-        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("roundtable", "all"); } },
-        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("review", "all"); } },
+        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("continue", "all"); } },
+        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("roundtable", "all"); } },
+        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("review", "all"); } },
       ],
     },
-    {
-      id: "view",
-      label: "View",
-      accessKey: "V",
-      items: [
-        { label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps },
+    defineViewMenu([
+        presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
         { type: "separator" },
-        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
-        { type: "separator" },
-        { label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) },
-        { label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) },
-        { label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification },
-      ],
-    },
-    {
-      id: "window",
-      label: "Window",
-      accessKey: "W",
-      disabled: true,
-      items: [
-        { label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } },
-        { label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements({ view: "list", scope: "active" }); } },
-        { label: "Tasks", accessKey: "T", checked: tasksView, onSelect: () => { if (tasksView) return; setTasksView(true); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Continuations", accessKey: "o", checked: continuationsView, onSelect: () => { if (continuationsView) return; setContinuationsView(true); setTasksView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Investigations", accessKey: "n", checked: investigationsView, onSelect: () => { if (investigationsView) return; setInvestigationsView(true); setContinuationsView(false); setTasksView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Reviewed contributions", accessKey: "R", checked: contributionsView, onSelect: () => { if (contributionsView) return; setContributionsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
-      ],
-    },
+        presentationCommand({ label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) }),
+        presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
+        presentationCommand({ label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification }),
+    ]),
+    defineWindowMenu([
+        workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
+        workspaceCommand({ label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setWorkspaceView(null); navigateImprovements({ view: "list", scope: "active" }); } }),
+        workspaceCommand({ label: "Tasks", accessKey: "T", checked: workspaceView === "Tasks", onSelect: () => { if (workspaceView !== "Tasks") showWorkspace("Tasks"); } }),
+        workspaceCommand({ label: "Continuations", accessKey: "o", checked: workspaceView === "Continuations", onSelect: () => { if (workspaceView !== "Continuations") showWorkspace("Continuations"); } }),
+        workspaceCommand({ label: "Investigations", accessKey: "n", checked: workspaceView === "Investigations", onSelect: () => { if (workspaceView !== "Investigations") showWorkspace("Investigations"); } }),
+        workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
+        workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
+    ]),
     {
       id: "help",
       label: "Help",
@@ -812,6 +823,19 @@ export default function App() {
     focusRouteHeading.current = false;
   }, [improvementsView]);
 
+  let workspaceContent: ReactNode = null;
+  if (improvementsView) workspaceContent = <Improvements route={improvementsView} onNavigate={navigateImprovements} />;
+  else if (workspaceView) {
+    switch (workspaceView) {
+      case "Tasks": workspaceContent = <Tasks refreshKey={connectionEpoch} />; break;
+      case "Continuations": workspaceContent = <Continuations refreshKey={connectionEpoch} />; break;
+      case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} />; break;
+      case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
+      case "Diagnostics": workspaceContent = <Diagnostics />; break;
+      default: workspaceView satisfies never;
+    }
+  }
+
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
   if (!human) return <LoadingScreen error={joinError || "Joining the room"} joining={Boolean(joinError)} retrying={joinPending} onRetry={retryJoin} onCancel={cancelJoin} />;
   if (!ready) return <LoadingScreen error={clientError} />;
@@ -827,13 +851,15 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics agents={enabledAgents} /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
+          {activeWorkspaceName ? <WorkspaceSurface name={activeWorkspaceName} onClose={showChat}>
+            {workspaceContent}
+          </WorkspaceSurface> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -861,6 +887,20 @@ export default function App() {
         {roomConfigurationOpen ? <RoomConfigurationDialog returnFocusTo={roomConfigurationTrigger.current} onClose={() => setRoomConfigurationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
+        {configuredAgent ? (
+          <AgentSettingsDialog
+            agent={configuredAgent}
+            available={room.availability?.[configuredAgent] !== false}
+            health={room.agentHealth?.[configuredAgent]}
+            providerHealth={configuredProviderId ? room.providerHealth?.[configuredProviderId] : undefined}
+            providerId={configuredProviderId}
+            implementationCapability={room.implementationCapabilities?.[configuredAgent]}
+            recoveryPending={providerRecoveryPending}
+            recoveryError={providerRecoveryError}
+            onRequestProviderRecovery={allowProviderRecovery}
+            onClose={() => { setConfiguredAgent(null); setProviderRecoveryError(""); }}
+          />
+        ) : null}
         {rosterOpen ? <RosterManagerDialog
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
@@ -882,6 +922,7 @@ export default function App() {
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
+          {room.githubReadStatus ? <div className="status-cell" aria-label="Room GitHub read status">GitHub read: {room.githubReadStatus.state === "ready" ? "Ready for this room" : room.githubReadStatus.reason.replaceAll("-", " ")}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>

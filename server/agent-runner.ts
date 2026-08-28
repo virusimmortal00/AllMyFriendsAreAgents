@@ -14,6 +14,7 @@ import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import { deploymentPromptContext, type DeploymentProvenance } from "./deployment-provenance.js";
 import { logOperationSafely, type OperationLog } from "./operation-log.js";
+import { ProviderInvocationError, providerFailuresFromOpenCodeOutput } from "./provider-failure.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -41,6 +42,7 @@ export interface AgentContextRuntime {
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
+  readonly diagnosticsTool?: { readonly url: string; readonly token: string };
   readonly operationLog?: OperationLog;
 }
 
@@ -255,9 +257,11 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
   const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";
+  const diagnosticsGuide = context?.diagnosticsTool ? "\nROOM DIAGNOSTICS (server-owned, lease-bound)\n- room_diagnostics is read-only and returns only bounded evidence visible to your current participant, room, and project. Its results are private tool output; do not copy sensitive evidence into the room transcript.\n" : "";
   const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
 ${basePromptSection}
 ${commandGuide}
+${diagnosticsGuide}
 
 ROOM NAME
 ${state.settings.roomName}
@@ -480,16 +484,12 @@ function parseOpenCodeOutput(stdout: string) {
   const text: string[] = [];
   const toolCalls = new Set<string>();
   const failedToolCalls = new Set<string>();
-  const errors: Array<{ name: string; message: string; statusCode?: number; retryable?: boolean }> = [];
+  const errors = providerFailuresFromOpenCodeOutput(stdout);
   let steps = 0;
   let cost = 0;
   let finishReason = "";
   const usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
   const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
-  const safeMessage = (value: unknown) => String(value || "OpenCode reported an error.")
-    .replace(/(?:sk-|key-|token-|Bearer\s+)[A-Za-z0-9._-]{8,}/gi, "[redacted]")
-    .replace(/\b[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=[^\s]+/gi, "[redacted]")
-    .slice(0, 500);
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     try {
@@ -507,7 +507,6 @@ function parseOpenCodeOutput(stdout: string) {
           tokens?: { total?: unknown; input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } };
           state?: { status?: string };
         };
-        error?: { name?: unknown; data?: { message?: unknown; statusCode?: unknown; isRetryable?: unknown } };
       };
       if (event.sessionID) sessionId = event.sessionID;
       if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
@@ -530,14 +529,6 @@ function parseOpenCodeOutput(stdout: string) {
         usage.cacheReadTokens += number(tokens?.cache?.read);
         usage.cacheWriteTokens += number(tokens?.cache?.write);
         usage.totalTokens += number(tokens?.total) || input + output + reasoning;
-      }
-      if (event.type === "error" && event.error && errors.length < 5) {
-        errors.push({
-          name: typeof event.error.name === "string" ? event.error.name.slice(0, 100) : "OpenCodeError",
-          message: safeMessage(event.error.data?.message),
-          ...(Number.isSafeInteger(event.error.data?.statusCode) ? { statusCode: Number(event.error.data?.statusCode) } : {}),
-          ...(typeof event.error.data?.isRetryable === "boolean" ? { retryable: event.error.data.isRetryable } : {}),
-        });
       }
     } catch {
       // OpenCode progress outside its JSON event protocol is intentionally ignored.
@@ -568,7 +559,7 @@ function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>)
   };
 }
 
-function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false) {
+function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false, roomDiagnosticsAvailable = false) {
   return permission === "read-only" ? {
     ...environment,
     OPENCODE_PERMISSION: JSON.stringify({
@@ -576,6 +567,7 @@ function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-o
       webfetch: "allow", websearch: "allow", lsp: "allow",
       room_history: "allow",
       room_command: roomCommandAvailable ? "allow" : "deny",
+      room_diagnostics: roomDiagnosticsAvailable ? "allow" : "deny",
     }),
   } : environment;
 }
@@ -696,9 +688,13 @@ export async function runAgent(
           AMFAA_ROOM_COMMAND_TOKEN: context.commandTool.token,
           AMFAA_ROOM_COMMANDS: JSON.stringify(context.commandTool.allowedCommands),
         } : {}),
+        ...(context?.diagnosticsTool ? {
+          AMFAA_ROOM_DIAGNOSTICS_URL: context.diagnosticsTool.url,
+          AMFAA_ROOM_DIAGNOSTICS_TOKEN: context.diagnosticsTool.token,
+        } : {}),
       };
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length)),
+        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length), Boolean(context?.diagnosticsTool)),
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
@@ -761,6 +757,7 @@ export async function runAgent(
       } : {}),
     });
     await logOperationSafely(context?.operationLog, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
+    if (failedProtocol?.errors[0]) throw new ProviderInvocationError(failedProtocol.errors[0]);
     throw error;
   } finally {
     lifecycle?.finish(generationId);

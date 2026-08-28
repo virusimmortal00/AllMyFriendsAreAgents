@@ -3,6 +3,7 @@ import type express from "express";
 import type { CommandInput, CommandInvocation, RoomCommandName } from "../shared/command-domain.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { CommandRuntime, CommandResponse } from "./command-runtime.js";
+import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 
 const LEASE_LIFETIME_MS = 10 * 60_000;
 
@@ -15,6 +16,7 @@ interface CommandToolLease {
   readonly expiresAt: number;
   readonly issuedAt: number;
   readonly manifestRevision: number;
+  readonly roomId: string;
   readonly requests: Map<string, { readonly fingerprint: string; readonly result: Promise<unknown> }>;
 }
 
@@ -35,16 +37,16 @@ export class RoomCommandToolBroker {
   private readonly recorded = new Set<string>();
   private manifestRevision = 0;
 
-  constructor(private readonly runtime: CommandRuntime, private readonly now: () => number = Date.now, private readonly currentProviderSessionId?: (agentId:ActiveAgentId)=>string|null, private readonly operationLog?: (event: CommandToolLeaseEvent) => Promise<unknown> | unknown) {}
+  constructor(private readonly runtime: CommandRuntime|((roomId:string)=>CommandRuntime|Promise<CommandRuntime>), private readonly now: () => number = Date.now, private readonly currentProviderSessionId?: (agentId:ActiveAgentId)=>string|null, private readonly operationLog?: (event: CommandToolLeaseEvent) => Promise<unknown> | unknown) {}
 
-  issue(input: { agentId: ActiveAgentId; displayName: string; providerSessionId: string | null; allowedCommands: readonly RoomCommandName[] }) {
+  issue(input: { agentId: ActiveAgentId; displayName: string; providerSessionId: string | null; allowedCommands: readonly RoomCommandName[]; roomId?:string }) {
     this.prune();
     const existing = [...this.leases.entries()].find(([, lease]) => lease.agentId === input.agentId);
     if (existing) this.leases.delete(existing[0]);
     const token = `${randomUUID()}${randomUUID()}`;
     const key = digest(token).toString("hex");
     const issuedAt = this.now(); const manifestRevision = ++this.manifestRevision;
-    this.leases.set(key, { digest: digest(token), ...input, allowedCommands: [...input.allowedCommands], issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, manifestRevision, requests: new Map() });
+    this.leases.set(key, { digest: digest(token), ...input, roomId:input.roomId||CANONICAL_ROOM_ID, allowedCommands: [...input.allowedCommands], issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, manifestRevision, requests: new Map() });
     this.record(input.agentId, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", issuedAt, issuedAt + LEASE_LIFETIME_MS, manifestRevision, `${manifestRevision}:issue`);
     return token;
   }
@@ -69,9 +71,9 @@ export class RoomCommandToolBroker {
       this.record(lease.agentId,"rejected","permission-not-granted",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:permission:${input.clientSubmissionId}`,metadata);
       return rejected;
     }
-    const invoker={ kind: "agent" as const, id: lease.agentId, displayName: lease.displayName };
+    const runtime=typeof this.runtime==="function"?await this.runtime(lease.roomId):this.runtime;const invoker={ kind: "agent" as const, id: lease.agentId, displayName: lease.displayName };
     const special=input.invocation as {command:string;pollId?:string;optionIndex?:number;expectedRevision?:number;submissionId?:string};
-    const result = operation==="polls"?this.runtime.listOpenPolls(invoker):operation==="poll_vote"?this.runtime.vote(special.pollId||"",invoker,input.clientSubmissionId,special.optionIndex??-1):operation==="poll_close"?this.runtime.closePoll(special.pollId||"",invoker,input.clientSubmissionId,special.expectedRevision??-1):operation==="gh_diagnostic"?this.runtime.getGhDiagnostic(invoker,special.submissionId||""):this.runtime.submit(input.invocation as CommandInvocation,invoker,input.clientSubmissionId);
+    const result = operation==="polls"?runtime.listOpenPolls(invoker):operation==="poll_vote"?runtime.vote(special.pollId||"",invoker,input.clientSubmissionId,special.optionIndex??-1):operation==="poll_close"?runtime.closePoll(special.pollId||"",invoker,input.clientSubmissionId,special.expectedRevision??-1):operation==="gh_diagnostic"?runtime.getGhDiagnostic(invoker,special.submissionId||""):runtime.submit(input.invocation as CommandInvocation,invoker,input.clientSubmissionId);
     lease.requests.set(input.clientSubmissionId, { fingerprint: requestFingerprint, result });
     this.record(lease.agentId,"accepted","tool-call-accepted",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:accepted:${input.clientSubmissionId}`,metadata);
     return result;

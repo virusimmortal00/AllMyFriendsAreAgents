@@ -87,9 +87,8 @@ Use the smallest set that proves the change, then broaden according to risk:
 # One focused file while iterating
 pnpm exec vitest run path/to/file.test.ts
 
-# Full automated suite and production build
-pnpm test
-pnpm build
+# Full repository quality gate
+pnpm run check:quality
 
 # Planning/template changes
 pnpm check:planning-docs -- --self-check

@@ -8,7 +8,6 @@ import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashbo
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
-import type { DiagnosticRecord } from "./diagnostics";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -16,6 +15,24 @@ const READY_TIMEOUT_MS = 2_500;
 let controlCsrfToken = "";
 const pollVoteIds = new Map<string,string>();
 const pollCloseIds = new Map<string,string>();
+
+export function routedRoomId(location:Pick<Location,"pathname">=window.location){
+  const match=/^\/rooms\/([a-zA-Z0-9-]{8,80})(?:\/|$)/.exec(location.pathname);
+  return match ? match[1] : null;
+}
+function roomPath(endpoint:"state"|"messages"|"events"){
+  const roomId=routedRoomId();
+  return roomId?`/api/rooms/${encodeURIComponent(roomId)}/${endpoint}`:`/api/${endpoint}`;
+}
+export function roomEventsPath(){return roomPath("events");}
+
+const GLOBAL_API_ROOTS=new Set(["ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","rooms"]);
+export function scopedRequestPath(path:string){
+  const roomId=routedRoomId();
+  if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
+  const root=path.slice(5).split(/[/?]/,1)[0];
+  return GLOBAL_API_ROOTS.has(root)?path:`/api/rooms/${encodeURIComponent(roomId)}/${path.slice(5)}`;
+}
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
@@ -34,7 +51,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
   try {
     const headers = new Headers(options.headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, {
+    const response = await fetch(scopedRequestPath(path), {
       ...options,
       headers,
       signal: controller.signal,
@@ -100,7 +117,11 @@ export async function checkReady(): Promise<ServerIdentity> {
 }
 
 export async function loadRoom(): Promise<RoomState> {
-  return request("/api/state").then((response) => response.json());
+  return request(roomPath("state")).then((response) => response.json());
+}
+
+export async function requestProviderRecovery(providerId: string) {
+  return request(`/api/provider-health/${encodeURIComponent(providerId)}/recover`, { method: "POST", body: "{}" }).then((response) => response.json());
 }
 
 export interface RosterCatalogEntry {
@@ -215,7 +236,7 @@ export async function updateMyProfile(profile: { name: string; avatarUrl?: strin
 }
 
 export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement | CommandMutationAcknowledgement> {
-  return request("/api/messages", {
+  return request(roomPath("messages"), {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }, REQUEST_TIMEOUT_MS, [400]).then(async (response) => {
@@ -240,18 +261,18 @@ export async function loadPolls() {
   return request("/api/polls", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ items: import("./types").PublicPollProjection[] }>);
 }
 
-/** Diagnostics are intentionally never fetched as part of room state or SSE. */
-export async function loadDiagnostics(token: string, agentId: string, search = ""): Promise<{ items: DiagnosticRecord[] }> {
-  const query = new URLSearchParams({ agentId, limit: "50" });
-  if (search.trim()) query.set("search", search.trim().slice(0, 200));
-  return request(`/api/developer/diagnostics?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
-    .then((response) => response.json() as Promise<{ items: DiagnosticRecord[] }>);
-}
-
-export async function loadDiagnostic(token: string, agentId: string, recordId: string): Promise<DiagnosticRecord> {
-  const query = new URLSearchParams({ agentId });
-  return request(`/api/developer/diagnostics/${encodeURIComponent(recordId)}?${query}`, { method: "GET", cache: "no-store", headers: { Authorization: `Bearer ${token}` } })
-    .then((response) => response.json() as Promise<DiagnosticRecord>);
+/** Owner diagnostics are intentionally never fetched as part of room state or SSE. */
+export interface OwnerDiagnosticRecord { recordId: string; stream: string; timestamp: string; severity: string; event: string; correlationId?: string; requestId?: string; traceId?: string; content: Record<string, unknown>; }
+export interface OwnerDiagnosticChunk { kind: "record-chunk"; recordId: string; stream: string; offset: number; totalBytes: number; encoding: "base64-json-utf8"; data: string; final: boolean; }
+export interface OwnerDiagnosticsResult { records: OwnerDiagnosticRecord[]; chunks: OwnerDiagnosticChunk[]; nextCursor: string | null; scannedBytes: number; serializedBytes: number; malformedRecords: number; scanLimitReached: boolean; }
+export async function queryOwnerDiagnostics(query: Record<string, unknown>): Promise<OwnerDiagnosticsResult> {
+  const send = () => request("/api/control/diagnostics/query", { method: "POST", cache: "no-store", headers: controlCsrfToken ? { "X-AMFAA-CSRF": controlCsrfToken } : {}, body: JSON.stringify(query) }).then((response) => response.json() as Promise<OwnerDiagnosticsResult>);
+  try { return await send(); }
+  catch (error) {
+    if (!(error instanceof ApiRequestError) || error.status !== 403) throw error;
+    await loadControlMe();
+    return send();
+  }
 }
 
 export interface CapabilityDiagnosticsResponse {

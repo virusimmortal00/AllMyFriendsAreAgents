@@ -142,4 +142,10 @@ describe("room delta reconciliation", () => {
     const reconciled = reconcileRoomEvent(current, { streamId: "old", version: 2 }, snapshot(next, "new", 0));
     expect(reconciled).toMatchObject({ kind: "applied", room: { implementationCapabilities: {} } });
   });
+
+  it("clears recovered provider state from an authoritative refresh", () => {
+    const current = state([], { providerHealth: { cursor: { status: "action_required", reason: "usage_exhausted", message: "Cursor usage is exhausted; increase the limit or change provider mode.", since: "2026-08-27T12:00:00.000Z" } } });
+    const reconciled = reconcileRoomEvent(current, { streamId: "old", version: 2 }, snapshot(state([], { providerHealth: {} }), "new", 0));
+    expect(reconciled).toMatchObject({ kind: "applied", room: { providerHealth: {} } });
+  });
 });

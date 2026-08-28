@@ -21,16 +21,10 @@ One server-owned policy resolves configured, runtime-available, and effective ca
 
 ## Current state
 
-Implemented and merged into `main` through pull request
-[#128](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/128).
-Capability resolution, safe projection, structured logging, audit behavior, and
-their denial and failure paths are covered by the repository test suite.
+Completed by merged PR [#128](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/128). Deployment-specific credentials and live-service canaries are not acceptance gates for this repository work.
 
 ## Evidence
 
-- Initial implementation:
-  [`dff07d9`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/dff07d9)
-- Review follow-up and final verification:
-  [`3e38546`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/3e38546)
-- Merge commit:
-  [`1547cb4`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/1547cb4)
+- Merge commit `1547cb49173215b4e566f38160f32aff981296ba`.
+- PR #128 records the focused and full tests, TypeScript checks, production build, planning-doc guard, and final privacy review.
+- Follow-up work is separately tracked by [#131](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/131) and [#132](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/132).

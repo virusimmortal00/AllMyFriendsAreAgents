@@ -12,7 +12,7 @@ import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isAgentId, participantScree
 import type { ImplementationCapability, ImplementationUnavailableReason } from "../shared/protocol";
 import { AIM_SMILEYS, renderAimSmileys } from "./aim-smileys";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy";
-import type { AgentHealth, AgentId, HumanPresence, PublicPollProjection, RoomMessage } from "./types";
+import type { AgentHealth, AgentId, HumanPresence, ProviderHealth, PublicPollProjection, RoomMessage } from "./types";
 import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { workshopLayout } from "./workshop-dialog";
@@ -94,6 +94,7 @@ export function ConfirmationDialog({
 export function RoomRoster({
   availability,
   agentHealth,
+  providerHealth,
   activeAgents,
   humans,
   currentHumanId,
@@ -102,10 +103,12 @@ export function RoomRoster({
   agentListSort = "room",
   onOpenRoomProperties,
   onManageRoster,
+  onConfigureAgent,
   onConfigureHumanAvatar,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  providerHealth?: Record<string, ProviderHealth>;
   activeAgents?: ReadonlySet<AgentId>;
   humans: HumanPresence[];
   currentHumanId: string;
@@ -114,10 +117,15 @@ export function RoomRoster({
   agentListSort?: AgentListSort;
   onOpenRoomProperties?: (trigger: HTMLButtonElement) => void;
   onManageRoster?: (trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => void;
+  onConfigureAgent?: (agent: ActiveAgentId) => void;
   onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
 }) {
-  const healthText = (health: AgentHealth) => health.status === "cooldown"
-    ? `Cooling down${health.retryAt ? ` until ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}` : ""}`
+  const healthText = (health: AgentHealth | ProviderHealth) => health.status === "action_required"
+    ? "Action required"
+    : health.status === "cooldown"
+    ? health.retryAt
+      ? `${health.message.replace(/\.$/, "")} · ${health.retrySource === "provider" ? "provider retry" : "automatic retry"} at ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}`
+      : "Cooling down"
     : "Unavailable";
   const presentAgents = sortAgentListItems(agents.filter((agent) => availability?.[agent] !== false).map((agent) => {
     const rosterEntry = roster?.entries.find((entry) => entry.agentId === agent);
@@ -136,6 +144,7 @@ export function RoomRoster({
           const { alias, providerId, modelId, authorId } = item;
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
+          const health = providerHealth?.[providerId] || agentHealth?.[agent];
           const availableLabel = `${alias}: ${modelName} via ${routeName}`;
           const configurable = Boolean(onManageRoster);
           const groupLabel = agentListGroupLabel(item, agentListSort);
@@ -159,16 +168,16 @@ export function RoomRoster({
               } : undefined}
             >
               <span
-                className={`presence-status${agentHealth?.[agent] ? ` presence-status--${agentHealth[agent].status}` : ""}`}
-                aria-label={agentHealth?.[agent] ? `${availableLabel}: ${agentHealth[agent].message}` : `${availableLabel}: available`}
-                title={agentHealth?.[agent]?.message || "Available"}
+                className={`presence-status${health ? ` presence-status--${health.status}` : ""}`}
+                aria-label={health ? `${availableLabel}: ${health.message}` : `${availableLabel}: available`}
+                title={health?.message || "Available"}
               />
               <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
               <span className="presence-identity">
                 <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
                 <span className="presence-meta">
                   <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
-                  {agentHealth?.[agent] ? <small className="presence-health" title={healthText(agentHealth[agent])}>{healthText(agentHealth[agent])}</small> : null}
+                  {health && !active ? <small className={`presence-health${health.status === "action_required" ? " presence-health--action-required" : ""}`} title={healthText(health)}>{healthText(health)}</small> : null}
                 </span>
               </span>
               <span className="presence-agent-actions">
@@ -177,6 +186,10 @@ export function RoomRoster({
                     <i /><i /><i />
                   </span>
                 ) : null}
+                {onConfigureAgent && health && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
+                  event.stopPropagation();
+                  onConfigureAgent(agent);
+                }}>⚙</button> : null}
               </span>
             </div>
             </Fragment>
@@ -203,18 +216,29 @@ export function AgentSettingsDialog({
   agent,
   available,
   health,
+  providerHealth,
+  providerId,
   implementationCapability,
+  recoveryPending = false,
+  recoveryError = "",
+  onRequestProviderRecovery,
   onClose,
 }: {
   agent: ActiveAgentId;
   available: boolean;
   health?: AgentHealth;
+  providerHealth?: ProviderHealth;
+  providerId?: string;
   implementationCapability?: ImplementationCapability;
+  recoveryPending?: boolean;
+  recoveryError?: string;
+  onRequestProviderRecovery?: (providerId: string) => void;
   onClose: () => void;
 }) {
-  const connectionState = !available ? "offline" : health?.status || "online";
-  const retryDescription = health?.retryAt
-    ? ` Retry after ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}.`
+  const effectiveHealth = providerHealth || health;
+  const connectionState = !available ? "offline" : effectiveHealth?.status || "online";
+  const retryDescription = effectiveHealth?.status === "cooldown" && effectiveHealth.retryAt
+    ? ` ${effectiveHealth.retrySource === "provider" ? "Provider retry time" : "Automatic retry eligible"}: ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(effectiveHealth.retryAt))}.`
     : "";
   const requestClose = onClose;
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
@@ -234,8 +258,13 @@ export function AgentSettingsDialog({
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
             <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />
-            {!available ? "CLI unavailable" : health ? `${health.message}${retryDescription}` : "Connected to the room"}
+            {!available ? "CLI unavailable" : effectiveHealth ? `${effectiveHealth.message}${retryDescription}` : "Connected to the room"}
           </div>
+          {providerHealth?.status === "action_required" && providerId && onRequestProviderRecovery ? <div className="provider-recovery">
+            <button type="button" className="classic-button" disabled={recoveryPending} onClick={() => onRequestProviderRecovery(providerId)}>{recoveryPending ? "Recovery attempt enabled" : "Allow one retry"}</button>
+            <small>The next request through this provider is a single bounded recovery attempt.</small>
+            {recoveryError ? <p className="agent-settings-error" role="alert">{recoveryError}</p> : null}
+          </div> : null}
           <fieldset>
             <legend>Implementation handoff</legend>
             <p className={capability.available ? "agent-settings-status" : "agent-settings-warning"} role="status">
@@ -559,6 +588,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
         <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
+        <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
       </div>

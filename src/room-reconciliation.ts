@@ -64,6 +64,8 @@ function mergeRoomFields(current: RoomState, next: Omit<RoomState, "messages"> &
     messages: next.messages || current.messages,
     availability: next.availability || current.availability,
     agentHealth: next.agentHealth || current.agentHealth,
+    githubReadStatus: next.githubReadStatus || current.githubReadStatus,
+    providerHealth: next.providerHealth || current.providerHealth,
   };
 }
 

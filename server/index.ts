@@ -2,12 +2,14 @@ import express from "express";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
+import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
@@ -27,7 +29,7 @@ import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-ap
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentModelReference, roomAgentProviderScope, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
@@ -62,6 +64,8 @@ import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
 import { COMMAND_CATALOG_REVISION, effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
+import { registerRoomDiagnosticsToolRoute, RoomDiagnosticsToolBroker, type RoomDiagnosticsCapabilityBinding } from "./room-diagnostics-tool.js";
+import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
@@ -70,22 +74,32 @@ import { ConsultationRunner } from "./consultation-service.js";
 import { DurableConsultationMcpService } from "./consultation-mcp.js";
 import { openConsultationRepository } from "./storage/open-consultation-repository.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge } from "./room-mcp.js";
-import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
-import { GitHubReadAdapter, type GitHubReadFetch } from "./github-read-adapter.js";
-import { GitHubReadStore } from "./github-read-store.js";
-import { GitHubReadService } from "./github-read-service.js";
+import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
+import type { GitHubReadFetch } from "./github-read-adapter.js";
+import { RoomBoundGitHubReadService } from "./room-bound-github-read.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
 import { CapabilityAuditStore } from "./capability-audit.js";
-import { StructuredLogger, traceMiddleware } from "./structured-logger.js";
+import { traceMiddleware } from "./structured-logger.js";
+import { ApplicationLoggerFacade, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, type StreamRotationConfiguration } from "./authoritative-logging.js";
+import { registerOwnerDiagnosticsRoutes } from "./owner-diagnostics-api.js";
+import { openJsonServerIdentity } from "./storage/json-server-identity.js";
+import type { IdentityRepository } from "./storage/identity-domain.js";
+import { RoomLifecycleStore } from "./room-lifecycle.js";
+import { RoomGenerationCapacity, RoomRuntimeRegistry } from "./room-runtime-registry.js";
+import { registerRoomLifecycleRoutes } from "./room-lifecycle-api.js";
+import { RoomCommandDispatcher } from "./room-command-dispatcher.js";
+import { ProjectRepositoryConnectionStore, ProjectRepositoryServiceRegistry, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
+import { registerProjectRepositoryRoutes } from "./project-repository-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
 const port = Number(process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT || 53147);
 const host = process.env.ALL_MY_FRIENDS_ARE_AGENTS_HOST || "127.0.0.1";
 const agentConcurrency = Math.max(1, Number.parseInt(process.env.ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY || "3", 10) || 3);
-const serverIdentity = { instanceId: randomUUID(), protocolVersion: ROOM_PROTOCOL_VERSION };
+const bootId = randomUUID();
+const serverIdentity: import("../shared/protocol.js").ServerIdentity = { instanceId: bootId, bootId, protocolVersion: ROOM_PROTOCOL_VERSION };
 let presenceConversationScheduled = false;
 const normalizedHost = host.replace(/^\[|\]$/g, "").toLowerCase();
 const isLoopbackHost = normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
@@ -108,17 +122,42 @@ if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICAT
 }
 const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
-const structuredLogger = new StructuredLogger(path.join(storageConfiguration.dataDirectory, "server.jsonl"), configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BYTES") || 5 * 1024 * 1024, 3, undefined, isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true", { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" });
+const streamRotation = Object.fromEntries(Object.entries(DEFAULT_STREAM_ROTATION).map(([stream, defaults]) => {
+  const prefix = `ALL_MY_FRIENDS_ARE_AGENTS_LOG_${stream.replaceAll("-", "_").toUpperCase()}`;
+  return [stream, { maxBytes: configuredPositiveInteger(`${prefix}_MAX_BYTES`) || defaults.maxBytes, frequencyMs: configuredPositiveInteger(`${prefix}_FREQUENCY_MS`) || defaults.frequencyMs, retention: configuredPositiveInteger(`${prefix}_RETENTION`) || defaults.retention }];
+})) as StreamRotationConfiguration;
+const loggingFoundation = await AuthoritativeLogging.open({
+  dataDirectory: storageConfiguration.dataDirectory,
+  projectId: path.basename(projectRoot),
+  projectPath: projectRoot,
+  roomId: CANONICAL_ROOM_ID,
+  rotation: streamRotation,
+  maxBufferedBytes: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BUFFERED_BYTES"),
+  includeStacks: isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true",
+  identity: { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" },
+});
+const structuredLogger = new ApplicationLoggerFacade(loggingFoundation);
 setControlRouteErrorReporter((error) => { void structuredLogger.log("error", "control-plane.request.failed", { error, outcome: "failed", reason: "internal-error" }); });
 app.use(traceMiddleware(structuredLogger));
 await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
 const store = await openRoomRepository(projectRoot, storageConfiguration);
+const durableServer = storageConfiguration.backend === "sqlite"
+  ? await (store as RoomRepository & IdentityRepository).getDurableServer()
+  : await openJsonServerIdentity(storageConfiguration.dataDirectory);
+serverIdentity.serverId = durableServer.serverId;
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
+const diagnosticsProjectId = path.basename(projectRepositoryPath);
+const diagnosticsQueryService = new LocalFileDiagnosticsQueryService(storageConfiguration.dataDirectory, diagnosticsProjectId);
+structuredLogger.setProject(path.basename(projectRepositoryPath), projectRepositoryPath);
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
-const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }));
+const storageScope = typeof (store as Partial<IdentityRepository>).getStorageScope === "function"
+  ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
+  : undefined;
+const currentProjectId = storageScope?.projectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
@@ -127,9 +166,15 @@ const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
 let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
+let healthRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+const providerHealth = await ProviderHealthRegistry.open(storageConfiguration.dataDirectory);
+await Promise.all([agentHealth.expire(), providerHealth.expire()]);
 const modelDiscovery = new ModelDiscoveryService();
 const openRouterCatalog = new OpenRouterCatalogService();
-const contextSummarizer = new OpenCodeContextSummarizer();
+const contextSummarizer = new OpenCodeContextSummarizer(undefined, undefined, undefined, {
+  providers: providerHealth,
+  onChange: () => { scheduleHealthRefresh(); broadcast(); },
+});
 const roomHistoryToken = `${randomUUID()}${randomUUID()}`;
 const roomHistoryTool = {
   configDirectory: path.join(serverDirectory, "agent-tools"),
@@ -139,20 +184,74 @@ const roomHistoryTool = {
 const controlPlane = await ControlPlaneStore.open(storageConfiguration.dataDirectory);
 const humans = new HumanPresenceRegistry();
 const humanSessions = new HumanSessions();
+const roomLifecycle = storageConfiguration.backend === "sqlite" ? await RoomLifecycleStore.open(storageConfiguration.databasePath, projectRoot) : undefined;
+const roomGenerationCapacity = new RoomGenerationCapacity({
+  perRoomLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_CONCURRENCY") || agentConcurrency,
+  globalLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_GLOBAL_CONCURRENCY") || Math.max(agentConcurrency, 6),
+  providerLimits: { openai: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_OPENAI_CONCURRENCY") || 4, anthropic: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ANTHROPIC_CONCURRENCY") || 4 },
+});
+const roomRuntimes = storageConfiguration.backend === "sqlite" ? new RoomRuntimeRegistry(async (roomId) => {
+  const { SqliteRoomRepository } = await import("./storage/sqlite-room-repository.js");
+  return SqliteRoomRepository.open(projectRoot, storageConfiguration.databasePath, { seedImprovements: false, roomId });
+}, {
+  perRoomLimit: agentConcurrency,
+  globalLimit: Math.max(agentConcurrency, 6),
+  providerLimits: {},
+  dormantAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_DORMANT_MS") || 60_000,
+}, roomGenerationCapacity) : undefined;
+const dormantRoomTimer = roomRuntimes ? setInterval(() => roomRuntimes.releaseDormant(), Math.min(30_000, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_ROOM_DORMANT_MS") || 60_000)) : undefined;
+dormantRoomTimer?.unref();
 const developerTeam = await openDeveloperTeamRegistry(storageConfiguration.dataDirectory);
 const developerBridge = new DeveloperBridgeService(store, developerTeam);
 const githubToken = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN?.trim();
 const githubRepository = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_REPOSITORY?.trim();
 const githubReadToken=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN?.trim();
-const githubReadRepository=process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim();
-const githubReadParts=githubReadRepository?.split("/")||[];
+const repositoryCredential=githubReadToken||githubToken;
+const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_CONNECTION_REFERENCE?.trim()
+  || process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_CONNECTION_REFERENCE?.trim()
+  || (repositoryCredential ? `github-connection:${createHash("sha256").update(repositoryCredential).digest("hex").slice(0, 24)}` : undefined);
+const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
+if (repositoryCredential && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, repositoryCredential);
+let contributionRecords: ContributionStore | undefined;
+let githubContributionStore: GitHubContributionStore | undefined;
+const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
+const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRepositoryConnectionStore, () => ({}), async (projectId) => {
+  if (projectId !== currentProjectId) return [];
+  const [assignments, continuations] = await Promise.all([store.listAssignments(), store.listContinuations()]);
+  const assignmentReferences = assignments.map((assignment) => ({ kind: "assignment" as const, id: assignment.assignmentId,
+    terminal: ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycleStatus), reconciled: assignment.recovery.classification !== "missing" }));
+  const jobReferences = continuations.map((job) => ({ kind: "job" as const, id: job.jobId,
+    terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
+  const contributionReferences = (contributionRecords?.list() || []).map((record) => ({ kind: (record.stage === "MERGED" || record.stage === "DEPLOYED" ? "deployment" : "contribution") as "deployment" | "contribution",
+    id: record.contributionId, terminal: record.stage === "DEPLOYED" || record.stage === "BLOCKED", reconciled: record.blockedReason === null }));
+  const brokerReferences = (githubContributionStore?.records() || []).filter((record) => record.outcome === "PENDING")
+    .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
+  return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
+}, (projectId, reference) => serverHeldRepositoryCredentials.available(projectId, reference));
+const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);
+Object.defineProperty(store, "getVerifiedRepositoryConnection", {
+  configurable: false,
+  enumerable: false,
+  value: (projectId: string) => projectId === currentProjectId ? projectRepositoryScope.connection.inspectServer() : undefined,
+});
+const verifyProjectRepositoryAuthority = async () => {
+  const connection = projectRepositoryScope.connection.inspectServer();
+  if (!connection) return "project-repository-connection-missing";
+  const result = await projectRepositoryScope.connection.revalidateAuthority(connection.revision);
+  return result.kind === "ok" ? null : result.reason;
+};
 const fakeSha="0123456789abcdef0123456789abcdef01234567";
 const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
-const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubReadService(new GitHubReadStore(new GitHubReadAdapter({owner:githubReadParts[0]!,repository:githubReadParts[1]!,defaultBranch:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH?.trim()||"main",token:githubReadToken},process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch),{operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event})}),githubReadRepository!):undefined;
+const identityRepository=typeof (store as Partial<IdentityRepository>).getStorageScope==="function"&&typeof (store as Partial<IdentityRepository>).getDurableProject==="function"&&typeof (store as Partial<IdentityRepository>).getRepositoryReference==="function"
+  ? store as RoomRepository&IdentityRepository : undefined;
+const githubReadService=identityRepository?new RoomBoundGitHubReadService(async(roomId)=>roomId===store.roomId?identityRepository:(await roomRuntimes!.acquire(roomId)).repository as RoomRepository&IdentityRepository,(projectId)=>projectRepositoryRegistry.forProject(projectId).connection,serverHeldRepositoryCredentials,{
+  fetcher:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch,
+  operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event}),
+}):undefined;
 const capabilityAudit = await CapabilityAuditStore.open(storageConfiguration.dataDirectory, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_CAPABILITY_AUDIT_LIMIT") || 500);
 let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object.fromEntries(normalizeRoomAgentRoster(store.snapshot().roster).entries.map((entry) => {
   const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
-  return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
+  return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
 }));
 async function refreshAgentCapabilities() {
   const roster = normalizeRoomAgentRoster(store.snapshot().roster);
@@ -160,7 +259,7 @@ async function refreshAgentCapabilities() {
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {
     const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
-    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
   capabilityStatuses = next;
@@ -170,28 +269,29 @@ async function refreshAgentCapabilities() {
   }
 }
 for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
-const githubContributionStore = githubToken && githubRepository
+githubContributionStore = githubToken && githubRepository
   ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
   : undefined;
 const githubClient = githubToken ? new GitHubRestClient(githubToken) : undefined;
 const githubContributionBroker = githubContributionStore && githubToken && githubRepository
   ? new GitHubContributionBroker(
     store, store, developerTeam, githubContributionStore, githubClient!, projectRepositoryPath,
-    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main",
+    githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", undefined, verifyProjectRepositoryAuthority,
   )
   : undefined;
-const contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
+contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
 const contributionExecutor = githubContributionBroker && githubClient && githubRepository
   ? new GovernedContributionExecutor(githubContributionBroker, githubClient, developerTeam, githubRepository,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL?.trim(),
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_TOKEN}` : undefined)
   : new UnavailableContributionExecutor();
 const contributionService = contributionRecords && githubRepository
-  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository)
+  ? new ContributionService(store, store, developerTeam, contributionRecords, contributionExecutor, projectRepositoryPath, githubRepository, undefined, undefined, verifyProjectRepositoryAuthority)
   : undefined;
 await structuredLogger.log("info", "github.store.initialized", { readStoreConfigured: Boolean(githubReadService), contributionStoreConfigured: Boolean(githubContributionStore) });
 await structuredLogger.log("info", "github.adapter.policy", { githubReadConfigured: Boolean(githubReadService), githubContributionConfigured: Boolean(githubContributionBroker), toolPolicy: "fixed-read-selectors" });
 await structuredLogger.log("info", "github.read-cache.snapshot", { configured: Boolean(githubReadService), status: githubReadService ? "ready" : "disabled" });
+if(process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY?.trim())await structuredLogger.log("warn","github.read.legacy-configuration",{outcome:"reconciliation-required",reason:"ambient-repository-ignored; connect and verify the room project's repository"});
 const assignmentLifecycle = new AssignmentLifecycleService(
   store,
   store,
@@ -203,6 +303,7 @@ const assignmentLifecycle = new AssignmentLifecycleService(
   agentProcesses,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION,
   (level, event, fields) => structuredLogger.log(level, event, fields),
+  verifyProjectRepositoryAuthority,
 );
 await assignmentLifecycle.reconcile();
 const startupAssignments = await assignmentLifecycle.list();
@@ -263,6 +364,7 @@ const investigationService = new InvestigationService(investigationStore, store,
   onTransition: () => broadcast(), onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
 });
 await investigationService.initialize();
+scheduleHealthRefresh();
 
 const jsonBodyParser = express.json({ limit: "64kb" });
 app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
@@ -282,6 +384,7 @@ registerRoomHistoryRoutes({
 });
 registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
 registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
+registerProjectRepositoryRoutes({ app, developers: developerTeam, service: projectRepositoryScope.connection });
 
 function roomSnapshot() {
   return { ...store.snapshot(), humans: humans.list() };
@@ -291,8 +394,21 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
+function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId) {
+  const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+  const capacity = roomGenerationCapacity.reserve(CANONICAL_ROOM_ID, entry?.providerId || "opencode");
+  if (!capacity) return undefined;
+  const active = activeGenerations.reserve(agent, agentConcurrency);
+  if (!active) { capacity.release(); return undefined; }
+  let released = false;
+  return {
+    activate: (generationId: string) => active.activate(generationId),
+    release: () => { if (released) return false; released = true; const activeReleased = active.release(); capacity.release(); return activeReleased; },
+  };
+}
+
 function publicRoomSnapshot(viewerHumanId?: string) {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -348,6 +464,32 @@ function scheduleImplementationCapabilityRefresh(refreshAt: string | undefined) 
   implementationCapabilityRefreshTimer.unref();
 }
 
+function scheduleHealthRefresh() {
+  if (healthRefreshTimer) clearTimeout(healthRefreshTimer);
+  healthRefreshTimer = undefined;
+  const retryAt = [agentHealth.nextRetryAt(), providerHealth.nextRetryAt()]
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => left - right)[0];
+  if (retryAt === undefined) return;
+  const delay = Math.max(0, Math.min(retryAt - Date.now() + 1, 2_147_483_647));
+  healthRefreshTimer = setTimeout(() => {
+    healthRefreshTimer = undefined;
+    void expireHealthAndBroadcast();
+  }, delay);
+  healthRefreshTimer.unref();
+}
+
+async function expireHealthAndBroadcast() {
+  try {
+    const changed = await Promise.all([agentHealth.expire(), providerHealth.expire()]);
+    scheduleHealthRefresh();
+    if (changed.some(Boolean)) broadcast();
+  } catch (error) {
+    console.error("Health cooldown expiry failed", error);
+    scheduleHealthRefresh();
+  }
+}
+
 async function refreshImplementationCapabilitiesAndBroadcast() {
   try {
     await refreshImplementationCapabilities();
@@ -374,10 +516,32 @@ function commandToolContext(agent: import("../shared/participants.js").ActiveAge
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
-    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands }),
+    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands, roomId:CANONICAL_ROOM_ID }),
     allowedCommands,
     guide: roomCommandGuide(allowedCommands),
   };
+}
+
+function diagnosticsCapabilityBinding(participantId: string): RoomDiagnosticsCapabilityBinding | undefined {
+  if (!isActiveAgentId(participantId)) return undefined;
+  const state = roomSnapshot();
+  const roster = normalizeRoomAgentRoster(state.roster);
+  const entry = roomAgentEntry(roster, participantId);
+  const status = capabilityStatuses[participantId];
+  if (!entry || !status) return undefined;
+  const manifestRevision = Number.parseInt(createHash("sha256").update(JSON.stringify({ policyRevision: status.policyRevision, rosterRevision: roster.revision, participantConfigurationRevision: entry.configurationRevision, capability: status.capabilities.room_diagnostics })).digest("hex").slice(0, 12), 16);
+  return {
+    effective: capabilityEnabled(status, "room_diagnostics"), participantId,
+    providerSessionId: state.sessions[participantId]?.id || null,
+    roomId: CANONICAL_ROOM_ID, projectId: diagnosticsProjectId, manifestRevision,
+    caller: { principalId: participantId, selfId: participantId, roomIds: [CANONICAL_ROOM_ID], projectIds: [diagnosticsProjectId], operator: false },
+    allowedScopes: ["self", "room", "project"],
+  };
+}
+
+function diagnosticsToolContext(participantId: import("../shared/participants.js").ActiveAgentId) {
+  const token = roomDiagnosticsToolBroker.issue(participantId);
+  return token ? { url: `http://127.0.0.1:${port}/api/agent-tools/room-diagnostics`, token } : undefined;
 }
 
 function developerRoomView(limit = 50) {
@@ -477,14 +641,21 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
-  const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
+  const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
+  const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
+  const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
   if (!agentStillEnabled()) {
     return { cancelled: true };
   }
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
-  const sharedReservation = activeAgent ? activeGenerations.reserve(activeAgent, agentConcurrency) : undefined;
+  const sharedReservation = activeAgent ? reserveCanonicalGeneration(activeAgent) : undefined;
   if (activeAgent && !sharedReservation) return { failed: true };
+  const providerAttempt = providerId ? providerHealth.claimAttempt(providerId) : "regular";
+  if (providerAttempt === "blocked") {
+    sharedReservation?.release();
+    return { failed: true };
+  }
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
@@ -514,17 +685,32 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
         commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
+        diagnosticsTool: activeAgent ? diagnosticsToolContext(activeAgent) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
   } catch (error) {
     if (!agentStillEnabled()) {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
       await store.clearSession(agent);
       return { cancelled: true };
     }
-    if (isAgentGenerationCancelledError(error)) return { cancelled: true };
+    if (isAgentGenerationCancelledError(error)) {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+      return { cancelled: true };
+    }
     if (!activeAgent) throw error;
-    await agentHealth.recordFailure(activeAgent, error);
+    const providerFailure = providerId ? classifyProviderScopedFailure(error, providerId) : undefined;
+    if (providerId && providerFailure?.status === "action_required") {
+      await providerHealth.recordActionRequired(providerId, providerFailure.reason);
+    } else if (providerId && providerFailure?.status === "cooldown") {
+      await providerHealth.recordCooldown(providerId, providerFailure);
+      scheduleHealthRefresh();
+    } else {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+      await agentHealth.recordFailure(activeAgent, error);
+      scheduleHealthRefresh();
+    }
     void structuredLogger.log("error", "agent.command.failed", { agentId: agent, error });
     broadcast();
     return { failed: true };
@@ -532,11 +718,15 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     sharedReservation?.release();
     generationCancellation.dispose();
   }
+  const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
+    if (providerRecovered) broadcast();
     return { cancelled: true };
   }
-  if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
+  const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
+  if (providerRecovered || participantRecovered) scheduleHealthRefresh();
+  if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents());
@@ -578,7 +768,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     await investigationService.request({
       owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
       signal: "AGENT_DECISION", evidenceRefs,
-      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot() }),
+      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
     });
   }
 
@@ -747,11 +937,15 @@ function commandAgentAvailable(agent: import("../shared/participants.js").Active
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
   const active = activeGenerations.snapshot();
   return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
+    && providerHealth.canAttempt(entry.providerId || "opencode")
     && !Object.values(active).includes(agent) && activeGenerations.size() < agentConcurrency && !jobs.busy);
 }
 
 async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
   const before = roomSnapshot();
+  const providerId = roomAgentProviderScope(normalizeRoomAgentRoster(before.roster), agent);
+  const providerAttempt = providerHealth.claimAttempt(providerId);
+  if (providerAttempt === "blocked") throw new Error("Provider is unavailable for this request.");
   const revision = roomActivity.current();
   const activityCancellation = roomActivity.abortSignal(revision);
   const signal = AbortSignal.any([hooks.signal, activityCancellation.signal]);
@@ -761,15 +955,30 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
+      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), diagnosticsTool: diagnosticsToolContext(agent), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
-    if (await agentHealth.recordSuccess(agent)) broadcast();
+    const providerRecovered = await providerHealth.recordSuccess(providerId);
+    const participantRecovered = await agentHealth.recordSuccess(agent);
+    if (providerRecovered || participantRecovered) scheduleHealthRefresh();
+    if (providerRecovered || participantRecovered) broadcast();
     const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
     return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
   } catch (error) {
-    if (!isAgentGenerationCancelledError(error)) await agentHealth.recordFailure(agent,error);
+    if (isAgentGenerationCancelledError(error)) {
+      if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+    } else {
+      const providerFailure = classifyProviderScopedFailure(error, providerId);
+      if (providerFailure?.status === "action_required") await providerHealth.recordActionRequired(providerId, providerFailure.reason);
+      else if (providerFailure?.status === "cooldown") await providerHealth.recordCooldown(providerId, providerFailure);
+      else {
+        if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+        await agentHealth.recordFailure(agent,error);
+      }
+      scheduleHealthRefresh();
+      broadcast();
+    }
     throw error;
   } finally { activityCancellation.dispose(); }
 }
@@ -779,7 +988,7 @@ const commandRuntime = new CommandRuntime({
   ceiling:githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS,
   roster: () => normalizeRoomAgentRoster(store.snapshot().roster),
   canLaunch: commandAgentAvailable,
-  reserveLaunch: (agent) => activeGenerations.reserve(agent, agentConcurrency),
+  reserveLaunch: reserveCanonicalGeneration,
   roomEpoch: () => String(roomActivity.current()),
   roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
   stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
@@ -788,7 +997,7 @@ const commandRuntime = new CommandRuntime({
   operationLog: (level,event,fields)=>structuredLogger.log(level,event,fields),
   executeTask: performCommandTask,
   executePov: async (agent, prompt, signal) => {
-    const reservation=activeGenerations.reserve(agent,agentConcurrency);
+    const reservation=reserveCanonicalGeneration(agent);
     if(!reservation)throw new Error("Shared generation capacity is unavailable for POV execution.");
     try{return await performCommandTask(agent,prompt,{signal,partial:()=>undefined,active:async(generationId)=>reservation.activate(generationId)});}
     finally{reservation.release();}
@@ -816,16 +1025,35 @@ const commandRuntime = new CommandRuntime({
 });
 const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
+const roomDiagnosticsToolBroker = new RoomDiagnosticsToolBroker(diagnosticsQueryService, diagnosticsCapabilityBinding, Date.now, (event) => structuredLogger.log(event.outcome === "rejected" || event.outcome === "revoked" || event.outcome === "expired" ? "warn" : "info", "room-diagnostics-tool.lease", { ...event }));
+registerRoomDiagnosticsToolRoute(app, roomDiagnosticsToolBroker);
 await commandRuntime.initialize();
+const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>new CommandRuntime({
+  store:room.repository,
+  roomId:room.roomId,
+  ceiling:githubReadService?["help","gh"]:["help"],
+  roster:()=>normalizeRoomAgentRoster(room.repository.snapshot().roster),
+  canLaunch:()=>false,
+  executeTask:async()=>{throw new Error("Agent task commands are unavailable in this room runtime.");},
+  executePov:async()=>{throw new Error("Agent POV commands are unavailable in this room runtime.");},
+  deliverPov:async()=>undefined,
+  deliverTask:async()=>undefined,
+  publishStatus:async(auditId,text)=>{await room.repository.addCommandAuditMessageOnce(auditId,text);},
+  githubRead:githubReadService,
+  publishGhResult:async(executionId,text)=>{await room.repository.addCommandDeliveryMessageOnce(executionId,0,"system",text);},
+  capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
+  operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
+})):undefined;
+if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!serverHeldRepositoryCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
 const consultationRunner = new ConsultationRunner(
   consultationRepository,
   {
     synthesize: async (input) => {
-      const agent = currentEnabledAgents()[0];
+      const agent = currentEnabledAgents().find(commandAgentAvailable);
       if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
-      const reservation = activeGenerations.reserve(agent, agentConcurrency);
+      const reservation = reserveCanonicalGeneration(agent);
       if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation synthesis.");
       const prior = input.turns.map(({ participantId, duty, response, dissent }) => ({ participantId, duty, response, dissent }));
       let result;
@@ -848,7 +1076,7 @@ const consultationRunner = new ConsultationRunner(
   {
     performTurn: async (input) => {
       if (!isActiveAgentId(input.participantId)) throw new Error(`Consultation participant ${input.participantId} is unavailable.`);
-      const reservation = activeGenerations.reserve(input.participantId, agentConcurrency);
+      const reservation = reserveCanonicalGeneration(input.participantId);
       if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation dialogue.");
       let result;
       try {
@@ -913,8 +1141,19 @@ app.get("/api/state", async (request, response) => {
     }, viewerHumanId)),
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
+    providerHealth: providerHealth.snapshot(),
     server: serverIdentity,
   });
+});
+
+app.post("/api/provider-health/:providerId/recover", async (request, response) => {
+  if (!sessionHuman(request, humans, humanSessions)) return response.status(401).json({ error: "Join the room before retrying a provider." });
+  const providerId = request.params.providerId;
+  const configured = normalizeRoomAgentRoster(store.snapshot().roster).entries.some((entry) => entry.enabled && (entry.providerId || "opencode") === providerId);
+  if (!configured || !providerHealth.hasActionRequired(providerId)) return response.status(404).json({ error: "That provider does not have a current action-required state." });
+  if (!await providerHealth.requestRecovery(providerId)) return response.status(409).json({ error: "A bounded provider recovery attempt is already in progress." });
+  broadcast();
+  response.json({ providerId, health: providerHealth.snapshot()[providerId], recoveryAttemptAvailable: true });
 });
 
 app.get("/api/ready", (_request, response) => {
@@ -1013,6 +1252,7 @@ app.get("/api/events", async (request, response) => {
 app.post("/api/humans", (request, response) => {
   try {
     const human = joinHumanWithSession(request, response, humans, humanSessions);
+    roomLifecycle?.ensureCanonicalMembership(human.id);
     broadcast();
     response.status(201).json(human);
   } catch (error) {
@@ -1024,6 +1264,7 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
+registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
   try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }
   catch (error) { return response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." }); }
@@ -1054,7 +1295,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -1113,7 +1354,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
@@ -1324,6 +1565,11 @@ async function shutdown(signal: string) {
   continuationService.shutdown();
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
+  if (dormantRoomTimer) clearInterval(dormantRoomTimer);
+  await roomCommandDispatcher?.close();
+  roomRuntimes?.close();
+  roomLifecycle?.close();
+  if (healthRefreshTimer) clearTimeout(healthRefreshTimer);
   const closeServer = new Promise<void>((resolve) => httpServer.close((error) => {
     if (error) void structuredLogger.log("error", "server.shutdown.failed", { signal, error });
     if (error) process.exitCode = 1;

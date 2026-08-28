@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
+import { ProviderInvocationError, providerFailureCode, providerRetryAfterMs } from "./provider-failure.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
 
@@ -55,13 +56,45 @@ describe("OpenCode runtime contract", () => {
     });
   });
 
+  it("reduces provider response bodies to allowlisted classification codes", () => {
+    expect(providerFailureCode(JSON.stringify({ type: "error", error: { code: "insufficient_quota", message: "private account detail" } }))).toBe("insufficient_quota");
+    expect(providerFailureCode(JSON.stringify({ type: "error", error: { type: "GoUsageLimitError" }, metadata: { workspace: "wrk_private" } }))).toBe("account_rate_limit");
+    expect(providerFailureCode(JSON.stringify({ error: { code: "unknown", credential: "secret" } }))).toBeUndefined();
+
+    const parsed = __testing.parseOpenCodeOutput(JSON.stringify({
+      type: "error",
+      sessionID: "ses_private",
+      error: { name: "APIError", data: { message: "Quota exceeded", isRetryable: false, responseBody: JSON.stringify({ type: "error", error: { code: "insufficient_quota", account: "private" } }) } },
+    }));
+    expect(parsed.errors).toEqual([{ source: "opencode", name: "APIError", message: "Quota exceeded", retryable: false, code: "insufficient_quota" }]);
+    const error = new ProviderInvocationError(parsed.errors[0]);
+    expect(error).not.toHaveProperty("process");
+    expect(error.message).toBe("Provider invocation failed.");
+    expect(Object.keys(error)).not.toContain("failure");
+  });
+
+  it("reduces Retry-After headers to bounded timing without retaining headers", () => {
+    const now = Date.parse("2026-08-27T12:00:00.000Z");
+    expect(providerRetryAfterMs({ "retry-after-ms": "2500", authorization: "private" }, now)).toBe(2_500);
+    expect(providerRetryAfterMs({ "Retry-After": "120" }, now)).toBe(120_000);
+    expect(providerRetryAfterMs({ "retry-after": "Thu, 27 Aug 2026 12:05:00 GMT" }, now)).toBe(300_000);
+    expect(providerRetryAfterMs({ "retry-after": "invalid", authorization: "private" }, now)).toBeUndefined();
+
+    const parsed = __testing.parseOpenCodeOutput(JSON.stringify({
+      type: "error",
+      error: { name: "APIError", data: { message: "Rate limited", statusCode: 429, isRetryable: true, responseHeaders: { "retry-after": "90", authorization: "private" } } },
+    }));
+    expect(parsed.errors).toEqual([{ source: "opencode", name: "APIError", message: "Rate limited", statusCode: 429, retryable: true, retryAfterMs: 90_000 }]);
+    expect(JSON.stringify(parsed.errors)).not.toMatch(/authorization|private|responseHeaders/i);
+  });
+
   it("maps room permissions without replacing OpenCode provider configuration", () => {
     const environment = { PATH: "/bin", OPENCODE_CONFIG: "/tmp/config" };
     expect(__testing.opencodeEnvironment(environment, "read-only")).toMatchObject({
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny",
+        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
       }),
     });
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
@@ -214,6 +247,17 @@ describe("room prompt context", () => {
   it("injects only the current permission-filtered room command guide without credentials", async () => {
     const secret="opaque-command-capability-secret";const guide=roomCommandGuide(["poll","help"]);const prompt=await __testing.buildPrompt("codex-sol",state,"Join if useful.",false,"read-only",{commandTool:{url:"http://127.0.0.1/internal",token:secret,allowedCommands:["poll","help"],guide}});
     expect(prompt).toContain("ROOM COMMANDS (server-owned");expect(prompt).toContain("poll:");expect(prompt).toContain("help:");expect(prompt).not.toContain("task:");expect(prompt).not.toContain("pov:");expect(prompt).not.toContain(secret);expect(JSON.parse(__testing.opencodeEnvironment({},"read-only",true).OPENCODE_PERMISSION!)).toHaveProperty("room_command","allow");
+  });
+
+  it("advertises room diagnostics only with an effective lease and never places its token in the prompt", async () => {
+    const secret = "opaque-room-diagnostics-secret";
+    const unavailable = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only");
+    expect(unavailable).not.toContain("ROOM DIAGNOSTICS (server-owned");
+    expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only").OPENCODE_PERMISSION!)).toHaveProperty("room_diagnostics", "deny");
+    const prompt = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only", { diagnosticsTool: { url: "http://127.0.0.1/internal", token: secret } });
+    expect(prompt).toContain("ROOM DIAGNOSTICS (server-owned, lease-bound)");
+    expect(prompt).not.toContain(secret);
+    expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only", false, true).OPENCODE_PERMISSION!)).toHaveProperty("room_diagnostics", "allow");
   });
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {

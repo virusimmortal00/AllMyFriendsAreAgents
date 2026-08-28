@@ -1,0 +1,39 @@
+name: Quality gates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  required-quality-gates:
+    name: Required quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install Linux confinement test dependency
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends --yes bubblewrap
+      - run: pnpm install --frozen-lockfile
+      - name: Enforce UI contracts
+        run: pnpm run check:ui-standards
+      - name: Type-check and build production assets
+        run: pnpm run build
+      - name: Run the full regression suite
+        run: pnpm test

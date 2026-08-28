@@ -30,7 +30,9 @@ export type GitHubSanitizedValue =
   | { readonly family: "issue"; readonly item: GhIssue }
   | { readonly family: "check-runs"; readonly items: readonly GhCheck[]; readonly truncated: boolean };
 
-export type GitHubFailureKind = "forbidden" | "not-found" | "rate-limited" | "timeout" | "invalid-response" | "upstream" | "saturated" | "configuration";
+export type GitHubFailureKind = "forbidden" | "not-found" | "rate-limited" | "timeout" | "invalid-response" | "upstream" | "saturated" | "configuration"
+  | "room-not-found" | "general-room" | "project-not-found" | "connection-missing" | "connection-disabled" | "connection-unverified"
+  | "connection-stale" | "connection-drift" | "credential-missing";
 export class GitHubReadFailure extends Error {
   constructor(readonly kind: GitHubFailureKind, readonly statusClass: "none" | "4xx" | "5xx", readonly retryAfterMs: number | null = null, readonly endpointFamily: GitHubEndpointFamily | null = null) { super(`GitHub read failed (${kind}).`); this.name = "GitHubReadFailure"; }
 }

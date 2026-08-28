@@ -123,6 +123,7 @@ describe("AgentSettingsDialog", () => {
           message: "Provider usage limit reached.",
           since: "2026-08-21T17:00:00.000Z",
           retryAt: "2026-08-21T17:15:00.000Z",
+          retrySource: "provider",
         }}
         implementationCapability={{ eligible: true, available: false, unavailableReason: "no-active-assignment" }}
         onClose={() => undefined}
@@ -131,7 +132,96 @@ describe("AgentSettingsDialog", () => {
 
     expect(html).toContain("agent-connection-light--cooldown");
     expect(html).toContain("Provider usage limit reached.");
+    expect(html).toContain("Provider retry time");
     expect(html).not.toContain("Connected to the room");
+  });
+
+  it("labels policy retry timing without presenting it as provider guidance", () => {
+    const html = renderToStaticMarkup(<RoomRoster
+      agents={["claude-sonnet"]}
+      agentHealth={{ "claude-sonnet": {
+        status: "cooldown",
+        reason: "transient_provider",
+        message: "Provider is temporarily unavailable.",
+        since: "2026-08-21T17:00:00.000Z",
+        retryAt: "2026-08-21T17:00:30.000Z",
+        retrySource: "policy",
+      } }}
+      humans={[]}
+      currentHumanId="human"
+      onConfigureAgent={() => undefined}
+    />);
+
+    expect(html).toContain("Provider is temporarily unavailable · automatic retry at");
+    expect(html).not.toContain("provider retry at");
+  });
+
+  it("shows sanitized provider action-required guidance without a cooldown countdown", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="cursor-grok"
+        available
+        providerId="cursor"
+        providerHealth={{
+          status: "action_required",
+          reason: "usage_exhausted",
+          message: "Cursor usage is exhausted; increase the limit or change provider mode.",
+          since: "2026-08-27T12:00:00.000Z",
+        }}
+        onRequestProviderRecovery={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-connection-light--action_required");
+    expect(html).toContain("Cursor usage is exhausted; increase the limit or change provider mode.");
+    expect(html).toContain("Allow one retry");
+    expect(html).not.toMatch(/cooling down|retry after|until \d/i);
+    expect(html).not.toMatch(/session|token|credential|account/i);
+  });
+
+  it("shows a provider-scoped transient cooldown with provider timing and no recovery control", () => {
+    const html = renderToStaticMarkup(
+      <AgentSettingsDialog
+        agent="cursor-grok"
+        available
+        providerId="cursor"
+        providerHealth={{
+          status: "cooldown",
+          reason: "account_rate_limit",
+          message: "Cursor is temporarily rate limited.",
+          since: "2026-08-27T12:00:00.000Z",
+          retryAt: "2026-08-27T12:05:00.000Z",
+          retrySource: "provider",
+        }}
+        onRequestProviderRecovery={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("agent-connection-light--cooldown");
+    expect(html).toContain("Cursor is temporarily rate limited.");
+    expect(html).toContain("Provider retry time");
+    expect(html).not.toContain("Allow one retry");
+  });
+
+  it("projects one provider action-required state onto every matching roster participant", () => {
+    const html = renderToStaticMarkup(<RoomRoster
+      roster={{ schemaVersion: 3, revision: 1, entries: [
+        { agentId: "cursor-grok", conversationalName: "Grok", providerId: "cursor", modelId: "cursor-grok-4.6-high", enabled: true },
+        { agentId: "cursor-composer", conversationalName: "Composer", providerId: "cursor", modelId: "composer-2.5", enabled: true },
+        { agentId: "claude-sonnet", conversationalName: "Claude", providerId: "anthropic", modelId: "claude-sonnet-5", enabled: true },
+      ] }}
+      agents={["cursor-grok", "cursor-composer", "claude-sonnet"]}
+      availability={{ "cursor-grok": true, "cursor-composer": true, "claude-sonnet": true }}
+      providerHealth={{ cursor: { status: "action_required", reason: "usage_exhausted", message: "Cursor usage is exhausted; increase the limit or change provider mode.", since: "2026-08-27T12:00:00.000Z" } }}
+      humans={[]}
+      currentHumanId="human"
+      onConfigureAgent={() => undefined}
+    />);
+
+    expect((html.match(/>Action required<\/small>/g) || [])).toHaveLength(2);
+    expect(html).toContain("Claude: Claude Sonnet 5 via Anthropic: available");
   });
 
   it("reports missing assignment availability without offering a write toggle", () => {

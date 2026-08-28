@@ -148,9 +148,9 @@ This should feel like a room, not a dashboard that happens to contain text:
 
 ## Local-first by default
 
-**Your room state stays on your machine.** Transcripts, sessions, diagnostics, and generation journals live under the Git-ignored `.allmyfriendsareagents/` directory. JSON works out of the box.
+**Your room state stays on your machine.** Transcripts, sessions, diagnostics, and six authoritative logging streams live under the Git-ignored `.allmyfriendsareagents/` directory. JSON works out of the box.
 
-The public room state includes bounded, server-derived deployment provenance: the exact checkout commit, branch or detached-HEAD state, and clean/dirty/unavailable worktree state. Provider session IDs remain private. Persisted provider sessions are bound to a deployment epoch, so clean same-revision restarts can resume while changed, dirty, unavailable, or pre-migration epochs start fresh and record the decision in the generation journal.
+The public room state includes bounded, server-derived deployment provenance: the exact checkout commit, branch or detached-HEAD state, and clean/dirty/unavailable worktree state. Provider session IDs remain private. Persisted provider sessions are bound to a deployment epoch, so clean same-revision restarts can resume while changed, dirty, unavailable, or pre-migration epochs start fresh and record the decision in the generation/provider exchange stream.
 
 <details>
 <summary><strong>SQLite, imports, and generation logs</strong></summary>
@@ -171,7 +171,7 @@ pnpm run storage:import:sqlite -- \
 
 The importer includes tasks and task events, preserves its source, and refuses to replace an existing SQLite room unless you pass `--overwrite`. Runtime storage backends are JSON and SQLite; PostgreSQL is not configurable until a complete room repository is available.
 
-Every generation is journaled to `.allmyfriendsareagents/generations.jsonl` with its prompt, raw output, timing, parsed messages, and delivery outcome. Prompts may include room history and worktree diffs, so treat this file as sensitive.
+Every generation is recorded in the independently rotated `.allmyfriendsareagents/logs/authoritative-v1/generations.*.jsonl` stream with its prompt, raw output, timing, parsed messages, and delivery outcome. Correlated OpenCode harness and provider evidence is owned by the `opencode-harness` and `openrouter-provider` streams in the same directory. These files may contain room history and worktree diffs, so treat the directory as sensitive.
 
 ```bash
 pnpm run logs:agents

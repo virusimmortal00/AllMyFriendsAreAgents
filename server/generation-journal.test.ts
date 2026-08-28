@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,16 +23,20 @@ describe("GenerationJournal", () => {
       journal.append({ type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 123, rawResponse: "hi", authorization: "Bearer journal-secret", error: "token=journal-token" }),
     ]);
 
-    const entries = (await readFile(journal.path, "utf8"))
-      .trim()
-      .split("\n")
+    await journal.logging.flush();
+    const logDirectory = path.dirname(journal.path);
+    const generationFiles = (await readdir(logDirectory)).filter((name) => name.startsWith("generations.") && name.endsWith(".jsonl"));
+    const entries = (await Promise.all(generationFiles.map((name) => readFile(path.join(logDirectory, name), "utf8"))))
+      .join("").trim().split("\n")
       .map((line) => JSON.parse(line));
     expect(entries).toHaveLength(4);
     expect(entries.map(({ type }) => type)).toEqual(["session.reused", "session.invalidated", "generation.started", "generation.completed"]);
     expect(entries.slice(0, 2).map(({ reason }) => reason)).toEqual(["deployment code epoch match", "deployment code epoch changed"]);
     expect(entries.every(({ timestamp }) => typeof timestamp === "string")).toBe(true);
     expect(JSON.stringify(entries)).not.toMatch(/journal-secret|journal-token/);
+    expect(entries.find(({ type }) => type === "generation.started")?.prompt).toBe("hello");
+    expect(entries.find(({ type }) => type === "generation.completed")?.rawResponse).toBe("hi");
     expect((await stat(path.dirname(journal.path))).mode & 0o777).toBe(0o700);
-    expect((await stat(journal.path)).mode & 0o777).toBe(0o600);
+    for (const name of generationFiles) expect((await stat(path.join(logDirectory, name))).mode & 0o777).toBe(0o600);
   });
 });

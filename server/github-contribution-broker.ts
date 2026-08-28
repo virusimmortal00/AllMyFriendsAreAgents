@@ -12,6 +12,7 @@ import {
 } from "./github-contribution-record.js";
 import type { GitHubContributionStore } from "./github-contribution-store.js";
 import { CANONICAL_ROOM_ID, type RoomRepository } from "./storage/room-repository.js";
+import { authorizeSourceWorkForCurrentBoot, requireReconciledSourceWork } from "./storage/identity-domain.js";
 
 const execFileAsync = promisify(execFile);
 const SHA = /^[0-9a-f]{40}$/;
@@ -38,6 +39,7 @@ export class GitHubContributionBroker {
     private readonly repository: string,
     private readonly baseBranch = "main",
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly repositoryAuthority?: () => Promise<string | null>,
   ) {
     if (!REPOSITORY.test(repository) || !baseBranch || baseBranch.startsWith("-") || baseBranch.includes("..")) throw new Error("A canonical GitHub repository and base branch are required");
   }
@@ -56,7 +58,13 @@ export class GitHubContributionBroker {
     const prior = this.store.latest(request?.idempotencyKey || "");
     if (prior) {
       if (prior.requestHash !== requestHash || prior.actorId !== auth.member.memberId) return { kind: "rejected", reason: "Idempotency key was already used for another request" };
-      if (prior.outcome === "SUCCEEDED" && prior.result && prior.claims) return { kind: "ok", value: prior.result, claims: prior.claims, replayed: true };
+      if (prior.outcome === "SUCCEEDED" && prior.result && prior.claims) {
+        try {
+          const current = await this.authorize(auth, request);
+          if (JSON.stringify(current) !== JSON.stringify(prior.claims)) return { kind: "rejected", reason: "Authority changed before idempotent replay" };
+          return { kind: "ok", value: prior.result, claims: prior.claims, replayed: true };
+        } catch (error) { return { kind: "rejected", reason: safeError(error) }; }
+      }
       if (prior.outcome === "REJECTED") return { kind: "rejected", reason: prior.detail };
       if (prior.outcome === "FAILED" && !prior.detail.startsWith("retryable:")) return { kind: "failed", reason: prior.detail, retryable: false };
     }
@@ -64,6 +72,7 @@ export class GitHubContributionBroker {
     let claims: GitHubBrokerClaims | null = null;
     let target = "invalid";
     try {
+      if (!prior) authorizeSourceWorkForCurrentBoot(this.rooms, "github-broker", request.idempotencyKey);
       claims = await this.authorize(auth, request);
       target = targetFor(request);
       if (!prior || prior.outcome !== "PENDING") await this.record(request, requestHash, auth.member.memberId, target, claims, "PENDING", null, "Authorized; external operation pending");
@@ -85,7 +94,13 @@ export class GitHubContributionBroker {
 
   private async authorize(auth: AuthenticatedDeveloper, request: GitHubBrokerRequest): Promise<GitHubBrokerClaims> {
     if (!request || !KEY.test(request.idempotencyKey || "") || !GITHUB_OPERATIONS.includes(request.operation)) throw new Error("A bounded idempotency key and documented GitHub operation are required");
+    await requireReconciledSourceWork(this.rooms, "github-broker", request.idempotencyKey);
+    await requireReconciledSourceWork(this.rooms, "assignment", request.assignmentId);
     if (Object.keys(request).some((field) => !REQUEST_FIELDS.has(field))) throw new Error("Request contains a field outside the GitHub broker contract");
+    if (!["READ_ISSUE", "READ_PULL_REQUEST", "READ_CHECKS"].includes(request.operation)) {
+      const authority = await this.repositoryAuthority?.();
+      if (authority) throw new Error(`Repository connection authority is unavailable (${authority})`);
+    }
     const latestMember = this.developers.latest(auth.member.memberId);
     const capability = GITHUB_OPERATION_CAPABILITY[request.operation];
     if (!latestMember || latestMember.revision !== auth.member.revision || !latestMember.capabilities.includes(capability)) throw new Error("Developer identity or operation capability changed");
