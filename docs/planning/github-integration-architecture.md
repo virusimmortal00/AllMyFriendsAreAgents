@@ -286,7 +286,7 @@ variables or OAuth details.
   require an exact repository ID, installation ID, and canonical remote from a
   catalog tied to the current connection revision. A binding-aware provider proves
   that multiple projects can resolve through one server connection without
-  copying a token. This store is not yet opened or selected by server startup.
+  copying a token.
 - A fixed-origin GitHub App device-flow transport implements start, polling,
   refresh, bounded response parsing, and redacted failures.
 - An AES-256-GCM credential vault now persists device-user and installation-token
@@ -315,13 +315,21 @@ variables or OAuth details.
   forwards caller-supplied binding, credential, installation, remote, or default
   branch authority, and project-binding audit metadata contains only stable
   outcomes and revisions.
-- Production startup does not register the new integration routes until a real
-  reusable GitHub App client ID can be bundled.
-- Production credential registration is still memory-only and initialized from
-  environment variables through the legacy provider.
+- A reviewed registration template and GitHub-supported prefilled registration
+  URL define the reusable public App. The bundled configuration contains only
+  the public App name, slug, and Client ID; its exact-field loader rejects
+  secret-shaped additions.
+- When that public configuration exists, production startup opens the durable
+  metadata store and encrypted vault, registers the integration and project
+  binding control routes, and exposes the public App identity in the sanitized
+  integration projection. Its generated wrapping key defaults outside both the
+  checkout and the server data directory.
+- Room-bound reads use the binding-aware provider first and then the legacy PAT
+  compatibility provider, so projects can migrate independently without copying
+  a credential into room configuration.
 - The legacy developer-oriented repository endpoint still accepts a caller-supplied
-  opaque credential reference; the new control-plane workflow is not wired into
-  production startup or a browser UI yet.
+  opaque credential reference; the browser settings UI has not replaced that
+  developer-oriented endpoint yet.
 - Current GitHub tests use fake credentials and mocked fetches; they prove
   containment behavior, not a live GitHub authentication path.
 - Durable control-plane principals and ephemeral room human sessions are not yet
@@ -329,11 +337,10 @@ variables or OAuth details.
 
 ## Next action
 
-Register the reusable public GitHub App, bundle its public client ID, then register
-the tested integration and project-binding routes with the binding-aware provider
-at production startup. The next product slice is the server/project settings UI;
-the next runtime slice is provider cutover and authority invalidation. Promote
-accepted slices from
+Register the reusable public GitHub App from the reviewed template, bundle its
+generated public client ID, and run a live installation/device-flow canary. The
+next product slice is the server/project settings UI; the next runtime slice is
+scheduled refresh and authority invalidation. Promote accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence
@@ -348,6 +355,12 @@ accepted slices from
 - `server/room-bound-github-read.test.ts`
 - `server/github-credential-provider.ts`
 - `server/github-credential-provider.test.ts`
+- `server/github-app-registration-template.ts`
+- `server/github-app-registration-template.test.ts`
+- `server/github-app-configuration.ts`
+- `server/github-app-configuration.test.ts`
+- `server/github-integration-runtime.ts`
+- `server/github-integration-runtime.test.ts`
 - `server/github-integration-store.ts`
 - `server/github-integration-store.test.ts`
 - `server/github-device-flow.ts`
@@ -366,6 +379,8 @@ accepted slices from
 - `server/project-github-binding.test.ts`
 - `server/project-github-binding-api.ts`
 - `server/project-github-binding-api.test.ts`
+- `config/github-app-registration.template.json`
+- `docs/operations/github-app-registration.md`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
 - `docs/operations/capabilities-and-logging.md`

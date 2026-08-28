@@ -293,10 +293,15 @@ A later mutation design must decide:
   and CSRF protection, forwards only an explicit allowlist of non-secret fields,
   returns no binding/credential reference, and audits failures without repository
   names or local paths.
-- Production still uses the environment-backed compatibility provider because
-  the reusable public App/client ID is not registered and the new routes are not
-  wired at startup. Refresh transport exists, but scheduled refresh orchestration
-  is not implemented.
+- A canonical registration template requests only read-only Actions, Checks,
+  Issues, Pull requests, and mandatory Metadata permissions, with webhooks and
+  install-time OAuth disabled. Production opens the durable App integration only
+  when an exact-field public App configuration is present; the loader rejects
+  bundled secrets.
+- Production registers the integration/project routes and resolves room reads
+  through the binding-aware provider before the environment-backed compatibility
+  provider. The fallback remains for incremental migration. Refresh transport
+  exists, but scheduled refresh orchestration is not implemented.
 - Room human sessions and durable control-plane principals are separate identity
   mechanisms.
 - Tests cover mocked device authorization, refresh, revocation metadata, restart,
@@ -306,10 +311,10 @@ A later mutation design must decide:
 
 ## Next action
 
-Register the public App, wire the tested integration/project components at startup,
-and resolve the canonical room-principal prerequisite. Then build the settings UI
-and cut room reads over to the binding-aware provider with rebind/deselection
-invalidation. Use
+Register the public App from the reviewed template, bundle its generated Client
+ID, and run a live installation/device-flow canary. Then resolve the canonical
+room-principal prerequisite, build the settings UI, and add scheduled refresh plus
+rebind/deselection invalidation. Use
 [the delivery plan](github-integration-delivery-plan.md) to open narrowly scoped
 issues with security acceptance checks copied into each slice.
 
@@ -319,6 +324,9 @@ issues with security acceptance checks copied into each slice.
 - `server/room-bound-github-read.ts`
 - `server/room-bound-github-read.test.ts`
 - `server/github-credential-provider.ts`
+- `server/github-app-registration-template.ts`
+- `server/github-app-configuration.ts`
+- `server/github-integration-runtime.ts`
 - `server/github-integration-store.ts`
 - `server/github-device-flow.ts`
 - `server/github-credential-vault.ts`
@@ -330,6 +338,8 @@ issues with security acceptance checks copied into each slice.
 - `server/project-github-binding-api.ts`
 - `server/human-session.ts`
 - `server/control-plane.ts`
+- `config/github-app-registration.template.json`
+- `docs/operations/github-app-registration.md`
 - `docs/operations/capabilities-and-logging.md`
 - [GitHub: Generating a user access token for a GitHub App](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app)
 - [GitHub: Refreshing user access tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens)

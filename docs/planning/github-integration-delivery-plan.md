@@ -198,23 +198,28 @@ the fixed-origin device-flow/refresh transport, durable encrypted credential
 storage, principal-bound authorization orchestration, dedicated integration
 capabilities, dependency-injected control-plane routes, fixed-origin installation
 discovery, revisioned catalog snapshots, catalog refresh/read APIs, and
-catalog-enforced project binding authority. The legacy environment PAT path
-remains active. The owner/admin project-binding backend now derives repository,
+catalog-enforced project binding authority. A canonical public-App registration
+template and prefilled registration URL now define the permission-minimized App,
+and an exact-field loader accepts only its public name, slug, and Client ID. When
+that config exists, production startup opens the durable store/vault, registers
+the integration and project-binding APIs, and gives room reads a binding-first,
+legacy-PAT-fallback provider for incremental project migration. The owner/admin
+project-binding backend now derives repository,
 installation, default-branch, and opaque credential authority from the current
 catalog, verifies the local checkout, compensates a failed repository commit by
 revoking the binding, and exposes a CSRF-protected request-allowlisted control API.
-Public App registration/client-ID bundling, production route registration,
-scheduled token refresh, project binding UI, canonical room-principal binding,
-rebind impact/cache invalidation, and runtime cutover remain unimplemented; none
-of these temporary notes is a substitute for accepted Issues.
+The real public App/client ID, live GitHub canary, scheduled token refresh,
+project binding UI, canonical room-principal binding, and rebind impact/cache
+invalidation remain unimplemented; none of these temporary notes is a substitute
+for accepted Issues.
 
 ## Next action
 
-Register the reusable public GitHub App and bundle its public client ID, then wire
-the tested integration and project-binding components at startup. The next product
-slice should build the server/project settings UI on the redacted catalog and
-project endpoints; the next runtime slice should cut room-bound reads over to the
-binding-aware provider and invalidate authority on rebind or catalog removal.
+Register the reusable public GitHub App from the reviewed template, bundle its
+generated public client ID, and run a live installation/device-flow canary. The
+next product slice should build the server/project settings UI on the redacted
+catalog and project endpoints; the next runtime slice should schedule refresh and
+invalidate authority on rebind or catalog removal.
 
 ## Evidence
 
@@ -222,6 +227,10 @@ binding-aware provider and invalidate authority on rebind or catalog removal.
 - `docs/planning/github-integration-security-and-lifecycle.md`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
+- `docs/operations/github-app-registration.md`
+- `config/github-app-registration.template.json`
+- `server/github-app-configuration.ts`
+- `server/github-integration-runtime.ts`
 
 ## Open questions
 
