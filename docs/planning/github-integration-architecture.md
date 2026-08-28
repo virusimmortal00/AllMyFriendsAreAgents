@@ -328,20 +328,30 @@ variables or OAuth details.
 - Room-bound reads use the binding-aware provider first and then the legacy PAT
   compatibility provider, so projects can migrate independently without copying
   a credential into room configuration.
+- The Room menu now exposes an authenticated GitHub integration dialog. It can
+  claim or sign in the server owner, link to the canonical App installation page,
+  start and poll device authorization, refresh the repository catalog, and bind
+  a selected repository to server-derived current-project paths. Configured
+  projects show a verified, read-only status that explicitly states every
+  attached room inherits the repository and cannot override its credential.
+- A live browser/API canary authorized the bundled public App, discovered the
+  real App installation and repository, encrypted the rotating credential, and
+  verified the project binding against a canonical checkout. No PAT, client
+  secret, private key, webhook, callback service, or room environment variable
+  was used.
 - The legacy developer-oriented repository endpoint still accepts a caller-supplied
-  opaque credential reference; the browser settings UI has not replaced that
-  developer-oriented endpoint yet.
-- Current GitHub tests use fake credentials and mocked fetches; they prove
-  containment behavior, not a live GitHub authentication path.
+  opaque credential reference for compatibility; the settings UI uses the newer
+  catalog-enforced current-project endpoint instead.
 - Durable control-plane principals and ephemeral room human sessions are not yet
   one canonical membership identity.
 
 ## Next action
 
-Run a live installation/device-flow canary with a disposable private repository.
-The next product slice is the server/project settings UI; the next runtime slice
-is scheduled refresh and authority invalidation. Promote accepted slices from
-[the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
+Implement scheduled credential/catalog refresh and fail-closed invalidation for
+disconnect, repository deselection, and rebind. Then resolve canonical
+room-principal membership and the server invite-trust warning. Promote accepted
+slices from [the delivery plan](github-integration-delivery-plan.md) into GitHub
+Issues.
 
 ## Evidence
 

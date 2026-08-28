@@ -210,17 +210,23 @@ catalog, verifies the local checkout, compensates a failed repository commit by
 revoking the binding, and exposes a CSRF-protected request-allowlisted control API.
 The public App is now registered and its GitHub-generated Client ID is bundled.
 The effective GitHub configuration is public, device-flow enabled, webhook-free,
-and limited to the planned read-only repository permissions. A live GitHub
-canary, scheduled token refresh, project binding UI, canonical room-principal
-binding, and rebind impact/cache invalidation remain unimplemented; none of
-these temporary notes is a substitute for accepted Issues.
+and limited to the planned read-only repository permissions. The Room menu now
+opens an authenticated server/project settings UI that can claim or sign in the
+server owner, link to App installation management, complete device flow, refresh
+the redacted repository catalog, and verify one catalog repository against the
+server-derived current project checkout. A live canary completed device
+authorization against the public App, discovered its real installation and
+repository, and verified the project binding in the browser; every attached room
+is shown as inheriting that binding without credentials. Scheduled token refresh,
+disconnect/reconnect lifecycle, canonical room-principal binding, and rebind
+impact/cache invalidation remain unimplemented; none of these temporary notes is
+a substitute for accepted Issues.
 
 ## Next action
 
-Run a live installation/device-flow canary with a disposable private repository.
-The next product slice should build the server/project settings UI on the redacted
-catalog and project endpoints; the next runtime slice should schedule refresh and
-invalidate authority on rebind or catalog removal.
+Implement scheduled refresh and authority invalidation for expired credentials,
+repository deselection, disconnect, and rebind. Then complete the canonical
+room-principal and invite-trust surfaces before removing the legacy PAT fallback.
 
 ## Evidence
 

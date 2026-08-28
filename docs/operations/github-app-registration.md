@@ -64,14 +64,14 @@ device code; the server encrypts those tokens locally.
 
 ## Self-hosted installation experience
 
-1. The server owner opens **Integrations → GitHub** and follows the public App's
-   installation link.
+1. The server owner opens **Room → GitHub integration...**, claims or signs in to
+   server administration, and selects **Install or configure repositories**.
 2. In GitHub, the owner selects the repositories available to that server.
-3. Back in the server UI, the owner starts device authorization and approves the
-   code on GitHub.
+3. Back in the same dialog, the owner selects **Connect with GitHub**, opens the
+   canonical device-authorization page, and approves the displayed code.
 4. The server refreshes its repository catalog.
-5. In project settings, an owner/admin selects a catalog repository and verifies
-   the matching local checkout.
+5. In the dialog's **Current project** section, an owner/admin selects a catalog
+   repository and verifies the matching server-derived local checkout.
 6. Every room attached to that project inherits the repository. Rooms never own
    tokens, App installations, or repository selectors.
 
