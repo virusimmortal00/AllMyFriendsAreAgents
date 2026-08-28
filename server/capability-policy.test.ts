@@ -6,12 +6,30 @@ const available = { available: true as const };
 
 describe("authoritative agent capability policy", () => {
   it("requires configuration, model/runtime availability, and preserves read-only GitHub", () => {
-    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" });
+    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody", lease: { status: "active", issuedAt: "2026-08-27T00:00:00.000Z", expiresAt: "2026-08-27T00:10:00.000Z" } });
     expect(result.capabilities.conversation.effective).toBe(true);
     expect(result.capabilities.github_read).toMatchObject({ effective: true, contract: "read-only", reason: "available" });
     expect(result.capabilities.project_write).toMatchObject({ effective: false, reason: "governed_worker_only" });
     expect(result.commands.gh).toMatchObject({ featureCompiled: true, requiredConfigPresent: true, serverCeiling: true, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, effective: true, exclusions: [] });
     expect(result.effectiveCommands).toContain("gh");
+  });
+
+  it("separates issuance eligibility and required server config from current leased authority", () => {
+    const missingLease = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" });
+    expect(missingLease.capabilities.github_read).toMatchObject({ configured: true, effective: false, reason: "available" });
+    expect(missingLease.issuableCommands).toContain("gh");
+    expect(missingLease.effectiveCommands).not.toContain("gh");
+    expect(missingLease.commands.gh.exclusions).toContain("lease-missing");
+
+    const ungranted = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: false, exclusiveWritableAgent: "nobody", lease: { status: "active", issuedAt: "2026-08-27T00:00:00.000Z", expiresAt: "2026-08-27T00:10:00.000Z" } });
+    expect(ungranted.capabilities.github_read).toMatchObject({ configured: true, effective: false, reason: "permission_not_granted" });
+    expect(ungranted.commands.gh).toMatchObject({ requiredConfigPresent: true, requestedGrant: false });
+    expect(ungranted.commands.gh.exclusions).toContain("permission-not-granted");
+
+    const missingDedicatedConfig = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: false, githubReadGranted: true, exclusiveWritableAgent: "nobody", lease: { status: "active", issuedAt: "2026-08-27T00:00:00.000Z", expiresAt: "2026-08-27T00:10:00.000Z" } });
+    expect(missingDedicatedConfig.capabilities.github_read).toMatchObject({ configured: false, effective: false, reason: "not_configured" });
+    expect(missingDedicatedConfig.commands.gh).toMatchObject({ requiredConfigPresent: false, requestedGrant: true });
+    expect(missingDedicatedConfig.commands.gh.exclusions).toContain("missing-server-config");
   });
 
   it("reports every stable command gate and preserves bounded lease/manifest/rejection evidence", () => {
@@ -25,16 +43,24 @@ describe("authoritative agent capability policy", () => {
   });
 
   it("makes the public GitHub capability follow the full command gate, including catalog and session freshness", () => {
-    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody", serverCeiling: ["gh"], requestedGrants: ["gh"], catalogRevisionCurrent: false, providerSessionFresh: false });
+    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody", serverCeiling: ["gh"], requestedGrants: ["gh"], catalogRevisionCurrent: false, providerSessionFresh: false, issuanceProviderSessionFresh: true, lease: { status: "active", issuedAt: "2026-08-27T00:00:00.000Z", expiresAt: "2026-08-27T00:10:00.000Z" } });
     expect(result.capabilities.github_read.effective).toBe(false);
     expect(result.commands.gh.exclusions).toEqual(["catalog-revision-stale", "provider-session-stale"]);
     expect(result.effectiveCommands).not.toContain("gh");
+    expect(result.issuableCommands).not.toContain("gh");
+  });
+
+  it("allows a new lease after stale current authority without treating that stale lease as authority", () => {
+    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody", requestedGrants: ["gh"], providerSessionFresh: false, issuanceProviderSessionFresh: true, lease: { status: "missing", issuedAt: null, expiresAt: null } });
+    expect(result.commands.gh.exclusions).toEqual(["provider-session-stale", "lease-missing"]);
+    expect(result.effectiveCommands).not.toContain("gh");
+    expect(result.issuableCommands).toContain("gh");
   });
 
   it("fails closed for disabled agents, missing models, runtime, grants, and writer exclusivity", () => {
     expect(resolveAgentCapabilities({ entry: { ...entry, enabled: false }, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" }).capabilities.github_read.reason).toBe("agent_disabled");
     expect(resolveAgentCapabilities({ entry, model: { available: false, reason: "model_removed", diagnostic: "removed" }, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" }).capabilities.conversation.reason).toBe("model_unavailable");
     expect(resolveAgentCapabilities({ entry, model: available, runtimeAvailable: false, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" }).capabilities.github_read.reason).toBe("runtime_unavailable");
-    expect(resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: false, exclusiveWritableAgent: "claude-opus" }).capabilities).toMatchObject({ github_read: { effective: false, reason: "not_configured" }, project_write: { effective: false, reason: "exclusive_writer_elsewhere" } });
+    expect(resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: false, exclusiveWritableAgent: "claude-opus" }).capabilities).toMatchObject({ github_read: { configured: true, effective: false, reason: "permission_not_granted" }, project_write: { effective: false, reason: "exclusive_writer_elsewhere" } });
   });
 });

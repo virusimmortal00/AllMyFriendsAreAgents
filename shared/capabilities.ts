@@ -5,7 +5,7 @@ export interface EffectiveCapability {
   readonly configured: boolean;
   readonly runtimeAvailable: boolean;
   readonly effective: boolean;
-  readonly reason: "available" | "agent_disabled" | "not_configured" | "runtime_unavailable" | "model_unavailable" | "governed_worker_only" | "exclusive_writer_elsewhere";
+  readonly reason: "available" | "agent_disabled" | "not_configured" | "permission_not_granted" | "runtime_unavailable" | "model_unavailable" | "governed_worker_only" | "exclusive_writer_elsewhere";
   readonly guidance: string;
   readonly contract?: "read-only";
 }
@@ -15,10 +15,11 @@ export interface AgentCapabilityStatus {
   readonly policyRevision: 1;
   readonly capabilities: Record<AgentCapabilityName, EffectiveCapability>;
   readonly effectiveCommands: readonly string[];
+  readonly issuableCommands: readonly string[];
   readonly commands: Readonly<Record<string, CommandCapabilityStatus>>;
 }
 
-export const CAPABILITY_EXCLUSIONS = ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired", "runtime-unavailable", "model-unavailable", "governed-worker-only", "exclusive-writer-elsewhere"] as const;
+export const CAPABILITY_EXCLUSIONS = ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-missing", "lease-expired", "runtime-unavailable", "model-unavailable", "governed-worker-only", "exclusive-writer-elsewhere"] as const;
 export type CapabilityExclusion = (typeof CAPABILITY_EXCLUSIONS)[number];
 export interface CommandCapabilityStatus {
   readonly featureCompiled: boolean;

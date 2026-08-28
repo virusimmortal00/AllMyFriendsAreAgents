@@ -28,12 +28,12 @@ export class GenerationJournal {
   async append(event: GenerationJournalEvent) {
     const { prompt: _prompt, rawResponse: _rawResponse, cliStdout: _cliStdout, cliStderr: _cliStderr, instruction: _instruction, visibleMessages: _visibleMessages, ...metadata } = event;
     const line = `${JSON.stringify(sanitizeLogValue({ ...metadata, timestamp: event.timestamp || new Date().toISOString() }))}\n`;
-    const operation = this.queue.then(async () => {
+    const operation = this.queue.catch(() => undefined).then(async () => {
       await appendFile(this.path, line, { encoding: "utf8", mode: 0o600 });
       await chmod(this.path, 0o600);
     });
     this.queue = operation.catch((error) => {
-      this.onError?.(error);
+      try { void Promise.resolve(this.onError?.(error)).catch(() => undefined); } catch { /* Error reporting is best effort. */ }
     });
     await operation.catch(() => undefined);
   }

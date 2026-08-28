@@ -8,7 +8,7 @@ import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction.js";
 export interface LogContext { traceId: string; spanId: string; requestId?: string; agentId?: string; operationId?: string }
 const storage = new AsyncLocalStorage<LogContext>();
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-0[01]$/;
-export function parseOrCreateTraceparent(value?: string) { const match = value?.toLowerCase().match(TRACEPARENT); const traceId = match?.[1] || randomBytes(16).toString("hex"); const parentSpanId = match?.[2]; const spanId = randomBytes(8).toString("hex"); return { traceId, spanId, ...(parentSpanId ? { parentSpanId } : {}), traceparent: `00-${traceId}-${spanId}-01` }; }
+export function parseOrCreateTraceparent(value?: string) { const candidate = value?.toLowerCase().match(TRACEPARENT); const match = candidate && candidate[1] !== "0".repeat(32) && candidate[2] !== "0".repeat(16) ? candidate : undefined; const traceId = match?.[1] || randomBytes(16).toString("hex"); const parentSpanId = match?.[2]; const spanId = randomBytes(8).toString("hex"); return { traceId, spanId, ...(parentSpanId ? { parentSpanId } : {}), traceparent: `00-${traceId}-${spanId}-01` }; }
 
 export function safeError(error: unknown, includeStack = false) { if (!(error instanceof Error)) return { name: "Error", message: redactDiagnosticSecrets(String(error)).slice(0, 500) }; return { name: error.name.slice(0, 100), message: redactDiagnosticSecrets(error.message).slice(0, 500), ...(includeStack && error.stack ? { stack: redactDiagnosticSecrets(error.stack).split("\n").slice(0, 12).join("\n") } : {}) }; }
 
@@ -78,7 +78,7 @@ export class StructuredLogger {
   }
   async flush() { await this.queue.catch(() => undefined); }
   private emit(level: "debug" | "info" | "warn" | "error", event: string, context: Record<string, unknown>, fields: Record<string, unknown>, now: number) {
-    const line = JSON.stringify({ ...this.identity, timestamp: new Date(now).toISOString(), level, event, ...context, ...fields });
+    const line = JSON.stringify({ ...context, ...fields, ...this.identity, timestamp: new Date(now).toISOString(), level, event });
     try { this.consoleSink(line); } catch {}
     if (!this.filePath) return;
     this.queue = this.queue.catch(() => undefined).then(async () => { await mkdir(path.dirname(this.filePath!), { recursive: true, mode: 0o700 }); await this.rotateIfNeeded(Buffer.byteLength(line) + 1); await appendFile(this.filePath!, `${line}\n`, { mode: 0o600 }); }).catch(() => undefined);

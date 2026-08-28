@@ -1,6 +1,6 @@
 # Capabilities, audit, and structured logging
 
-The server is the authority for agent capabilities. For every configured roster participant it resolves configured, runtime-available, and effective states plus a per-command gate record. Each command record reports whether the feature is compiled, required server configuration exists, the server ceiling includes it, the roster is enabled, the requested grant and command-catalog revision are current, and the provider session is fresh. It also includes effective commands, bounded lease issuance/expiry status, last manifest issuance, and the last bounded rejection. Stable exclusions include `missing-server-config`, `permission-not-granted`, `agent-disabled`, `catalog-revision-stale`, `provider-session-stale`, and `lease-expired`. The browser never receives tokens, credential paths, environment values, or provider responses.
+The server is the authority for agent capabilities. For every configured roster participant it resolves configured, runtime-available, and effective states plus a per-command gate record. Each command record reports whether the feature is compiled, required server configuration exists, the server ceiling includes it, the roster is enabled, the requested grant and command-catalog revision are current, and the provider session is fresh. It separately reports commands eligible for a newly minted lease and commands holding current effective authority, plus bounded lease issuance/expiry status, last manifest issuance, and the last bounded rejection. Stable exclusions include `missing-server-config`, `permission-not-granted`, `agent-disabled`, `catalog-revision-stale`, `provider-session-stale`, `lease-missing`, and `lease-expired`. The browser never receives tokens, credential paths, environment values, or provider responses.
 
 ## Capability model
 
@@ -29,7 +29,8 @@ Set these only in the repository root `.env`, which the installed `.allmyfriends
 Create a fine-grained token bound to exactly the configured repository with read-only Metadata, Actions, Checks, Contents, Issues, and Pull requests permissions. Grant no write or administration permission, and never reuse the contribution/mutation token (`ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN`). Keep root `.env` mode `0600`. Presence-check configuration without printing values:
 
 ```zsh
-cd /Users/virusimmortal00/src/virusimmortal00/AllMyFriendsAreAgents
+repository_root="$(git rev-parse --show-toplevel)"
+cd "$repository_root"
 chmod 600 .env
 for name in ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH; do
   grep -q "^${name}=.\+" .env && print "${name}=present" || print "${name}=missing"
@@ -43,7 +44,7 @@ launchctl kickstart -k "gui/$(id -u)/io.amfaa.live-dev"
 curl -fsS http://127.0.0.1:53147/api/ready >/dev/null && print ready
 ```
 
-Sign in as the owner, open Manage Agents, explicitly check the requested `/gh` grant, and save. The UI shows requested and effective state separately. Start a fresh agent turn so the server issues a fresh `room_command` lease, use `/help` to confirm `/gh` is listed, then run `/gh recent` against the real repository. The owner Diagnostics inspector should show no exclusion; otherwise use its stable code (`missing-server-config`, `permission-not-granted`, `agent-disabled`, `catalog-revision-stale`, `provider-session-stale`, or `lease-expired`) rather than inspecting credentials.
+Sign in as the owner, open Manage Agents, explicitly check the requested `/gh` grant, and save. The UI shows requested and currently effective state separately; the bounded owner projection additionally reports eligibility for a newly issued lease. Start a fresh agent turn so the server issues a fresh `room_command` lease, use `/help` to confirm `/gh` is listed, then run `/gh recent` against the real repository. The owner Diagnostics inspector should show no exclusion; otherwise use its stable code (`missing-server-config`, `permission-not-granted`, `agent-disabled`, `catalog-revision-stale`, `provider-session-stale`, `lease-missing`, or `lease-expired`) rather than inspecting credentials.
 
 Structured records are written to `.allmyfriendsareagents/server.jsonl` under the configured data directory and rotate through `.1`–`.3`; foreground/launchd output remains in `.allmyfriendsareagents/live-dev.log`. Copy the response `traceparent` trace ID or `x-request-id`, then search only correlated JSONL records, for example `rg '"requestId":"<request-id>"' .allmyfriendsareagents/server.jsonl*`. Identical records are limited to 20 for an identical payload/context in a 10-second window. Further copies are suppressed; the next identical record after the window emits one `logging.identical.coalesced` summary with the bounded suppressed count.
 

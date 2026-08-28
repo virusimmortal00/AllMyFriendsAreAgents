@@ -4,7 +4,7 @@ import path from "node:path";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseOrCreateTraceparent, safeError, sanitizeLogValue, StructuredLogger, traceMiddleware } from "./structured-logger.js";
+import { parseOrCreateTraceparent, safeError, sanitizeLogValue, StructuredLogger, traceMiddleware, withLogContext } from "./structured-logger.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -15,6 +15,15 @@ describe("structured logging", () => {
     expect(parsed.traceId).toBe("0123456789abcdef0123456789abcdef");
     expect(parsed.spanId).toMatch(/^[0-9a-f]{16}$/);
     expect(parseOrCreateTraceparent("invalid").traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(parseOrCreateTraceparent("00-00000000000000000000000000000000-0123456789abcdef-01").traceId).not.toBe("0".repeat(32));
+    expect(parseOrCreateTraceparent("00-0123456789abcdef0123456789abcdef-0000000000000000-01").traceId).not.toBe("0123456789abcdef0123456789abcdef");
+  });
+
+  it("prevents caller context and fields from overwriting logger-owned envelope metadata", async () => {
+    const lines: string[] = []; let now = Date.parse("2026-08-27T12:00:00.000Z");
+    const logger = new StructuredLogger(undefined, 1_000, 1, (line) => lines.push(line), false, { schemaVersion: 1, service: "service", serviceVersion: "2.0.0", instanceId: "instance", deploymentCommit: "commit", deploymentEpoch: "epoch", environment: "test" }, { now: () => now });
+    await withLogContext({ traceId: "a".repeat(32), spanId: "b".repeat(16), level: "debug", event: "context-event" } as never, () => logger.log("warn", "owned-event", { timestamp: "attacker", level: "error", event: "field-event" }));
+    expect(JSON.parse(lines[0]!)).toMatchObject({ schemaVersion: 1, service: "service", serviceVersion: "2.0.0", instanceId: "instance", deploymentCommit: "commit", deploymentEpoch: "epoch", environment: "test", timestamp: "2026-08-27T12:00:00.000Z", level: "warn", event: "owned-event" });
   });
 
   it("redacts fields and errors and rotates bounded files", async () => {

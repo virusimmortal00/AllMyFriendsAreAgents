@@ -22,8 +22,9 @@ export class CapabilityAuditStore {
     const event: CapabilityAuditEvent = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), agentId: safe(input.agentId, 80), capability: input.capability, outcome: input.outcome, ...(input.correlationId ? { correlationId: safe(input.correlationId, 100) } : {}), ...(input.reason ? { reason: safe(input.reason) } : {}) };
     this.events = [...this.events, event].slice(-this.limit);
     const serialized = JSON.stringify(this.events);
-    this.queue = this.queue.then(async () => { const temporary = `${this.filePath}.tmp`; await writeFile(temporary, serialized, { mode: 0o600 }); await rename(temporary, this.filePath); await chmod(this.filePath, 0o600); });
-    await this.queue;
+    const operation = this.queue.catch(() => undefined).then(async () => { const temporary = `${this.filePath}.tmp`; await writeFile(temporary, serialized, { mode: 0o600 }); await rename(temporary, this.filePath); await chmod(this.filePath, 0o600); });
+    this.queue = operation.catch(() => undefined);
+    await operation;
     return event;
   }
   list(limit = 100) { return this.events.slice(-Math.max(1, Math.min(limit, 200))); }

@@ -326,6 +326,22 @@ describe("OpenCode runtime safety", () => {
       ALL_MY_FRIENDS_ARE_AGENTS_GIT_BROKER_TOKEN: "broker-token",
     });
   });
+
+  it("filters inherited secrets before adding only minted internal tool variables", async () => {
+    const command = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
+    const result = await __testing.runProcess(process.execPath, command, process.cwd(), {
+      environment: { PATH: process.env.PATH, GH_TOKEN: "inherited-gh", AMFAA_ROOM_COMMAND_TOKEN: "attacker-token", ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN: "dedicated-read-token" },
+      internalEnvironment: { AMFAA_ROOM_HISTORY_TOKEN: "minted-history", AMFAA_ROOM_COMMAND_TOKEN: "minted-command", AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/internal" },
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({ AMFAA_ROOM_HISTORY_TOKEN: "minted-history", AMFAA_ROOM_COMMAND_TOKEN: "minted-command", AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/internal" });
+    expect(result.stdout).not.toMatch(/inherited-gh|attacker-token|dedicated-read-token/);
+  });
+
+  it("keeps generation operation reporting nonblocking across sync and async failures", async () => {
+    expect(() => __testing.reportOperation({ operationLog: () => { throw new Error("sync"); } } as never, "info", "agent.generation.started", {})).not.toThrow();
+    expect(() => __testing.reportOperation({ operationLog: () => Promise.reject(new Error("async")) } as never, "error", "agent.generation.failed", {})).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 });
 
 describe("agent process cancellation", () => {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,5 +16,15 @@ describe("capability audit", () => {
     const raw = await readFile(store.filePath, "utf8");
     expect(raw).not.toContain("very-secret-token");
     expect(raw).toContain("[REDACTED]");
+  });
+
+  it("reports the current failed append and recovers the queue for later writes", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-cap-audit-recovery-")); roots.push(root);
+    const store = await CapabilityAuditStore.open(root, 10);
+    await mkdir(store.filePath);
+    await expect(store.append({ agentId: "codex-sol", capability: "github_read", outcome: "attempted" })).rejects.toThrow();
+    await rm(store.filePath, { recursive: true });
+    await expect(store.append({ agentId: "codex-sol", capability: "github_read", outcome: "completed" })).resolves.toMatchObject({ outcome: "completed" });
+    expect(JSON.parse(await readFile(store.filePath, "utf8"))).toHaveLength(2);
   });
 });

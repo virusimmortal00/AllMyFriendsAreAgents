@@ -93,7 +93,7 @@ export class RoomCommandToolBroker {
     const event = { id: dedupeId.slice(0, 24), at: new Date(this.now()).toISOString(), agentId, outcome, reason, ...metadata, issuedAt: issuedAt === null ? null : new Date(issuedAt).toISOString(), expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(), manifestRevision } satisfies CommandToolLeaseEvent;
     this.events.push(event); if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
     const prior = this.lastByAgent.get(agentId); this.lastByAgent.set(agentId, { agentId, present: outcome === "issued" || outcome === "refreshed" || outcome === "accepted" || outcome === "rejected", status: outcome === "expired" ? "expired" : outcome === "revoked" ? "revoked" : "active", issuedAt: event.issuedAt, expiresAt: event.expiresAt, providerSessionFresh: outcome !== "revoked", effectiveCommands: outcome === "expired" || outcome === "revoked" ? [] : this.snapshotCommands(agentId), lastManifestIssuance: manifestRevision && event.issuedAt ? { revision: manifestRevision, issuedAt: event.issuedAt } : prior?.lastManifestIssuance || null, lastRejection: outcome === "rejected" ? { at: event.at, reason: reason as CommandToolRejectionReason } : prior?.lastRejection || null });
-    void this.operationLog?.(event);
+    try { void Promise.resolve(this.operationLog?.(event)).catch(() => undefined); } catch { /* Lease state must not depend on logging. */ }
   }
 
   private snapshotCommands(agentId: ActiveAgentId) { return [...this.leases.values()].find((lease) => lease.agentId === agentId)?.allowedCommands || []; }

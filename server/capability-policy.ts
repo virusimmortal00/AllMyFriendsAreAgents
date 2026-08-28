@@ -21,6 +21,7 @@ export interface CapabilityPolicyInput {
   readonly requestedGrants?: readonly string[];
   readonly catalogRevisionCurrent?: boolean;
   readonly providerSessionFresh?: boolean;
+  readonly issuanceProviderSessionFresh?: boolean;
   readonly lease?: CommandCapabilityStatus["lease"];
   readonly lastManifestIssuance?: CommandCapabilityStatus["lastManifestIssuance"];
   readonly lastRejection?: CommandCapabilityStatus["lastRejection"];
@@ -34,17 +35,17 @@ function capability(configured: boolean, runtimeAvailable: boolean, reason: Effe
 export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCapabilityStatus {
   const { entry } = input;
   const conversationReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !input.model.available ? "model_unavailable" : !input.runtimeAvailable ? "runtime_unavailable" : "available";
-  const ghConfigured = input.githubReadConfigured && input.githubReadGranted;
-  const ghReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !ghConfigured ? "not_configured" : !input.runtimeAvailable ? "runtime_unavailable" : !input.model.available ? "model_unavailable" : "available";
+  const ghReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !input.githubReadConfigured ? "not_configured" : !input.githubReadGranted ? "permission_not_granted" : !input.runtimeAvailable ? "runtime_unavailable" : !input.model.available ? "model_unavailable" : "available";
   const selectedWriter = input.exclusiveWritableAgent === entry.agentId;
   const writeReason: EffectiveCapability["reason"] = !entry.enabled ? "agent_disabled" : !selectedWriter && input.exclusiveWritableAgent !== "nobody" ? "exclusive_writer_elsewhere" : "governed_worker_only";
   const ceiling = input.serverCeiling || (input.githubReadConfigured ? ROOM_COMMANDS : ROOM_COMMANDS.filter((command) => command !== "gh"));
   const requested = input.requestedGrants || (input.githubReadGranted ? ["gh"] : []);
-  const common = { featureCompiled: input.featureCompiled !== false, rosterEnabled: entry.enabled, providerSessionFresh: input.providerSessionFresh !== false, lease: input.lease || { status: "not-required" as const, issuedAt: null, expiresAt: null }, lastManifestIssuance: input.lastManifestIssuance || null, lastRejection: input.lastRejection || null, runtimeAvailable: input.runtimeAvailable, modelAvailable: input.model.available };
-  const commands = Object.fromEntries(ROOM_COMMANDS.map((command) => [command, resolveCommandCapability({ ...common, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false })]));
+  const common = { featureCompiled: input.featureCompiled !== false, rosterEnabled: entry.enabled, providerSessionFresh: input.providerSessionFresh !== false, lease: input.lease || { status: "missing" as const, issuedAt: null, expiresAt: null }, lastManifestIssuance: input.lastManifestIssuance || null, lastRejection: input.lastRejection || null, runtimeAvailable: input.runtimeAvailable, modelAvailable: input.model.available };
+  const issuance = Object.fromEntries(ROOM_COMMANDS.map((command) => [command, resolveCommandCapability({ ...common, providerSessionFresh: input.issuanceProviderSessionFresh ?? common.providerSessionFresh, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false })]));
+  const commands = Object.fromEntries(ROOM_COMMANDS.map((command) => [command, resolveCommandCapability({ ...common, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false, requiresLease: true })]));
   const projectWrite = resolveCommandCapability({ ...common, featureCompiled: false, requiredConfigPresent: entry.supportsProjectWrites === true, serverCeiling: selectedWriter, requestedGrant: selectedWriter, catalogRevisionCurrent: true, lease: input.lease || { status: "missing", issuedAt: null, expiresAt: null }, requiresLease: true, requiresProviderSession: false, modelAvailable: true });
   commands.project_write = projectWrite;
-  const githubCapability = capability(ghConfigured, input.runtimeAvailable && input.model.available, ghReason, "github_read", "read-only");
+  const githubCapability = capability(input.githubReadConfigured, input.runtimeAvailable && input.model.available, ghReason, "github_read", "read-only");
   return {
     agentId: entry.agentId,
     policyRevision: 1,
@@ -54,6 +55,7 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
       project_write: capability(selectedWriter && entry.supportsProjectWrites === true, false, writeReason, "project_write"),
     },
     effectiveCommands: ROOM_COMMANDS.filter((command) => commands[command]?.effective),
+    issuableCommands: ROOM_COMMANDS.filter((command) => issuance[command]?.effective),
     commands,
   };
 }
@@ -66,7 +68,7 @@ export function resolveCommandCapability(input: { featureCompiled: boolean; requ
   if (!input.catalogRevisionCurrent) exclusions.push("catalog-revision-stale");
   if ((input.requiresProviderSession ?? true) && !input.providerSessionFresh) exclusions.push("provider-session-stale");
   if (input.requiresLease && input.lease.status === "expired") exclusions.push("lease-expired");
-  else if (input.requiresLease && input.lease.status !== "active") exclusions.push("missing-server-config");
+  else if (input.requiresLease && input.lease.status !== "active") exclusions.push("lease-missing");
   if (!input.runtimeAvailable) exclusions.push("runtime-unavailable");
   if (!input.modelAvailable) exclusions.push("model-unavailable");
   return { featureCompiled: input.featureCompiled, requiredConfigPresent: input.requiredConfigPresent, serverCeiling: input.serverCeiling, rosterEnabled: input.rosterEnabled, requestedGrant: input.requestedGrant, catalogRevisionCurrent: input.catalogRevisionCurrent, providerSessionFresh: input.providerSessionFresh, lease: input.lease, lastManifestIssuance: input.lastManifestIssuance, lastRejection: input.lastRejection, effective: exclusions.length === 0, exclusions };

@@ -60,7 +60,7 @@ import { registerRoomSettingsRoutes } from "./room-settings-api.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
-import { COMMAND_CATALOG_REVISION, effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
+import { COMMAND_CATALOG_REVISION, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
@@ -76,7 +76,8 @@ import { GitHubReadStore } from "./github-read-store.js";
 import { GitHubReadService } from "./github-read-service.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
-import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
+import { resolveAgentCapabilities } from "./capability-policy.js";
+import { registerCapabilityDiagnosticsRoute } from "./capability-diagnostics-route.js";
 import { CapabilityAuditStore } from "./capability-audit.js";
 import { StructuredLogger, traceMiddleware } from "./structured-logger.js";
 
@@ -159,8 +160,9 @@ async function refreshAgentCapabilities() {
   const [catalog, runtime] = await Promise.all([modelDiscovery.discover(), cliAvailability(enabledRoomAgentIds(roster))]);
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {
-    const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
-    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-missing", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
+    const persistedSessionFresh = !store.snapshot().sessions[entry.agentId]?.invalidatedAt;
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && persistedSessionFresh, issuanceProviderSessionFresh: persistedSessionFresh, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
   capabilityStatuses = next;
@@ -369,8 +371,7 @@ function roomEventStream(humanId: string) {
 
 function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
   const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
-  const ceiling = capabilityEnabled(capabilityStatuses[agent], "github_read") ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS;
-  const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), ceiling) : [];
+  const allowedCommands = entry?.enabled ? (capabilityStatuses[agent]?.issuableCommands || []).filter((command): command is import("../shared/command-domain.js").RoomCommandName => ROOM_COMMANDS.includes(command as import("../shared/command-domain.js").RoomCommandName)) : [];
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
@@ -1024,13 +1025,7 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
-app.get("/api/control/capabilities", async (request, response) => {
-  try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }
-  catch (error) { return response.status(error instanceof ControlError ? error.status : 500).json({ error: error instanceof Error ? error.message : "Authorization failed." }); }
-  await refreshAgentCapabilities().catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error }));
-  const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
-  return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
-});
+registerCapabilityDiagnosticsRoute({ app, control: controlPlane, refresh: refreshAgentCapabilities, statuses: () => capabilityStatuses, audit: capabilityAudit, operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) });
 registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: () => { void Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]).then(() => broadcast()).catch((error) => structuredLogger.log("error", "capability.refresh.failed", { error })); } });
 registerRoomSettingsRoutes({
   app,

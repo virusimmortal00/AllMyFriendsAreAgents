@@ -318,6 +318,7 @@ interface RunProcessOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
+  internalEnvironment?: NodeJS.ProcessEnv;
   trustedEnvironment?: boolean;
   supervisor?: AgentProcessSupervisor;
   scope?: string | readonly string[];
@@ -353,6 +354,10 @@ function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
   }));
 }
 
+function reportOperation(context: AgentContextRuntime | undefined, level: "info" | "error", event: string, fields: Record<string, unknown>) {
+  try { void Promise.resolve(context?.operationLog?.(level, event, fields)).catch(() => undefined); } catch { /* Observability is best effort. */ }
+}
+
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const timeoutMs = options.timeoutMs ?? CHAT_RUN_TIMEOUT_MS;
@@ -360,7 +365,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     supervisor.assertOpen();
     const child = spawn(command, args, {
       cwd,
-      env: options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment),
+      env: { ...(options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment)), ...options.internalEnvironment },
       shell: false,
       detached: process.platform !== "win32",
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -655,7 +660,7 @@ export async function runAgent(
     storedSessionEpoch: storedSession?.codeEpoch,
     sessionId: storedSession?.id,
   });
-  await context?.operationLog?.("info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
+  reportOperation(context, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -682,8 +687,7 @@ export async function runAgent(
     const invoke = async (sessionId?: string) => {
       const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
       const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
-      const environment = {
-        ...invocation.env,
+      const internalEnvironment = {
         ...(context?.historyTool ? {
           OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
           AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
@@ -696,7 +700,8 @@ export async function runAgent(
         } : {}),
       };
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length)),
+        environment: opencodeEnvironment(invocation.env, permission, Boolean(context?.commandTool?.allowedCommands.length)),
+        internalEnvironment,
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
@@ -725,7 +730,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    await context?.operationLog?.("info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
+    reportOperation(context, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
     return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
@@ -758,7 +763,7 @@ export async function runAgent(
         cliStderr: error.process.stderr,
       } : {}),
     });
-    await context?.operationLog?.("error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
+    reportOperation(context, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
     throw error;
   } finally {
     lifecycle?.finish(generationId);
@@ -778,4 +783,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess, reportOperation };
