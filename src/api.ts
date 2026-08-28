@@ -17,6 +17,24 @@ let controlCsrfToken = "";
 const pollVoteIds = new Map<string,string>();
 const pollCloseIds = new Map<string,string>();
 
+export function routedRoomId(location:Pick<Location,"pathname">=window.location){
+  const match=/^\/rooms\/([a-zA-Z0-9-]{8,80})(?:\/|$)/.exec(location.pathname);
+  return match ? match[1] : null;
+}
+function roomPath(endpoint:"state"|"messages"|"events"){
+  const roomId=routedRoomId();
+  return roomId?`/api/rooms/${encodeURIComponent(roomId)}/${endpoint}`:`/api/${endpoint}`;
+}
+export function roomEventsPath(){return roomPath("events");}
+
+const GLOBAL_API_ROOTS=new Set(["ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","rooms"]);
+export function scopedRequestPath(path:string){
+  const roomId=routedRoomId();
+  if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
+  const root=path.slice(5).split(/[/?]/,1)[0];
+  return GLOBAL_API_ROOTS.has(root)?path:`/api/rooms/${encodeURIComponent(roomId)}/${path.slice(5)}`;
+}
+
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
     super(message);
@@ -34,7 +52,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
   try {
     const headers = new Headers(options.headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, {
+    const response = await fetch(scopedRequestPath(path), {
       ...options,
       headers,
       signal: controller.signal,
@@ -100,7 +118,7 @@ export async function checkReady(): Promise<ServerIdentity> {
 }
 
 export async function loadRoom(): Promise<RoomState> {
-  return request("/api/state").then((response) => response.json());
+  return request(roomPath("state")).then((response) => response.json());
 }
 
 export interface RosterCatalogEntry {
@@ -215,7 +233,7 @@ export async function updateMyProfile(profile: { name: string; avatarUrl?: strin
 }
 
 export async function sendMessage(text: string, clientMessageId: string, mentions: MessageMention[] = [], continuation?: RoomContinuationWorkRequest): Promise<MessageMutationAcknowledgement | CommandMutationAcknowledgement> {
-  return request("/api/messages", {
+  return request(roomPath("messages"), {
     method: "POST",
     body: JSON.stringify({ text, clientMessageId, mentions, ...(continuation ? { continuation } : {}) }),
   }, REQUEST_TIMEOUT_MS, [400]).then(async (response) => {
