@@ -213,16 +213,24 @@ describe("JSON to SQLite import", () => {
     const source = await RoomStore.open(projectRoot, sourceStateDirectory);
     await source.updateSettings({ roomName: "Replacement Room" });
     expect((await source.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "source-task", title: "Source task", actor, now: "2026-08-24T12:00:00.000Z" }))).kind).toBe("created");
+    await source.putAssignment({ assignmentId: "source-assignment", improvementId: "new", developerMemberId: "new-dev", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 2, manifestRevision: 1, pinnedBaseSha: "b".repeat(40), branch: "new-branch", observedHeadSha: "b".repeat(40), workspacePath: path.join(projectRoot, "new-worktree"), lifecycleStatus: "RECOVERABLE", recovery: { classification: "clean", reconciledAt: "2026-08-24T12:00:00.000Z", previousStatus: null, detail: "new" }, createdAt: "2026-08-24T12:00:00.000Z", updatedAt: "2026-08-24T12:00:00.000Z" });
 
     const destination = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect((await destination.createTask(createTask({ roomId: DEFAULT_ROOM_ID, taskId: "destination-only-task", title: "Remove me", actor, now: "2026-08-24T11:00:00.000Z" }))).kind).toBe("created");
     await destination.putAssignment({ assignmentId: "destination-assignment", improvementId: "old", developerMemberId: "old-dev", developerMemberConfigRevision: 1, agent: "codex-sol", fencingToken: 1, manifestRevision: 1, pinnedBaseSha: "a".repeat(40), branch: "old-branch", observedHeadSha: "a".repeat(40), workspacePath: path.join(projectRoot, "old-worktree"), lifecycleStatus: "RECOVERABLE", recovery: { classification: "clean", reconciledAt: "2026-08-24T11:00:00.000Z", previousStatus: null, detail: "old" }, createdAt: "2026-08-24T11:00:00.000Z", updatedAt: "2026-08-24T11:00:00.000Z" });
+    const destinationScope = (await destination.getStorageScope(DEFAULT_ROOM_ID))!;
+    await destination.putSourceWorkBinding({ schemaVersion: 1, kind: "assignment", workId: "destination-assignment", roomId: DEFAULT_ROOM_ID,
+      projectId: destinationScope.projectId, repositoryReferenceId: destinationScope.repositoryReferenceId, repositoryReferenceRevision: destinationScope.repositoryReferenceRevision,
+      originTaskId: null, originTaskRevision: null, implementationJobId: null, implementationWorkerId: null, state: "needs-reconciliation",
+      reasonCode: "stale-destination-binding", evidence: {}, revision: 1, createdAt: "2026-08-24T11:00:00.000Z", updatedAt: "2026-08-24T11:00:00.000Z" });
     destination.close();
 
     await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath, overwrite: true });
     const replaced = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect((await replaced.listTasks()).items.map(({ taskId }) => taskId)).toEqual(["source-task"]);
-    expect(await replaced.listAssignments()).toEqual([]);
+    expect((await replaced.listAssignments()).map(({ assignmentId }) => assignmentId)).toEqual(["source-assignment"]);
+    expect(await replaced.getSourceWorkBinding("assignment", "destination-assignment")).toBeUndefined();
+    expect(await replaced.getSourceWorkBinding("assignment", "source-assignment")).toMatchObject({ state: "needs-reconciliation", reasonCode: "legacy-missing-implementation-job-worker" });
     replaced.close();
   });
 });

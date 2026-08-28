@@ -53,7 +53,7 @@ import type { AgentContextSummaryKey } from "../transcript.js";
 import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfiguration, type RoomConfigurationUpdate } from "../room-configuration.js";
 import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_OPEN_POLLS_PER_ROOM, MAX_RECENT_POLLS, parseCommandPollCursor, type AcceptCommandResult, type CloseCommandPollResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "../command-record.js";
 import { validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validGhExecution, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote } from "./command-storage.js";
-import { ensureDurableIdentityMigration, prepareDurableIdentityBackup } from "./identity-migration.js";
+import { ensureDurableIdentityMigration, prepareDurableIdentityBackup, rebuildJsonImportSourceWorkBindings } from "./identity-migration.js";
 import type { DurableProjectRecord, DurableRoomRecord, DurableServerRecord, IdentityMigrationEvidence, RepositoryReferenceRecord, SourceWorkBinding, SourceWorkKind, StorageScope } from "./identity-domain.js";
 import { boundedReconciliationReason } from "./identity-domain.js";
 
@@ -318,6 +318,10 @@ export class SqliteRoomRepository implements RoomRepository {
       throw new Error("JSON import source manifest changed after the verified migration; restore the original source or use an explicit reviewed migration.");
     }
     if (!allowOverwrite) throw new Error(`Durable identity storage was initialized from ${existing.source_kind}; importing JSON requires explicit overwrite authorization.`);
+  }
+
+  async rebuildJsonImportSourceWorkBindings(legacyStateDirectory: string) {
+    return rebuildJsonImportSourceWorkBindings(this.database, this.roomId, legacyStateDirectory);
   }
 
   async getDurableServer(): Promise<DurableServerRecord> {

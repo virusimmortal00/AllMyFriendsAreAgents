@@ -117,6 +117,10 @@ function taskOrigins(database: DatabaseSync) {
   return origins;
 }
 
+function assignmentOriginCandidates(origins: ReturnType<typeof taskOrigins>, assignmentId: string, roomId: string) {
+  return (origins.get(assignmentId) || []).filter((candidate) => candidate.roomId === roomId);
+}
+
 function insertBinding(database: DatabaseSync, value: {
   kind: string; workId: string; roomId: string; projectId: string | null; repositoryReferenceId: string | null;
   originTaskId?: string | null; originTaskRevision?: number | null; state: "needs-reconciliation" | "terminal-history"; reasonCode: string; evidence?: Record<string, unknown>; now: string;
@@ -130,6 +134,76 @@ function insertBinding(database: DatabaseSync, value: {
     value.originTaskId ?? null, value.originTaskRevision ?? null, value.state, value.reasonCode,
     JSON.stringify(value.evidence || {}), 1, value.now, value.now,
   );
+}
+
+/** Rebuilds only the room-scoped provenance overlay after an explicitly reviewed
+ * JSON overwrite. Durable server/project/repository identities remain stable. */
+export async function rebuildJsonImportSourceWorkBindings(database: DatabaseSync, roomId: string, legacyStateDirectory: string, now = () => new Date().toISOString()) {
+  const evidence = database.prepare("SELECT source_kind FROM storage_identity_migrations WHERE migration_version=?").get(IDENTITY_MIGRATION_VERSION) as { source_kind: string } | undefined;
+  if (!evidence || evidence.source_kind !== "sqlite-in-place") return false;
+  const room = database.prepare(`SELECT r.project_id,p.repository_reference_id FROM rooms r
+    LEFT JOIN durable_projects p ON p.project_id=r.project_id WHERE r.id=?`).get(roomId) as { project_id: string | null; repository_reference_id: string | null } | undefined;
+  if (!room) throw new Error(`Cannot rebuild source-work bindings for missing room ${roomId}.`);
+  const scope = { projectId: room.project_id, repositoryReferenceId: room.repository_reference_id };
+  const timestamp = now();
+  const origins = taskOrigins(database);
+  const sidecars = await loadLegacySidecars(legacyStateDirectory);
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.prepare("DELETE FROM source_work_bindings WHERE room_id=?").run(roomId);
+    const assignments = database.prepare("SELECT assignment_id,lifecycle_status,lifecycle_revision FROM assignment_records WHERE room_id=?").all(roomId) as Array<{ assignment_id: string; lifecycle_status: string; lifecycle_revision: number }>;
+    for (const assignment of assignments) {
+      const candidates = assignmentOriginCandidates(origins, assignment.assignment_id, roomId);
+      const origin = candidates.length === 1 ? candidates[0] : undefined;
+      const terminal = ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycle_status);
+      insertBinding(database, { kind: "assignment", workId: assignment.assignment_id, roomId, ...scope,
+        originTaskId: origin?.taskId, originTaskRevision: origin?.revision, state: terminal ? "terminal-history" : "needs-reconciliation",
+        reasonCode: terminal ? "legacy-terminal-history" : "legacy-missing-implementation-job-worker",
+        evidence: { priorLifecycleStatus: assignment.lifecycle_status, priorLifecycleRevision: assignment.lifecycle_revision || 1, originCandidates: candidates.length }, now: timestamp });
+    }
+    const jobs = database.prepare("SELECT job_id,status,projection_json FROM continuation_jobs WHERE room_id=?").all(roomId) as Array<{ job_id: string; status: string; projection_json: string }>;
+    for (const job of jobs) {
+      let projection: { task?: { taskId?: string }; taskRevision?: number; authority?: { assignmentId?: string } } = {};
+      try { projection = JSON.parse(job.projection_json); } catch {}
+      const terminal = ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status);
+      insertBinding(database, { kind: "continuation", workId: job.job_id, roomId, ...scope,
+        originTaskId: projection.task?.taskId || null, originTaskRevision: projection.taskRevision || null,
+        state: terminal ? "terminal-history" : "needs-reconciliation", reasonCode: terminal ? "legacy-terminal-history" : "legacy-continuation-lacks-implementation-worker",
+        evidence: { priorStatus: job.status, assignmentId: projection.authority?.assignmentId || null }, now: timestamp });
+    }
+    if (roomId === CANONICAL_ROOM_ID) {
+      for (const investigation of sidecars.investigationJobs) {
+        const id = typeof investigation.investigationId === "string" ? investigation.investigationId : ""; if (!id) continue;
+        const terminal = ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED", "ARCHIVED"].includes(String(investigation.status));
+        insertBinding(database, { kind: "investigation", workId: id, roomId, ...scope, state: terminal ? "terminal-history" : "needs-reconciliation",
+          reasonCode: terminal ? "legacy-terminal-history" : "legacy-investigation-provider-session-invalidated",
+          evidence: { priorStatus: String(investigation.status || "unknown"), hadProviderSession: Boolean(investigation.providerSessionId) }, now: timestamp });
+      }
+      for (const contribution of sidecars.contributionRecords) {
+        const id = typeof contribution.contributionId === "string" ? contribution.contributionId : ""; if (!id) continue;
+        const source = contribution.source && typeof contribution.source === "object" ? contribution.source as Record<string, unknown> : {};
+        const terminal = String(contribution.stage) === "DEPLOYED";
+        insertBinding(database, { kind: "contribution", workId: id, roomId, ...scope,
+          originTaskId: typeof source.taskId === "string" ? source.taskId : null, originTaskRevision: Number.isSafeInteger(source.taskRevision) ? Number(source.taskRevision) : null,
+          state: terminal ? "terminal-history" : "needs-reconciliation", reasonCode: terminal ? "legacy-terminal-history" : "legacy-contribution-binding-requires-reconciliation",
+          evidence: { priorStage: String(contribution.stage || "unknown"), assignmentId: typeof source.assignmentId === "string" ? source.assignmentId : null }, now: timestamp });
+      }
+      for (const audit of sidecars.githubRecords) {
+        const id = typeof audit.idempotencyKey === "string" ? audit.idempotencyKey : ""; if (!id) continue;
+        const claims = audit.claims && typeof audit.claims === "object" ? audit.claims as Record<string, unknown> : {};
+        insertBinding(database, { kind: "github-broker", workId: id, roomId, ...scope,
+          originTaskId: typeof claims.taskId === "string" ? claims.taskId : null, originTaskRevision: Number.isSafeInteger(claims.taskRevision) ? Number(claims.taskRevision) : null,
+          state: "needs-reconciliation", reasonCode: "legacy-github-replay-requires-reauthorization",
+          evidence: { priorOutcome: String(audit.outcome || "unknown"), assignmentId: typeof claims.assignmentId === "string" ? claims.assignmentId : null }, now: timestamp });
+      }
+    }
+    database.exec("COMMIT");
+    return true;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export async function ensureDurableIdentityMigration(
@@ -199,7 +273,7 @@ export async function ensureDurableIdentityMigration(
     if (tableExists(database, "assignment_records")) {
       const assignments = database.prepare("SELECT room_id,assignment_id,lifecycle_status,lifecycle_revision FROM assignment_records").all() as Array<{ room_id: string; assignment_id: string; lifecycle_status: string; lifecycle_revision: number }>;
       for (const assignment of assignments) {
-        const candidates = origins.get(assignment.assignment_id) || [];
+        const candidates = assignmentOriginCandidates(origins, assignment.assignment_id, assignment.room_id);
         const origin = candidates.length === 1 ? candidates[0] : undefined;
         const scope = roomBindings.get(assignment.room_id) || { projectId: null, repositoryReferenceId: null };
         const terminal = ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycle_status);
@@ -327,4 +401,4 @@ function evidenceFromRow(row: Record<string, unknown>): IdentityMigrationEvidenc
   };
 }
 
-export const __testing = { legacyCheckout, counts, sourceDigest, taskOrigins };
+export const __testing = { legacyCheckout, counts, sourceDigest, taskOrigins, assignmentOriginCandidates };

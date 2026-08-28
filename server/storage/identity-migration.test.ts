@@ -8,12 +8,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CANONICAL_ROOM_ID } from "./room-repository.js";
 import { DEFAULT_SQLITE_MIGRATIONS_DIRECTORY, runSqliteMigrations } from "./sqlite-migrations.js";
 import { SqliteRoomRepository } from "./sqlite-room-repository.js";
+import { __testing as migrationTesting } from "./identity-migration.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe("durable identity migration", () => {
+  it("selects assignment origins only from the assignment room", () => {
+    const origins = new Map([["shared-assignment", [
+      { roomId: "room-a", taskId: "task-a", revision: 2 },
+      { roomId: "room-b", taskId: "task-b", revision: 3 },
+    ]]]) as ReturnType<typeof migrationTesting.taskOrigins>;
+    expect(migrationTesting.assignmentOriginCandidates(origins, "shared-assignment", "room-a")).toEqual([{ roomId: "room-a", taskId: "task-a", revision: 2 }]);
+  });
+
   it("keeps an invalid legacy checkout as a general room without repository authority", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-general-room-")); roots.push(root);
     const databasePath = path.join(root, "amfaa.sqlite");
