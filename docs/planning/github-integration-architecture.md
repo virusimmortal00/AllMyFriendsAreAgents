@@ -282,12 +282,13 @@ variables or OAuth details.
   existing environment-backed PAT behavior is isolated in a compatibility
   provider.
 - A revisioned `GitHubIntegrationStore` persists non-secret server connection
-  metadata and unique per-project bindings. A binding-aware provider proves that
-  multiple projects can resolve through one server connection without copying a
-  token. This store is not yet opened or selected by server startup.
+  metadata, catalog snapshots, and unique per-project bindings. Bindings now
+  require an exact repository ID, installation ID, and canonical remote from a
+  catalog tied to the current connection revision. A binding-aware provider proves
+  that multiple projects can resolve through one server connection without
+  copying a token. This store is not yet opened or selected by server startup.
 - A fixed-origin GitHub App device-flow transport implements start, polling,
-  refresh, bounded response parsing, and redacted failures. It is not yet joined
-  to a repository catalog.
+  refresh, bounded response parsing, and redacted failures.
 - An AES-256-GCM credential vault now persists device-user and installation-token
   records with compare-and-set rotation, encrypted tombstones, authenticated
   restart, restrictive permissions, and wrapping-key material required to live in
@@ -297,9 +298,14 @@ variables or OAuth details.
   API origin, commits the vault before public connection metadata, and compensates
   failed metadata commits by tombstoning the new secret.
 - Dependency-injected control-plane routes now expose redacted connection and
-  authorization projections behind dedicated integration view/configure
-  capabilities and CSRF-protected mutations. Production startup does not register
-  them until a real reusable GitHub App client ID can be bundled.
+  authorization projections plus catalog refresh/read operations behind dedicated
+  integration view/configure capabilities and CSRF-protected mutations.
+- Fixed-origin catalog discovery enumerates the authorizing user's App
+  installations and repositories with bounded pagination. Refresh resolves the
+  token only inside the server, rechecks connection authority after network I/O,
+  and atomically publishes metadata-only snapshots.
+- Production startup does not register the new integration routes until a real
+  reusable GitHub App client ID can be bundled.
 - Production credential registration is still memory-only and initialized from
   environment variables through the legacy provider.
 - Repository configuration currently accepts a caller-supplied opaque credential
@@ -313,9 +319,10 @@ variables or OAuth details.
 ## Next action
 
 Register the reusable public GitHub App, bundle its public client ID, then register
-the tested control-plane routes at production startup. The next backend slice is
-installation/repository catalog discovery so project bindings cannot select a
-repository outside the app installation. Promote accepted slices from
+the tested control-plane routes at production startup. The next implementation
+slice is the owner/admin project-binding API and UI, which must derive the opaque
+binding reference server-side and verify the selected catalog entry against the
+local checkout. Promote accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence
@@ -340,6 +347,10 @@ repository outside the app installation. Promote accepted slices from
 - `server/github-device-authorization.test.ts`
 - `server/github-integration-api.ts`
 - `server/github-integration-api.test.ts`
+- `server/github-repository-catalog.ts`
+- `server/github-repository-catalog.test.ts`
+- `server/github-repository-catalog-service.ts`
+- `server/github-repository-catalog-service.test.ts`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
 - `docs/operations/capabilities-and-logging.md`

@@ -277,6 +277,13 @@ A later mutation design must decide:
   vault state if connection publication fails.
 - Dedicated integration capabilities and CSRF protection govern the tested
   control-plane routes; terminal authorization audits contain only redacted state.
+- Catalog discovery uses only server-computed `api.github.com` pagination URLs,
+  rejects inconsistent totals and duplicate identities, binds repository ownership
+  to the installation account, and discards results if connection authority
+  changes during discovery.
+- Project bindings and credential resolution now fail closed when the repository
+  is absent from the current catalog or the catalog's connection revision is
+  stale.
 - Production still uses the environment-backed compatibility provider because
   the reusable public App/client ID is not registered and the new routes are not
   wired at startup. Refresh transport exists, but scheduled refresh orchestration
@@ -284,12 +291,14 @@ A later mutation design must decide:
 - Room human sessions and durable control-plane principals are separate identity
   mechanisms.
 - Tests cover mocked device authorization, refresh, revocation metadata, restart,
-  repository substitution, and secret serialization. No live GitHub flow or
-  installation-selection evidence exists.
+  paginated installation discovery, catalog-backed repository substitution,
+  authority changes during refresh, and secret serialization. No live GitHub flow
+  or installation-selection evidence exists.
 
 ## Next action
 
-Resolve the vault backend and canonical-principal prerequisites, then use
+Register the public App and resolve the canonical room-principal prerequisite,
+then implement the server-derived project binding workflow. Use
 [the delivery plan](github-integration-delivery-plan.md) to open narrowly scoped
 issues with security acceptance checks copied into each slice.
 
@@ -304,6 +313,8 @@ issues with security acceptance checks copied into each slice.
 - `server/github-credential-vault.ts`
 - `server/github-device-authorization.ts`
 - `server/github-integration-api.ts`
+- `server/github-repository-catalog.ts`
+- `server/github-repository-catalog-service.ts`
 - `server/human-session.ts`
 - `server/control-plane.ts`
 - `docs/operations/capabilities-and-logging.md`

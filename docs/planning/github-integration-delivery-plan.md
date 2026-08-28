@@ -196,18 +196,21 @@ Foundation work now includes the credential-provider runtime seam, revisioned
 non-secret server connection/project binding storage, a vault-reader boundary,
 the fixed-origin device-flow/refresh transport, durable encrypted credential
 storage, principal-bound authorization orchestration, dedicated integration
-capabilities, and dependency-injected control-plane routes. The legacy environment
-PAT path remains active. Public App registration/client-ID bundling, production
-route registration, scheduled refresh, repository catalog, UI, canonical
+capabilities, dependency-injected control-plane routes, fixed-origin installation
+discovery, revisioned catalog snapshots, catalog refresh/read APIs, and
+catalog-enforced project binding authority. The legacy environment PAT path
+remains active. Public App registration/client-ID bundling, production route
+registration, scheduled token refresh, project binding UI/API, canonical
 room-principal binding, and runtime cutover remain unimplemented; none of these
 temporary notes is a substitute for accepted Issues.
 
 ## Next action
 
 Register the reusable public GitHub App and bundle its public client ID, then wire
-the tested integration components at startup. In parallel, implement installation
-and repository catalog discovery before enabling project binding through the new
-connection path.
+the tested integration components at startup. The next code slice should expose a
+server-derived owner/admin project binding workflow and verify the selected
+catalog repository against the local checkout without accepting a binding or
+credential reference from the browser.
 
 ## Evidence
 
