@@ -35,7 +35,7 @@ async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 }
 
-async function repositoryFixture(kind: "json" | "sqlite" = "json", implementationConfinementAvailable = true) {
+async function repositoryFixture(kind: "json" | "sqlite" = "json", implementationConfinementAvailable = true, operationLog?: ConstructorParameters<typeof AssignmentLifecycleService>[9]) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-assignment-"));
   directories.push(root);
   await git(root, "init", "-b", "main");
@@ -59,7 +59,7 @@ async function repositoryFixture(kind: "json" | "sqlite" = "json", implementatio
   });
   const service = new AssignmentLifecycleService(
     repository, repository, registry, root, path.join(root, ".worktrees"),
-    () => "2099-01-01T00:02:00.000Z", true, undefined, implementationConfinementAvailable,
+    () => "2099-01-01T00:02:00.000Z", true, undefined, implementationConfinementAvailable, operationLog,
   );
   return { root, state, repository, service, bridge, base };
 }
@@ -110,6 +110,14 @@ describe("assignment record persistence", () => {
 });
 
 describe("trusted single-writer assignment lifecycle", () => {
+  it("keeps lifecycle and governance outcomes independent of logging failures", async () => {
+    const { service } = await repositoryFixture("json", true, async () => { throw new Error("logging unavailable"); });
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "logging-independent", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    expect(created.kind).toBe("ok");
+    await expect(service.reconcile()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ assignmentId: "logging-independent" })]));
+    await expect(service.create(`Bearer ${token}`, { assignmentId: "logging-denied", improvementId: "imp-1", agent: "codex-sol", fencingToken: 999, manifestRevision: 1 })).resolves.toMatchObject({ kind: "rejected" });
+  });
+
   it("accepts a clean assignment owned by a repository that is itself a linked worktree", async () => {
     const container = await mkdtemp(path.join(os.tmpdir(), "amfaa-linked-repository-")); directories.push(container);
     const source = path.join(container, "source"); const repository = path.join(container, "repository"); const worktrees = path.join(container, "worktrees");

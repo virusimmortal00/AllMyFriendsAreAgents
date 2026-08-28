@@ -39,6 +39,7 @@ export function roomCommandGuide(commands: readonly RoomCommandName[]) {
 - Never emit raw slash-command text as a visible chat response. The tool is the command transport; slash syntax below is explanatory human syntax only.
 - A soft @mention in ordinary conversation is only a conversational hint. It is not hard routing, authorization, or delegation. Use room_command task with pinned selection for hard routing.
 - Poll participation is an explicit tool action, not conversational discussion: use polls to inspect open polls, poll_vote with a stable poll ID and zero-based option index to vote, and poll_close only for a poll you created.
+- GitHub reads are gh subcommands carried by this same room_command tool, not a separate GitHub tool. A roster grant only requests that capability; it creates no authority unless the server configuration, current policy, provider session, and lease also allow it.
 ${entries.map((entry) => `- ${entry.command}: ${entry.summary} Structured example: ${structuredExample(entry.command)} Human syntax example (never emit it): ${entry.example}`).join("\n")}`;
 }
 

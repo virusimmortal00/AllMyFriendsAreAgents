@@ -20,7 +20,7 @@ describe("GenerationJournal", () => {
       journal.append({ type: "session.reused", generationId: "one", agent: "codex-sol", reason: "deployment code epoch match", deploymentEpoch: `deployment-v1:${"a".repeat(64)}` }),
       journal.append({ type: "session.invalidated", generationId: "two", agent: "claude-sonnet", reason: "deployment code epoch changed", storedSessionEpoch: `deployment-v1:${"b".repeat(64)}` }),
       journal.append({ type: "generation.started", generationId: "one", agent: "codex-sol", prompt: "hello" }),
-      journal.append({ type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 123, rawResponse: "hi" }),
+      journal.append({ type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 123, rawResponse: "hi", authorization: "Bearer journal-secret", error: "token=journal-token" }),
     ]);
 
     const entries = (await readFile(journal.path, "utf8"))
@@ -31,6 +31,7 @@ describe("GenerationJournal", () => {
     expect(entries.map(({ type }) => type)).toEqual(["session.reused", "session.invalidated", "generation.started", "generation.completed"]);
     expect(entries.slice(0, 2).map(({ reason }) => reason)).toEqual(["deployment code epoch match", "deployment code epoch changed"]);
     expect(entries.every(({ timestamp }) => typeof timestamp === "string")).toBe(true);
+    expect(JSON.stringify(entries)).not.toMatch(/journal-secret|journal-token/);
     expect((await stat(path.dirname(journal.path))).mode & 0o777).toBe(0o700);
     expect((await stat(journal.path)).mode & 0o777).toBe(0o600);
   });

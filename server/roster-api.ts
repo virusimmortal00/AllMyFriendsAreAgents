@@ -1,6 +1,7 @@
 import type express from "express";
 import { AGENT_PROFILES, SUPPORTED_AGENT_IDS, type ActiveAgentId } from "../shared/participants.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
+import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentModelReference, validateRosterEntries } from "../shared/roster.js";
 import type { ActiveGenerationTracker } from "./active-generations.js";
 import type { AgentProcessSupervisor } from "./agent-runner.js";
@@ -19,10 +20,11 @@ export function registerRosterRoutes(input: {
   sessions: HumanSessions;
   processes: AgentProcessSupervisor;
   generations: ActiveGenerationTracker;
-  broadcast: () => void;
+  broadcast: () => void | Promise<void>;
   discovery?: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
   control?: ControlPlaneStore;
+  capabilityStatuses?: () => Readonly<Record<string, AgentCapabilityStatus>> | Promise<Readonly<Record<string, AgentCapabilityStatus>>>;
 }) {
   const { app, store, humans, sessions, processes, generations, broadcast } = input;
   const discovery = input.discovery || new ModelDiscoveryService();
@@ -53,6 +55,7 @@ export function registerRosterRoutes(input: {
       participantAvailability: Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.selectionConfirmationRequired
         ? { available: false as const, reason: "selection_unpinnable" as const, diagnostic: entry.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run." }
         : selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery)])),
+      capabilityStatuses: input.capabilityStatuses ? await input.capabilityStatuses() : {},
     };
   };
 
@@ -129,7 +132,7 @@ export function registerRosterRoutes(input: {
         if (!previous || JSON.stringify(normalizeCommandPermissions(previous.commandPermissions)) !== JSON.stringify(normalizeCommandPermissions(entry.commandPermissions))) await control.recordAudit(authenticated.principal.id, "COMMAND_PERMISSIONS_CHANGED", entry.agentId, { allowAll: normalizeCommandPermissions(entry.commandPermissions).allowAll, allowedCommands: normalizeCommandPermissions(entry.commandPermissions).allowed.join(",") });
       }
     }
-    broadcast();
+    await broadcast();
     return response.json(await projection());
   });
 }

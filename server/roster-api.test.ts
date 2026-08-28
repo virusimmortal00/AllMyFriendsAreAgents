@@ -16,7 +16,7 @@ import { ControlError, type ControlPlaneStore } from "./control-plane.js";
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-async function fixture(options:{control?:boolean}={}) {
+async function fixture(options:{control?:boolean;capabilities?:boolean}={}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-roster-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
   const humans = new HumanPresenceRegistry();
@@ -30,7 +30,8 @@ async function fixture(options:{control?:boolean}={}) {
   ].map((identity) => { const separator = identity.indexOf("/"); const providerId = identity.slice(0, separator); const modelId = identity.slice(separator + 1); return { providerId, modelId, displayName: identity, provenance: "opencode-catalog" as const }; }).concat([{ providerId: "openrouter", modelId: "~openai/gpt-latest", displayName: "openrouter/~openai/gpt-latest", provenance: "opencode-catalog" as const }]) })) } as unknown as ModelDiscoveryService;
   const app = express(); app.use(express.json());
   const control=options.control?{require:(request:express.Request,capability:string)=>{if(request.header("x-test-capability")!==capability)throw new ControlError(403,`${capability} required`);return{principal:{id:"operator"}};},recordAudit:vi.fn(async()=>undefined)} as unknown as ControlPlaneStore:undefined;
-  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, control, broadcast() {} });
+  const capabilityStatuses=options.capabilities?()=>({"codex-sol":{agentId:"codex-sol",policyRevision:1 as const,capabilities:{conversation:{configured:true,runtimeAvailable:true,effective:true,reason:"available" as const,guidance:"safe"},github_read:{configured:false,runtimeAvailable:false,effective:false,reason:"not_configured" as const,guidance:"Configure server-only read access.",contract:"read-only" as const},project_write:{configured:false,runtimeAvailable:false,effective:false,reason:"governed_worker_only" as const,guidance:"Use a worker."}},effectiveCommands:[],commands:{}}}):undefined;
+  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, control, capabilityStatuses, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (url: string, init: RequestInit = {}, authenticated = true) => fetch(`${base}${url}`, { ...init, headers: { "Content-Type": "application/json", ...(authenticated ? { Cookie: cookie } : {}), ...(init.headers as Record<string, string> | undefined) } });
@@ -38,6 +39,12 @@ async function fixture(options:{control?:boolean}={}) {
 }
 
 describe("live roster API", () => {
+  it("serializes bounded capability diagnostics without credential material", async () => {
+    const api = await fixture({ capabilities: true });
+    try { const response = await api.call("/api/roster"); const body = await response.json(); expect(body.capabilityStatuses["codex-sol"].capabilities.github_read).toEqual({ configured: false, runtimeAvailable: false, effective: false, reason: "not_configured", guidance: "Configure server-only read access.", contract: "read-only" }); expect(JSON.stringify(body)).not.toMatch(/token|authorization|password/i); }
+    finally { await api.close(); }
+  });
+
   it("requires a joined human and rejects unsupported or stale replacements", async () => {
     const api = await fixture();
     try {

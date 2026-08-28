@@ -8,6 +8,7 @@ export const DEFAULT_GITHUB_READ_MAX_QUEUED = 32;
 export interface MonotonicClock { now(): number }
 export interface GitHubReadDiagnostic { readonly family: GitHubEndpointFamily; readonly cache: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: import("./github-read-adapter.js").GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
 export interface GitHubReadOutcome { readonly value: GitHubSanitizedValue; readonly diagnostic: GitHubReadDiagnostic }
+export interface GitHubReadCacheEvent extends GitHubReadDiagnostic { readonly outcome: "completed" | "failed" }
 interface Entry { value: GitHubSanitizedValue; expiresAt: number; touched: number }
 interface Pending { readonly promise: Promise<GitHubReadOutcome>; readonly refresh: boolean }
 interface QueueItem { readonly start: () => void; readonly enqueuedAt: number }
@@ -22,16 +23,17 @@ export class GitHubReadStore {
   private readonly queue:QueueItem[]=[];
   private readonly ttlMs:number; private readonly maxEntries:number; private readonly maxActive:number; private readonly maxQueued:number;
   private active=0; private touches=0; private sequence=0;
-  constructor(private readonly adapter:GitHubReadAdapter, options:{ttlMs?:number;maxEntries?:number;maxActive?:number;maxQueued?:number;clock?:MonotonicClock}={}){this.ttlMs=positive(options.ttlMs,DEFAULT_GITHUB_READ_TTL_MS,1,3_600_000);this.maxEntries=positive(options.maxEntries,DEFAULT_GITHUB_READ_MAX_ENTRIES,1,10_000);this.maxActive=positive(options.maxActive,DEFAULT_GITHUB_READ_MAX_ACTIVE,1,64);this.maxQueued=positive(options.maxQueued,DEFAULT_GITHUB_READ_MAX_QUEUED,0,1_000);this.clock=options.clock||performanceClock;}
+  constructor(private readonly adapter:GitHubReadAdapter, options:{ttlMs?:number;maxEntries?:number;maxActive?:number;maxQueued?:number;clock?:MonotonicClock;operationLog?:(event:GitHubReadCacheEvent)=>Promise<unknown>|unknown}={}){this.ttlMs=positive(options.ttlMs,DEFAULT_GITHUB_READ_TTL_MS,1,3_600_000);this.maxEntries=positive(options.maxEntries,DEFAULT_GITHUB_READ_MAX_ENTRIES,1,10_000);this.maxActive=positive(options.maxActive,DEFAULT_GITHUB_READ_MAX_ACTIVE,1,64);this.maxQueued=positive(options.maxQueued,DEFAULT_GITHUB_READ_MAX_QUEUED,0,1_000);this.clock=options.clock||performanceClock;this.operationLog=options.operationLog;}
   private readonly clock:MonotonicClock;
+  private readonly operationLog?: (event:GitHubReadCacheEvent)=>Promise<unknown>|unknown;
   key(query:GitHubReadQuery){return `${query.family}\0${this.adapter.normalizedQuery(query)}`;}
 
   async get(query:GitHubReadQuery):Promise<GitHubReadOutcome>{
     const key=this.key(query);const now=this.clock.now();const existing=this.entries.get(key);const live=this.pending.get(key);const cache=existing&&now<existing.expiresAt?"hit":existing?"refresh":"miss";
-    if(existing&&now<existing.expiresAt){existing.touched=++this.touches;return{value:structuredClone(existing.value),diagnostic:{family:query.family,cache:"hit",queueDelayMs:0,rateLimited:false,truncated:Boolean("truncated" in existing.value&&existing.value.truncated),failureKind:null,statusClass:"none",correlationId:correlation(query.family,++this.sequence)}};}
-    if(live){const outcome=await live.promise;return{value:structuredClone(outcome.value),diagnostic:{...outcome.diagnostic,cache:"coalesced",correlationId:correlation(query.family,++this.sequence)}};}
+    if(existing&&now<existing.expiresAt){existing.touched=++this.touches;const outcome={value:structuredClone(existing.value),diagnostic:{family:query.family,cache:"hit" as const,queueDelayMs:0,rateLimited:false,truncated:Boolean("truncated" in existing.value&&existing.value.truncated),failureKind:null,statusClass:"none" as const,correlationId:correlation(query.family,++this.sequence)}};this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}
+    if(live){const outcome=await live.promise;const coalesced={value:structuredClone(outcome.value),diagnostic:{...outcome.diagnostic,cache:"coalesced" as const,correlationId:correlation(query.family,++this.sequence)}};this.report({...coalesced.diagnostic,outcome:"completed"});return coalesced;}
     const pending=this.schedule(query,cache==="refresh");this.pending.set(key,{promise:pending,refresh:cache==="refresh"});
-    try{return await pending;}finally{this.pending.delete(key);}
+    try{const outcome=await pending;this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}catch(error){const failure=error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none");this.report({family:query.family,cache,queueDelayMs:0,rateLimited:failure.kind==="rate-limited",truncated:false,failureKind:failure.kind,statusClass:failure.statusClass,correlationId:correlation(query.family,++this.sequence),outcome:"failed"});throw error;}finally{this.pending.delete(key);}
   }
 
   private schedule(query:GitHubReadQuery,refresh:boolean):Promise<GitHubReadOutcome>{
@@ -44,4 +46,5 @@ export class GitHubReadStore {
   invalidate(query:GitHubReadQuery){this.entries.delete(this.key(query));}
   putSanitized(query:GitHubReadQuery,value:GitHubSanitizedValue){if(query.family!==value.family)throw new GitHubReadFailure("configuration","none");const key=this.key(query);this.entries.set(key,{value:structuredClone(value),expiresAt:this.clock.now()+this.ttlMs,touched:++this.touches});this.evict();}
   inspect(){return{entries:this.entries.size,active:this.active,queued:this.queue.length,pending:this.pending.size};}
+  private report(event:GitHubReadCacheEvent){try{void Promise.resolve(this.operationLog?.(event)).catch(()=>undefined);}catch{}}
 }

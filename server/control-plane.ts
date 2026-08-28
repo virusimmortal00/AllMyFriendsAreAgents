@@ -44,6 +44,7 @@ const ALL_CAPABILITIES = [...CONTROL_CAPABILITIES];
 const ADMIN_DEFAULTS: ControlCapability[] = ["PROVIDER_VIEW", "PROVIDER_CONFIGURE", "MODEL_SELECT", "ROSTER_MANAGE"];
 const SESSION_TTL_MS = 8 * 60 * 60_000;
 const AUDIT_LIMIT = 5_000;
+let reportControlRouteError: (error: unknown) => void = () => undefined;
 
 function validUsername(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,47}$/.test(value); }
 function validPassword(value: unknown): value is string { return typeof value === "string" && value.length >= 12 && value.length <= 256; }
@@ -171,6 +172,7 @@ function validRole(value: unknown): value is ControlRole { return value === "OWN
 function validCapabilities(value: unknown): ControlCapability[] | undefined { if (!Array.isArray(value) || value.some((candidate) => !CONTROL_CAPABILITIES.includes(candidate as ControlCapability))) return undefined; return [...new Set(value as ControlCapability[])]; }
 
 export class ControlError extends Error { constructor(readonly status: number, message: string) { super(message); this.name = "ControlError"; } }
-export function controlRoute(operation: (request: express.Request, response: express.Response) => Promise<unknown> | unknown) { return async (request: express.Request, response: express.Response) => { try { await operation(request, response); } catch (error) { if (error instanceof ControlError) response.status(error.status).json({ error: error.message }); else { console.error("Control-plane request failed", error); response.status(500).json({ error: "The control-plane request failed." }); } } }; }
+export function setControlRouteErrorReporter(reporter: (error: unknown) => void) { reportControlRouteError = reporter; }
+export function controlRoute(operation: (request: express.Request, response: express.Response) => Promise<unknown> | unknown) { return async (request: express.Request, response: express.Response) => { try { await operation(request, response); } catch (error) { if (error instanceof ControlError) response.status(error.status).json({ error: error.message }); else { reportControlRouteError(error); response.status(500).json({ error: "The control-plane request failed." }); } } }; }
 export function setControlSession(response: express.Response, token: string) { response.setHeader("Set-Cookie", `${CONTROL_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}`); }
 export function clearControlSession(response: express.Response) { response.setHeader("Set-Cookie", `${CONTROL_SESSION_COOKIE}=; Path=/api; HttpOnly; SameSite=Strict; Max-Age=0`); }

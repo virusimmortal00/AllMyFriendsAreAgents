@@ -9,6 +9,20 @@ function response(body: unknown, status = 200) { return Promise.resolve(new Resp
 const record = { recordId: "diag-1", agentId: "codex-sol", attemptId: "attempt-1", generationId: null, promptFingerprint: "sha256:bounded", reason: "stalled", metadata: { stage: 2 }, diagnosticText: "bounded diagnostic", createdAt: "2026-08-27T12:00:00.000Z" };
 
 describe("authorized diagnostic dashboard", () => {
+  it("renders the owner-only effective capability and audit inspector on explicit refresh", async () => {
+    const projection = { policyRevision: 1, agents: { "codex-sol": { agentId: "codex-sol", policyRevision: 1, capabilities: { conversation: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "safe" }, github_read: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "safe", contract: "read-only" }, project_write: { configured: false, runtimeAvailable: false, effective: false, reason: "governed_worker_only", guidance: "worker" } }, effectiveCommands: ["gh"], commands: { gh: { featureCompiled: true, requiredConfigPresent: true, serverCeiling: true, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, lease: { status: "active", issuedAt: "2026-08-27T11:00:00.000Z", expiresAt: "2026-08-27T12:00:00.000Z" }, lastManifestIssuance: { revision: 2, issuedAt: "2026-08-27T11:00:00.000Z" }, lastRejection: null, effective: true, exclusions: [] } } } }, audit: [{ id: "audit-1", timestamp: "2026-08-27T12:00:00.000Z", agentId: "codex-sol", capability: "github_read", outcome: "completed", reason: "available" }] };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(projection));
+    render(<Diagnostics agents={["codex-sol"]} />);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh capability diagnostics" }));
+    expect(await screen.findByText(/Policy revision 1/)).toBeTruthy();
+    expect(screen.getByText(/github_read: effective · read-only/)).toBeTruthy();
+    expect(screen.getByText(/compiled true · config true · ceiling true/)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Capability audit events" }).textContent).toContain("github_read · completed");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/control/capabilities?limit=100");
+    expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).has("Authorization")).toBe(false);
+  });
+
   it("does not request diagnostics until a user explicitly searches", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [record] }));
     render(<Diagnostics agents={["codex-sol"]} />);
