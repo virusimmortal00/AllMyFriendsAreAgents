@@ -1,6 +1,6 @@
 ---
 id: capabilities-and-structured-logging
-status: active
+status: done
 issue: 126
 ---
 
@@ -21,8 +21,16 @@ One server-owned policy resolves configured, runtime-available, and effective ca
 
 ## Current state
 
-Implementation is isolated on `codex/3-32-capabilities-logging`. No live-service mutation or PR publication is part of this work unit.
+Implemented and merged into `main` through pull request
+[#128](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/128).
+Capability resolution, safe projection, structured logging, audit behavior, and
+their denial and failure paths are covered by the repository test suite.
 
 ## Evidence
 
-Final command results and immutable commit are reported to the coordinating task after verification.
+- Initial implementation:
+  [`dff07d9`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/dff07d9)
+- Review follow-up and final verification:
+  [`3e38546`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/3e38546)
+- Merge commit:
+  [`1547cb4`](https://github.com/virusimmortal00/AllMyFriendsAreAgents/commit/1547cb4)

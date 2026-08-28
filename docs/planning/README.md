@@ -23,6 +23,7 @@ Their frontmatter links to the canonical issue and records a terminal `done` or
 4. Keep authorship and review distinct. Record immutable evidence such as commit SHAs, test commands, traces, or deployment IDs.
 5. Preserve completed files as history. Mark replaced work `superseded` and link its issue or replacement instead of deleting the file.
 6. Read the relevant file, not the entire directory, unless doing deliberate planning or audit work.
+7. Treat planning records as public. Translate private room or local-environment context into standalone, sanitized project context following `AGENTS.md`; keep raw transcripts, prompts, internal notes, and sensitive logs out of the repository.
 
 Allowed status values are `proposed`, `active`, `blocked`, `done`, and `superseded`.
 
