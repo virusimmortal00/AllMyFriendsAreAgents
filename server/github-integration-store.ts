@@ -7,7 +7,10 @@ import type {
   GitHubCredentialProviderKind,
   GitHubCredentialResolutionRequest,
   ResolvedGitHubCredential,
+  SecretVaultReader,
 } from "./github-credential-provider.js";
+
+export type { SecretVaultReader } from "./github-credential-provider.js";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -57,11 +60,6 @@ interface GitHubIntegrationState {
   readonly schemaVersion: 1;
   readonly connections: readonly ServerGitHubConnection[];
   readonly bindings: readonly ProjectGitHubBinding[];
-}
-
-export interface SecretVaultReader {
-  available(secretReference: string): boolean;
-  read(secretReference: string): Promise<{ readonly token: string; readonly revision: string } | undefined>;
 }
 
 export type GitHubIntegrationMutationResult<T> =
@@ -238,7 +236,7 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
     const connection = this.#integrations.connection(binding.connectionId);
     if (!connection || connection.state !== "ready") return undefined;
     const secret = await this.#vault.read(connection.secretReference);
-    if (!secret?.token) return undefined;
+    if (!secret?.token || secret.provider !== connection.authMode) return undefined;
     return {
       token: secret.token,
       provider: connection.authMode,

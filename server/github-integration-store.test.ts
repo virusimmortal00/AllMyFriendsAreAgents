@@ -38,7 +38,7 @@ function vault(): SecretVaultReader {
   return {
     available: (reference) => reference === "vault-secret-one",
     read: async (reference) => reference === "vault-secret-one"
-      ? { token: "ghu_private_device_token", revision: "vault-revision-one" }
+      ? { token: "ghu_private_device_token", revision: "vault-revision-one", provider: "github-device-user" as const }
       : undefined,
   };
 }
@@ -115,7 +115,7 @@ describe("server GitHub integration metadata", () => {
     const provider = new BoundGitHubCredentialProvider(f.store, {
       token: "ghu_serialization_secret",
       available: () => true,
-      read: async () => ({ token: "ghu_serialization_secret", revision: "one" }),
+      read: async () => ({ token: "ghu_serialization_secret", revision: "one", provider: "github-device-user" as const }),
     } as SecretVaultReader & { token: string });
     expect(JSON.stringify(provider)).not.toMatch(/ghu_serialization_secret|vault-secret-one/);
   });

@@ -26,6 +26,15 @@ export interface GitHubCredentialHealth {
   readonly reason: string;
 }
 
+export interface SecretVaultReader {
+  available(secretReference: string): boolean;
+  read(secretReference: string): Promise<{
+    readonly token: string;
+    readonly revision: string;
+    readonly provider: Extract<GitHubCredentialProviderKind, "github-device-user" | "github-app-installation">;
+  } | undefined>;
+}
+
 /** Runtime boundary shared by legacy PAT, device-user, and installation-token providers. */
 export interface GitHubCredentialProvider {
   available(projectId: string, credentialReference: string): boolean;
@@ -90,4 +99,3 @@ export class LegacyPatGitHubCredentialProvider implements GitHubCredentialProvid
     return `${projectId}\0${reference}`;
   }
 }
-
