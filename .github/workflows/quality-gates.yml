@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Install Linux confinement test dependency
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends --yes bubblewrap
       - run: pnpm install --frozen-lockfile
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
