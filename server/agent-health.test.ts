@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentHealthRegistry, classifyAgentFailure } from "./agent-health.js";
+import { ProviderInvocationError } from "./provider-failure.js";
 
 describe("agent failure classification", () => {
   it("holds authentication failures until an explicit successful attempt", () => {
@@ -19,6 +20,37 @@ describe("agent failure classification", () => {
       status: "cooldown",
       reason: "rate_limit",
       retryAt: new Date(121_000).toISOString(),
+      retrySource: "provider",
+    });
+  });
+
+  it("uses structured OpenCode retry semantics before message heuristics", () => {
+    expect(classifyAgentFailure(new ProviderInvocationError({
+      source: "opencode",
+      name: "APIError",
+      message: "opaque provider failure",
+      statusCode: 429,
+      retryable: true,
+      code: "account_rate_limit",
+      retryAfterMs: 120_000,
+    }), 1_000)).toMatchObject({
+      status: "cooldown",
+      reason: "rate_limit",
+      retryAt: new Date(121_000).toISOString(),
+      retrySource: "provider",
+    });
+
+    expect(classifyAgentFailure(new ProviderInvocationError({
+      source: "opencode",
+      name: "APIError",
+      message: "opaque provider failure",
+      statusCode: 503,
+      retryable: false,
+    }), 1_000)).toMatchObject({
+      status: "cooldown",
+      reason: "transient_provider",
+      retryAt: new Date(31_000).toISOString(),
+      retrySource: "policy",
     });
   });
 
@@ -32,6 +64,7 @@ describe("agent failure classification", () => {
       status: "cooldown",
       reason: "rate_limit",
       retryAt: expected.toISOString(),
+      retrySource: "provider",
     });
   });
 
@@ -40,7 +73,19 @@ describe("agent failure classification", () => {
       status: "cooldown",
       reason: "timeout",
       retryAt: new Date(31_000).toISOString(),
+      retrySource: "policy",
     });
+  });
+
+  it("keeps generic and empty-response failures participant-local", () => {
+    for (const message of ["Provider returned an empty response", ""]) {
+      expect(classifyAgentFailure(new Error(message), 1_000)).toMatchObject({
+        status: "cooldown",
+        reason: "provider_error",
+        retryAt: new Date(61_000).toISOString(),
+        retrySource: "policy",
+      });
+    }
   });
 });
 
@@ -61,6 +106,19 @@ describe("AgentHealthRegistry", () => {
     expect(registry.canAttempt("codex-sol", 30_999)).toBe(false);
     expect(registry.canAttempt("codex-sol", 31_000)).toBe(true);
     expect(registry.snapshot(31_000)).toEqual({});
+  });
+
+  it("reports the next expiry and prunes elapsed cooldowns deterministically", async () => {
+    const registry = AgentHealthRegistry.memory();
+    await registry.recordFailure("codex-sol", new Error("request timed out"), 1_000);
+    await registry.recordFailure("claude-sonnet", new Error("HTTP 429 retry-after 2 minutes"), 1_000);
+
+    expect(registry.nextRetryAt(1_000)).toBe(31_000);
+    expect(await registry.expire(30_999)).toBe(false);
+    expect(await registry.expire(31_000)).toBe(true);
+    expect(registry.snapshot(31_000)["codex-sol"]).toBeUndefined();
+    expect(registry.snapshot(31_000)["claude-sonnet"]).toBeDefined();
+    expect(registry.nextRetryAt(31_000)).toBe(121_000);
   });
 
   it("preserves cooldowns across server restarts", async () => {

@@ -2,6 +2,7 @@ import type { ChatStyle, ParticipantStyles } from "../shared/chat-style.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId, AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 import type { AgentHealth } from "./agent-health.js";
+import type { ProviderHealth } from "./provider-health.js";
 import type { ImplementationCapability, RoomContinuationWorkRequest, ServerIdentity } from "../shared/protocol.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { ActiveGenerations } from "./active-generations.js";
@@ -79,6 +80,7 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
+  providerHealth?: Record<string, ProviderHealth>;
   server?: ServerIdentity;
   preflightEvidence?: PreflightEvidence;
   githubReadStatus?: { state: "ready" | "unavailable"; reason: string };

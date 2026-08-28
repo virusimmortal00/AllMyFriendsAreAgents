@@ -116,4 +116,23 @@ describe("room state responses", () => {
     expect(own.messages.map(({ id }) => id)).toEqual(["public", "private"]);
     expect(JSON.stringify(own)).not.toContain("human-a");
   });
+
+  it("projects only sanitized provider action guidance", () => {
+    const snapshot: RoomState = {
+      messages: [], sessions: { "cursor-grok": { id: "private-provider-session", permission: "read-only" } },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: "/secret/project", participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+      status: "idle",
+    };
+    const publicState = publicRoomState(snapshot, undefined, undefined, { providerHealth: {
+      cursor: { status: "action_required", reason: "usage_exhausted", message: "Cursor usage is exhausted; increase the limit or change provider mode.", since: "2026-08-27T12:00:00.000Z" },
+    } });
+
+    expect(publicState.providerHealth?.cursor).toEqual({
+      status: "action_required",
+      reason: "usage_exhausted",
+      message: "Cursor usage is exhausted; increase the limit or change provider mode.",
+      since: "2026-08-27T12:00:00.000Z",
+    });
+    expect(JSON.stringify(publicState)).not.toMatch(/private-provider-session|\/secret\/project|credential|account/i);
+  });
 });

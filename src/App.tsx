@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
-import { HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -136,6 +136,9 @@ export default function App() {
   const [roomConfigurationOpen, setRoomConfigurationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
+  const [providerRecoveryPending, setProviderRecoveryPending] = useState(false);
+  const [providerRecoveryError, setProviderRecoveryError] = useState("");
   const [rosterOpen, setRosterOpen] = useState(false);
   const [rosterTrigger, setRosterTrigger] = useState<HTMLElement | null>(null);
   const [rosterSelectedAgentId, setRosterSelectedAgentId] = useState<ActiveAgentId | null>(null);
@@ -478,6 +481,18 @@ export default function App() {
     setRoom((current) => ({ ...current, settings: { ...current.settings, ...settings } }));
   }
 
+  async function allowProviderRecovery(providerId: string) {
+    setProviderRecoveryPending(true);
+    setProviderRecoveryError("");
+    try {
+      await requestProviderRecovery(providerId);
+    } catch (error) {
+      setProviderRecoveryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setProviderRecoveryPending(false);
+    }
+  }
+
   function changeMyStyle(style: ChatStyle) {
     if (!human) return;
     const previousHuman = human;
@@ -709,6 +724,7 @@ export default function App() {
   const chatActive = !improvementsView && !tasksView && !continuationsView && !investigationsView && !contributionsView && !diagnosticsView;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
+  const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
   const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
   const openRoster = useCallback((trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => {
@@ -833,7 +849,7 @@ export default function App() {
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -861,6 +877,20 @@ export default function App() {
         {roomConfigurationOpen ? <RoomConfigurationDialog returnFocusTo={roomConfigurationTrigger.current} onClose={() => setRoomConfigurationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
+        {configuredAgent ? (
+          <AgentSettingsDialog
+            agent={configuredAgent}
+            available={room.availability?.[configuredAgent] !== false}
+            health={room.agentHealth?.[configuredAgent]}
+            providerHealth={configuredProviderId ? room.providerHealth?.[configuredProviderId] : undefined}
+            providerId={configuredProviderId}
+            implementationCapability={room.implementationCapabilities?.[configuredAgent]}
+            recoveryPending={providerRecoveryPending}
+            recoveryError={providerRecoveryError}
+            onRequestProviderRecovery={allowProviderRecovery}
+            onClose={() => { setConfiguredAgent(null); setProviderRecoveryError(""); }}
+          />
+        ) : null}
         {rosterOpen ? <RosterManagerDialog
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}

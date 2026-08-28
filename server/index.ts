@@ -9,6 +9,7 @@ import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
+import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
@@ -28,7 +29,7 @@ import { listWorkshopImprovements, readWorkshopImprovement } from "./workshop-ap
 import type { AgentId, RoomSettings } from "./types.js";
 import { projectParticipantImprovementManifest, resolveImprovementReferences } from "./governed-improvement-api.js";
 import { roomMentionCandidates, validateMessageMentions } from "../shared/mentions.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentModelReference, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, roomAgentModelReference, roomAgentProviderScope, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent } from "../shared/roster.js";
 import { AssignmentLifecycleService } from "./assignment-lifecycle.js";
 import { registerAssignmentRoutes } from "./assignment-api.js";
 import { ActiveGenerationTracker } from "./active-generations.js";
@@ -165,9 +166,15 @@ const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
 let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
+let healthRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+const providerHealth = await ProviderHealthRegistry.open(storageConfiguration.dataDirectory);
+await Promise.all([agentHealth.expire(), providerHealth.expire()]);
 const modelDiscovery = new ModelDiscoveryService();
 const openRouterCatalog = new OpenRouterCatalogService();
-const contextSummarizer = new OpenCodeContextSummarizer();
+const contextSummarizer = new OpenCodeContextSummarizer(undefined, undefined, undefined, {
+  providers: providerHealth,
+  onChange: () => { scheduleHealthRefresh(); broadcast(); },
+});
 const roomHistoryToken = `${randomUUID()}${randomUUID()}`;
 const roomHistoryTool = {
   configDirectory: path.join(serverDirectory, "agent-tools"),
@@ -357,6 +364,7 @@ const investigationService = new InvestigationService(investigationStore, store,
   onTransition: () => broadcast(), onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
 });
 await investigationService.initialize();
+scheduleHealthRefresh();
 
 const jsonBodyParser = express.json({ limit: "64kb" });
 app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
@@ -400,7 +408,7 @@ function reserveCanonicalGeneration(agent: import("../shared/participants.js").A
 }
 
 function publicRoomSnapshot(viewerHumanId?: string) {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId), activeGenerations: activeGenerations.snapshot(), agentHealth: agentHealth.snapshot(), preflightEvidence, server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -454,6 +462,32 @@ function scheduleImplementationCapabilityRefresh(refreshAt: string | undefined) 
     void refreshImplementationCapabilitiesAndBroadcast();
   }, delay);
   implementationCapabilityRefreshTimer.unref();
+}
+
+function scheduleHealthRefresh() {
+  if (healthRefreshTimer) clearTimeout(healthRefreshTimer);
+  healthRefreshTimer = undefined;
+  const retryAt = [agentHealth.nextRetryAt(), providerHealth.nextRetryAt()]
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => left - right)[0];
+  if (retryAt === undefined) return;
+  const delay = Math.max(0, Math.min(retryAt - Date.now() + 1, 2_147_483_647));
+  healthRefreshTimer = setTimeout(() => {
+    healthRefreshTimer = undefined;
+    void expireHealthAndBroadcast();
+  }, delay);
+  healthRefreshTimer.unref();
+}
+
+async function expireHealthAndBroadcast() {
+  try {
+    const changed = await Promise.all([agentHealth.expire(), providerHealth.expire()]);
+    scheduleHealthRefresh();
+    if (changed.some(Boolean)) broadcast();
+  } catch (error) {
+    console.error("Health cooldown expiry failed", error);
+    scheduleHealthRefresh();
+  }
 }
 
 async function refreshImplementationCapabilitiesAndBroadcast() {
@@ -607,7 +641,9 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
-  const rosterEpoch = activeAgent ? roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), activeAgent) : undefined;
+  const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
+  const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
+  const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
   if (!agentStillEnabled()) {
     return { cancelled: true };
@@ -615,6 +651,11 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
   const sharedReservation = activeAgent ? reserveCanonicalGeneration(activeAgent) : undefined;
   if (activeAgent && !sharedReservation) return { failed: true };
+  const providerAttempt = providerId ? providerHealth.claimAttempt(providerId) : "regular";
+  if (providerAttempt === "blocked") {
+    sharedReservation?.release();
+    return { failed: true };
+  }
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
   const pacingStartedAt = pacingStartTime(before.messages, agent, Date.now());
@@ -650,12 +691,26 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     );
   } catch (error) {
     if (!agentStillEnabled()) {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
       await store.clearSession(agent);
       return { cancelled: true };
     }
-    if (isAgentGenerationCancelledError(error)) return { cancelled: true };
+    if (isAgentGenerationCancelledError(error)) {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+      return { cancelled: true };
+    }
     if (!activeAgent) throw error;
-    await agentHealth.recordFailure(activeAgent, error);
+    const providerFailure = providerId ? classifyProviderScopedFailure(error, providerId) : undefined;
+    if (providerId && providerFailure?.status === "action_required") {
+      await providerHealth.recordActionRequired(providerId, providerFailure.reason);
+    } else if (providerId && providerFailure?.status === "cooldown") {
+      await providerHealth.recordCooldown(providerId, providerFailure);
+      scheduleHealthRefresh();
+    } else {
+      if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+      await agentHealth.recordFailure(activeAgent, error);
+      scheduleHealthRefresh();
+    }
     void structuredLogger.log("error", "agent.command.failed", { agentId: agent, error });
     broadcast();
     return { failed: true };
@@ -663,11 +718,15 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     sharedReservation?.release();
     generationCancellation.dispose();
   }
+  const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
+    if (providerRecovered) broadcast();
     return { cancelled: true };
   }
-  if (activeAgent && await agentHealth.recordSuccess(activeAgent)) broadcast();
+  const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
+  if (providerRecovered || participantRecovered) scheduleHealthRefresh();
+  if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents());
@@ -709,7 +768,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     await investigationService.request({
       owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
       signal: "AGENT_DECISION", evidenceRefs,
-      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot() }),
+      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
     });
   }
 
@@ -878,11 +937,15 @@ function commandAgentAvailable(agent: import("../shared/participants.js").Active
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
   const active = activeGenerations.snapshot();
   return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
+    && providerHealth.canAttempt(entry.providerId || "opencode")
     && !Object.values(active).includes(agent) && activeGenerations.size() < agentConcurrency && !jobs.busy);
 }
 
 async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
   const before = roomSnapshot();
+  const providerId = roomAgentProviderScope(normalizeRoomAgentRoster(before.roster), agent);
+  const providerAttempt = providerHealth.claimAttempt(providerId);
+  if (providerAttempt === "blocked") throw new Error("Provider is unavailable for this request.");
   const revision = roomActivity.current();
   const activityCancellation = roomActivity.abortSignal(revision);
   const signal = AbortSignal.any([hooks.signal, activityCancellation.signal]);
@@ -895,12 +958,27 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), diagnosticsTool: diagnosticsToolContext(agent), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
-    if (await agentHealth.recordSuccess(agent)) broadcast();
+    const providerRecovered = await providerHealth.recordSuccess(providerId);
+    const participantRecovered = await agentHealth.recordSuccess(agent);
+    if (providerRecovered || participantRecovered) scheduleHealthRefresh();
+    if (providerRecovered || participantRecovered) broadcast();
     const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
     return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
   } catch (error) {
-    if (!isAgentGenerationCancelledError(error)) await agentHealth.recordFailure(agent,error);
+    if (isAgentGenerationCancelledError(error)) {
+      if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+    } else {
+      const providerFailure = classifyProviderScopedFailure(error, providerId);
+      if (providerFailure?.status === "action_required") await providerHealth.recordActionRequired(providerId, providerFailure.reason);
+      else if (providerFailure?.status === "cooldown") await providerHealth.recordCooldown(providerId, providerFailure);
+      else {
+        if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
+        await agentHealth.recordFailure(agent,error);
+      }
+      scheduleHealthRefresh();
+      broadcast();
+    }
     throw error;
   } finally { activityCancellation.dispose(); }
 }
@@ -973,7 +1051,7 @@ const consultationRunner = new ConsultationRunner(
   consultationRepository,
   {
     synthesize: async (input) => {
-      const agent = currentEnabledAgents()[0];
+      const agent = currentEnabledAgents().find(commandAgentAvailable);
       if (!agent) throw new Error("No enabled room participant is available to synthesize this consultation.");
       const reservation = reserveCanonicalGeneration(agent);
       if (!reservation) throw new Error("Shared generation capacity is unavailable for consultation synthesis.");
@@ -1063,8 +1141,19 @@ app.get("/api/state", async (request, response) => {
     }, viewerHumanId)),
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
+    providerHealth: providerHealth.snapshot(),
     server: serverIdentity,
   });
+});
+
+app.post("/api/provider-health/:providerId/recover", async (request, response) => {
+  if (!sessionHuman(request, humans, humanSessions)) return response.status(401).json({ error: "Join the room before retrying a provider." });
+  const providerId = request.params.providerId;
+  const configured = normalizeRoomAgentRoster(store.snapshot().roster).entries.some((entry) => entry.enabled && (entry.providerId || "opencode") === providerId);
+  if (!configured || !providerHealth.hasActionRequired(providerId)) return response.status(404).json({ error: "That provider does not have a current action-required state." });
+  if (!await providerHealth.requestRecovery(providerId)) return response.status(409).json({ error: "A bounded provider recovery attempt is already in progress." });
+  broadcast();
+  response.json({ providerId, health: providerHealth.snapshot()[providerId], recoveryAttemptAvailable: true });
 });
 
 app.get("/api/ready", (_request, response) => {
@@ -1480,6 +1569,7 @@ async function shutdown(signal: string) {
   await roomCommandDispatcher?.close();
   roomRuntimes?.close();
   roomLifecycle?.close();
+  if (healthRefreshTimer) clearTimeout(healthRefreshTimer);
   const closeServer = new Promise<void>((resolve) => httpServer.close((error) => {
     if (error) void structuredLogger.log("error", "server.shutdown.failed", { signal, error });
     if (error) process.exitCode = 1;

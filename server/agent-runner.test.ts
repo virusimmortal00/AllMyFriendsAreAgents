@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
+import { ProviderInvocationError, providerFailureCode, providerRetryAfterMs } from "./provider-failure.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
 
@@ -53,6 +54,38 @@ describe("OpenCode runtime contract", () => {
       finishReason: "stop",
       errors: [{ name: "APIError", message: "[redacted] failed", statusCode: 429, retryable: true }],
     });
+  });
+
+  it("reduces provider response bodies to allowlisted classification codes", () => {
+    expect(providerFailureCode(JSON.stringify({ type: "error", error: { code: "insufficient_quota", message: "private account detail" } }))).toBe("insufficient_quota");
+    expect(providerFailureCode(JSON.stringify({ type: "error", error: { type: "GoUsageLimitError" }, metadata: { workspace: "wrk_private" } }))).toBe("account_rate_limit");
+    expect(providerFailureCode(JSON.stringify({ error: { code: "unknown", credential: "secret" } }))).toBeUndefined();
+
+    const parsed = __testing.parseOpenCodeOutput(JSON.stringify({
+      type: "error",
+      sessionID: "ses_private",
+      error: { name: "APIError", data: { message: "Quota exceeded", isRetryable: false, responseBody: JSON.stringify({ type: "error", error: { code: "insufficient_quota", account: "private" } }) } },
+    }));
+    expect(parsed.errors).toEqual([{ source: "opencode", name: "APIError", message: "Quota exceeded", retryable: false, code: "insufficient_quota" }]);
+    const error = new ProviderInvocationError(parsed.errors[0]);
+    expect(error).not.toHaveProperty("process");
+    expect(error.message).toBe("Provider invocation failed.");
+    expect(Object.keys(error)).not.toContain("failure");
+  });
+
+  it("reduces Retry-After headers to bounded timing without retaining headers", () => {
+    const now = Date.parse("2026-08-27T12:00:00.000Z");
+    expect(providerRetryAfterMs({ "retry-after-ms": "2500", authorization: "private" }, now)).toBe(2_500);
+    expect(providerRetryAfterMs({ "Retry-After": "120" }, now)).toBe(120_000);
+    expect(providerRetryAfterMs({ "retry-after": "Thu, 27 Aug 2026 12:05:00 GMT" }, now)).toBe(300_000);
+    expect(providerRetryAfterMs({ "retry-after": "invalid", authorization: "private" }, now)).toBeUndefined();
+
+    const parsed = __testing.parseOpenCodeOutput(JSON.stringify({
+      type: "error",
+      error: { name: "APIError", data: { message: "Rate limited", statusCode: 429, isRetryable: true, responseHeaders: { "retry-after": "90", authorization: "private" } } },
+    }));
+    expect(parsed.errors).toEqual([{ source: "opencode", name: "APIError", message: "Rate limited", statusCode: 429, retryable: true, retryAfterMs: 90_000 }]);
+    expect(JSON.stringify(parsed.errors)).not.toMatch(/authorization|private|responseHeaders/i);
   });
 
   it("maps room permissions without replacing OpenCode provider configuration", () => {
