@@ -588,6 +588,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
         <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
+        <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
       </div>
