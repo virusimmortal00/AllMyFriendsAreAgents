@@ -199,6 +199,77 @@ export async function loadControlPrincipals() { return request("/api/control/pri
 export async function createControlPrincipal(username: string, password: string, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request("/api/control/principals", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ username, password, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 export async function updateControlGrants(principal: ControlPrincipal, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request(`/api/control/principals/${principal.id}/grants`, { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision: principal.revision, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }
 
+export interface GitHubIntegrationConnection {
+  readonly connectionId: string;
+  readonly revision: number;
+  readonly authMode: "github-device-user" | "github-app-installation";
+  readonly state: "ready" | "degraded" | "revoked";
+  readonly githubUser: { readonly id: number; readonly login: string };
+  readonly connectedAt: string;
+  readonly lastValidatedAt: string;
+  readonly updatedAt: string;
+}
+export interface GitHubIntegrationStatus {
+  readonly app: { readonly name: string; readonly slug: string; readonly clientId: string } | null;
+  readonly connections: readonly GitHubIntegrationConnection[];
+}
+export interface GitHubRepositoryCatalog {
+  readonly connectionId: string;
+  readonly connectionRevision: number;
+  readonly revision: number;
+  readonly observedAt: string;
+  readonly installations: readonly { readonly installationId: number; readonly account: { readonly id: number; readonly login: string; readonly type: "User" | "Organization" }; readonly repositorySelection: "all" | "selected" }[];
+  readonly repositories: readonly { readonly githubRepositoryId: number; readonly installationId: number; readonly owner: string; readonly name: string; readonly canonical: string; readonly visibility: "public" | "private" | "internal"; readonly defaultBranch: string }[];
+}
+export interface GitHubDeviceAuthorization {
+  readonly flowId: string;
+  readonly state: "authorizing" | "ready" | "denied" | "expired" | "failed";
+  readonly challenge?: { readonly userCode: string; readonly verificationUri: "https://github.com/login/device"; readonly expiresInSeconds: number; readonly intervalSeconds: number };
+  readonly expiresAt: string;
+  readonly nextPollAt?: string;
+  readonly connection?: GitHubIntegrationConnection;
+  readonly failureReason?: "github-unavailable" | "invalid-credential" | "storage-failed";
+}
+export interface CurrentProjectGitHubStatus {
+  readonly binding?: { readonly projectId: string; readonly revision: number; readonly state: "ready" | "revoked"; readonly connectionId: string; readonly installationId: number; readonly githubRepositoryId: number; readonly repository: string; readonly updatedAt: string };
+  readonly repository: { readonly configured: boolean; readonly revision?: number; readonly state?: "verified" | "disabled"; readonly repository?: string };
+  readonly defaults?: { readonly checkoutPath: string; readonly worktreeRoot: string; readonly policyRevision: number };
+}
+
+export async function loadGitHubIntegration(): Promise<GitHubIntegrationStatus> {
+  return request("/api/control/integrations/github", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+export async function startGitHubDeviceAuthorization(): Promise<GitHubDeviceAuthorization> {
+  return request("/api/control/integrations/github/device-authorizations", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" })
+    .then((response) => response.json()).then((result) => result.authorization);
+}
+export async function pollGitHubDeviceAuthorization(flowId: string): Promise<GitHubDeviceAuthorization> {
+  return request(`/api/control/integrations/github/device-authorizations/${encodeURIComponent(flowId)}/poll`, { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" })
+    .then((response) => response.json()).then((result) => result.authorization);
+}
+export async function loadGitHubRepositoryCatalog(connectionId: string): Promise<GitHubRepositoryCatalog> {
+  return request(`/api/control/integrations/github/repositories?connectionId=${encodeURIComponent(connectionId)}`, { method: "GET", cache: "no-store" })
+    .then((response) => response.json()).then((result) => result.catalog);
+}
+export async function refreshGitHubRepositoryCatalog(connectionId: string, expectedRevision: number): Promise<GitHubRepositoryCatalog> {
+  return request("/api/control/integrations/github/catalog-refreshes", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ connectionId, expectedRevision }) })
+    .then((response) => response.json()).then((result) => result.catalog);
+}
+export async function loadCurrentProjectGitHubStatus(): Promise<CurrentProjectGitHubStatus> {
+  return request("/api/control/projects/current/repository", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+export async function configureCurrentProjectGitHubRepository(input: {
+  readonly githubConnectionId: string;
+  readonly githubRepositoryId: number;
+  readonly expectedBindingRevision: number;
+  readonly expectedRepositoryRevision: number;
+  readonly checkoutPath: string;
+  readonly worktreeRoot: string;
+  readonly policyRevision: number;
+}): Promise<CurrentProjectGitHubStatus> {
+  return request("/api/control/projects/current/repository", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(input) }).then((response) => response.json());
+}
+
 export async function updateSettings(settings: { roomName?: string; topic?: string; conversationEnergy?: ConversationEnergy }) {
   return request("/api/settings", {
     method: "PATCH",

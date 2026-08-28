@@ -306,6 +306,22 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .room-configuration-check { display: flex; align-items: center; gap: 7px; font-weight: 700; }
 .room-configuration-model { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .room-configuration-card .model-picker { max-height: 460px; overflow: auto; }
+.github-integration-window { width: min(720px, calc(100vw - 28px)); max-height: min(820px, calc(100vh - 28px)); overflow: hidden; }
+.github-integration-body { display: grid; gap: 12px; max-height: calc(100vh - 96px); padding: 14px; overflow: auto; background: var(--chrome); }
+.github-integration-card, .github-control-login { display: grid; gap: 10px; padding: 12px; border: 2px groove white; background: #f4f4f4; }
+.github-integration-card h3, .github-control-login h3, .github-integration-card p, .github-control-login p { margin: 0; }
+.github-control-login label, .github-integration-card label { display: grid; gap: 4px; font-weight: 700; }
+.github-control-login input, .github-integration-card select { min-width: 0; padding: 6px; font: inherit; }
+.github-status-row, .github-card-heading, .github-device-challenge { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.github-status-row > span:first-child, .github-card-heading > span, .github-device-challenge { min-width: 0; }
+.github-status-row small, .github-card-heading small, .github-device-challenge small { display: block; margin-top: 3px; }
+.github-status-badge { padding: 3px 8px; border: 1px solid #1f6f3f; color: #174f30; background: #d9f5e4; font-weight: 700; }
+.github-device-challenge { flex-wrap: wrap; padding: 10px; border: 1px solid #8b6d15; background: #fff7d6; }
+.github-device-challenge strong, .github-project-defaults dd { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.github-device-challenge strong { letter-spacing: .08em; }
+.github-project-defaults { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; margin: 0; }
+.github-project-defaults dt { font-weight: 700; }
+.github-project-defaults dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: .9em; }
 .room-settings-window .room-settings-form { padding: 8px 16px 18px; }
 .help-window { width: min(520px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100vh - 28px); overflow: auto; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 2px outset white; box-shadow: 2px 2px 0 #000; }
 .help-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.45 Tahoma, Arial, sans-serif; }
@@ -875,6 +891,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   .model-offer > span:last-of-type, .model-offer > em { grid-column: 2; }
   .room-settings-window .controls-panel { max-height: calc(100dvh - 58px); }
   .room-configuration-window { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
+  .github-integration-window { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
+  .github-integration-body { max-height: calc(100dvh - 80px); }
+  .github-status-row, .github-card-heading, .github-device-challenge { align-items: stretch; flex-direction: column; }
+  .github-project-defaults { grid-template-columns: 1fr; }
   .human-avatar-body { grid-template-columns: 54px minmax(0, 1fr); padding: 14px; }
   .human-avatar-body > .human-avatar { width: 54px; height: 54px; border-radius: 12px; }
   .human-avatar-actions .classic-button { min-height: 42px; }
