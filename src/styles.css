@@ -246,11 +246,14 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .presence-human-name { align-self: center; }
 .presence-health { min-width: 0; max-width: 55%; flex: 0 1 auto; overflow: hidden; color: #754b00; font: 11px/14px Tahoma, Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .presence-health::before { content: " · "; }
+.presence-health--action-required { color: #8b0000; font-weight: 700; }
 .presence-status { width: 9px; height: 9px; border: 1px solid #005d0b; border-radius: 50%; background: #15c52b; box-shadow: inset 1px 1px 0 rgba(255,255,255,.75); }
 .presence-status--offline { border-color: #747474; background: #aaa; }
 .presence-status--cooldown { border-color: #8a5700; background: #ffb000; }
 .presence-status--unavailable { border-color: #700; background: #c72a2a; }
+.presence-status--action_required { border-color: #700; background: #c72a2a; }
 .presence-agent-actions { display: flex; width: 18px; align-items: center; justify-content: flex-end; }
+.presence-agent-settings-button { width: 18px; height: 18px; border-width: 1px; font-size: 12px; }
 .agent-activity-indicator { display: inline-flex; align-items: flex-end; justify-content: center; gap: 2px; width: 18px; height: 15px; }
 .agent-activity-indicator i { width: 3px; height: 13px; border-radius: 2px; background: #2368c4; transform: scaleY(.3); transform-origin: bottom; animation: agent-activity-pulse .9s ease-in-out infinite alternate; }
 .agent-activity-indicator i:nth-child(2) { animation-delay: .15s; }
@@ -319,6 +322,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .agent-connection-light--offline { border-color: #777; background: #aaa; }
 .agent-connection-light--cooldown { border-color: #8a5700; background: #ffb000; }
 .agent-connection-light--unavailable { border-color: #700; background: #c72a2a; }
+.agent-connection-light--action_required { border-color: #700; background: #c72a2a; }
+.provider-recovery { display: grid; justify-items: start; gap: 5px; margin: -8px 0 16px 17px; }
+.provider-recovery small { color: #555; font: 11px/1.35 Tahoma, Arial, sans-serif; }
+.provider-recovery .agent-settings-error { margin: 0; color: #8b0000; font: 700 11px/1.35 Tahoma, Arial, sans-serif; }
 .agent-settings-body fieldset { margin: 0; padding: 13px; border: 2px groove white; }
 .agent-settings-body legend { padding: 0 6px; color: var(--blue); font-size: 16px; font-weight: 800; }
 .agent-settings-body fieldset p { margin: 10px 0 0 30px; color: #555; font: 12px/1.4 Tahoma, Arial, sans-serif; }

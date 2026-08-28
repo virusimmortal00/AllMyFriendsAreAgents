@@ -120,6 +120,10 @@ export async function loadRoom(): Promise<RoomState> {
   return request(roomPath("state")).then((response) => response.json());
 }
 
+export async function requestProviderRecovery(providerId: string) {
+  return request(`/api/provider-health/${encodeURIComponent(providerId)}/recover`, { method: "POST", body: "{}" }).then((response) => response.json());
+}
+
 export interface RosterCatalogEntry {
   readonly agentId: ActiveAgentId;
   readonly provider: AgentProvider;

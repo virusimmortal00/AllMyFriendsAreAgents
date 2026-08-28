@@ -109,6 +109,7 @@ export function roomAgentIds(roster: RoomAgentRoster) { return roster.entries.ma
 export function enabledRoomAgentIds(roster: RoomAgentRoster) { return roster.entries.filter(({ enabled }) => enabled).map(({ agentId }) => agentId); }
 export function roomAgentEnabled(roster: RoomAgentRoster, agent: ActiveAgentId) { return roster.entries.some((entry) => entry.agentId === agent && entry.enabled); }
 export function roomAgentEntry(roster: RoomAgentRoster | undefined, agent: ActiveAgentId) { return normalizeRoomAgentRoster(roster).entries.find((entry) => entry.agentId === agent); }
+export function roomAgentProviderScope(roster: RoomAgentRoster | undefined, agent: ActiveAgentId) { return roomAgentEntry(roster, agent)?.providerId || "opencode"; }
 export function roomAgentModelReference(entry: RoomAgentRosterEntry): ModelReference { const normalized = normalizedEntry(entry); if (!normalized?.modelId) throw new Error("Invalid participant execution configuration."); return { ...(normalized.providerId ? { providerId: normalized.providerId } : {}), modelId: normalized.modelId, ...(normalized.variant ? { variant: normalized.variant } : {}) }; }
 export function participantConfigurationFingerprint(entry: RoomAgentRosterEntry) { return JSON.stringify(roomAgentModelReference(entry)); }
 export function participantConfigurationFingerprintMatches(stored: string | undefined, entry: RoomAgentRosterEntry) {

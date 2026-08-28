@@ -1,9 +1,11 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isActiveAgentId, type ActiveAgentId } from "../shared/participants.js";
+import { isProviderInvocationError } from "./provider-failure.js";
 
-export type AgentFailureReason = "rate_limit" | "authentication" | "timeout" | "configuration" | "provider_error";
+export type AgentFailureReason = "rate_limit" | "authentication" | "timeout" | "transient_provider" | "configuration" | "provider_error";
 export type AgentHealthStatus = "cooldown" | "unavailable";
+export type AgentRetrySource = "provider" | "policy";
 
 export interface AgentHealth {
   status: AgentHealthStatus;
@@ -11,6 +13,7 @@ export interface AgentHealth {
   message: string;
   since: string;
   retryAt?: string;
+  retrySource?: AgentRetrySource;
 }
 
 interface StoredAgentHealth extends AgentHealth {
@@ -24,7 +27,7 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function retryDelayMs(text: string, now: number) {
+function providerRetryDelayMs(text: string, now: number) {
   const absoluteReset = text.match(/resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
   if (absoluteReset) {
     const target = new Date(now);
@@ -38,11 +41,36 @@ function retryDelayMs(text: string, now: number) {
   if (retryAfter) return Number(retryAfter[1]) * (/minute/i.test(retryAfter[2]) ? MINUTE : SECOND);
   const tryAgain = text.match(/(?:try again|resets?)[^\d]*(\d+)\s*(seconds?|minutes?)/i);
   if (tryAgain) return Number(tryAgain[1]) * (/minute/i.test(tryAgain[2]) ? MINUTE : SECOND);
-  return 15 * MINUTE;
+  return undefined;
+}
+
+function cooldown(reason: AgentFailureReason, message: string, now: number, providerDelay: number | undefined, policyDelay: number) {
+  const delay = providerDelay ?? policyDelay;
+  return {
+    status: "cooldown" as const,
+    reason,
+    message,
+    retryAt: new Date(now + delay).toISOString(),
+    retryAtMs: now + delay,
+    retrySource: providerDelay === undefined ? "policy" as const : "provider" as const,
+  };
 }
 
 export function classifyAgentFailure(error: unknown, now = Date.now()): Omit<StoredAgentHealth, "since"> {
   const text = errorText(error);
+  const providerFailure = isProviderInvocationError(error) ? error.failure : undefined;
+  if (providerFailure?.name === "AuthError" || providerFailure?.name === "ProviderAuthError" || providerFailure?.statusCode === 401) {
+    return { status: "unavailable", reason: "authentication", message: "Provider login is required." };
+  }
+  if (providerFailure?.statusCode === 429 || providerFailure?.code === "account_rate_limit") {
+    return cooldown("rate_limit", "Provider rate limit reached.", now, providerFailure.retryAfterMs ?? providerRetryDelayMs(providerFailure.message, now), MINUTE);
+  }
+  if (providerFailure && (providerFailure.statusCode === 408 || /timeout/i.test(providerFailure.name))) {
+    return cooldown("timeout", "Provider request timed out.", now, providerFailure.retryAfterMs ?? providerRetryDelayMs(providerFailure.message, now), 30 * SECOND);
+  }
+  if (providerFailure?.retryable || (providerFailure?.statusCode !== undefined && providerFailure.statusCode >= 500)) {
+    return cooldown("transient_provider", "Provider is temporarily unavailable.", now, providerFailure.retryAfterMs ?? providerRetryDelayMs(providerFailure.message, now), 30 * SECOND);
+  }
   if (/not logged in|not authenticated|authentication expired|failed to authenticate|oauth session expired|unauthorized/i.test(text)) {
     return { status: "unavailable", reason: "authentication", message: "Provider login is required." };
   }
@@ -50,31 +78,12 @@ export function classifyAgentFailure(error: unknown, now = Date.now()): Omit<Sto
     return { status: "unavailable", reason: "configuration", message: "Provider configuration needs attention." };
   }
   if (/\b429\b|rate.?limit|quota|usage limit|too many requests|capacity/i.test(text)) {
-    const delay = retryDelayMs(text, now);
-    return {
-      status: "cooldown",
-      reason: "rate_limit",
-      message: "Provider usage limit reached.",
-      retryAt: new Date(now + delay).toISOString(),
-      retryAtMs: now + delay,
-    };
+    return cooldown("rate_limit", "Provider rate limit reached.", now, providerRetryDelayMs(text, now), MINUTE);
   }
   if (/timed out|timeout|temporarily unavailable|\b502\b|\b503\b|\b504\b|connection (?:reset|refused)/i.test(text)) {
-    return {
-      status: "cooldown",
-      reason: "timeout",
-      message: "Provider request failed temporarily.",
-      retryAt: new Date(now + 30 * SECOND).toISOString(),
-      retryAtMs: now + 30 * SECOND,
-    };
+    return cooldown("timeout", "Provider request timed out.", now, providerRetryDelayMs(text, now), 30 * SECOND);
   }
-  return {
-    status: "cooldown",
-    reason: "provider_error",
-    message: "Provider request failed.",
-    retryAt: new Date(now + 5 * MINUTE).toISOString(),
-    retryAtMs: now + 5 * MINUTE,
-  };
+  return cooldown("provider_error", "Provider request failed.", now, undefined, MINUTE);
 }
 
 export class AgentHealthRegistry {
@@ -116,11 +125,33 @@ export class AgentHealthRegistry {
     return !health || !this.isCurrent(health, now);
   }
 
+  nextRetryAt(now = Date.now()) {
+    const retryTimes = [...this.states.values()]
+      .filter((health) => health.status === "cooldown" && (health.retryAtMs || 0) > now)
+      .map((health) => health.retryAtMs!);
+    return retryTimes.length ? Math.min(...retryTimes) : undefined;
+  }
+
+  async expire(now = Date.now()) {
+    let changed = false;
+    for (const [agent, health] of this.states) {
+      if (health.status === "cooldown" && (health.retryAtMs || 0) <= now) {
+        this.states.delete(agent);
+        changed = true;
+      }
+    }
+    if (changed) await this.save(now);
+    return changed;
+  }
+
   async recordFailure(agent: ActiveAgentId, error: unknown, now = Date.now()) {
     const stored = this.states.get(agent);
     const previous = stored && this.isCurrent(stored, now) ? stored : undefined;
     const classified = classifyAgentFailure(error, now);
-    const health: StoredAgentHealth = { ...classified, since: previous?.since || new Date(now).toISOString() };
+    const health: StoredAgentHealth = {
+      ...classified,
+      since: previous?.status === classified.status && previous.reason === classified.reason ? previous.since : new Date(now).toISOString(),
+    };
     this.states.set(agent, health);
     await this.save(now);
     return this.publicHealth(health);
