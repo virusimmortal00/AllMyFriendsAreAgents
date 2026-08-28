@@ -41,6 +41,7 @@ export interface AgentContextRuntime {
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
+  readonly diagnosticsTool?: { readonly url: string; readonly token: string };
   readonly operationLog?: OperationLog;
 }
 
@@ -255,9 +256,11 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
   const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";
+  const diagnosticsGuide = context?.diagnosticsTool ? "\nROOM DIAGNOSTICS (server-owned, lease-bound)\n- room_diagnostics is read-only and returns only bounded evidence visible to your current participant, room, and project. Its results are private tool output; do not copy sensitive evidence into the room transcript.\n" : "";
   const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
 ${basePromptSection}
 ${commandGuide}
+${diagnosticsGuide}
 
 ROOM NAME
 ${state.settings.roomName}
@@ -568,7 +571,7 @@ function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>)
   };
 }
 
-function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false) {
+function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false, roomDiagnosticsAvailable = false) {
   return permission === "read-only" ? {
     ...environment,
     OPENCODE_PERMISSION: JSON.stringify({
@@ -576,6 +579,7 @@ function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-o
       webfetch: "allow", websearch: "allow", lsp: "allow",
       room_history: "allow",
       room_command: roomCommandAvailable ? "allow" : "deny",
+      room_diagnostics: roomDiagnosticsAvailable ? "allow" : "deny",
     }),
   } : environment;
 }
@@ -696,9 +700,13 @@ export async function runAgent(
           AMFAA_ROOM_COMMAND_TOKEN: context.commandTool.token,
           AMFAA_ROOM_COMMANDS: JSON.stringify(context.commandTool.allowedCommands),
         } : {}),
+        ...(context?.diagnosticsTool ? {
+          AMFAA_ROOM_DIAGNOSTICS_URL: context.diagnosticsTool.url,
+          AMFAA_ROOM_DIAGNOSTICS_TOKEN: context.diagnosticsTool.token,
+        } : {}),
       };
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length)),
+        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length), Boolean(context?.diagnosticsTool)),
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });

@@ -1,4 +1,4 @@
-export const AGENT_CAPABILITIES = ["conversation", "github_read", "project_write"] as const;
+export const AGENT_CAPABILITIES = ["conversation", "room_diagnostics", "github_read", "project_write"] as const;
 export type AgentCapabilityName = (typeof AGENT_CAPABILITIES)[number];
 
 export interface EffectiveCapability {

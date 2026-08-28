@@ -61,7 +61,7 @@ describe("OpenCode runtime contract", () => {
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny",
+        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
       }),
     });
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
@@ -214,6 +214,17 @@ describe("room prompt context", () => {
   it("injects only the current permission-filtered room command guide without credentials", async () => {
     const secret="opaque-command-capability-secret";const guide=roomCommandGuide(["poll","help"]);const prompt=await __testing.buildPrompt("codex-sol",state,"Join if useful.",false,"read-only",{commandTool:{url:"http://127.0.0.1/internal",token:secret,allowedCommands:["poll","help"],guide}});
     expect(prompt).toContain("ROOM COMMANDS (server-owned");expect(prompt).toContain("poll:");expect(prompt).toContain("help:");expect(prompt).not.toContain("task:");expect(prompt).not.toContain("pov:");expect(prompt).not.toContain(secret);expect(JSON.parse(__testing.opencodeEnvironment({},"read-only",true).OPENCODE_PERMISSION!)).toHaveProperty("room_command","allow");
+  });
+
+  it("advertises room diagnostics only with an effective lease and never places its token in the prompt", async () => {
+    const secret = "opaque-room-diagnostics-secret";
+    const unavailable = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only");
+    expect(unavailable).not.toContain("ROOM DIAGNOSTICS (server-owned");
+    expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only").OPENCODE_PERMISSION!)).toHaveProperty("room_diagnostics", "deny");
+    const prompt = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only", { diagnosticsTool: { url: "http://127.0.0.1/internal", token: secret } });
+    expect(prompt).toContain("ROOM DIAGNOSTICS (server-owned, lease-bound)");
+    expect(prompt).not.toContain(secret);
+    expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only", false, true).OPENCODE_PERMISSION!)).toHaveProperty("room_diagnostics", "allow");
   });
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {

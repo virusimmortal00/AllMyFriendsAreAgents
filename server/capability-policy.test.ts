@@ -6,8 +6,9 @@ const available = { available: true as const };
 
 describe("authoritative agent capability policy", () => {
   it("requires configuration, model/runtime availability, and preserves read-only GitHub", () => {
-    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" });
+    const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, diagnosticsConfigured: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody" });
     expect(result.capabilities.conversation.effective).toBe(true);
+    expect(result.capabilities.room_diagnostics).toMatchObject({ effective: true, contract: "read-only", reason: "available" });
     expect(result.capabilities.github_read).toMatchObject({ effective: true, contract: "read-only", reason: "available" });
     expect(result.capabilities.project_write).toMatchObject({ effective: false, reason: "governed_worker_only" });
     expect(result.commands.gh).toMatchObject({ featureCompiled: true, requiredConfigPresent: true, serverCeiling: true, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, effective: true, exclusions: [] });

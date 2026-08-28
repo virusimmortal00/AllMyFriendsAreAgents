@@ -62,6 +62,8 @@ import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
 import { COMMAND_CATALOG_REVISION, effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
+import { registerRoomDiagnosticsToolRoute, RoomDiagnosticsToolBroker, type RoomDiagnosticsCapabilityBinding } from "./room-diagnostics-tool.js";
+import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
@@ -132,6 +134,8 @@ await structuredLogger.log("info", "storage.migration.checked", { backend: stora
 const store = await openRoomRepository(projectRoot, storageConfiguration);
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
+const diagnosticsProjectId = path.basename(projectRepositoryPath);
+const diagnosticsQueryService = new LocalFileDiagnosticsQueryService(storageConfiguration.dataDirectory, diagnosticsProjectId);
 structuredLogger.setProject(path.basename(projectRepositoryPath), projectRepositoryPath);
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
@@ -168,7 +172,7 @@ const githubReadService=githubReadToken&&githubReadParts.length===2?new GitHubRe
 const capabilityAudit = await CapabilityAuditStore.open(storageConfiguration.dataDirectory, configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_CAPABILITY_AUDIT_LIMIT") || 500);
 let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object.fromEntries(normalizeRoomAgentRoster(store.snapshot().roster).entries.map((entry) => {
   const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
-  return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
+  return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
 }));
 async function refreshAgentCapabilities() {
   const roster = normalizeRoomAgentRoster(store.snapshot().roster);
@@ -176,7 +180,7 @@ async function refreshAgentCapabilities() {
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {
     const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
-    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
   capabilityStatuses = next;
@@ -396,6 +400,28 @@ function commandToolContext(agent: import("../shared/participants.js").ActiveAge
   };
 }
 
+function diagnosticsCapabilityBinding(participantId: string): RoomDiagnosticsCapabilityBinding | undefined {
+  if (!isActiveAgentId(participantId)) return undefined;
+  const state = roomSnapshot();
+  const roster = normalizeRoomAgentRoster(state.roster);
+  const entry = roomAgentEntry(roster, participantId);
+  const status = capabilityStatuses[participantId];
+  if (!entry || !status) return undefined;
+  const manifestRevision = Number.parseInt(createHash("sha256").update(JSON.stringify({ policyRevision: status.policyRevision, rosterRevision: roster.revision, participantConfigurationRevision: entry.configurationRevision, capability: status.capabilities.room_diagnostics })).digest("hex").slice(0, 12), 16);
+  return {
+    effective: capabilityEnabled(status, "room_diagnostics"), participantId,
+    providerSessionId: state.sessions[participantId]?.id || null,
+    roomId: CANONICAL_ROOM_ID, projectId: diagnosticsProjectId, manifestRevision,
+    caller: { principalId: participantId, selfId: participantId, roomIds: [CANONICAL_ROOM_ID], projectIds: [diagnosticsProjectId], operator: false },
+    allowedScopes: ["self", "room", "project"],
+  };
+}
+
+function diagnosticsToolContext(participantId: import("../shared/participants.js").ActiveAgentId) {
+  const token = roomDiagnosticsToolBroker.issue(participantId);
+  return token ? { url: `http://127.0.0.1:${port}/api/agent-tools/room-diagnostics`, token } : undefined;
+}
+
 function developerRoomView(limit = 50) {
   const state = publicRoomSnapshot();
   return {
@@ -530,6 +556,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
         commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
+        diagnosticsTool: activeAgent ? diagnosticsToolContext(activeAgent) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
@@ -777,7 +804,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
+      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), diagnosticsTool: diagnosticsToolContext(agent), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
     if (await agentHealth.recordSuccess(agent)) broadcast();
@@ -832,6 +859,8 @@ const commandRuntime = new CommandRuntime({
 });
 const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
+const roomDiagnosticsToolBroker = new RoomDiagnosticsToolBroker(diagnosticsQueryService, diagnosticsCapabilityBinding, Date.now, (event) => structuredLogger.log(event.outcome === "rejected" || event.outcome === "revoked" || event.outcome === "expired" ? "warn" : "info", "room-diagnostics-tool.lease", { ...event }));
+registerRoomDiagnosticsToolRoute(app, roomDiagnosticsToolBroker);
 await commandRuntime.initialize();
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
