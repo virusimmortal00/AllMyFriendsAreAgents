@@ -78,7 +78,8 @@ import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
 import { capabilityEnabled, resolveAgentCapabilities } from "./capability-policy.js";
 import { CapabilityAuditStore } from "./capability-audit.js";
-import { StructuredLogger, traceMiddleware } from "./structured-logger.js";
+import { traceMiddleware } from "./structured-logger.js";
+import { ApplicationLoggerFacade, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, type StreamRotationConfiguration } from "./authoritative-logging.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -108,7 +109,21 @@ if (!isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICAT
 }
 const app = express();
 const storageConfiguration = resolveStorageConfiguration(projectRoot);
-const structuredLogger = new StructuredLogger(path.join(storageConfiguration.dataDirectory, "server.jsonl"), configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BYTES") || 5 * 1024 * 1024, 3, undefined, isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true", { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" });
+const streamRotation = Object.fromEntries(Object.entries(DEFAULT_STREAM_ROTATION).map(([stream, defaults]) => {
+  const prefix = `ALL_MY_FRIENDS_ARE_AGENTS_LOG_${stream.replaceAll("-", "_").toUpperCase()}`;
+  return [stream, { maxBytes: configuredPositiveInteger(`${prefix}_MAX_BYTES`) || defaults.maxBytes, retention: configuredPositiveInteger(`${prefix}_RETENTION`) || defaults.retention }];
+})) as StreamRotationConfiguration;
+const loggingFoundation = await AuthoritativeLogging.open({
+  dataDirectory: storageConfiguration.dataDirectory,
+  projectId: path.basename(projectRoot),
+  projectPath: projectRoot,
+  roomId: CANONICAL_ROOM_ID,
+  rotation: streamRotation,
+  maxBufferedBytes: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BUFFERED_BYTES"),
+  includeStacks: isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true",
+  identity: { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" },
+});
+const structuredLogger = new ApplicationLoggerFacade(loggingFoundation);
 setControlRouteErrorReporter((error) => { void structuredLogger.log("error", "control-plane.request.failed", { error, outcome: "failed", reason: "internal-error" }); });
 app.use(traceMiddleware(structuredLogger));
 await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
@@ -117,8 +132,9 @@ await structuredLogger.log("info", "storage.migration.checked", { backend: stora
 const store = await openRoomRepository(projectRoot, storageConfiguration);
 structuredLogger.setDeployment(store.snapshot().deployment?.commitSha || null, store.snapshot().deployment?.epoch || null);
 const projectRepositoryPath = store.snapshot().settings.projectPath;
+structuredLogger.setProject(path.basename(projectRepositoryPath), projectRepositoryPath);
 const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(projectRepositoryPath, storageConfiguration.assignmentWorktreesDirectory);
-const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }));
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();

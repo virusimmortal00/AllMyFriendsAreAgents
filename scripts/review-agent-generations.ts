@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 interface JournalEntry {
@@ -12,14 +12,15 @@ interface JournalEntry {
 const verbose = process.argv.includes("--verbose");
 const limitArgument = process.argv.find((argument) => argument.startsWith("--limit="));
 const limit = Math.max(1, Number(limitArgument?.split("=")[1]) || 20);
-const journalPath = path.join(process.cwd(), ".allmyfriendsareagents", "generations.jsonl");
+const journalDirectory = path.join(process.cwd(), ".allmyfriendsareagents", "logs", "authoritative-v1");
 
 let contents: string;
 try {
-  contents = await readFile(journalPath, "utf8");
+  const files = (await readdir(journalDirectory)).filter((name) => name.startsWith("generation-provider-exchanges.") && name.endsWith(".jsonl")).sort();
+  contents = (await Promise.all(files.map((name) => readFile(path.join(journalDirectory, name), "utf8")))).join("");
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-    console.log(`No agent generation journal exists yet at ${journalPath}`);
+    console.log(`No agent generation exchange stream exists yet at ${journalDirectory}`);
     process.exit(0);
   }
   throw error;
@@ -40,7 +41,7 @@ const generations = [...grouped.values()]
   .sort((left, right) => Date.parse(String(right[0]?.timestamp)) - Date.parse(String(left[0]?.timestamp)))
   .slice(0, limit);
 
-console.log(`Agent generation journal: ${journalPath}`);
+console.log(`Agent generation exchange stream: ${journalDirectory}`);
 console.log(`Showing ${generations.length} of ${grouped.size} generations (newest first).`);
 
 for (const generation of generations) {

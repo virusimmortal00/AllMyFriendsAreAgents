@@ -29,7 +29,7 @@ describe("structured logging", () => {
     expect(safeError(new Error("token=abcdef1234567890")).message).not.toContain("abcdef1234567890");
     expect(safeError(new Error("local failure"))).not.toHaveProperty("stack");
     expect(safeError(new Error("local failure"), true)).toHaveProperty("stack");
-    expect(sanitizeLogValue({ arbitrary: "must-not-pass", method: "GET", prompt: "private prompt", rawResponse: "private response", sessionId: "provider-session", providerErrors: [{ message: "provider detail" }] })).toEqual({ method: "GET" });
+    expect(sanitizeLogValue({ arbitrary: "diagnostic", method: "GET", prompt: "private prompt", rawResponse: "private response", authorization: "Bearer private-auth", providerErrors: [{ message: "provider detail" }] })).toEqual({ arbitrary: "diagnostic", method: "GET", prompt: "private prompt", rawResponse: "private response", authorization: "[REDACTED]", providerErrors: [{ message: "provider detail" }] });
     expect(await readdir(root)).toContain("server.jsonl.1");
     expect(await readFile(file, "utf8")).toContain('"event":"test.rotate"');
   });
