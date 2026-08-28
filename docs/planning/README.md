@@ -6,8 +6,10 @@ This directory is the repo-native working set for concrete bugs and features. Ea
 
 ## Current work
 
-No planning document currently represents active work. Use the repository's open
-GitHub Issues for the current backlog.
+- [#131 — Wave 1 application-native observability](131-application-native-observability.md)
+- [#132 — Wave 2 optional observability integrations](132-optional-observability-integrations.md)
+
+GitHub Issues remain canonical; these linked records preserve repository context and lifecycle state.
 
 ## Historical records
 
