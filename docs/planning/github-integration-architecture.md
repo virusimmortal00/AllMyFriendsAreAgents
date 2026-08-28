@@ -278,9 +278,18 @@ variables or OAuth details.
   provide most of the required containment path.
 - The `/gh` adapter is read-only and resolves repository authority from the
   room's project rather than caller input.
-- Credential registration is memory-only, initialized from environment
-  variables, keyed by project, and explicitly rejects one credential reference
-  being assigned to another project.
+- `/gh` now resolves credentials through an asynchronous provider boundary; the
+  existing environment-backed PAT behavior is isolated in a compatibility
+  provider.
+- A revisioned `GitHubIntegrationStore` persists non-secret server connection
+  metadata and unique per-project bindings. A binding-aware provider proves that
+  multiple projects can resolve through one server connection without copying a
+  token. This store is not yet opened or selected by server startup.
+- A fixed-origin GitHub App device-flow transport implements start, polling,
+  refresh, bounded response parsing, and redacted failures. It is not yet joined
+  to a vault, control-plane workflow, or repository catalog.
+- Production credential registration is still memory-only and initialized from
+  environment variables through the legacy provider.
 - Repository configuration currently accepts a caller-supplied opaque credential
   reference through a developer-oriented API rather than a server-derived UI
   workflow.
@@ -291,9 +300,9 @@ variables or OAuth details.
 
 ## Next action
 
-Review this design together with
-[the security and lifecycle note](github-integration-security-and-lifecycle.md),
-then promote accepted slices from
+Select and implement the durable encrypted vault, then join device authorization,
+server connection metadata, and the control-plane workflow without exposing a
+credential to the browser. Promote accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence
@@ -306,6 +315,12 @@ then promote accepted slices from
 - `server/control-plane.ts`
 - `server/room-bound-github-read.ts`
 - `server/room-bound-github-read.test.ts`
+- `server/github-credential-provider.ts`
+- `server/github-credential-provider.test.ts`
+- `server/github-integration-store.ts`
+- `server/github-integration-store.test.ts`
+- `server/github-device-flow.ts`
+- `server/github-device-flow.test.ts`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
 - `docs/operations/capabilities-and-logging.md`

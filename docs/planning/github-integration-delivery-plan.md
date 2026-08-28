@@ -192,15 +192,19 @@ attachments remain stable.
 
 ## Current state
 
-Architecture review has identified existing seams and gaps, but none of the waves
-above is yet an accepted issue or implementation commitment.
+Foundation work now includes the credential-provider runtime seam, revisioned
+non-secret server connection/project binding storage, a vault-reader boundary,
+and the fixed-origin device-flow/refresh transport. The legacy environment PAT
+path remains active. Durable encrypted vault storage, canonical-principal binding,
+control-plane orchestration, repository catalog, UI, and runtime cutover remain
+unimplemented; none of these temporary notes is a substitute for accepted Issues.
 
 ## Next action
 
-Review the three temporary notes, resolve the first-release open questions, and
-create only the accepted issue slices. The likely first technical spike is the
-credential-vault backend because it determines restart, packaging, container, and
-backup behavior for every later wave.
+Resolve and implement the credential-vault backend before device authorization is
+wired to an API. It determines restart, packaging, container, and backup behavior
+and prevents an otherwise functional OAuth flow from falling back to plaintext or
+environment-backed persistence.
 
 ## Evidence
 

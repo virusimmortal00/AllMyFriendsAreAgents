@@ -262,13 +262,20 @@ A later mutation design must decide:
 
 - The current adapter is allowlisted and read-only, and project/revision/policy
   context participates in authorization and caching.
-- Credentials are supplied through process environment and held in memory; there
-  is no durable credential-vault implementation or token refresh lifecycle.
+- The runtime now has a credential-provider boundary and a binding-aware provider
+  that keeps its vault object out of ordinary serialization.
+- Non-secret connection and binding metadata is revisioned, persisted with
+  restrictive permissions, and rejected on corrupt restart state.
+- Device-flow and refresh HTTP exchanges use fixed GitHub origins, bounded
+  responses, no client secret, and redacted error types.
+- Production credentials are still supplied through process environment and held
+  in memory; there is no durable credential-vault implementation or orchestrated
+  token refresh lifecycle.
 - Room human sessions and durable control-plane principals are separate identity
   mechanisms.
-- Current tests mock GitHub fetches and use literal fake credentials; no live
-  device authorization, refresh, revocation, restart, or installation-selection
-  evidence exists.
+- Tests cover mocked device authorization, refresh, revocation metadata, restart,
+  repository substitution, and secret serialization. No live GitHub flow or
+  installation-selection evidence exists.
 
 ## Next action
 
@@ -281,6 +288,9 @@ issues with security acceptance checks copied into each slice.
 - `server/project-repository-connection.ts`
 - `server/room-bound-github-read.ts`
 - `server/room-bound-github-read.test.ts`
+- `server/github-credential-provider.ts`
+- `server/github-integration-store.ts`
+- `server/github-device-flow.ts`
 - `server/human-session.ts`
 - `server/control-plane.ts`
 - `docs/operations/capabilities-and-logging.md`
