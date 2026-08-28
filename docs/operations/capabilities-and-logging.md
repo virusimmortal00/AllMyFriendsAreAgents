@@ -35,7 +35,12 @@ Create a fine-grained token bound to exactly the configured repository with read
 cd /path/to/AllMyFriendsAreAgents
 chmod 600 .env
 for name in ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_TOKEN ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_REPOSITORY ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_DEFAULT_BRANCH; do
-  grep -q "^${name}=.\+" .env && print "${name}=present" || print "${name}=missing"
+  raw=$(grep -E "^${name}=" .env | tail -n 1)
+  value=${raw#*=}
+  value=${value//[[:space:]]/}
+  value=${value#\"}; value=${value%\"}
+  value=${value#\'}; value=${value%\'}
+  [[ -n ${value} ]] && print "${name}=present" || print "${name}=missing"
 done
 ```
 
