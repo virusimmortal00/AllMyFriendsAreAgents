@@ -287,7 +287,19 @@ variables or OAuth details.
   token. This store is not yet opened or selected by server startup.
 - A fixed-origin GitHub App device-flow transport implements start, polling,
   refresh, bounded response parsing, and redacted failures. It is not yet joined
-  to a vault, control-plane workflow, or repository catalog.
+  to a repository catalog.
+- An AES-256-GCM credential vault now persists device-user and installation-token
+  records with compare-and-set rotation, encrypted tombstones, authenticated
+  restart, restrictive permissions, and wrapping-key material required to live in
+  a separate directory from encrypted data.
+- A server-only authorization coordinator binds flows to durable control-plane
+  principal IDs, enforces polling intervals, validates the GitHub user at a fixed
+  API origin, commits the vault before public connection metadata, and compensates
+  failed metadata commits by tombstoning the new secret.
+- Dependency-injected control-plane routes now expose redacted connection and
+  authorization projections behind dedicated integration view/configure
+  capabilities and CSRF-protected mutations. Production startup does not register
+  them until a real reusable GitHub App client ID can be bundled.
 - Production credential registration is still memory-only and initialized from
   environment variables through the legacy provider.
 - Repository configuration currently accepts a caller-supplied opaque credential
@@ -300,9 +312,10 @@ variables or OAuth details.
 
 ## Next action
 
-Select and implement the durable encrypted vault, then join device authorization,
-server connection metadata, and the control-plane workflow without exposing a
-credential to the browser. Promote accepted slices from
+Register the reusable public GitHub App, bundle its public client ID, then register
+the tested control-plane routes at production startup. The next backend slice is
+installation/repository catalog discovery so project bindings cannot select a
+repository outside the app installation. Promote accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence
@@ -321,6 +334,12 @@ credential to the browser. Promote accepted slices from
 - `server/github-integration-store.test.ts`
 - `server/github-device-flow.ts`
 - `server/github-device-flow.test.ts`
+- `server/github-credential-vault.ts`
+- `server/github-credential-vault.test.ts`
+- `server/github-device-authorization.ts`
+- `server/github-device-authorization.test.ts`
+- `server/github-integration-api.ts`
+- `server/github-integration-api.test.ts`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
 - `docs/operations/capabilities-and-logging.md`

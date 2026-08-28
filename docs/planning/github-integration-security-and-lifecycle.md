@@ -268,9 +268,19 @@ A later mutation design must decide:
   restrictive permissions, and rejected on corrupt restart state.
 - Device-flow and refresh HTTP exchanges use fixed GitHub origins, bounded
   responses, no client secret, and redacted error types.
-- Production credentials are still supplied through process environment and held
-  in memory; there is no durable credential-vault implementation or orchestrated
-  token refresh lifecycle.
+- The encrypted credential vault uses authenticated encryption, atomic revisioned
+  writes, separate wrapping-key and ciphertext directories, restrictive
+  permissions, tamper detection, and persistent deletion tombstones that prevent
+  stale revision-zero resurrection.
+- Device authorization is bound to a durable control-plane principal, never
+  returns a token, validates GitHub identity before publication, and tombstones
+  vault state if connection publication fails.
+- Dedicated integration capabilities and CSRF protection govern the tested
+  control-plane routes; terminal authorization audits contain only redacted state.
+- Production still uses the environment-backed compatibility provider because
+  the reusable public App/client ID is not registered and the new routes are not
+  wired at startup. Refresh transport exists, but scheduled refresh orchestration
+  is not implemented.
 - Room human sessions and durable control-plane principals are separate identity
   mechanisms.
 - Tests cover mocked device authorization, refresh, revocation metadata, restart,
@@ -291,6 +301,9 @@ issues with security acceptance checks copied into each slice.
 - `server/github-credential-provider.ts`
 - `server/github-integration-store.ts`
 - `server/github-device-flow.ts`
+- `server/github-credential-vault.ts`
+- `server/github-device-authorization.ts`
+- `server/github-integration-api.ts`
 - `server/human-session.ts`
 - `server/control-plane.ts`
 - `docs/operations/capabilities-and-logging.md`

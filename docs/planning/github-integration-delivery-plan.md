@@ -194,17 +194,20 @@ attachments remain stable.
 
 Foundation work now includes the credential-provider runtime seam, revisioned
 non-secret server connection/project binding storage, a vault-reader boundary,
-and the fixed-origin device-flow/refresh transport. The legacy environment PAT
-path remains active. Durable encrypted vault storage, canonical-principal binding,
-control-plane orchestration, repository catalog, UI, and runtime cutover remain
-unimplemented; none of these temporary notes is a substitute for accepted Issues.
+the fixed-origin device-flow/refresh transport, durable encrypted credential
+storage, principal-bound authorization orchestration, dedicated integration
+capabilities, and dependency-injected control-plane routes. The legacy environment
+PAT path remains active. Public App registration/client-ID bundling, production
+route registration, scheduled refresh, repository catalog, UI, canonical
+room-principal binding, and runtime cutover remain unimplemented; none of these
+temporary notes is a substitute for accepted Issues.
 
 ## Next action
 
-Resolve and implement the credential-vault backend before device authorization is
-wired to an API. It determines restart, packaging, container, and backup behavior
-and prevents an otherwise functional OAuth flow from falling back to plaintext or
-environment-backed persistence.
+Register the reusable public GitHub App and bundle its public client ID, then wire
+the tested integration components at startup. In parallel, implement installation
+and repository catalog discovery before enabling project binding through the new
+connection path.
 
 ## Evidence
 
