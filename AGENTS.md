@@ -104,20 +104,6 @@ protocol, or retry behavior, test denial and recovery paths as well as success.
 If a required check cannot run, report the exact reason and what remains
 unverified; do not describe an unrun check as passing.
 
-## Continue or ask
-
-Proceed without interruption for reversible, repository-local work that is
-clearly covered by the requested outcome. Stop and request direction before:
-
-- deleting or irreversibly migrating user data;
-- weakening an authentication, authorization, confinement, privacy, or network
-  boundary;
-- adding a new external service, credential requirement, telemetry destination,
-  or paid/live-provider invocation;
-- changing a public protocol or durable schema when compatibility expectations
-  are not established; or
-- making a product decision that materially changes the requested scope.
-
 ## Public repository boundary
 
 Treat every committed file, GitHub issue, pull request, review, comment, commit
