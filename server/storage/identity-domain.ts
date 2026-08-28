@@ -145,10 +145,14 @@ export function authorizeSourceWorkForCurrentBoot(repository: unknown, kind: Sou
 }
 
 export async function repositoryAuthorityBlocker(repository: unknown, roomId: string) {
-  const candidate = repository as Partial<Pick<IdentityRepository, "getStorageScope" | "getRepositoryReference">>;
+  const candidate = repository as Partial<Pick<IdentityRepository, "getStorageScope" | "getRepositoryReference">> & {
+    getVerifiedRepositoryConnection?: (projectId: string) => { readonly projectId: string; readonly revision: number; readonly state: string } | undefined;
+  };
   if (typeof candidate.getStorageScope !== "function") return null;
   const scope = await candidate.getStorageScope(roomId);
   if (!scope?.projectId) return "room-has-no-project-authority";
+  const verified = candidate.getVerifiedRepositoryConnection?.(scope.projectId);
+  if (verified?.projectId === scope.projectId && verified.state === "verified" && verified.revision > 0) return null;
   if (!scope.repositoryReferenceId || !scope.repositoryReferenceRevision) return "project-has-no-repository-authority";
   if (typeof candidate.getRepositoryReference !== "function") return "repository-reference-unavailable";
   const reference = await candidate.getRepositoryReference(scope.repositoryReferenceId);

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createImprovement, type DomainActor } from "../shared/improvement-domain.js";
 import { __testing as runnerTesting } from "./agent-runner.js";
 import { ASSIGNMENT_LIFECYCLE_METADATA, type AssignmentRecord } from "./assignment-record.js";
@@ -35,7 +35,9 @@ async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 }
 
-async function repositoryFixture(kind: "json" | "sqlite" = "json", implementationConfinementAvailable = true, operationLog?: ConstructorParameters<typeof AssignmentLifecycleService>[9]) {
+async function repositoryFixture(kind: "json" | "sqlite" = "json", implementationConfinementAvailable = true,
+  operationLog?: ConstructorParameters<typeof AssignmentLifecycleService>[9], repositoryAuthority?: () => Promise<string | null>,
+  processes?: { terminateScope(scope: string): Promise<void> }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-assignment-"));
   directories.push(root);
   await git(root, "init", "-b", "main");
@@ -59,7 +61,7 @@ async function repositoryFixture(kind: "json" | "sqlite" = "json", implementatio
   });
   const service = new AssignmentLifecycleService(
     repository, repository, registry, root, path.join(root, ".worktrees"),
-    () => "2099-01-01T00:02:00.000Z", true, undefined, implementationConfinementAvailable, operationLog,
+    () => "2099-01-01T00:02:00.000Z", true, processes, implementationConfinementAvailable, operationLog, repositoryAuthority,
   );
   return { root, state, repository, service, bridge, base };
 }
@@ -295,6 +297,18 @@ describe("trusted single-writer assignment lifecycle", () => {
     expect(await stat(path.join(created.value.workspacePath, "keep.txt"))).toBeTruthy();
     expect((await service.dispose(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 2, idempotencyKey: "dispose-dirty", confirmDisposable: true })).kind).toBe("rejected");
     expect((await service.create(`Bearer ${token}`, { assignmentId: "assignment-next", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 })).kind).toBe("ok");
+  });
+
+  it("persists cancellation and terminates its process scope after repository authority drifts", async () => {
+    let authorityBlocker: string | null = null; const terminateScope = vi.fn(async () => undefined);
+    const { service, repository } = await repositoryFixture("json", true, undefined, async () => authorityBlocker, { terminateScope });
+    const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-drift-cancel", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
+    if (created.kind !== "ok") throw new Error(created.kind);
+    authorityBlocker = "immutable-remote-drift";
+    const cancelled = await service.cancel(`Bearer ${token}`, { assignmentId: created.value.assignmentId, expectedRevision: 1, idempotencyKey: "cancel-drifted" });
+    expect(cancelled).toMatchObject({ kind: "ok", value: { lifecycleStatus: "CANCELLED", lifecycleRevision: 2 } });
+    expect(await repository.getAssignment(created.value.assignmentId)).toMatchObject({ lifecycleStatus: "CANCELLED" });
+    expect(terminateScope).toHaveBeenCalledWith(created.value.assignmentId);
   });
 
   it("disposes only an explicitly confirmed clean cancelled worktree and is idempotent", async () => {

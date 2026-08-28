@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openJsonServerIdentity } from "./json-server-identity.js";
-import { requireReconciledSourceWork, sourceWorkAuthorityReason, sourceWorkReconciliationBlocker, type SourceWorkBinding } from "./identity-domain.js";
+import { repositoryAuthorityBlocker, requireReconciledSourceWork, sourceWorkAuthorityReason, sourceWorkReconciliationBlocker, type SourceWorkBinding } from "./identity-domain.js";
 import { RoomStore } from "../room-store.js";
 
 const roots: string[] = [];
@@ -43,5 +43,17 @@ describe("durable identity domain", () => {
     expect(await sourceWorkReconciliationBlocker(first, "assignment", "new-assignment")).toBeNull();
     const restarted = await RoomStore.open(root, path.join(root, "state"));
     expect(await sourceWorkReconciliationBlocker(restarted, "assignment", "new-assignment")).toBe("source-work-binding-missing");
+  });
+
+  it("accepts only the current project's verified server-held repository connection", async () => {
+    const base = { getStorageScope: async () => ({ schemaVersion: 1 as const, serverId: "server", roomId: "room", projectId: "project",
+      repositoryReferenceId: "legacy", repositoryReferenceRevision: 1 }), getRepositoryReference: async () => ({ schemaVersion: 1 as const,
+      repositoryReferenceId: "legacy", projectId: "project", revision: 1, state: "unverified-legacy-placeholder" as const,
+      localPath: "/private/repository", sanitizedRemoteIdentity: null, createdAt: "now", updatedAt: "now" }) };
+    expect(await repositoryAuthorityBlocker(base, "room")).toBe("repository-reference-unverified");
+    expect(await repositoryAuthorityBlocker({ ...base, getVerifiedRepositoryConnection: () => ({ projectId: "other", revision: 1, state: "verified" }) }, "room"))
+      .toBe("repository-reference-unverified");
+    expect(await repositoryAuthorityBlocker({ ...base, getVerifiedRepositoryConnection: () => ({ projectId: "project", revision: 2, state: "verified" }) }, "room"))
+      .toBeNull();
   });
 });

@@ -55,6 +55,7 @@ export class AssignmentLifecycleService {
     private readonly processes?: { terminateScope(scope: string): Promise<void> },
     private readonly implementationConfinementAvailable = true,
     private readonly operationLog?: OperationLog,
+    private readonly repositoryAuthority?: () => Promise<string | null>,
   ) {}
 
   create(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
@@ -66,6 +67,8 @@ export class AssignmentLifecycleService {
   private async createLocked(authorization: string | undefined, input: CreateAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
     const authenticated = this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR");
     if (!authenticated) return { kind: "unauthorized" };
+    const authority = await this.repositoryAuthority?.();
+    if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority}).` };
     if (!validId(input.assignmentId) || !validId(input.improvementId) || !isAgentId(input.agent)
       || !Number.isSafeInteger(input.fencingToken) || !Number.isSafeInteger(input.manifestRevision)) {
       return { kind: "rejected", reason: "Valid assignment, improvement, agent, fencing-token, and manifest-revision fields are required" };
@@ -300,6 +303,8 @@ export class AssignmentLifecycleService {
 
   private async disposeLocked(authorization: string | undefined, input: DisposeAssignmentInput): Promise<AssignmentResult<AssignmentRecord>> {
     if (!this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR")) return { kind: "unauthorized" };
+    const authority = await this.repositoryAuthority?.();
+    if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority}).` };
     if (!validMutation(input) || input.confirmDisposable !== true) return { kind: "rejected", reason: "Explicit disposable confirmation is required" };
     const assignment = await this.records.getAssignment(input.assignmentId);
     if (!assignment) return { kind: "not_found" };
