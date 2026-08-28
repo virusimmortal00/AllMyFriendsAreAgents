@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
@@ -29,6 +29,10 @@ import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomConfigurationDialog } from "./room-configuration-dialog";
 import { Diagnostics } from "./diagnostics";
+import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
+import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
+
+type LocalWorkspaceName = Exclude<WorkspaceName, "Improvements">;
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -150,11 +154,7 @@ export default function App() {
   const [workshopError, setWorkshopError] = useState("");
   const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
-  const [tasksView, setTasksView] = useState(false);
-  const [continuationsView, setContinuationsView] = useState(false);
-  const [investigationsView, setInvestigationsView] = useState(false);
-  const [contributionsView, setContributionsView] = useState(false);
-  const [diagnosticsView, setDiagnosticsView] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<LocalWorkspaceName | null>(null);
   const [clientError, setClientError] = useState("");
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -706,11 +706,12 @@ export default function App() {
   }
 
   function showChat() {
-    setTasksView(false);
-    setContinuationsView(false);
-    setInvestigationsView(false);
-    setContributionsView(false);
-    setDiagnosticsView(false);
+    setWorkspaceView(null);
+    navigateImprovements(null);
+  }
+
+  function showWorkspace(name: LocalWorkspaceName) {
+    setWorkspaceView(name);
     navigateImprovements(null);
   }
 
@@ -721,7 +722,8 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  const chatActive = !improvementsView && !tasksView && !continuationsView && !investigationsView && !contributionsView && !diagnosticsView;
+  const activeWorkspaceName: WorkspaceName | null = improvementsView ? "Improvements" : workspaceView;
+  const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
@@ -754,6 +756,12 @@ export default function App() {
     setWorkshopId((current) => nextWorkshopId(current, { type: "open", id }));
   }, []);
 
+  // Application menu contract:
+  // - You changes the current member's profile.
+  // - Room changes this room or invokes room-scoped actions.
+  // - View changes the presentation of the current workspace; it never navigates.
+  // - Window switches between whole-workspace destinations.
+  // - Help contains documentation and support entry points.
   const menus: ClassicMenuDefinition[] = [
     {
       id: "you",
@@ -772,40 +780,27 @@ export default function App() {
         { label: "Room settings...", accessKey: "S", onSelect: openRoomConfiguration },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
-        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("continue", "all"); } },
-        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("roundtable", "all"); } },
-        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setContributionsView(false); setInvestigationsView(false); invoke("review", "all"); } },
+        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("continue", "all"); } },
+        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("roundtable", "all"); } },
+        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("review", "all"); } },
       ],
     },
-    {
-      id: "view",
-      label: "View",
-      accessKey: "V",
-      items: [
-        { label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps },
+    defineViewMenu([
+        presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
         { type: "separator" },
-        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
-        { type: "separator" },
-        { label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) },
-        { label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) },
-        { label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification },
-      ],
-    },
-    {
-      id: "window",
-      label: "Window",
-      accessKey: "W",
-      disabled: true,
-      items: [
-        { label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } },
-        { label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setTasksView(false); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements({ view: "list", scope: "active" }); } },
-        { label: "Tasks", accessKey: "T", checked: tasksView, onSelect: () => { if (tasksView) return; setTasksView(true); setContinuationsView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Continuations", accessKey: "o", checked: continuationsView, onSelect: () => { if (continuationsView) return; setContinuationsView(true); setTasksView(false); setInvestigationsView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Investigations", accessKey: "n", checked: investigationsView, onSelect: () => { if (investigationsView) return; setInvestigationsView(true); setContinuationsView(false); setTasksView(false); setContributionsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Reviewed contributions", accessKey: "R", checked: contributionsView, onSelect: () => { if (contributionsView) return; setContributionsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setDiagnosticsView(false); navigateImprovements(null); } },
-        { label: "Diagnostics", accessKey: "D", checked: diagnosticsView, onSelect: () => { if (diagnosticsView) return; setDiagnosticsView(true); setInvestigationsView(false); setTasksView(false); setContinuationsView(false); setContributionsView(false); navigateImprovements(null); } },
-      ],
-    },
+        presentationCommand({ label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) }),
+        presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
+        presentationCommand({ label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification }),
+    ]),
+    defineWindowMenu([
+        workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
+        workspaceCommand({ label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setWorkspaceView(null); navigateImprovements({ view: "list", scope: "active" }); } }),
+        workspaceCommand({ label: "Tasks", accessKey: "T", checked: workspaceView === "Tasks", onSelect: () => { if (workspaceView !== "Tasks") showWorkspace("Tasks"); } }),
+        workspaceCommand({ label: "Continuations", accessKey: "o", checked: workspaceView === "Continuations", onSelect: () => { if (workspaceView !== "Continuations") showWorkspace("Continuations"); } }),
+        workspaceCommand({ label: "Investigations", accessKey: "n", checked: workspaceView === "Investigations", onSelect: () => { if (workspaceView !== "Investigations") showWorkspace("Investigations"); } }),
+        workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
+        workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
+    ]),
     {
       id: "help",
       label: "Help",
@@ -828,6 +823,19 @@ export default function App() {
     focusRouteHeading.current = false;
   }, [improvementsView]);
 
+  let workspaceContent: ReactNode = null;
+  if (improvementsView) workspaceContent = <Improvements route={improvementsView} onNavigate={navigateImprovements} />;
+  else if (workspaceView) {
+    switch (workspaceView) {
+      case "Tasks": workspaceContent = <Tasks refreshKey={connectionEpoch} />; break;
+      case "Continuations": workspaceContent = <Continuations refreshKey={connectionEpoch} />; break;
+      case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} />; break;
+      case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
+      case "Diagnostics": workspaceContent = <Diagnostics />; break;
+      default: workspaceView satisfies never;
+    }
+  }
+
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
   if (!human) return <LoadingScreen error={joinError || "Joining the room"} joining={Boolean(joinError)} retrying={joinPending} onRetry={retryJoin} onCancel={cancelJoin} />;
   if (!ready) return <LoadingScreen error={clientError} />;
@@ -843,7 +851,9 @@ export default function App() {
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {improvementsView ? <Improvements route={improvementsView} onNavigate={navigateImprovements} /> : diagnosticsView ? <Diagnostics /> : investigationsView ? <Investigations refreshKey={connectionEpoch} /> : contributionsView ? <Contributions refreshKey={connectionEpoch} /> : continuationsView ? <Continuations refreshKey={connectionEpoch} /> : tasksView ? <Tasks refreshKey={connectionEpoch} /> : <>
+          {activeWorkspaceName ? <WorkspaceSurface name={activeWorkspaceName} onClose={showChat}>
+            {workspaceContent}
+          </WorkspaceSurface> : <>
           <section className="chat-panel beveled-inset">
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />

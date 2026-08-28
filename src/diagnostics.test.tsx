@@ -113,4 +113,5 @@ describe("owner diagnostic dashboard", () => {
     expect(screen.getByRole("region", { name: "Capability audit events" }).textContent).toContain("github_read · completed");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/control/capabilities?limit=100");
   });
+
 });
