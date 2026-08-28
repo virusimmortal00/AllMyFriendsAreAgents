@@ -126,6 +126,28 @@ describe("server GitHub integration metadata", () => {
     expect(new BoundGitHubCredentialProvider(f.store, vault()).health("project-one", binding.bindingId)).toMatchObject({ state: "degraded", reason: "catalog-stale" });
   });
 
+  it("revokes and revision-safely restores a project binding without exposing its vault authority", async () => {
+    const f = await fixture(); await readyConnection(f.store); await readyCatalog(f.store);
+    const bound = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101,
+      githubRepositoryId: 201, repository: "github.com/example/one" });
+    if (bound.kind !== "ok") throw new Error("expected project binding");
+    const provider = new BoundGitHubCredentialProvider(f.store, vault());
+
+    await expect(f.store.revokeBinding({ expectedRevision: 0, projectId: "project-one" })).resolves.toEqual({ kind: "conflict", actualRevision: 1 });
+    await expect(f.store.revokeBinding({ expectedRevision: 1, projectId: "project-one" })).resolves.toMatchObject({ kind: "ok", value: { revision: 2, state: "revoked" } });
+    expect(provider.available("project-one", bound.value.bindingId)).toBe(false);
+    expect(provider.health("project-one", bound.value.bindingId)).toMatchObject({ state: "revoked", reason: "binding-revoked" });
+    await expect(provider.resolve({ projectId: "project-one", credentialReference: bound.value.bindingId, connectionId: "repository-connection-one", connectionRevision: 1,
+      repository: "github.com/example/one" })).resolves.toBeUndefined();
+
+    const restored = await f.store.bindProject({ expectedRevision: 2, projectId: "project-one", connectionId: "github-server-one", installationId: 101,
+      githubRepositoryId: 202, repository: "github.com/example/two" });
+    expect(restored).toMatchObject({ kind: "ok", value: { revision: 3, state: "ready", repository: "github.com/example/two" } });
+    if (restored.kind !== "ok") throw new Error("expected restored binding");
+    expect(restored.value.bindingId).toBe(bound.value.bindingId);
+    expect(provider.available("project-one", restored.value.bindingId)).toBe(true);
+  });
+
   it("rejects corrupt persisted integration metadata on restart", async () => {
     const f = await fixture(); await readyConnection(f.store);
     const state = JSON.parse(await readFile(f.store.filePath, "utf8")) as { connections: Array<Record<string, unknown>> };

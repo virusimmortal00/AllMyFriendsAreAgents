@@ -52,6 +52,7 @@ export interface ProjectGitHubBinding {
   readonly bindingId: string;
   readonly projectId: string;
   readonly revision: number;
+  readonly state: "ready" | "revoked";
   readonly connectionId: string;
   readonly installationId: number;
   readonly githubRepositoryId: number;
@@ -100,6 +101,11 @@ export interface BindProjectToGitHubInput {
   readonly installationId: number;
   readonly githubRepositoryId: number;
   readonly repository: string;
+}
+
+export interface RevokeProjectGitHubBindingInput {
+  readonly expectedRevision: number;
+  readonly projectId: string;
 }
 
 export interface ReplaceGitHubRepositoryCatalogInput {
@@ -224,6 +230,7 @@ export class GitHubIntegrationStore {
         bindingId: current?.bindingId ?? `github-binding:${randomUUID()}`,
         projectId: input.projectId,
         revision: input.expectedRevision + 1,
+        state: "ready",
         connectionId: input.connectionId,
         installationId: input.installationId,
         githubRepositoryId: input.githubRepositoryId,
@@ -232,6 +239,29 @@ export class GitHubIntegrationStore {
         updatedAt: timestamp,
       };
       if (!normalizeBinding(candidate)) return { kind: "rejected", reason: "Project GitHub binding is not canonical." };
+      const state = {
+        ...this.state,
+        bindings: [...this.state.bindings.filter((record) => record.projectId !== candidate.projectId), candidate],
+      };
+      await this.persist(state);
+      return { kind: "ok", value: structuredClone(candidate) };
+    });
+  }
+
+  revokeBinding(input: RevokeProjectGitHubBindingInput): Promise<GitHubIntegrationMutationResult<ProjectGitHubBinding>> {
+    return this.mutate(async () => {
+      if (!validExpectedRevision(input.expectedRevision) || !SAFE_ID.test(input.projectId)) {
+        return { kind: "rejected", reason: "Project binding revocation is not canonical." };
+      }
+      const current = this.state.bindings.find((record) => record.projectId === input.projectId);
+      if (!current) return { kind: "rejected", reason: "Project GitHub binding does not exist." };
+      if (current.revision !== input.expectedRevision) return { kind: "conflict", actualRevision: current.revision };
+      const candidate: ProjectGitHubBinding = {
+        ...current,
+        revision: current.revision + 1,
+        state: "revoked",
+        updatedAt: new Date().toISOString(),
+      };
       const state = {
         ...this.state,
         bindings: [...this.state.bindings.filter((record) => record.projectId !== candidate.projectId), candidate],
@@ -268,7 +298,7 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
 
   available(projectId: string, credentialReference: string) {
     const binding = this.#integrations.bindingForProject(projectId);
-    if (!binding || binding.bindingId !== credentialReference) return false;
+    if (!binding || binding.state !== "ready" || binding.bindingId !== credentialReference) return false;
     const connection = this.#integrations.connection(binding.connectionId);
     const catalog = this.#integrations.catalog(binding.connectionId);
     return connection?.state === "ready" && catalog?.connectionRevision === connection.revision
@@ -281,6 +311,7 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
     if (!binding || binding.bindingId !== credentialReference) return { state: "missing", reason: "binding-missing" };
     const connection = this.#integrations.connection(binding.connectionId);
     if (!connection) return { state: "missing", reason: "connection-missing" };
+    if (binding.state === "revoked") return { state: "revoked", provider: connection.authMode, reason: "binding-revoked" };
     if (connection.state === "revoked") return { state: "revoked", provider: connection.authMode, reason: "connection-revoked" };
     if (connection.state === "degraded") return { state: "degraded", provider: connection.authMode, reason: "connection-degraded" };
     const catalog = this.#integrations.catalog(binding.connectionId);
@@ -295,7 +326,7 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
   async resolve(request: GitHubCredentialResolutionRequest): Promise<ResolvedGitHubCredential | undefined> {
     if (!canonicalResolutionRequest(request)) return undefined;
     const binding = this.#integrations.bindingForProject(request.projectId);
-    if (!binding || binding.bindingId !== request.credentialReference || binding.repository !== request.repository) return undefined;
+    if (!binding || binding.state !== "ready" || binding.bindingId !== request.credentialReference || binding.repository !== request.repository) return undefined;
     const connection = this.#integrations.connection(binding.connectionId);
     if (!connection || connection.state !== "ready") return undefined;
     const catalog = this.#integrations.catalog(binding.connectionId);
@@ -351,9 +382,10 @@ function normalizeConnection(value: unknown): ServerGitHubConnection | undefined
 
 function normalizeBinding(value: unknown): ProjectGitHubBinding | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const record = value as ProjectGitHubBinding;
+  const source = value as ProjectGitHubBinding & { readonly state?: "ready" | "revoked" };
+  const record: ProjectGitHubBinding = { ...source, state: source.state ?? "ready" };
   if (record.schemaVersion !== 1 || !SAFE_ID.test(record.bindingId) || !SAFE_ID.test(record.projectId)
-    || !Number.isSafeInteger(record.revision) || record.revision < 1 || !SAFE_ID.test(record.connectionId)
+    || !Number.isSafeInteger(record.revision) || record.revision < 1 || !["ready", "revoked"].includes(record.state) || !SAFE_ID.test(record.connectionId)
     || !Number.isSafeInteger(record.installationId) || record.installationId < 1 || !Number.isSafeInteger(record.githubRepositoryId)
     || record.githubRepositoryId < 1 || !GITHUB_REPOSITORY.test(record.repository)
     || !validTimestamp(record.createdAt) || !validTimestamp(record.updatedAt)) return undefined;
