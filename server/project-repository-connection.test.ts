@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -57,6 +57,16 @@ describe("verified project repository connections", () => {
     expect(JSON.stringify(service.inspect())).not.toMatch(/github_pat|private_secret|credential/);
     expect(credentials.forServerOperation("project-one", "github-connection-one")).toBe("github_pat_private_secret");
     expect(credentials.forServerOperation("project-two", "github-connection-one")).toBeUndefined();
+  });
+
+  it("fails closed when persisted nested remote or policy metadata is corrupt", async () => {
+    const f = await fixture(); const service = connectionService("project-one", f.store);
+    await service.connect(input(f)); const valid = service.inspectServer()!;
+    for (const corrupt of [{ ...valid, remote: { ...valid.remote, canonical: "github.com/attacker/other" } },
+      { ...valid, protectedBranches: "main" }, { ...valid, validationCommands: ["pnpm test", 7] }, { ...valid, sensitivePaths: ["../secret"] }]) {
+      await writeFile(f.store.filePath, JSON.stringify({ schemaVersion: 1, connections: [corrupt] }));
+      await expect(ProjectRepositoryConnectionStore.open(f.data)).rejects.toThrow(/invalid or duplicate project record/);
+    }
   });
 
   it("rejects noncanonical, ambiguous, linked-common-directory, and overlapping paths", async () => {
@@ -120,7 +130,7 @@ describe("verified project repository connections", () => {
   });
 
   it("strips credentials and repository authority from worker environments", () => {
-    const safe = repositorySafeWorkerEnvironment({ PATH: "/bin", HOME: "/private/home", GITHUB_TOKEN: "secret", GIT_ASKPASS: "secret-helper",
+    const safe = repositorySafeWorkerEnvironment({ PATH: "/bin", HOME: "/private/home", GITHUB_TOKEN: "secret", GIT_ASKPASS: "secret-helper", GIT_CONFIG_NOSYSTEM: "attacker",
       ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: "/private/repo", REPOSITORY_CREDENTIAL: "secret" });
     expect(safe).toEqual({ PATH: "/bin", HOME: "/private/home" }); expect(JSON.stringify(safe)).not.toMatch(/secret|private\/repo/);
   });

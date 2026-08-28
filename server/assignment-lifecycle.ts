@@ -275,8 +275,6 @@ export class AssignmentLifecycleService {
 
   private async cancelLocked(authorization: string | undefined, input: AssignmentMutationInput): Promise<AssignmentResult<AssignmentRecord>> {
     if (!this.developers.authenticate(authorization, "ASSIGNMENT_WRITE", "OPERATOR")) return { kind: "unauthorized" };
-    const authority = await this.repositoryAuthority?.();
-    if (authority) return { kind: "rejected", reason: `Repository connection authority is unavailable (${authority}).` };
     if (!validMutation(input)) return { kind: "rejected", reason: "Valid assignment, expected revision, and idempotency key are required" };
     const assignment = await this.records.getAssignment(input.assignmentId);
     if (!assignment) return { kind: "not_found" };

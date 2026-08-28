@@ -381,7 +381,7 @@ function pathsOverlap(left: string, right: string) {
 
 async function git(repository: string, args: readonly string[]) {
   const result = await execFileAsync("git", ["-C", repository, ...args], { timeout: 5_000, maxBuffer: 128 * 1024,
-    env: repositorySafeWorkerEnvironment({ PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" }) });
+    env: { ...repositorySafeWorkerEnvironment(process.env), GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } });
   return result.stdout.trim();
 }
 
@@ -401,11 +401,24 @@ function canonicalRelativePaths(values: readonly string[]) {
 function normalizeConnection(value: unknown): ProjectRepositoryConnection | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as ProjectRepositoryConnection;
+  const remote = item.remote as Partial<CanonicalRemoteIdentity> | undefined;
+  const protectedBranches = Array.isArray(item.protectedBranches) ? uniqueStrings(item.protectedBranches, SAFE_BRANCH, 32) : null;
+  const validationCommands = Array.isArray(item.validationCommands) ? uniqueStrings(item.validationCommands, /^.{1,500}$/, 32) : null;
+  const sensitivePaths = Array.isArray(item.sensitivePaths) ? canonicalRelativePaths(item.sensitivePaths) : null;
   if (item.schemaVersion !== 1 || !SAFE_ID.test(item.projectId) || !SAFE_ID.test(item.connectionId) || !Number.isSafeInteger(item.revision) || item.revision < 1
     || !["verified", "disabled", "identity-drift"].includes(item.state) || item.checkoutMode !== "existing-local" || !path.isAbsolute(item.checkoutPath)
     || !path.isAbsolute(item.commonDirectory) || !path.isAbsolute(item.worktreeRoot) || !SAFE_BRANCH.test(item.defaultBranch)
-    || !Number.isSafeInteger(item.policyRevision) || item.policyRevision < 1 || !SAFE_ID.test(item.credentialReference) || !SHA256.test(item.identityDigest)) return undefined;
+    || !Number.isSafeInteger(item.policyRevision) || item.policyRevision < 1 || !SAFE_ID.test(item.credentialReference) || !SHA256.test(item.identityDigest)
+    || !validStoredRemote(remote)
+    || !protectedBranches || !validationCommands || !sensitivePaths) return undefined;
   return structuredClone(item);
+}
+
+function validStoredRemote(remote: Partial<CanonicalRemoteIdentity> | undefined): remote is CanonicalRemoteIdentity {
+  if (!remote || remote.provider !== "github" || typeof remote.owner !== "string" || typeof remote.repository !== "string" || typeof remote.canonical !== "string"
+    || remote.owner !== remote.owner.toLowerCase() || remote.repository !== remote.repository.toLowerCase()
+    || remote.canonical !== `github.com/${remote.owner}/${remote.repository}`) return false;
+  try { return canonicalRemote(`https://${remote.canonical}`).canonical === remote.canonical; } catch { return false; }
 }
 
 function conflict(actualRevision: number): RepositoryConnectionResult { return { kind: "conflict", reason: "Repository connection revision is stale.", actualRevision }; }
