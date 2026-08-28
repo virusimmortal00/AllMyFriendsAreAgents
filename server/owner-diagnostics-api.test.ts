@@ -36,6 +36,7 @@ async function fixture(service?: DiagnosticsQueryService, bind = "127.0.0.1") {
 }
 
 const query = { from: "2026-08-28T00:00:00.000Z", to: "2026-08-29T00:00:00.000Z", scope: "operator", streams: ["generations"], limit: 25, maxScannedBytes: 64_000, maxSerializedBytes: 16_000 };
+const nonLoopbackIpv4 = Object.values(networkInterfaces()).flat().find((address) => address?.family === "IPv4" && !address.internal)?.address;
 
 describe("owner diagnostics HTTP route", () => {
   it("denies an unauthenticated request without returning or querying evidence", async () => {
@@ -84,12 +85,10 @@ describe("owner diagnostics HTTP route", () => {
     expect(service.query).not.toHaveBeenCalled();
   });
 
-  it("denies an authenticated non-loopback peer even when headers claim a loopback origin", async () => {
-    const peer = Object.values(networkInterfaces()).flat().find((address) => address?.family === "IPv4" && !address.internal)?.address;
-    if (!peer) throw new Error("A non-loopback interface is required for the route boundary test.");
+  it.skipIf(!nonLoopbackIpv4)("denies an authenticated non-loopback peer even when headers claim a loopback origin", async () => {
     const service = { query: vi.fn(async () => emptyResult) };
     const api = await fixture(service, "0.0.0.0");
-    const response = await fetch(`http://${peer}:${api.port}/api/control/diagnostics/query`, { method: "POST", headers: { ...api.headers, forwarded: "for=127.0.0.1;host=127.0.0.1", "x-forwarded-for": "127.0.0.1", "x-real-ip": "127.0.0.1", origin: `http://127.0.0.1:${api.port}` }, body: JSON.stringify(query) });
+    const response = await fetch(`http://${nonLoopbackIpv4}:${api.port}/api/control/diagnostics/query`, { method: "POST", headers: { ...api.headers, forwarded: "for=127.0.0.1;host=127.0.0.1", "x-forwarded-for": "127.0.0.1", "x-real-ip": "127.0.0.1", origin: `http://127.0.0.1:${api.port}` }, body: JSON.stringify(query) });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Diagnostics are unavailable." });
     expect(service.query).not.toHaveBeenCalled();
