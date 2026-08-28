@@ -39,7 +39,8 @@ describe("GitHub integration control-plane API", () => {
         visibility: "private", default_branch: "main" }] }), { status: 200 });
     }, () => new Date(now).toISOString());
     const catalogs = new GitHubRepositoryCatalogService(integrations, vault, catalogClient);
-    const app = express(); app.use(express.json()); registerGitHubIntegrationRoutes({ app, control, integrations, authorizations, catalogs });
+    const app = express(); app.use(express.json()); registerGitHubIntegrationRoutes({ app, control, integrations, authorizations, catalogs,
+      configuration: { schemaVersion: 1, appName: "All My Friends Are Agents", appSlug: "all-my-friends-are-agents", clientId: "Iv1.1234567890abcdef" } });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -56,7 +57,9 @@ describe("GitHub integration control-plane API", () => {
     const viewer = await control.authenticate("viewer", "viewer password long"); if (!viewer) throw new Error("viewer authentication failed");
     const viewerCookie = `${CONTROL_SESSION_COOKIE}=${encodeURIComponent(viewer.token)}`;
 
-    expect((await call("/api/control/integrations/github", {}, viewerCookie)).status).toBe(200);
+    const viewed = await call("/api/control/integrations/github", {}, viewerCookie);
+    expect(viewed.status).toBe(200); expect(await viewed.json()).toMatchObject({ app: { name: "All My Friends Are Agents",
+      slug: "all-my-friends-are-agents", clientId: "Iv1.1234567890abcdef" }, connections: [] });
     expect((await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, viewerCookie, viewer.csrfToken)).status).toBe(403);
     expect((await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, ownerCookie)).status).toBe(403);
     const startedResponse = await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, ownerCookie, owner.csrfToken);

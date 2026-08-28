@@ -3,6 +3,7 @@ import { ControlError, controlRoute, type ControlPlaneStore } from "./control-pl
 import { GitHubDeviceAuthorizationFailure, type GitHubDeviceAuthorizationCoordinator, type PublicGitHubDeviceAuthorization } from "./github-device-authorization.js";
 import type { GitHubIntegrationStore } from "./github-integration-store.js";
 import type { GitHubRepositoryCatalogService } from "./github-repository-catalog-service.js";
+import type { BundledGitHubAppConfiguration } from "./github-app-configuration.js";
 
 type DeviceAuthorizations = Pick<GitHubDeviceAuthorizationCoordinator, "start" | "status" | "poll">;
 type IntegrationReader = Pick<GitHubIntegrationStore, "connections">;
@@ -14,13 +15,16 @@ export function registerGitHubIntegrationRoutes(input: {
   readonly integrations: IntegrationReader;
   readonly authorizations: DeviceAuthorizations;
   readonly catalogs: Catalogs;
+  readonly configuration?: BundledGitHubAppConfiguration;
 }) {
-  const { app, control, integrations, authorizations, catalogs } = input;
+  const { app, control, integrations, authorizations, catalogs, configuration } = input;
   const auditedTerminalStates = new Set<string>();
 
   app.get("/api/control/integrations/github", controlRoute((request, response) => {
     control.require(request, "INTEGRATION_VIEW");
-    response.set("Cache-Control", "no-store").json({ connections: integrations.connections() });
+    response.set("Cache-Control", "no-store").json({ app: configuration
+      ? { name: configuration.appName, slug: configuration.appSlug, clientId: configuration.clientId }
+      : null, connections: integrations.connections() });
   }));
 
   app.get("/api/control/integrations/github/repositories", controlRoute((request, response) => {

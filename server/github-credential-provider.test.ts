@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LegacyPatGitHubCredentialProvider } from "./github-credential-provider.js";
+import { CascadingGitHubCredentialProvider, LegacyPatGitHubCredentialProvider, type GitHubCredentialProvider } from "./github-credential-provider.js";
 
 function request(projectId = "project-one", credentialReference = "credential-one") {
   return {
@@ -43,5 +43,22 @@ describe("GitHub credential providers", () => {
     expect(JSON.stringify(provider.health("project-one", "credential-one"))).not.toMatch(/github_pat|private_secret|credential-one/);
     expect(() => provider.register("project-one", "credential-one", "replacement_secret")).toThrow(/already registered/);
   });
-});
 
+  it("migrates references across providers without serializing either provider", async () => {
+    const legacy = new LegacyPatGitHubCredentialProvider(); legacy.register("project-one", "legacy-reference", "github_pat_private_secret");
+    const app = {
+      available: (_projectId: string, reference: string) => reference === "app-reference",
+      health: (_projectId: string, reference: string) => reference === "app-reference"
+        ? { state: "ready" as const, provider: "github-device-user" as const, reason: "ready" }
+        : { state: "missing" as const, reason: "binding-missing" },
+      resolve: async (value: ReturnType<typeof request>) => value.credentialReference === "app-reference"
+        ? { token: "ghu_private_app_token", provider: "github-device-user" as const, authorityRevision: "app:one" }
+        : undefined,
+    } satisfies GitHubCredentialProvider;
+    const provider = new CascadingGitHubCredentialProvider([app, legacy]);
+    await expect(provider.resolve(request("project-one", "app-reference"))).resolves.toMatchObject({ provider: "github-device-user" });
+    await expect(provider.resolve(request("project-one", "legacy-reference"))).resolves.toMatchObject({ provider: "legacy-pat" });
+    expect(provider.health("project-one", "app-reference")).toMatchObject({ state: "ready", provider: "github-device-user" });
+    expect(JSON.stringify(provider)).not.toMatch(/private_app_token|private_secret|app-reference|legacy-reference/);
+  });
+});

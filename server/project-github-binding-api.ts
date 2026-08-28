@@ -8,12 +8,15 @@ export function registerProjectGitHubBindingRoutes(input: {
   readonly app: express.Express;
   readonly control: ControlPlaneStore;
   readonly bindings: ProjectBindings;
+  readonly projectExists?: (projectId: string) => boolean | Promise<boolean>;
 }) {
-  const { app, control, bindings } = input;
+  const { app, control, bindings, projectExists = () => true } = input;
 
-  app.get("/api/control/projects/:projectId/repository", controlRoute((request, response) => {
+  app.get("/api/control/projects/:projectId/repository", controlRoute(async (request, response) => {
     control.require(request, "INTEGRATION_VIEW");
-    const status = bindings.inspect(String(request.params.projectId));
+    const projectId = String(request.params.projectId);
+    if (!await projectExists(projectId)) throw new ControlError(404, "Project repository configuration was not found.");
+    const status = bindings.inspect(projectId);
     if (!status) throw new ControlError(404, "Project repository configuration was not found.");
     response.set("Cache-Control", "no-store").json(status);
   }));
@@ -21,6 +24,7 @@ export function registerProjectGitHubBindingRoutes(input: {
   app.put("/api/control/projects/:projectId/repository", controlRoute(async (request, response) => {
     const actor = control.require(request, "PROJECT_REPOSITORY_CONFIGURE", true).principal;
     const projectId = String(request.params.projectId);
+    if (!await projectExists(projectId)) throw new ControlError(404, "Project repository configuration was not found.");
     const result = await bindings.configure({
       projectId,
       githubConnectionId: request.body?.githubConnectionId,

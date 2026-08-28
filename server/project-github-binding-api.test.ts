@@ -28,7 +28,8 @@ describe("project GitHub binding control API", () => {
       githubRepositoryId: 201, repository: "github.com/example/one", updatedAt: "2026-08-28T12:00:00.000Z" },
       repository: { configured: true, revision: 1, state: "verified" as const, repository: "github.com/example/one" } };
     const bindings = { inspect: () => status, configure: vi.fn(async (input: ConfigureProjectGitHubRepositoryInput) => { received = input; return { kind: "ok" as const, value: status }; }) };
-    const app = express(); app.use(express.json()); registerProjectGitHubBindingRoutes({ app, control, bindings: bindings as unknown as ProjectGitHubBindingService });
+    const app = express(); app.use(express.json()); registerProjectGitHubBindingRoutes({ app, control, bindings: bindings as unknown as ProjectGitHubBindingService,
+      projectExists: async (projectId) => projectId === "project-one" });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -37,6 +38,7 @@ describe("project GitHub binding control API", () => {
 
     expect((await call("/api/control/projects/project-one/repository")).status).toBe(401);
     expect((await call("/api/control/projects/project-one/repository", {}, viewerCookie)).status).toBe(200);
+    expect((await call("/api/control/projects/project-other/repository", {}, viewerCookie)).status).toBe(404);
     const body = JSON.stringify({ githubConnectionId: "github-server-one", githubRepositoryId: 201, expectedBindingRevision: 0,
       expectedRepositoryRevision: 0, checkoutPath: "/srv/project-one", worktreeRoot: "/srv/worktrees/project-one", policyRevision: 7,
       credentialReference: "attacker-secret-reference", bindingId: "attacker-binding", installationId: 999, repository: "github.com/attacker/other",

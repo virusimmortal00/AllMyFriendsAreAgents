@@ -92,6 +92,11 @@ import { registerRoomLifecycleRoutes } from "./room-lifecycle-api.js";
 import { RoomCommandDispatcher } from "./room-command-dispatcher.js";
 import { ProjectRepositoryConnectionStore, ProjectRepositoryServiceRegistry, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
 import { registerProjectRepositoryRoutes } from "./project-repository-api.js";
+import { CascadingGitHubCredentialProvider } from "./github-credential-provider.js";
+import { openGitHubIntegrationRuntime } from "./github-integration-runtime.js";
+import { registerGitHubIntegrationRoutes } from "./github-integration-api.js";
+import { ProjectGitHubBindingService } from "./project-github-binding.js";
+import { registerProjectGitHubBindingRoutes } from "./project-github-binding-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -212,6 +217,11 @@ const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_R
   || (repositoryCredential ? `github-connection:${createHash("sha256").update(repositoryCredential).digest("hex").slice(0, 24)}` : undefined);
 const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
 if (repositoryCredential && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, repositoryCredential);
+const githubIntegrationRuntime = await openGitHubIntegrationRuntime({ projectRoot, dataDirectory: storageConfiguration.dataDirectory });
+const githubCredentials = new CascadingGitHubCredentialProvider([
+  ...(githubIntegrationRuntime ? [githubIntegrationRuntime.credentials] : []),
+  serverHeldRepositoryCredentials,
+]);
 let contributionRecords: ContributionStore | undefined;
 let githubContributionStore: GitHubContributionStore | undefined;
 const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
@@ -227,8 +237,11 @@ const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRe
   const brokerReferences = (githubContributionStore?.records() || []).filter((record) => record.outcome === "PENDING")
     .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
   return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
-}, (projectId, reference) => serverHeldRepositoryCredentials.available(projectId, reference));
+}, (projectId, reference) => githubCredentials.available(projectId, reference));
 const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);
+const projectGitHubBindings = githubIntegrationRuntime
+  ? new ProjectGitHubBindingService(githubIntegrationRuntime.integrations, (projectId) => projectRepositoryRegistry.forProject(projectId).connection)
+  : undefined;
 Object.defineProperty(store, "getVerifiedRepositoryConnection", {
   configurable: false,
   enumerable: false,
@@ -244,7 +257,7 @@ const fakeSha="0123456789abcdef0123456789abcdef01234567";
 const githubReadFakeFetch:GitHubReadFetch=async(input)=>{const url=new URL(input);const headers=new Headers({"content-type":"application/json"});if(url.pathname.endsWith("/pulls"))return new Response(JSON.stringify([{number:98,title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"codex/issue-98",sha:fakeSha},body:"Controlled fixture pull request"}]),{status:200,headers});if(url.pathname.endsWith("/issues"))return new Response(JSON.stringify([{number:98,title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[{name:"fixture"}],comments:1,body:"Controlled fixture issue"}]),{status:200,headers});if(url.pathname.endsWith("/actions/runs"))return new Response(JSON.stringify({workflow_runs:[{name:"CI",status:"completed",conclusion:"success",updated_at:new Date(0).toISOString(),head_branch:"main",head_sha:fakeSha}]}),{status:200,headers});if(/\/pulls\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Bounded GitHub reads",state:"open",draft:false,user:{login:"fixture"},updated_at:new Date(0).toISOString(),base:{ref:"main"},head:{ref:"fixture",sha:fakeSha},body:"Controlled fixture pull request"}),{status:200,headers});if(/\/issues\/\d+$/.test(url.pathname))return new Response(JSON.stringify({number:Number(url.pathname.split("/").at(-1)),title:"Read-only GitHub commands",state:"open",user:{login:"fixture"},updated_at:new Date(0).toISOString(),labels:[],comments:1,body:"Controlled fixture issue"}),{status:200,headers});if(url.pathname.endsWith("/check-runs"))return new Response(JSON.stringify({check_runs:[{name:"test",status:"completed",conclusion:"success",completed_at:new Date(0).toISOString(),head_sha:fakeSha,output:{title:"green",summary:"Controlled fixture"}}]}),{status:200,headers});return new Response("{}",{status:404,headers});};
 const identityRepository=typeof (store as Partial<IdentityRepository>).getStorageScope==="function"&&typeof (store as Partial<IdentityRepository>).getDurableProject==="function"&&typeof (store as Partial<IdentityRepository>).getRepositoryReference==="function"
   ? store as RoomRepository&IdentityRepository : undefined;
-const githubReadService=identityRepository?new RoomBoundGitHubReadService(async(roomId)=>roomId===store.roomId?identityRepository:(await roomRuntimes!.acquire(roomId)).repository as RoomRepository&IdentityRepository,(projectId)=>projectRepositoryRegistry.forProject(projectId).connection,serverHeldRepositoryCredentials,{
+const githubReadService=identityRepository?new RoomBoundGitHubReadService(async(roomId)=>roomId===store.roomId?identityRepository:(await roomRuntimes!.acquire(roomId)).repository as RoomRepository&IdentityRepository,(projectId)=>projectRepositoryRegistry.forProject(projectId).connection,githubCredentials,{
   fetcher:process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_READ_FAKE==="true"?githubReadFakeFetch:fetch,
   operationLog:(event)=>structuredLogger.log(event.outcome==="failed"?"warn":"info","github.read-cache",{...event}),
 }):undefined;
@@ -1044,7 +1057,7 @@ const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>
   capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
   operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
 })):undefined;
-if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!serverHeldRepositoryCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
+if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!githubCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
 const consultationRunner = new ConsultationRunner(
@@ -1264,6 +1277,10 @@ registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam,
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
+if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
+  authorizations: githubIntegrationRuntime.authorizations, catalogs: githubIntegrationRuntime.catalogs, configuration: githubIntegrationRuntime.configuration });
+if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: controlPlane, bindings: projectGitHubBindings,
+  projectExists: async (projectId) => Boolean(identityRepository ? await identityRepository.getDurableProject(projectId) : projectId === currentProjectId) });
 registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
   try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }

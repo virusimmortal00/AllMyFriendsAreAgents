@@ -42,6 +42,36 @@ export interface GitHubCredentialProvider {
   resolve(request: GitHubCredentialResolutionRequest): Promise<ResolvedGitHubCredential | undefined>;
 }
 
+/** Supports a fail-closed migration from legacy PATs to server-owned App credentials. */
+export class CascadingGitHubCredentialProvider implements GitHubCredentialProvider {
+  readonly #providers: readonly GitHubCredentialProvider[];
+
+  constructor(providers: readonly GitHubCredentialProvider[]) {
+    if (providers.length === 0) throw new Error("At least one GitHub credential provider is required.");
+    this.#providers = [...providers];
+  }
+
+  available(projectId: string, credentialReference: string) {
+    return this.#providers.some((provider) => provider.available(projectId, credentialReference));
+  }
+
+  health(projectId: string, credentialReference: string): GitHubCredentialHealth {
+    for (const provider of this.#providers) {
+      const health = provider.health(projectId, credentialReference);
+      if (health.state !== "missing") return health;
+    }
+    return { state: "missing", reason: "credential-missing" };
+  }
+
+  async resolve(request: GitHubCredentialResolutionRequest) {
+    for (const provider of this.#providers) {
+      const credential = await provider.resolve(request);
+      if (credential) return credential;
+    }
+    return undefined;
+  }
+}
+
 interface LegacyCredentialRecord {
   readonly token: string;
   readonly authorityRevision: string;
