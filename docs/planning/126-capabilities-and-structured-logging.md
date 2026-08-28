@@ -1,6 +1,6 @@
 ---
 id: capabilities-and-structured-logging
-status: active
+status: done
 issue: 126
 ---
 
