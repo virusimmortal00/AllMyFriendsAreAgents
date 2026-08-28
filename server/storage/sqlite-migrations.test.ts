@@ -117,7 +117,7 @@ describe("SQLite migrations", () => {
         "room_attachment_events",
         "room_forks",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 26 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 27 });
       expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));

@@ -387,7 +387,7 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability }));
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
@@ -882,6 +882,7 @@ export default function App() {
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
+          {room.githubReadStatus ? <div className="status-cell" aria-label="Room GitHub read status">GitHub read: {room.githubReadStatus.state === "ready" ? "Ready for this room" : room.githubReadStatus.reason.replaceAll("-", " ")}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>

@@ -84,6 +84,7 @@ export interface RoomState {
   preflightEvidence?: PreflightEvidence;
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
+  githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
 }
 export interface WorkshopResponse extends GovernedImprovementDetail {
   kind: "found";

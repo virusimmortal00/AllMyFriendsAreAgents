@@ -17,7 +17,7 @@ const COMMAND_CATALOG: Readonly<Record<RoomCommandName, RoomCommandCatalogEntry>
   task: { command: "task", summary: "Delegate bounded work to one eligible agent.", syntax: "/task [@agent] <bounded work>", example: "/task @Sol check the error path" },
   pov: { command: "pov", summary: "Request bounded perspectives from all eligible agents or one named agent.", syntax: "/pov [@agent] <question>", example: "/pov @Sol What tradeoff are we missing?" },
   poll: { command: "poll", summary: "Create a server-authoritative poll with quoted options.", syntax: '/poll "Question" "Option A" "Option B"', example: '/poll "Ship today?" "Yes" "No"' },
-  gh: { command: "gh", summary: "Read bounded context from the server-configured GitHub repository.", syntax: "/gh recent | pr <number> | issue <number> | ci [<number>]", example: "/gh pr 98" },
+  gh: { command: "gh", summary: "Read bounded context from this room's verified project repository.", syntax: "/gh recent | pr <number> | issue <number> | ci [<number>]", example: "/gh pr 98" },
 };
 
 export function commandCatalog(commands: readonly RoomCommandName[]) {
