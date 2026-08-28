@@ -284,6 +284,15 @@ A later mutation design must decide:
 - Project bindings and credential resolution now fail closed when the repository
   is absent from the current catalog or the catalog's connection revision is
   stale.
+- Project bindings now have revisioned ready/revoked state, and revoked bindings
+  cannot pass availability, health, or token resolution checks. The project
+  configuration workflow verifies the catalog-derived repository against the
+  local checkout before persistence and revokes its binding if the repository
+  authority commit fails.
+- The tested project control API requires the dedicated configuration capability
+  and CSRF protection, forwards only an explicit allowlist of non-secret fields,
+  returns no binding/credential reference, and audits failures without repository
+  names or local paths.
 - Production still uses the environment-backed compatibility provider because
   the reusable public App/client ID is not registered and the new routes are not
   wired at startup. Refresh transport exists, but scheduled refresh orchestration
@@ -297,8 +306,10 @@ A later mutation design must decide:
 
 ## Next action
 
-Register the public App and resolve the canonical room-principal prerequisite,
-then implement the server-derived project binding workflow. Use
+Register the public App, wire the tested integration/project components at startup,
+and resolve the canonical room-principal prerequisite. Then build the settings UI
+and cut room reads over to the binding-aware provider with rebind/deselection
+invalidation. Use
 [the delivery plan](github-integration-delivery-plan.md) to open narrowly scoped
 issues with security acceptance checks copied into each slice.
 
@@ -315,6 +326,8 @@ issues with security acceptance checks copied into each slice.
 - `server/github-integration-api.ts`
 - `server/github-repository-catalog.ts`
 - `server/github-repository-catalog-service.ts`
+- `server/project-github-binding.ts`
+- `server/project-github-binding-api.ts`
 - `server/human-session.ts`
 - `server/control-plane.ts`
 - `docs/operations/capabilities-and-logging.md`

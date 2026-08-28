@@ -304,13 +304,24 @@ variables or OAuth details.
   installations and repositories with bounded pagination. Refresh resolves the
   token only inside the server, rechecks connection authority after network I/O,
   and atomically publishes metadata-only snapshots.
+- A server-derived project binding workflow now accepts a catalog repository ID,
+  verifies the selected repository and default branch against the canonical local
+  checkout, creates the opaque binding internally, and commits repository
+  authority with separate binding/repository revision preconditions. A failed
+  repository commit revokes the newly-created binding so credential resolution
+  fails closed.
+- Dependency-injected project control routes expose sanitized status and a
+  CSRF-protected owner/admin configuration operation. The request allowlist never
+  forwards caller-supplied binding, credential, installation, remote, or default
+  branch authority, and project-binding audit metadata contains only stable
+  outcomes and revisions.
 - Production startup does not register the new integration routes until a real
   reusable GitHub App client ID can be bundled.
 - Production credential registration is still memory-only and initialized from
   environment variables through the legacy provider.
-- Repository configuration currently accepts a caller-supplied opaque credential
-  reference through a developer-oriented API rather than a server-derived UI
-  workflow.
+- The legacy developer-oriented repository endpoint still accepts a caller-supplied
+  opaque credential reference; the new control-plane workflow is not wired into
+  production startup or a browser UI yet.
 - Current GitHub tests use fake credentials and mocked fetches; they prove
   containment behavior, not a live GitHub authentication path.
 - Durable control-plane principals and ephemeral room human sessions are not yet
@@ -319,10 +330,10 @@ variables or OAuth details.
 ## Next action
 
 Register the reusable public GitHub App, bundle its public client ID, then register
-the tested control-plane routes at production startup. The next implementation
-slice is the owner/admin project-binding API and UI, which must derive the opaque
-binding reference server-side and verify the selected catalog entry against the
-local checkout. Promote accepted slices from
+the tested integration and project-binding routes with the binding-aware provider
+at production startup. The next product slice is the server/project settings UI;
+the next runtime slice is provider cutover and authority invalidation. Promote
+accepted slices from
 [the delivery plan](github-integration-delivery-plan.md) into GitHub Issues.
 
 ## Evidence
@@ -351,6 +362,10 @@ local checkout. Promote accepted slices from
 - `server/github-repository-catalog.test.ts`
 - `server/github-repository-catalog-service.ts`
 - `server/github-repository-catalog-service.test.ts`
+- `server/project-github-binding.ts`
+- `server/project-github-binding.test.ts`
+- `server/project-github-binding-api.ts`
+- `server/project-github-binding-api.test.ts`
 - `docs/planning/82-project-repository-connections.md`
 - `docs/planning/129-room-bound-github-read.md`
 - `docs/operations/capabilities-and-logging.md`

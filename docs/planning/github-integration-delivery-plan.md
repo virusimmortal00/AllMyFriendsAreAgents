@@ -199,18 +199,22 @@ storage, principal-bound authorization orchestration, dedicated integration
 capabilities, dependency-injected control-plane routes, fixed-origin installation
 discovery, revisioned catalog snapshots, catalog refresh/read APIs, and
 catalog-enforced project binding authority. The legacy environment PAT path
-remains active. Public App registration/client-ID bundling, production route
-registration, scheduled token refresh, project binding UI/API, canonical
-room-principal binding, and runtime cutover remain unimplemented; none of these
-temporary notes is a substitute for accepted Issues.
+remains active. The owner/admin project-binding backend now derives repository,
+installation, default-branch, and opaque credential authority from the current
+catalog, verifies the local checkout, compensates a failed repository commit by
+revoking the binding, and exposes a CSRF-protected request-allowlisted control API.
+Public App registration/client-ID bundling, production route registration,
+scheduled token refresh, project binding UI, canonical room-principal binding,
+rebind impact/cache invalidation, and runtime cutover remain unimplemented; none
+of these temporary notes is a substitute for accepted Issues.
 
 ## Next action
 
 Register the reusable public GitHub App and bundle its public client ID, then wire
-the tested integration components at startup. The next code slice should expose a
-server-derived owner/admin project binding workflow and verify the selected
-catalog repository against the local checkout without accepting a binding or
-credential reference from the browser.
+the tested integration and project-binding components at startup. The next product
+slice should build the server/project settings UI on the redacted catalog and
+project endpoints; the next runtime slice should cut room-bound reads over to the
+binding-aware provider and invalidate authority on rebind or catalog removal.
 
 ## Evidence
 
