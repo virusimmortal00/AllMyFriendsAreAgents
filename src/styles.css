@@ -209,6 +209,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
   padding: 8px;
 }
 .workspace--single { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.workspace-surface { min-width: 0; min-height: 0; display: grid; grid-template-rows: 23px minmax(0, 1fr); }
+.workspace-surface__titlebar { display: flex; align-items: center; justify-content: space-between; padding: 2px 3px 2px 6px; color: #fff; background: var(--blue); font: 700 12px/17px "MS Sans Serif", Arial, sans-serif; }
+.workspace-surface__titlebar button { width: 18px; height: 16px; padding: 0; color: #111; border: 2px outset #fff; background: var(--chrome); font: 800 13px/10px Arial, sans-serif; }
+.workspace-surface__titlebar button:active { border-style: inset; }
+.workspace-surface__content { min-width: 0; min-height: 0; display: grid; }
+.workspace-surface__content > * { min-width: 0; min-height: 0; }
 
 .beveled-inset { border: 2px inset white; background: #f5f5f5; }
 .panel-title {

@@ -9,6 +9,13 @@ reported_by: unknown
 updated: YYYY-MM-DD
 ---
 
+<!--
+Planning records are committed public artifacts. Make this document understandable
+without private chats, meetings, local environment state, or unexplained agent
+attribution. Preserve uncertainty and use sanitized, reproducible evidence. See
+AGENTS.md for the full public-context policy.
+-->
+
 # Outcome
 
 State the observable result, not the implementation.

@@ -511,12 +511,12 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
   });
 
-  it("puts You first, removes People and Change name, and grays unavailable categories and room actions", async () => {
+  it("puts You first, removes People and Change name, and grays unavailable room actions", async () => {
     const user = userEvent.setup();
     await renderConnected();
     const topLevelMenus = screen.getAllByRole("menuitem");
     expect(topLevelMenus[0]?.textContent).toBe("You");
-    expect((screen.getByRole("menuitem", { name: "Window" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("menuitem", { name: "Window" }) as HTMLButtonElement).disabled).toBe(false);
 
     await user.click(screen.getByRole("menuitem", { name: "Room" }));
     const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
@@ -571,21 +571,21 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("textbox", { name: "What should everyone call you?" })).toBeNull();
   });
 
-  it("keeps Room menu access inert and makes the Window category unavailable", async () => {
+  it("keeps full-workspace destinations in Window and closes Diagnostics back to Chat", async () => {
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
 
     expect(screen.queryByRole("menuitem", { name: "Actions" })).toBeNull();
-    await user.click(screen.getByRole("menuitem", { name: "Room" }));
-    expect(pushState).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    expect(within(screen.getByRole("menu", { name: "View" })).queryByRole("menuitemradio", { name: "Diagnostics" })).toBeNull();
     await user.keyboard("{Escape}");
-    const windowMenu = screen.getByRole("menuitem", { name: "Window" });
-    expect((windowMenu as HTMLButtonElement).disabled).toBe(true);
-    await user.click(windowMenu);
-    expect(window.location.pathname).toBe("/");
+
+    await chooseMenuItem(user, "Window", "Diagnostics");
+    expect(screen.getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Close Diagnostics and return to Chat" }));
     expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
-    expect(screen.queryByRole("menu", { name: "Window" })).toBeNull();
     expect(pushState).not.toHaveBeenCalled();
   });
 

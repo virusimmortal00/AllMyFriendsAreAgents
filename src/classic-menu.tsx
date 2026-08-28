@@ -1,8 +1,18 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
-export type ClassicMenuItem =
-  | { type?: "command"; label: string; accessKey: string; shortcut?: string; disabled?: boolean; checked?: boolean; checkType?: "radio" | "checkbox"; onSelect: (returnFocusTo: HTMLButtonElement) => void }
-  | { type: "separator" };
+export interface ClassicMenuCommand {
+  type?: "command";
+  label: string;
+  accessKey: string;
+  shortcut?: string;
+  disabled?: boolean;
+  checked?: boolean;
+  checkType?: "radio" | "checkbox";
+  onSelect: (returnFocusTo: HTMLButtonElement) => void;
+}
+
+export interface ClassicMenuSeparator { type: "separator" }
+export type ClassicMenuItem = ClassicMenuCommand | ClassicMenuSeparator;
 
 export interface ClassicMenuDefinition {
   id: string;

@@ -13,6 +13,8 @@
     "dev:web": "vite",
     "github:app:registration-url": "tsx scripts/github-app-registration.ts",
     "build": "tsc -b --force && vite build",
+    "check:quality": "pnpm run check:ui-standards && pnpm run build && pnpm test",
+    "check:ui-standards": "vitest run src/ui-standards.test.tsx src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",
     "canary:investigations": "tsx scripts/investigation-canary.ts",
     "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
     "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",
