@@ -6,6 +6,7 @@ import { normalizeAgentContextConfig } from "./agent-context-config.js";
 import { agentContextConfigFor, normalizeRoomConfiguration } from "./room-configuration.js";
 import { normalizeRoomAgentRoster } from "../shared/roster.js";
 import type { AgentId } from "./types.js";
+import { commandMessageDisclosure } from "../shared/command-message.js";
 
 export const TRANSCRIPT_CHARACTER_BUDGET = 12_000;
 export const SUMMARY_FOREGROUND_WAIT_MS = 750;
@@ -23,9 +24,12 @@ function entriesFor(messages: RoomMessage[], includeIds = false) {
   const entries: TranscriptEntry[] = [];
   for (const message of messages) {
     if (!isVisibleRoomMessage(message)) continue;
+    const disclosure = commandMessageDisclosure(message);
+    if (disclosure?.legacy) continue;
+    const sourceText = disclosure?.summary || message.text;
     const text = isAgentId(message.speaker)
-      ? visibleAgentChatText(message.text)
-      : visibleAgentText(message.text);
+      ? visibleAgentChatText(sourceText)
+      : visibleAgentText(sourceText);
     if (!text) continue;
     const previous = entries.at(-1);
     if (!includeIds && message.burstId && previous?.speaker === message.speaker && previous.burstId === message.burstId) {
