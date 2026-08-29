@@ -139,6 +139,13 @@ function lines(value: string) {
   return value.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
+export function changedPathsFromNameStatus(value: string) {
+  return lines(value).flatMap((line) => {
+    const [status, ...paths] = line.split("\t");
+    return /^[RC]\d+$/.test(status) ? paths.slice(0, 2) : paths.slice(0, 1);
+  });
+}
+
 function option(name: string) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -156,8 +163,8 @@ function resolveBase() {
 }
 
 function changedFiles(base: string, head: string) {
-  const committed = base && base !== head ? lines(git(["diff", "--name-only", `${base}...${head}`])) : [];
-  const working = lines(git(["diff", "--name-only", "HEAD"]));
+  const committed = base && base !== head ? changedPathsFromNameStatus(git(["diff", "--name-status", "-M", `${base}...${head}`])) : [];
+  const working = changedPathsFromNameStatus(git(["diff", "--name-status", "-M", "HEAD"]));
   const untracked = lines(git(["ls-files", "--others", "--exclude-standard"]));
   return [...new Set([...committed, ...working, ...untracked])].sort();
 }

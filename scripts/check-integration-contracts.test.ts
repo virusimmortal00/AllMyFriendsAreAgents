@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   affectedSurfaces,
+  changedPathsFromNameStatus,
   parseContract,
   pathMatches,
   requiredUpstreamPaths,
@@ -45,6 +46,12 @@ describe("OpenCode integration contract guard", () => {
     expect(affectedSurfaces(contract, ["server/tools/room.ts"]).map(({ id }) => id)).toEqual(["tools"]);
     expect(affectedSurfaces(contract, ["src/App.tsx"])).toEqual([]);
     expect(requiredUpstreamPaths(contract.surfaces)).toEqual(["upstream/run.ts", "upstream/tool.ts"]);
+  });
+
+  it("keeps both sides of a rename so moved integration files remain affected", () => {
+    const paths = changedPathsFromNameStatus("R100\tserver/tools/room.ts\tsrc/room.ts\nM\tsrc/App.tsx");
+    expect(paths).toEqual(["server/tools/room.ts", "src/room.ts", "src/App.tsx"]);
+    expect(affectedSurfaces(contract, paths).map(({ id }) => id)).toEqual(["tools"]);
   });
 
   it("requires a new review revision and every relevant upstream path", () => {
