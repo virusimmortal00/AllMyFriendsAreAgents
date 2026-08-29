@@ -579,6 +579,16 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .message > div { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.message--command { margin-bottom: 7px; }
+.command-disclosure { max-width: 100%; color: #444; font-size: calc(14px * var(--transcript-magnification, 1)); }
+.command-disclosure > summary { display: flex; min-width: 0; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; }
+.command-disclosure > summary::-webkit-details-marker { display: none; }
+.command-disclosure > summary::before { flex: 0 0 auto; content: "▶"; font-size: .72em; }
+.command-disclosure[open] > summary::before { content: "▼"; }
+.command-disclosure__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-disclosure__hint { flex: 0 0 auto; color: #0000b0; font-size: .86em; text-decoration: underline; }
+.command-disclosure__detail { margin: 6px 0 0 13px; padding: 7px 9px; overflow-wrap: anywhere; border: 1px solid #bbb; background: #f7f7f7; color: #111; white-space: pre-wrap; }
+.command-disclosure > summary:focus-visible { outline: 2px solid #ffb000; outline-offset: 2px; }
 .message-link { color: #0000b0; text-decoration: underline; }
 .message-link:visited { color: #800080; }
 .message-link:focus-visible { outline: 1px dotted currentColor; outline-offset: 1px; }
