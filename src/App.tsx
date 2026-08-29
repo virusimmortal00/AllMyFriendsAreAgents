@@ -29,6 +29,7 @@ import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomConfigurationDialog } from "./room-configuration-dialog";
 import { Diagnostics } from "./diagnostics";
+import { GitHubIntegrationDialog } from "./github-integration-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
 
@@ -138,6 +139,7 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
   const [roomConfigurationOpen, setRoomConfigurationOpen] = useState(false);
+  const [githubIntegrationOpen, setGitHubIntegrationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
@@ -178,6 +180,7 @@ export default function App() {
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
   const roomSettingsTrigger = useRef<HTMLButtonElement | null>(null);
   const roomConfigurationTrigger = useRef<HTMLElement | null>(null);
+  const githubIntegrationTrigger = useRef<HTMLElement | null>(null);
   const profileTrigger = useRef<HTMLElement | null>(null);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
@@ -750,6 +753,10 @@ export default function App() {
     roomConfigurationTrigger.current = trigger;
     setRoomConfigurationOpen(true);
   }, []);
+  const openGitHubIntegration = useCallback((trigger: HTMLElement) => {
+    githubIntegrationTrigger.current = trigger;
+    setGitHubIntegrationOpen(true);
+  }, []);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
     setWorkshopRequestRevision((current) => current + 1);
@@ -779,6 +786,7 @@ export default function App() {
         { label: "Room properties...", accessKey: "P", onSelect: openRoomSettings },
         { label: "Room settings...", accessKey: "S", onSelect: openRoomConfiguration },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
+        { label: "GitHub integration...", accessKey: "G", onSelect: openGitHubIntegration },
         { type: "separator" },
         { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("continue", "all"); } },
         { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("roundtable", "all"); } },
@@ -885,6 +893,7 @@ export default function App() {
 
         {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
         {roomConfigurationOpen ? <RoomConfigurationDialog returnFocusTo={roomConfigurationTrigger.current} onClose={() => setRoomConfigurationOpen(false)} /> : null}
+        {githubIntegrationOpen ? <GitHubIntegrationDialog returnFocusTo={githubIntegrationTrigger.current} onClose={() => setGitHubIntegrationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (

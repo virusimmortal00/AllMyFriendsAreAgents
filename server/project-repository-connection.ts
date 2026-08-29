@@ -4,6 +4,11 @@ import { chmod, mkdir, readFile, realpath, rename, stat, writeFile } from "node:
 import path from "node:path";
 import { promisify } from "node:util";
 
+export {
+  LegacyPatGitHubCredentialProvider,
+  LegacyPatGitHubCredentialProvider as ServerHeldRepositoryCredentials,
+} from "./github-credential-provider.js";
+
 const execFileAsync = promisify(execFile);
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_BRANCH = /^(?![-./])(?!.*(?:\.\.|\/\/|@\{|\\|\s|[~^:?*\[]))[A-Za-z0-9._/-]{1,240}$/;
@@ -79,6 +84,10 @@ export interface DurableRepositoryReference {
 export type RepositoryConnectionResult =
   | { readonly kind: "ok"; readonly connection: ProjectRepositoryConnection }
   | { readonly kind: "conflict"; readonly reason: string; readonly actualRevision: number }
+  | { readonly kind: "rejected"; readonly reason: string };
+
+export type RepositoryCheckoutVerificationResult =
+  | { readonly kind: "ok"; readonly remote: CanonicalRemoteIdentity }
   | { readonly kind: "rejected"; readonly reason: string };
 
 interface StoredConnections { readonly schemaVersion: 1; readonly connections: readonly ProjectRepositoryConnection[] }
@@ -281,24 +290,30 @@ export class ProjectRepositoryServiceRegistry<T> {
   }
 }
 
-/** Secrets remain memory-only; persisted records and projections contain only opaque references. */
-export class ServerHeldRepositoryCredentials {
-  private readonly values = new Map<string, string>();
-  register(projectId: string, reference: string, credential: string) {
-    if (!SAFE_ID.test(projectId) || !SAFE_ID.test(reference) || !credential) throw new Error("A canonical project, credential reference, and server-held credential are required.");
-    const key = `${projectId}\0${reference}`; if (this.values.has(key)) throw new Error("Credential reference is already registered.");
-    this.values.set(key, credential);
-  }
-  available(projectId: string, reference: string) { return this.values.has(`${projectId}\0${reference}`); }
-  forServerOperation(projectId: string, reference: string) { return this.values.get(`${projectId}\0${reference}`); }
-}
-
 export function publicRepositoryConnectionStatus(connection?: ProjectRepositoryConnection): PublicRepositoryConnectionStatus {
   if (!connection) return { configured: false };
   return { configured: true, connectionId: connection.connectionId, projectId: connection.projectId, revision: connection.revision,
     state: connection.state, repository: connection.remote.canonical, defaultBranch: connection.defaultBranch,
     protectedBranches: connection.protectedBranches, policyRevision: connection.policyRevision, checkoutMode: connection.checkoutMode,
     validatedAt: connection.validatedAt };
+}
+
+/** Preflights a local checkout against server-derived catalog identity before authority is persisted. */
+export async function verifyRepositoryCheckout(input: {
+  readonly checkoutPath: string;
+  readonly worktreeRoot: string;
+  readonly defaultBranch: string;
+  readonly expectedRepository: string;
+}): Promise<RepositoryCheckoutVerificationResult> {
+  try {
+    const evidence = await inspectCheckout(input.checkoutPath, input.worktreeRoot, input.defaultBranch);
+    if (evidence.remote.canonical !== input.expectedRepository) {
+      return { kind: "rejected", reason: "Local checkout remote does not match the selected GitHub repository." };
+    }
+    return { kind: "ok", remote: evidence.remote };
+  } catch (error) {
+    return { kind: "rejected", reason: safeError(error) };
+  }
 }
 
 /** Remove repository credentials and local authority paths before worker dispatch. */

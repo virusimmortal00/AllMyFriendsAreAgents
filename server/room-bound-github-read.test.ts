@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { GitHubReadFailure, type GitHubReadFetch } from "./github-read-adapter.js";
-import { type ProjectRepositoryConnection, ServerHeldRepositoryCredentials } from "./project-repository-connection.js";
+import type { GitHubCredentialProvider, ResolvedGitHubCredential } from "./github-credential-provider.js";
+import type { ProjectRepositoryConnection } from "./project-repository-connection.js";
 import { RoomBoundGitHubReadService } from "./room-bound-github-read.js";
 
 const sha = "0123456789abcdef0123456789abcdef01234567";
@@ -18,7 +19,13 @@ function fixture(options:{maxEntries?:number;fetcher?:GitHubReadFetch}={}){
   const rooms=new Map<string,string|null>([["room-a","project-one"],["room-b","project-one"],["room-c","project-two"],["room-general",null],["room-missing-project","project-missing"],["room-unverified","project-unverified"],["room-stale","project-stale"]]);
   const attachmentRevisions=new Map([...rooms.keys()].map((roomId)=>[roomId,1]));
   const records=new Map<string,ProjectRepositoryConnection>([["project-one",connection("project-one","connection-one","owner","one","credential-one")],["project-two",connection("project-two","connection-two","owner","two","credential-two")]]);
-  const credentials=new ServerHeldRepositoryCredentials();credentials.register("project-one","credential-one",secretOne);credentials.register("project-two","credential-two",secretTwo);
+  const credentialRecords=new Map<string,ResolvedGitHubCredential>([["project-one\0credential-one",{token:secretOne,provider:"legacy-pat",authorityRevision:"legacy:one"}],
+    ["project-two\0credential-two",{token:secretTwo,provider:"legacy-pat",authorityRevision:"legacy:two"}]]);
+  const credentials:GitHubCredentialProvider={
+    available:(projectId,reference)=>credentialRecords.has(`${projectId}\0${reference}`),
+    health:(projectId,reference)=>credentialRecords.has(`${projectId}\0${reference}`)?{state:"ready",provider:"legacy-pat",reason:"ready"}:{state:"missing",reason:"credential-missing"},
+    resolve:async(request)=>structuredClone(credentialRecords.get(`${request.projectId}\0${request.credentialReference}`)),
+  };
   let scopeCalls=0;let pauseAt=Number.POSITIVE_INFINITY;let reached:undefined|(()=>void);let release:undefined|(()=>void);
   const identities={
     async getStorageScope(roomId:string){scopeCalls++;if(scopeCalls===pauseAt){reached?.();await new Promise<void>((resolve)=>{release=resolve;});}if(!rooms.has(roomId))return undefined;const projectId=rooms.get(roomId)!;return{schemaVersion:1 as const,serverId:"server-one",roomId,projectId,roomAttachmentRevision:attachmentRevisions.get(roomId),repositoryReferenceId:null,repositoryReferenceRevision:null};},
@@ -31,7 +38,8 @@ function fixture(options:{maxEntries?:number;fetcher?:GitHubReadFetch}={}){
     revalidateAuthority:async(expectedRevision:number)=>{const current=records.get(projectId);return current?.state==="verified"&&current.revision===expectedRevision?{kind:"ok" as const,connection:structuredClone(current)}:{kind:"rejected" as const,reason:current?.revision!==expectedRevision?"Repository connection revision is stale.":"Repository identity drift."};},
   }) as never,credentials,{fetcher,maxEntries:options.maxEntries});
   const pauseBeforeNextValidation=()=>{pauseAt=scopeCalls+2;const waiting=new Promise<void>((resolve)=>{reached=resolve;});return{waiting,release:()=>release?.()};};
-  return{service,fetcher,records,rooms,attachmentRevisions,pauseBeforeNextValidation};
+  const rotateCredential=(projectId:string,reference:string,token:string)=>credentialRecords.set(`${projectId}\0${reference}`,{token,provider:"legacy-pat",authorityRevision:`legacy:rotated:${projectId}`});
+  return{service,fetcher,records,rooms,attachmentRevisions,rotateCredential,pauseBeforeNextValidation};
 }
 
 describe("room-bound read-only GitHub resolution",()=>{
@@ -47,6 +55,12 @@ describe("room-bound read-only GitHub resolution",()=>{
   it("keeps one global LRU bound across repository scopes",async()=>{
     const f=fixture({maxEntries:1});await f.service.execute("room-a",{kind:"pr",number:7});await f.service.execute("room-c",{kind:"pr",number:7});
     expect(f.service.inspect()).toMatchObject({entries:1});await f.service.execute("room-a",{kind:"pr",number:7});expect(f.fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not reuse a cache entry after credential authority rotates",async()=>{
+    const f=fixture();await f.service.execute("room-a",{kind:"pr",number:7});expect(f.fetcher).toHaveBeenCalledTimes(1);
+    f.rotateCredential("project-one","credential-one",secretTwo);
+    await f.service.execute("room-a",{kind:"pr",number:7});expect(f.fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("makes old cache entries unreachable after revision change, rebind, disable, drift, or credential loss",async()=>{

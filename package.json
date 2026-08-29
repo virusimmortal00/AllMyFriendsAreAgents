@@ -11,6 +11,7 @@
     "dev": "concurrently -k -n api,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
     "dev:server": "ALL_MY_FRIENDS_ARE_AGENTS_PORT=${ALL_MY_FRIENDS_ARE_AGENTS_PORT:-53147} tsx watch server/index.ts",
     "dev:web": "vite",
+    "github:app:registration-url": "tsx scripts/github-app-registration.ts",
     "build": "tsc -b --force && vite build",
     "check:quality": "pnpm run check:ui-standards && pnpm run build && pnpm test",
     "check:ui-standards": "vitest run src/ui-standards.test.tsx src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",

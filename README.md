@@ -233,6 +233,12 @@ rollout gate are documented in
 
 Point the room at another project, isolate its state, cap agent concurrency, or configure stable developer identities. Every option is documented in [`.env.example`](.env.example).
 
+The normal read-only GitHub experience uses the project-owned reusable GitHub
+App and requires no per-room token variables. App maintainers should follow the
+[registration template and client-ID runbook](docs/operations/github-app-registration.md).
+The GitHub token variables below remain compatibility or separately governed
+write-path configuration while migration is completed.
+
 | Variable | Purpose |
 | --- | --- |
 | `ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` | Project context room participants may inspect |

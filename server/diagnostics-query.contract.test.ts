@@ -17,6 +17,7 @@ import {
 const roots: string[] = [];
 const projectId = "project-one";
 const range = { from: "2026-08-28T00:00:00.000Z", to: "2026-08-29T00:00:00.000Z" };
+const loggedAt = () => Date.parse("2026-08-28T12:00:00.000Z");
 const projectCaller: DiagnosticCaller = { principalId: "human-one", selfId: "agent-one", roomIds: ["room-one"], projectIds: [projectId], operator: false };
 const baseQuery: DiagnosticQuery = { ...range, scope: "project" };
 
@@ -133,7 +134,7 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
 
     it("reads the finalized authoritative logging envelope and never projects its filesystem identity", async () => {
       const { root, service } = await make();
-      const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId, projectPath: "/sensitive/project/path" });
+      const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId, projectPath: "/sensitive/project/path", now: loggedAt });
       logging.log("generations", "info", "generation.real-envelope", { prompt: "full prompt", rawOutput: "full output", authorization: "Bearer unsafe-value" }, { visibility: "project", roomId: "room-one", agentId: "agent-one", selfId: "agent-one", generationId: "generation-real" });
       await logging.flush();
       const result = await service.query(projectCaller, { ...baseQuery, events: ["generation.real-envelope"] });
@@ -149,6 +150,7 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       const logging = await AuthoritativeLogging.open({
         dataDirectory: root, projectId, projectPath: root, maxBufferedBytes: 3 * 1024 * 1024,
         rotation: { generations: { maxBytes: 4 * 1024 * 1024, frequencyMs: 60_000, retention: 3 } },
+        now: loggedAt,
       });
       logging.log("generations", "info", "generation.oversized", { rawOutput: evidence, authorization: "Bearer remove-me" }, { visibility: "project", roomId: "room-one", selfId: "agent-one" });
       await logging.flush();

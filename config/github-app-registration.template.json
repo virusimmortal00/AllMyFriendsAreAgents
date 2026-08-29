@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "All My Friends Are Agents",
+  "description": "Server-owned, read-only GitHub integration for project-backed agent rooms.",
+  "homepageUrl": "https://github.com/virusimmortal00/AllMyFriendsAreAgents",
+  "public": true,
+  "requestOAuthOnInstall": false,
+  "webhookActive": false,
+  "repositoryPermissions": {
+    "actions": "read",
+    "checks": "read",
+    "issues": "read",
+    "pull_requests": "read"
+  },
+  "postRegistration": {
+    "enableDeviceFlow": true,
+    "expireUserAuthorizationTokens": true
+  }
+}
