@@ -59,7 +59,7 @@ export function parseContract(text: string): OpenCodeIntegrationContract {
 }
 
 export function pathMatches(pattern: string, file: string) {
-  if (pattern.endsWith("/**")) return file.startsWith(pattern.slice(0, -3));
+  if (pattern.endsWith("/**")) return file.startsWith(pattern.slice(0, -2));
   return pattern === file;
 }
 
@@ -81,11 +81,34 @@ export function validateReview(contract: OpenCodeIntegrationContract, surfaces: 
 
 export function validatePullRequestEvidence(contract: OpenCodeIntegrationContract, surfaces: readonly IntegrationSurface[], body: string) {
   const errors: string[] = [];
-  if (!body.includes("## OpenCode upstream review")) errors.push("add the OpenCode upstream review section to the pull request body");
-  if (!body.includes(contract.upstream.auditedTag)) errors.push(`record audited tag ${contract.upstream.auditedTag} in the pull request body`);
-  if (!body.includes(contract.upstream.auditedCommit)) errors.push(`record audited commit ${contract.upstream.auditedCommit} in the pull request body`);
-  for (const surface of surfaces) if (!body.includes(surface.id)) errors.push(`record affected surface ${surface.id} in the pull request body`);
-  if (!/^Result:\s+\S.{30,}$/m.test(body)) errors.push("add a substantive Result: line to the OpenCode upstream review section");
+  const heading = /^## OpenCode upstream review\s*$/m.exec(body);
+  const sectionStart = heading ? heading.index + heading[0].length : -1;
+  const remainingBody = sectionStart >= 0 ? body.slice(sectionStart) : "";
+  const nextHeading = /^##\s+/m.exec(remainingBody);
+  const section = nextHeading ? remainingBody.slice(0, nextHeading.index) : remainingBody;
+  const field = (name: string) => new RegExp(`^${name}:\\s*(.+)$`, "m").exec(section)?.[1].trim() || "";
+  const unwrapCode = (value: string) => value.startsWith("`") && value.endsWith("`") ? value.slice(1, -1).trim() : value;
+
+  if (!heading) errors.push("add the OpenCode upstream review section to the pull request body");
+
+  const tag = unwrapCode(field("Tag"));
+  if (!tag || /^N\/?A$/i.test(tag) || tag !== contract.upstream.auditedTag) errors.push(`record audited tag ${contract.upstream.auditedTag} in the OpenCode upstream review section`);
+
+  const commit = unwrapCode(field("Commit"));
+  if (!commit || /^N\/?A$/i.test(commit) || commit !== contract.upstream.auditedCommit) errors.push(`record audited commit ${contract.upstream.auditedCommit} in the OpenCode upstream review section`);
+
+  const declaredSurfaces = field("Surfaces").split(",").map((surface) => unwrapCode(surface.trim())).filter(Boolean);
+  const expectedSurfaces = surfaces.map((surface) => surface.id).sort();
+  const uniqueDeclaredSurfaces = [...new Set(declaredSurfaces)].sort();
+  if (declaredSurfaces.some((surface) => /^N\/?A$/i.test(surface))
+    || declaredSurfaces.length !== uniqueDeclaredSurfaces.length
+    || uniqueDeclaredSurfaces.length !== expectedSurfaces.length
+    || uniqueDeclaredSurfaces.some((surface, index) => surface !== expectedSurfaces[index])) {
+    errors.push(`record exactly these affected surfaces in the OpenCode upstream review section: ${expectedSurfaces.join(", ")}`);
+  }
+
+  const result = field("Result");
+  if (result.length < 40 || /^(?:N\/?A|not applicable)\b/i.test(result)) errors.push("add a substantive Result: line to the OpenCode upstream review section");
   return errors;
 }
 

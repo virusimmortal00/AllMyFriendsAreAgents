@@ -37,6 +37,8 @@ describe("OpenCode integration contract guard", () => {
     expect(pathMatches("server/runner.ts", "server/runner.ts")).toBe(true);
     expect(pathMatches("server/tools/**", "server/tools/room.ts")).toBe(true);
     expect(pathMatches("server/tools/**", "server/tooling.ts")).toBe(false);
+    expect(pathMatches("server/tools/**", "server/toolsmith.ts")).toBe(false);
+    expect(pathMatches("server/tools/**", "server/tools")).toBe(false);
   });
 
   it("maps a diff to only the affected upstream surfaces", () => {
@@ -55,7 +57,19 @@ describe("OpenCode integration contract guard", () => {
   it("validates durable pull-request evidence against the exact contract", () => {
     const body = `## OpenCode upstream review\nTag: v1.18.25\nCommit: ${"a".repeat(40)}\nSurfaces: runtime, tools\nResult: Confirmed the mapped behavior remains compatible with the local implementation.`;
     expect(validatePullRequestEvidence(contract, contract.surfaces, body)).toEqual([]);
-    expect(validatePullRequestEvidence(contract, contract.surfaces, "")).toHaveLength(6);
+    expect(validatePullRequestEvidence(contract, contract.surfaces, "")).not.toEqual([]);
+    expect(validatePullRequestEvidence(contract, [contract.surfaces[0]], body)).toContain("record exactly these affected surfaces in the OpenCode upstream review section: runtime");
+  });
+
+  it("rejects valid-looking evidence outside the OpenCode review section", () => {
+    const evidence = `Tag: v1.18.25\nCommit: ${"a".repeat(40)}\nSurfaces: runtime, tools\nResult: Confirmed the mapped behavior remains compatible with the local implementation.`;
+    const body = `${evidence}\n\n## OpenCode upstream review\nTag: N/A\nCommit: N/A\nSurfaces: N/A\nResult: Not applicable; no mapped OpenCode integration surface changed.`;
+    expect(validatePullRequestEvidence(contract, contract.surfaces, body)).toEqual([
+      "record audited tag v1.18.25 in the OpenCode upstream review section",
+      `record audited commit ${"a".repeat(40)} in the OpenCode upstream review section`,
+      "record exactly these affected surfaces in the OpenCode upstream review section: runtime, tools",
+      "add a substantive Result: line to the OpenCode upstream review section",
+    ]);
   });
 
   it("keeps the package, compiler, install policy, and runtime range pinned together", () => {
