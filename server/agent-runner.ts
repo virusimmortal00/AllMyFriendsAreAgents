@@ -386,6 +386,46 @@ function agentChildProcessEnvironment(options: Pick<RunProcessOptions, "environm
   };
 }
 
+const SCOPED_AGENT_TOOL_REQUIREMENTS = {
+  roomCommand: ["AMFAA_ROOM_COMMAND_URL", "AMFAA_ROOM_COMMAND_TOKEN", "AMFAA_ROOM_COMMANDS"],
+  roomHistory: ["AMFAA_ROOM_HISTORY_URL", "AMFAA_ROOM_HISTORY_TOKEN"],
+  roomDiagnostics: ["AMFAA_ROOM_DIAGNOSTICS_URL", "AMFAA_ROOM_DIAGNOSTICS_TOKEN"],
+} as const;
+
+type ScopedAgentTool = keyof typeof SCOPED_AGENT_TOOL_REQUIREMENTS;
+type ScopedAgentToolState = "not-configured" | "ready" | "missing";
+
+function scopedAgentToolReadiness(
+  environment: NodeJS.ProcessEnv,
+  expected: Readonly<Record<ScopedAgentTool, boolean>>,
+): Record<ScopedAgentTool, ScopedAgentToolState> {
+  return Object.fromEntries(Object.entries(SCOPED_AGENT_TOOL_REQUIREMENTS).map(([tool, names]) => [
+    tool,
+    !expected[tool as ScopedAgentTool]
+      ? "not-configured"
+      : names.every((name) => typeof environment[name] === "string" && environment[name]!.length > 0) ? "ready" : "missing",
+  ])) as Record<ScopedAgentTool, ScopedAgentToolState>;
+}
+
+async function logScopedAgentToolReadiness(
+  operationLog: OperationLog | undefined,
+  generationId: string,
+  agentId: AgentId,
+  environment: NodeJS.ProcessEnv,
+  expected: Readonly<Record<ScopedAgentTool, boolean>>,
+) {
+  const readiness = scopedAgentToolReadiness(environment, expected);
+  const missing = Object.values(readiness).includes("missing");
+  await logOperationSafely(operationLog, missing ? "error" : "info", "agent.tool-policy.environment", {
+    generationId,
+    agentId,
+    outcome: missing ? "failed" : "configured",
+    reason: missing ? "scoped-tool-environment-missing" : "scoped-tool-environment-ready",
+    ...readiness,
+  });
+  return readiness;
+}
+
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const timeoutMs = options.timeoutMs ?? CHAT_RUN_TIMEOUT_MS;
@@ -724,12 +764,20 @@ export async function runAgent(
           AMFAA_ROOM_DIAGNOSTICS_TOKEN: context.diagnosticsTool.token,
         } : {}),
       };
-      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
+      const processOptions = {
         environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length), Boolean(context?.diagnosticsTool)),
         scopedToolEnvironment,
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
-      });
+      } satisfies RunProcessOptions;
+      await logScopedAgentToolReadiness(
+        context?.operationLog,
+        generationId,
+        agent,
+        agentChildProcessEnvironment(processOptions),
+        { roomCommand: Boolean(context?.commandTool), roomHistory: Boolean(context?.historyTool), roomDiagnostics: Boolean(context?.diagnosticsTool) },
+      );
+      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, processOptions);
     };
     let result: ProcessResult;
     try {
@@ -809,4 +857,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, agentChildProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, agentChildProcessEnvironment, scopedAgentToolReadiness, logScopedAgentToolReadiness, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };

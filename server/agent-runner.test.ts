@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
@@ -415,6 +415,40 @@ describe("OpenCode runtime safety", () => {
       DATABASE_URL: false,
       OTHER_TOKEN: false,
     });
+  });
+
+  it("reports bounded room-tool subprocess readiness without credential or endpoint values", async () => {
+    const environment = __testing.agentChildProcessEnvironment({
+      environment: { PATH: process.env.PATH, GITHUB_TOKEN: "github-secret" },
+      scopedToolEnvironment: {
+        AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+        AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+        AMFAA_ROOM_COMMANDS: '["gh"]',
+        AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+        AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+        AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      },
+    });
+    const operationLog = vi.fn();
+
+    await __testing.logScopedAgentToolReadiness(
+      operationLog,
+      "generation-1",
+      "codex-sol",
+      environment,
+      { roomCommand: true, roomHistory: true, roomDiagnostics: true },
+    );
+
+    expect(operationLog).toHaveBeenCalledWith("error", "agent.tool-policy.environment", {
+      generationId: "generation-1",
+      agentId: "codex-sol",
+      outcome: "failed",
+      reason: "scoped-tool-environment-missing",
+      roomCommand: "ready",
+      roomHistory: "ready",
+      roomDiagnostics: "missing",
+    });
+    expect(JSON.stringify(operationLog.mock.calls)).not.toMatch(/command-secret|history-secret|github-secret|127\.0\.0\.1/);
   });
 
   it("preserves only an explicitly trusted confined-writer environment", async () => {
