@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   verify:
@@ -25,15 +26,39 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Compare latest and audited releases
+        id: releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           audited_tag="$(node -p "require('./integration-contracts/opencode.json').upstream.auditedTag")"
           latest_tag="$(gh api repos/anomalyco/opencode/releases/latest --jq .tag_name)"
-          if [ "$latest_tag" != "$audited_tag" ]; then
-            echo "Latest OpenCode release is $latest_tag; audited release is $audited_tag. Review upstream source before expanding the supported range."
-            exit 1
+          echo "audited_tag=$audited_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          test "$latest_tag" = "$audited_tag" && echo "drift=false" >> "$GITHUB_OUTPUT" || echo "drift=true" >> "$GITHUB_OUTPUT"
+      - name: Open or update the upstream-drift issue
+        if: steps.releases.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          AUDITED_TAG: ${{ steps.releases.outputs.audited_tag }}
+          LATEST_TAG: ${{ steps.releases.outputs.latest_tag }}
+        run: |
+          issue_title="OpenCode upstream drift detected"
+          issue_body="OpenCode $LATEST_TAG is the latest upstream release, while this repository is audited through $AUDITED_TAG. Review the upstream source, update the integration contract and focused tests, then close this issue after the audited range is advanced."
+          issue_number="$(gh issue list --repo "$GH_REPO" --state open --limit 100 --json number,title --jq '.[] | select(.title == "OpenCode upstream drift detected") | .number' | head -n 1)"
+          if [ -n "$issue_number" ]; then
+            gh issue edit "$issue_number" --repo "$GH_REPO" --title "$issue_title" --body "$issue_body"
+          else
+            gh issue create --repo "$GH_REPO" --title "$issue_title" --body "$issue_body"
           fi
+      - name: Fail when upstream source review is required
+        if: steps.releases.outputs.drift == 'true'
+        env:
+          AUDITED_TAG: ${{ steps.releases.outputs.audited_tag }}
+          LATEST_TAG: ${{ steps.releases.outputs.latest_tag }}
+        run: |
+          echo "Latest OpenCode release is $LATEST_TAG; audited release is $AUDITED_TAG. Review upstream source before expanding the supported range."
+          exit 1
       - name: Verify immutable upstream source evidence
         run: pnpm exec tsx scripts/check-integration-contracts.ts --all --verify-upstream
       - name: Download audited provider-free binary

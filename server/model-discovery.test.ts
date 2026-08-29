@@ -76,6 +76,13 @@ describe("OpenCode model discovery", () => {
     const future = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.26\n", stderr: "" }));
     await expect(new ModelDiscoveryService(future).discover()).resolves.toMatchObject({ status: "runtime_incompatible", diagnostic: expect.stringContaining("source-audited range"), models: [] });
     expect(future).toHaveBeenCalledTimes(1);
+    const malformed = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "unexpected\n", stderr: "" }));
+    await expect(new ModelDiscoveryService(malformed).discover()).resolves.toMatchObject({
+      status: "runtime_incompatible",
+      diagnostic: `OpenCode returned an unrecognized version; install a release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}.`,
+      models: [],
+    });
+    expect(malformed).toHaveBeenCalledTimes(1);
   });
 
   it("distinguishes CLI, authentication, configuration, and malformed output errors", async () => {

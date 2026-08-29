@@ -43,6 +43,10 @@ export function parseContract(text: string): OpenCodeIntegrationContract {
     || !/^\d+\.\d+\.\d+$/.test(value.upstream.auditedVersion)
     || value.upstream.auditedTag !== `v${value.upstream.auditedVersion}`
     || !/^[0-9a-f]{40}$/.test(value.upstream.auditedCommit)) throw new Error("The OpenCode contract has invalid version or immutable-commit evidence.");
+  const minimumVersion = value.upstream.minimumVersion.split(".").map(Number);
+  const auditedVersion = value.upstream.auditedVersion.split(".").map(Number);
+  const firstDifference = minimumVersion.findIndex((part, index) => part !== auditedVersion[index]);
+  if (firstDifference >= 0 && minimumVersion[firstDifference] > auditedVersion[firstDifference]) throw new Error("The OpenCode contract minimum version cannot exceed its audited version.");
   if (!value.review || !Number.isSafeInteger(value.review.revision) || value.review.revision < 1
     || !/^\d{4}-\d{2}-\d{2}$/.test(value.review.reviewedOn)
     || typeof value.review.result !== "string" || value.review.result.length < 40
@@ -65,6 +69,10 @@ export function pathMatches(pattern: string, file: string) {
 
 export function affectedSurfaces(contract: OpenCodeIntegrationContract, changedFiles: readonly string[]) {
   return contract.surfaces.filter((surface) => surface.local.some((pattern) => changedFiles.some((file) => pathMatches(pattern, file))));
+}
+
+export function surfacesForChanges(contract: OpenCodeIntegrationContract, changedFiles: readonly string[], all = false) {
+  return all || changedFiles.includes(OPENCODE_CONTRACT_PATH) ? [...contract.surfaces] : affectedSurfaces(contract, changedFiles);
 }
 
 export function requiredUpstreamPaths(surfaces: readonly IntegrationSurface[]) {
@@ -210,8 +218,7 @@ async function main() {
   const requestedFiles = (option("--inspect-files") || "").split(",").map((file) => file.trim()).filter(Boolean);
   const inspectOnly = requestedFiles.length > 0;
   const changed = [...new Set([...changedFiles(base, head), ...requestedFiles])].sort();
-  const mappedSurfaces = affectedSurfaces(contract, changed);
-  const surfaces = (all || (!mappedSurfaces.length && changed.includes(OPENCODE_CONTRACT_PATH))) ? [...contract.surfaces] : mappedSurfaces;
+  const surfaces = surfacesForChanges(contract, changed, all);
   if (!surfaces.length) {
     console.log("OpenCode integration contract: no mapped surfaces changed.");
     return;

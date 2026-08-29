@@ -242,7 +242,7 @@ export class ModelDiscoveryService {
         ...(runtime ? { runtime } : {}),
         diagnostic: runtime
           ? `OpenCode ${runtime.version} is outside the source-audited range ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}; install ${MAXIMUM_AUDITED_OPENCODE_VERSION} or update the upstream integration contract.`
-          : "OpenCode returned an unrecognized version; install a supported 1.x release.",
+          : `OpenCode returned an unrecognized version; install a release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}.`,
         discoveredAt,
       };
     }

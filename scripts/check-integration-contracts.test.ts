@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  OPENCODE_CONTRACT_PATH,
   affectedSurfaces,
   changedPathsFromNameStatus,
   parseContract,
   pathMatches,
   requiredUpstreamPaths,
+  surfacesForChanges,
   validatePullRequestEvidence,
   validateLocalPins,
   validateReview,
@@ -48,6 +50,10 @@ describe("OpenCode integration contract guard", () => {
     expect(requiredUpstreamPaths(contract.surfaces)).toEqual(["upstream/run.ts", "upstream/tool.ts"]);
   });
 
+  it("audits every surface whenever the contract itself changes", () => {
+    expect(surfacesForChanges(contract, [OPENCODE_CONTRACT_PATH, "server/runner.ts"]).map(({ id }) => id)).toEqual(["runtime", "tools"]);
+  });
+
   it("keeps both sides of a rename so moved integration files remain affected", () => {
     const paths = changedPathsFromNameStatus("R100\tserver/tools/room.ts\tsrc/room.ts\nM\tsrc/App.tsx");
     expect(paths).toEqual(["server/tools/room.ts", "src/room.ts", "src/App.tsx"]);
@@ -59,6 +65,13 @@ describe("OpenCode integration contract guard", () => {
     expect(validateReview(contract, contract.surfaces, 3)).toContain("increment review.revision above 3");
     const missing = { ...contract, review: { ...contract.review, revision: 4, paths: ["upstream/run.ts"] } };
     expect(validateReview(missing, contract.surfaces, 3)).toContain("record upstream review path upstream/tool.ts");
+  });
+
+  it("rejects a minimum version above the audited version", () => {
+    expect(() => parseContract(JSON.stringify({
+      ...contract,
+      upstream: { ...contract.upstream, minimumVersion: "1.18.26" },
+    }))).toThrow("minimum version cannot exceed its audited version");
   });
 
   it("validates durable pull-request evidence against the exact contract", () => {
