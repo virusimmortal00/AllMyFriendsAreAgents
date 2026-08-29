@@ -87,7 +87,7 @@ describe("GitHub App device-flow transport", () => {
       { fetcher: async () => json({ error: "incorrect_client_credentials", error_description: "private upstream details" }), kind: "upstream" },
       { fetcher: async () => json({ error: "server" }, 500), kind: "upstream" },
       { fetcher: async () => { throw new DOMException("timed out", "TimeoutError"); }, kind: "upstream" },
-      { fetcher: async () => ({ ok: true, text: async () => { throw new DOMException("timed out", "AbortError"); } }) as Response, kind: "upstream" },
+      { fetcher: async () => Object.assign(new Response("{}"), { text: async () => { throw new DOMException("timed out", "AbortError"); } }), kind: "upstream" },
     ];
     for (const value of cases) {
       try {
