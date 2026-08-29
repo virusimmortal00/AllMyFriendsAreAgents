@@ -7,6 +7,8 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const GITHUB_USER_ENDPOINT = "https://api.github.com/user";
 const MAX_RESPONSE_BYTES = 32 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ACTIVE_FLOWS_PER_PRINCIPAL = 3;
 
 export type GitHubUserFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 export type GitHubDeviceAuthorizationState = "authorizing" | "ready" | "denied" | "expired" | "failed";
@@ -47,7 +49,7 @@ export class GitHubDeviceAuthorizationCoordinator {
   readonly #vault: CredentialWriter;
   readonly #userFetch: GitHubUserFetch;
   readonly #now: () => number;
-  #queue: Promise<void> = Promise.resolve();
+  readonly #queues = new Map<string, Promise<void>>();
 
   constructor(
     deviceFlow: GitHubDeviceFlowTransport,
@@ -64,8 +66,12 @@ export class GitHubDeviceAuthorizationCoordinator {
   }
 
   start(principalId: string): Promise<PublicGitHubDeviceAuthorization> {
-    return this.serialize(async () => {
+    return this.serialize(`principal:${principalId}`, async () => {
       if (!SAFE_ID.test(principalId)) throw new GitHubDeviceAuthorizationFailure("not-found");
+      this.sweepExpired();
+      if ([...this.#flows.values()].filter((flow) => flow.principalId === principalId && flow.state === "authorizing").length >= MAX_ACTIVE_FLOWS_PER_PRINCIPAL) {
+        throw new GitHubDeviceAuthorizationFailure("limit-exceeded");
+      }
       const authorization = await this.#deviceFlow.start();
       const nowMs = this.#now();
       const flow: PendingAuthorization = {
@@ -88,14 +94,17 @@ export class GitHubDeviceAuthorizationCoordinator {
   status(flowId: string, principalId: string) {
     const flow = this.ownedFlow(flowId, principalId);
     this.expire(flow);
-    return project(flow);
+    const result = project(flow);
+    if (flow.state !== "authorizing") this.#flows.delete(flow.flowId);
+    this.sweepExpired();
+    return result;
   }
 
   poll(flowId: string, principalId: string): Promise<PublicGitHubDeviceAuthorization> {
-    return this.serialize(async () => {
+    return this.serialize(`flow:${flowId}`, async () => {
       const flow = this.ownedFlow(flowId, principalId);
       this.expire(flow);
-      if (flow.state !== "authorizing") return project(flow);
+      if (flow.state !== "authorizing") return this.finish(flow);
       const nowMs = this.#now();
       if (nowMs < flow.nextPollAtMs) return project(flow);
       let result;
@@ -103,7 +112,7 @@ export class GitHubDeviceAuthorizationCoordinator {
       catch {
         flow.state = "failed";
         flow.failureReason = "github-unavailable";
-        return project(flow);
+        return this.finish(flow);
       }
       if (result.kind === "pending" || result.kind === "slow-down") {
         flow.intervalSeconds = result.retryAfterSeconds;
@@ -115,7 +124,7 @@ export class GitHubDeviceAuthorizationCoordinator {
       } else {
         await this.complete(flow, result.credential);
       }
-      return project(flow);
+      return this.finish(flow);
     });
   }
 
@@ -198,20 +207,35 @@ export class GitHubDeviceAuthorizationCoordinator {
     if (flow.state === "authorizing" && this.#now() >= flow.expiresAtMs) flow.state = "expired";
   }
 
+  private finish(flow: PendingAuthorization) {
+    const result = project(flow);
+    if (flow.state !== "authorizing") this.#flows.delete(flow.flowId);
+    return result;
+  }
+
+  private sweepExpired() {
+    const nowMs = this.#now();
+    for (const [flowId, flow] of this.#flows) {
+      if (flow.state !== "authorizing" || nowMs >= flow.expiresAtMs) this.#flows.delete(flowId);
+    }
+  }
+
   private async compensate(secretReference: string, revision: number) {
     try { await this.#vault.delete(secretReference, revision); } catch { /* The unreferenced secret remains inaccessible and can be reconciled on startup. */ }
   }
 
-  private serialize<T>(work: () => Promise<T>): Promise<T> {
-    const operation = this.#queue.then(work);
-    this.#queue = operation.then(() => undefined, () => undefined);
+  private serialize<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const operation = (this.#queues.get(key) ?? Promise.resolve()).then(work);
+    const release = operation.then(() => undefined, () => undefined);
+    this.#queues.set(key, release);
+    void release.then(() => { if (this.#queues.get(key) === release) this.#queues.delete(key); });
     return operation;
   }
 }
 
 export class GitHubDeviceAuthorizationFailure extends Error {
-  constructor(readonly kind: "not-found") {
-    super("GitHub device authorization was not found.");
+  constructor(readonly kind: "not-found" | "limit-exceeded") {
+    super(kind === "not-found" ? "GitHub device authorization was not found." : "Too many GitHub device authorizations are active.");
     this.name = "GitHubDeviceAuthorizationFailure";
   }
 }
@@ -234,11 +258,14 @@ async function fetchGitHubUser(accessToken: string, fetcher: GitHubUserFetch) {
     response = await fetcher(GITHUB_USER_ENDPOINT, {
       method: "GET",
       redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { accept: "application/vnd.github+json", authorization: `Bearer ${accessToken}`, "x-github-api-version": "2022-11-28" },
     });
   } catch { throw new Error("GitHub user validation failed."); }
   if (!response.ok) throw new Error("GitHub user validation failed.");
-  const text = await response.text();
+  let text: string;
+  try { text = await response.text(); }
+  catch { throw new Error("GitHub user validation failed."); }
   if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("GitHub user validation failed.");
   let payload: unknown;
   try { payload = JSON.parse(text); } catch { throw new Error("GitHub user validation failed."); }

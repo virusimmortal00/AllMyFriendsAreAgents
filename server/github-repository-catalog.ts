@@ -4,6 +4,7 @@ const PAGE_SIZE = 100;
 const MAX_INSTALLATION_PAGES = 10;
 const MAX_REPOSITORY_PAGES = 100;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
 const USER_ACCESS_TOKEN = /^ghu_[A-Za-z0-9_]{10,1000}$/;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const GITHUB_REPOSITORY_NAME = /^[A-Za-z0-9_.-]{1,100}$/;
@@ -83,16 +84,42 @@ export class GitHubRepositoryCatalogClient {
     try {
       response = await this.fetcher(`${API_ORIGIN}${pathname}`, { method: "GET", redirect: "error", headers: {
         accept: "application/vnd.github+json", authorization: `Bearer ${accessToken}`, "x-github-api-version": API_VERSION,
-      } });
+      }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     } catch { throw new GitHubRepositoryCatalogFailure("upstream"); }
     if (!response.ok) throw new GitHubRepositoryCatalogFailure("upstream");
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new GitHubRepositoryCatalogFailure("invalid-response");
+    let text: string;
+    try { text = await readBoundedBody(response); }
+    catch (error) {
+      if (error instanceof GitHubRepositoryCatalogFailure) throw error;
+      throw new GitHubRepositoryCatalogFailure("upstream");
+    }
     let payload: unknown;
     try { payload = JSON.parse(text); } catch { throw new GitHubRepositoryCatalogFailure("invalid-response"); }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new GitHubRepositoryCatalogFailure("invalid-response");
     return payload as Record<string, unknown>;
   }
+}
+
+async function readBoundedBody(response: Response) {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && /^\d+$/.test(contentLength) && Number(contentLength) > MAX_RESPONSE_BYTES) {
+    throw new GitHubRepositoryCatalogFailure("invalid-response");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    totalBytes += chunk.value.byteLength;
+    if (totalBytes > MAX_RESPONSE_BYTES) {
+      void reader.cancel().catch(() => undefined);
+      throw new GitHubRepositoryCatalogFailure("invalid-response");
+    }
+    chunks.push(Buffer.from(chunk.value));
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
 }
 
 function installationFrom(value: unknown): GitHubInstallationCatalogEntry {

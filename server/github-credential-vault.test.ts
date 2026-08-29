@@ -60,6 +60,22 @@ describe("encrypted GitHub credential vault", () => {
       .resolves.toEqual({ kind: "ok", reference: "github-secret-one", revision: 4 });
   });
 
+  it("serializes compare-and-set mutations across independently opened vault instances", async () => {
+    const f = await fixture();
+    const second = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => secondTime });
+    const [one, two] = await Promise.all([
+      f.vault.put("github-secret-one", 0, credential()),
+      second.put("github-secret-two", 0, credential("ghu_second_access_token_1234567890", "ghr_second_refresh_token_1234567890")),
+    ]);
+    expect(one).toMatchObject({ kind: "ok", revision: 1 });
+    expect(two).toMatchObject({ kind: "ok", revision: 1 });
+    const reopened = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath });
+    expect(reopened.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reference: "github-secret-one", revision: 1, state: "ready" }),
+      expect.objectContaining({ reference: "github-secret-two", revision: 1, state: "ready" }),
+    ]));
+  });
+
   it("fails authentication after ciphertext tampering or when opened with another key", async () => {
     const f = await fixture(); await f.vault.put("github-secret-one", 0, credential());
     const envelope = JSON.parse(await readFile(f.vaultPath, "utf8")) as { ciphertext: string };

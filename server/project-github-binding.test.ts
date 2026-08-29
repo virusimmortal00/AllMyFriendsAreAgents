@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoundGitHubCredentialProvider, GitHubIntegrationStore, type SecretVaultReader } from "./github-integration-store.js";
 import { ProjectGitHubBindingService } from "./project-github-binding.js";
 import { ProjectRepositoryConnectionService, ProjectRepositoryConnectionStore } from "./project-repository-connection.js";
@@ -67,6 +67,17 @@ describe("project GitHub binding workflow", () => {
     await expect(service.configure(input(f))).resolves.toEqual({ kind: "rejected", reason: "simulated repository rejection" });
     expect(f.integrations.bindingForProject("project-one")).toMatchObject({ revision: 2, state: "revoked" });
   });
+
+  it("reports an incomplete rollback when repository persistence and binding revocation both fail", async () => {
+    const f = await fixture();
+    const rejectingAuthority = { inspect: () => ({ configured: false as const }), inspectServer: () => undefined,
+      connect: async () => ({ kind: "rejected" as const, reason: "simulated repository rejection" }) };
+    vi.spyOn(f.integrations, "revokeBinding").mockResolvedValueOnce({ kind: "conflict", actualRevision: 2 });
+    const service = new ProjectGitHubBindingService(f.integrations, () => rejectingAuthority);
+    await expect(service.configure(input(f))).resolves.toEqual({ kind: "rejected",
+      reason: "Repository connection failed and the GitHub binding rollback did not complete. Reconfigure the project." });
+    expect(f.integrations.bindingForProject("project-one")).toMatchObject({ revision: 1, state: "ready" });
+  });
 });
 
 function vault(): SecretVaultReader {
@@ -74,5 +85,5 @@ function vault(): SecretVaultReader {
 }
 
 async function git(repository: string, args: readonly string[]) {
-  await exec("git", ["-C", repository, ...args], { env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } });
+  await exec("git", ["-C", repository, ...args], { env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } });
 }

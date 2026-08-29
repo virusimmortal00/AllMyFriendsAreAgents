@@ -97,7 +97,7 @@ export class RoomBoundGitHubReadService {
       repository: connection.remote.canonical,
     });
     if (!credential) throw new GitHubReadFailure("credential-missing", "none");
-    const cacheScope = `${project.projectId}:${connection.connectionId}:${connection.revision}:${connection.remote.canonical}`;
+    const cacheScope = `${project.projectId}:${connection.connectionId}:${connection.revision}:${connection.remote.canonical}:${credential.provider}:${credential.authorityRevision}`;
     const authorizationLease=`sha256:${createHash("sha256").update(JSON.stringify({serverId:scope.serverId,roomId:scope.roomId,roomAttachmentRevision:scope.roomAttachmentRevision??0,
       projectId:project.projectId,projectRevision:project.revision,connectionId:connection.connectionId,connectionRevision:connection.revision,
       repository:connection.remote.canonical,identityDigest:connection.identityDigest,credentialReference:connection.credentialReference,

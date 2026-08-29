@@ -8,6 +8,7 @@ import type { BundledGitHubAppConfiguration } from "./github-app-configuration.j
 type DeviceAuthorizations = Pick<GitHubDeviceAuthorizationCoordinator, "start" | "status" | "poll">;
 type IntegrationReader = Pick<GitHubIntegrationStore, "connections">;
 type Catalogs = Pick<GitHubRepositoryCatalogService, "inspect" | "refresh">;
+const MAX_AUDITED_TERMINAL_FLOWS = 1_000;
 
 export function registerGitHubIntegrationRoutes(input: {
   readonly app: express.Express;
@@ -41,7 +42,7 @@ export function registerGitHubIntegrationRoutes(input: {
     if (result.kind !== "ok") {
       await control.recordAudit(actor.id, "GITHUB_CATALOG_REFRESH_FAILED", undefined, { state: result.kind, reason: result.kind === "rejected" ? result.reason : "revision-conflict" });
       if (result.kind === "conflict") return response.status(409).json(result);
-      return response.status(403).json(result);
+      return response.status(422).json(result);
     }
     await control.recordAudit(actor.id, "GITHUB_CATALOG_REFRESHED", connectionId, { state: "ready", repositoryCount: result.value.repositories.length,
       installationCount: result.value.installations.length, nextRevision: result.value.revision });
@@ -50,7 +51,7 @@ export function registerGitHubIntegrationRoutes(input: {
 
   app.post("/api/control/integrations/github/device-authorizations", controlRoute(async (request, response) => {
     const actor = control.require(request, "INTEGRATION_CONFIGURE", true).principal;
-    const authorization = await authorizations.start(actor.id);
+    const authorization = await ownedStart(authorizations, actor.id);
     await control.recordAudit(actor.id, "GITHUB_AUTHORIZATION_STARTED", authorization.flowId, { state: authorization.state });
     response.set("Cache-Control", "no-store").status(201).json({ authorization });
   }));
@@ -63,9 +64,7 @@ export function registerGitHubIntegrationRoutes(input: {
   app.post("/api/control/integrations/github/device-authorizations/:flowId/poll", controlRoute(async (request, response) => {
     const actor = control.require(request, "INTEGRATION_CONFIGURE", true).principal;
     const authorization = await ownedPoll(authorizations, String(request.params.flowId), actor.id);
-    const auditKey = `${authorization.flowId}:${authorization.state}`;
-    if (["ready", "denied", "expired", "failed"].includes(authorization.state) && !auditedTerminalStates.has(auditKey)) {
-      auditedTerminalStates.add(auditKey);
+    if (["ready", "denied", "expired", "failed"].includes(authorization.state) && rememberTerminalFlow(auditedTerminalStates, authorization.flowId)) {
       await control.recordAudit(actor.id, authorization.state === "ready" ? "GITHUB_AUTHORIZATION_COMPLETED" : "GITHUB_AUTHORIZATION_FAILED",
         authorization.connection?.connectionId ?? authorization.flowId, { state: authorization.state, reason: authorization.failureReason ?? authorization.state });
     }
@@ -78,11 +77,26 @@ function ownedStatus(authorizations: DeviceAuthorizations, flowId: string, princ
   catch (error) { throw mappedAuthorizationError(error); }
 }
 
+async function ownedStart(authorizations: DeviceAuthorizations, principalId: string) {
+  try { return await authorizations.start(principalId); }
+  catch (error) { throw mappedAuthorizationError(error); }
+}
+
 async function ownedPoll(authorizations: DeviceAuthorizations, flowId: string, principalId: string) {
   try { return await authorizations.poll(flowId, principalId); }
   catch (error) { throw mappedAuthorizationError(error); }
 }
 
 function mappedAuthorizationError(error: unknown) {
-  return error instanceof GitHubDeviceAuthorizationFailure ? new ControlError(404, "GitHub device authorization was not found.") : error;
+  if (!(error instanceof GitHubDeviceAuthorizationFailure)) return error;
+  return error.kind === "limit-exceeded"
+    ? new ControlError(429, "Too many GitHub device authorizations are active.")
+    : new ControlError(404, "GitHub device authorization was not found.");
+}
+
+function rememberTerminalFlow(flows: Set<string>, flowId: string) {
+  if (flows.has(flowId)) return false;
+  flows.add(flowId);
+  if (flows.size > MAX_AUDITED_TERMINAL_FLOWS) flows.delete(flows.values().next().value!);
+  return true;
 }

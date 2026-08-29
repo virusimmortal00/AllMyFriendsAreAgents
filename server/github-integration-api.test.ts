@@ -76,10 +76,15 @@ describe("GitHub integration control-plane API", () => {
     expect(listed).toContain("octocat"); expect(listed).not.toMatch(/ghu_|ghr_|github-secret/);
     const connectionId = (JSON.parse(listed) as { connections: Array<{ connectionId: string }> }).connections[0]!.connectionId;
     expect((await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId, expectedRevision: 0 }) }, ownerCookie)).status).toBe(403);
+    expect((await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId: "missing", expectedRevision: 0 }) }, ownerCookie, owner.csrfToken)).status).toBe(422);
     const refreshed = await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId, expectedRevision: 0 }) }, ownerCookie, owner.csrfToken);
     expect(refreshed.status).toBe(200); expect(await refreshed.json()).toMatchObject({ catalog: { revision: 1, repositories: [{ canonical: "github.com/example/one" }] } });
     const repositories = await (await call(`/api/control/integrations/github/repositories?connectionId=${encodeURIComponent(connectionId)}`, {}, viewerCookie)).text();
     expect(repositories).toContain("github.com/example/one"); expect(repositories).not.toMatch(/ghu_|ghr_|github-secret/);
+    for (let activeFlow = 0; activeFlow < 3; activeFlow += 1) {
+      expect((await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, ownerCookie, owner.csrfToken)).status).toBe(201);
+    }
+    expect((await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, ownerCookie, owner.csrfToken)).status).toBe(429);
     const audit = JSON.stringify(await control.audit(ownerActor));
     expect(audit).toContain("GITHUB_AUTHORIZATION_STARTED"); expect(audit).toContain("GITHUB_AUTHORIZATION_COMPLETED");
     expect(audit).toContain("GITHUB_CATALOG_REFRESHED");

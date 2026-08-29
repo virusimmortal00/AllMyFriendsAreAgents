@@ -107,7 +107,10 @@ export class ProjectGitHubBindingService {
     };
     const repository = await authority.connect(repositoryInput);
     if (repository.kind !== "ok") {
-      await this.integrations.revokeBinding({ projectId: input.projectId, expectedRevision: binding.value.revision });
+      const rollback = await this.integrations.revokeBinding({ projectId: input.projectId, expectedRevision: binding.value.revision });
+      if (rollback.kind !== "ok") {
+        return { kind: "rejected", reason: "Repository connection failed and the GitHub binding rollback did not complete. Reconfigure the project." };
+      }
       return repositoryFailure(repository);
     }
     return { kind: "ok", value: { binding: publicBinding(binding.value), repository: publicRepositoryConnectionStatus(repository.connection) } };

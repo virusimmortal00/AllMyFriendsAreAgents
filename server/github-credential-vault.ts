@@ -9,6 +9,7 @@ const REFRESH_TOKEN = /^ghr_[A-Za-z0-9_]{10,1000}$/;
 const INSTALLATION_ACCESS_TOKEN = /^ghs_[A-Za-z0-9_]{10,1000}$/;
 const KEY_PREFIX = "amfaa-github-vault-key-v1:";
 const AAD_PREFIX = "amfaa:github-credential-vault:v1:";
+const VAULT_MUTATION_QUEUES = new Map<string, Promise<void>>();
 
 export interface GitHubDeviceUserVaultCredential {
   readonly kind: "github-device-user";
@@ -72,7 +73,6 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
   readonly #keyId: string;
   readonly #now: () => string;
   #state: PlaintextVaultState;
-  #queue: Promise<void> = Promise.resolve();
 
   private constructor(readonly vaultPath: string, readonly keyPath: string, key: Buffer, state: PlaintextVaultState, now: () => string) {
     this.#key = key;
@@ -158,8 +158,17 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
   }
 
   private mutate(work: () => Promise<CredentialVaultMutationResult>): Promise<CredentialVaultMutationResult> {
-    const operation = this.#queue.then(work);
-    this.#queue = operation.then(() => undefined, () => undefined);
+    const queueKey = `${this.vaultPath}\u0000${this.keyPath}`;
+    const previous = VAULT_MUTATION_QUEUES.get(queueKey) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      const latest = await readRegularFile(this.vaultPath);
+      if (latest === undefined) throw new Error("GitHub credential vault is unavailable.");
+      this.#state = decryptState(latest, this.#key, this.#keyId);
+      return work();
+    });
+    const release = operation.then(() => undefined, () => undefined);
+    VAULT_MUTATION_QUEUES.set(queueKey, release);
+    void release.then(() => { if (VAULT_MUTATION_QUEUES.get(queueKey) === release) VAULT_MUTATION_QUEUES.delete(queueKey); });
     return operation;
   }
 

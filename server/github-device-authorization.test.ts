@@ -73,6 +73,7 @@ describe("server-only GitHub device authorization", () => {
     expect(JSON.stringify(completed)).not.toMatch(/ghu_|ghr_|github-secret/);
     expect(f.userFetch).toHaveBeenCalledWith("https://api.github.com/user", expect.objectContaining({ method: "GET", redirect: "error" }));
     expect((f.userFetch.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ authorization: `Bearer ${accessToken}` });
+    expect((f.userFetch.mock.calls[0]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
     expect(f.integrations.connections()).toHaveLength(1);
     expect(f.vault.list()).toEqual([expect.objectContaining({ state: "ready", revision: 1, kind: "github-device-user" })]);
   });
@@ -83,12 +84,38 @@ describe("server-only GitHub device authorization", () => {
     const deniedStart = await denied.coordinator.start("principal-owner");
     deniedNow += 5_000;
     await expect(denied.coordinator.poll(deniedStart.flowId, "principal-owner")).resolves.toMatchObject({ state: "denied" });
+    expect(() => denied.coordinator.status(deniedStart.flowId, "principal-owner")).toThrow(GitHubDeviceAuthorizationFailure);
     expect(denied.integrations.connections()).toHaveLength(0); expect(denied.vault.list()).toHaveLength(0);
 
     let now = Date.parse("2026-08-28T14:00:00.000Z");
     const expired = await fixture(transport(async () => ({ kind: "pending", retryAfterSeconds: 5 })), () => now);
     const expiredStart = await expired.coordinator.start("principal-owner"); now += 900_000;
     expect(expired.coordinator.status(expiredStart.flowId, "principal-owner")).toMatchObject({ state: "expired" });
+  });
+
+  it("bounds active flows per principal and does not serialize unrelated principals", async () => {
+    let now = Date.parse("2026-08-28T14:00:00.000Z");
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let starts = 0;
+    const deviceFlow = transport(async () => ({ kind: "pending", retryAfterSeconds: 5 }));
+    deviceFlow.start = async () => {
+      starts += 1;
+      if (starts === 1) await firstGate;
+      return { deviceCode, userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", expiresInSeconds: 900, intervalSeconds: 5 };
+    };
+    const f = await fixture(deviceFlow, () => now);
+    const first = f.coordinator.start("principal-one");
+    await expect(f.coordinator.start("principal-two")).resolves.toMatchObject({ state: "authorizing" });
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ state: "authorizing" });
+
+    await f.coordinator.start("principal-limited");
+    await f.coordinator.start("principal-limited");
+    await f.coordinator.start("principal-limited");
+    await expect(f.coordinator.start("principal-limited")).rejects.toMatchObject({ kind: "limit-exceeded" });
+    now += 900_000;
+    await expect(f.coordinator.start("principal-limited")).resolves.toMatchObject({ state: "authorizing" });
   });
 
   it("tombstones a newly stored token when connection metadata cannot be published", async () => {

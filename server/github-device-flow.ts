@@ -2,6 +2,7 @@ const DEVICE_CODE_ENDPOINT = "https://github.com/login/device/code";
 const TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
 const VERIFICATION_URI = "https://github.com/login/device";
 const MAX_RESPONSE_BYTES = 32 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
 const CLIENT_ID = /^[A-Za-z0-9._-]{10,200}$/;
 const DEVICE_CODE = /^[A-Za-z0-9._-]{10,500}$/;
 const USER_CODE = /^[A-Za-z0-9-]{4,40}$/;
@@ -111,6 +112,7 @@ export class GitHubDeviceFlowClient implements GitHubDeviceFlowTransport {
       response = await this.fetcher(endpoint, {
         method: "POST",
         redirect: "error",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(parameters).toString(),
       });
@@ -118,7 +120,9 @@ export class GitHubDeviceFlowClient implements GitHubDeviceFlowTransport {
       throw new GitHubDeviceFlowFailure("upstream");
     }
     if (!response.ok) throw new GitHubDeviceFlowFailure("upstream");
-    const text = await response.text();
+    let text: string;
+    try { text = await response.text(); }
+    catch { throw new GitHubDeviceFlowFailure("upstream"); }
     if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new GitHubDeviceFlowFailure("invalid-response");
     let payload: unknown;
     try { payload = JSON.parse(text); } catch { throw new GitHubDeviceFlowFailure("invalid-response"); }

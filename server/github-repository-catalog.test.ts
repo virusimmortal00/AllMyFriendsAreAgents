@@ -26,6 +26,7 @@ describe("GitHub installation repository discovery", () => {
     for (const [input, init] of fetcher.mock.calls) {
       expect(String(input)).toMatch(/^https:\/\/api\.github\.com\/user\/installations/);
       expect(init).toMatchObject({ method: "GET", redirect: "error", headers: expect.objectContaining({ authorization: `Bearer ${token}` }) });
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
     }
     expect(JSON.stringify(result)).not.toContain(token);
   });
@@ -51,6 +52,7 @@ describe("GitHub installation repository discovery", () => {
         : json({ total_count: 1, installations: [installation(1)] }), kind: "invalid-response" },
       { fetcher: async () => json({ total_count: 1, installations: [{ id: 1, account: null }] }), kind: "invalid-response" },
       { fetcher: async () => new Response(JSON.stringify({ total_count: 0, installations: [], padding: "x".repeat(2 * 1024 * 1024) })), kind: "invalid-response" },
+      { fetcher: async () => new Response("{}", { headers: { "content-length": String(2 * 1024 * 1024 + 1) } }), kind: "invalid-response" },
       { fetcher: async () => json({ message: "private upstream details" }, 403), kind: "upstream" },
     ];
     for (const value of cases) {

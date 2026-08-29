@@ -30,6 +30,7 @@ describe("GitHub App device-flow transport", () => {
     const request = fetcher.mock.calls[0]![1]!;
     expect(String(request.body)).toBe(`client_id=${clientId}`);
     expect(String(request.body)).not.toMatch(/secret|device_code/);
+    expect(request.signal).toBeInstanceOf(AbortSignal);
     expect(publicGitHubDeviceChallenge(authorization)).toEqual({ userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", expiresInSeconds: 900, intervalSeconds: 5 });
     expect(JSON.stringify(publicGitHubDeviceChallenge(authorization))).not.toContain(deviceCode);
   });
@@ -85,6 +86,8 @@ describe("GitHub App device-flow transport", () => {
       { fetcher: async () => json({ error: "device_flow_disabled", error_description: "private upstream details" }), kind: "disabled" },
       { fetcher: async () => json({ error: "incorrect_client_credentials", error_description: "private upstream details" }), kind: "upstream" },
       { fetcher: async () => json({ error: "server" }, 500), kind: "upstream" },
+      { fetcher: async () => { throw new DOMException("timed out", "TimeoutError"); }, kind: "upstream" },
+      { fetcher: async () => ({ ok: true, text: async () => { throw new DOMException("timed out", "AbortError"); } }) as Response, kind: "upstream" },
     ];
     for (const value of cases) {
       try {
