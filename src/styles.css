@@ -324,7 +324,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 .github-status-badge { padding: 3px 8px; border: 1px solid #1f6f3f; color: #174f30; background: #d9f5e4; font-weight: 700; }
 .github-install-link { justify-self: start; text-decoration: none; color: inherit; }
 .github-device-challenge { flex-wrap: wrap; padding: 10px; border: 1px solid #8b6d15; background: #fff7d6; }
-.github-device-challenge strong, .github-project-defaults dd { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.github-device-challenge strong, .github-project-defaults dd { font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace; }
 .github-device-challenge strong { letter-spacing: .08em; }
 .github-project-defaults { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; margin: 0; }
 .github-project-defaults dt { font-weight: 700; }

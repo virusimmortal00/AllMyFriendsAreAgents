@@ -12,6 +12,7 @@ import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
+const GITHUB_DISCOVERY_TIMEOUT_MS = 30_000;
 let controlCsrfToken = "";
 const pollVoteIds = new Map<string,string>();
 const pollCloseIds = new Map<string,string>();
@@ -252,7 +253,7 @@ export async function loadGitHubRepositoryCatalog(connectionId: string): Promise
     .then((response) => response.json()).then((result) => result.catalog);
 }
 export async function refreshGitHubRepositoryCatalog(connectionId: string, expectedRevision: number): Promise<GitHubRepositoryCatalog> {
-  return request("/api/control/integrations/github/catalog-refreshes", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ connectionId, expectedRevision }) })
+  return request("/api/control/integrations/github/catalog-refreshes", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ connectionId, expectedRevision }) }, GITHUB_DISCOVERY_TIMEOUT_MS)
     .then((response) => response.json()).then((result) => result.catalog);
 }
 export async function loadCurrentProjectGitHubStatus(): Promise<CurrentProjectGitHubStatus> {
@@ -267,7 +268,7 @@ export async function configureCurrentProjectGitHubRepository(input: {
   readonly worktreeRoot: string;
   readonly policyRevision: number;
 }): Promise<CurrentProjectGitHubStatus> {
-  return request("/api/control/projects/current/repository", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(input) }).then((response) => response.json());
+  return request("/api/control/projects/current/repository", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(input) }, GITHUB_DISCOVERY_TIMEOUT_MS).then((response) => response.json());
 }
 
 export async function updateSettings(settings: { roomName?: string; topic?: string; conversationEnergy?: ConversationEnergy }) {

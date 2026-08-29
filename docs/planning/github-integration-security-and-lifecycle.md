@@ -115,13 +115,15 @@ triggers the same fail-closed behavior at the narrowest affected scope.
 ## Credential-vault contract
 
 Token persistence is not an environment-variable replacement if it is merely
-written as plaintext JSON. The server needs a small, pluggable vault abstraction:
+written as plaintext JSON. The server needs a small, pluggable vault abstraction.
+The implemented local backend exposes this revisioned compare-and-swap shape
+(the concrete credential and mutation-result types are omitted here):
 
 ```ts
 interface CredentialVault {
-  put(record: SecretRecord, expectedRevision?: number): Promise<SecretPointer>;
-  get(pointer: SecretPointer): Promise<SecretRecord | undefined>;
-  delete(pointer: SecretPointer, expectedRevision?: number): Promise<void>;
+  put(reference: string, expectedRevision: number, credential: Credential): Promise<MutationResult>;
+  readCredential(reference: string): StoredCredential | undefined;
+  delete(reference: string, expectedRevision: number): Promise<MutationResult>;
 }
 ```
 
@@ -307,14 +309,16 @@ A later mutation design must decide:
   mechanisms.
 - Tests cover mocked device authorization, refresh, revocation metadata, restart,
   paginated installation discovery, catalog-backed repository substitution,
-  authority changes during refresh, and secret serialization. No live GitHub flow
-  or installation-selection evidence exists.
+  authority changes during refresh, and secret serialization. A live browser/API
+  canary authorized the bundled public App, discovered its real installation and
+  selected repository, encrypted the rotating credential, and verified the
+  project binding against a canonical checkout without a PAT or client secret.
 
 ## Next action
 
-Run a live installation/device-flow canary with a disposable private repository.
-Then resolve the canonical room-principal prerequisite, build the settings UI,
-and add scheduled refresh plus rebind/deselection invalidation. Use
+Add scheduled credential/catalog refresh plus disconnect, rebind, and repository
+deselection invalidation. Then resolve the canonical room-principal prerequisite
+and add the server invitation trust warning. Use
 [the delivery plan](github-integration-delivery-plan.md) to open narrowly scoped
 issues with security acceptance checks copied into each slice.
 
