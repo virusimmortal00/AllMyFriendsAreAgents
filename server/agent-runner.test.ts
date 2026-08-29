@@ -451,6 +451,75 @@ describe("OpenCode runtime safety", () => {
     expect(JSON.stringify(operationLog.mock.calls)).not.toMatch(/command-secret|history-secret|github-secret|127\.0\.0\.1/);
   });
 
+  it("wires the complete scoped room-tool family through a real runAgent subprocess", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "amfaa-room-tool-env-"));
+    try {
+      const capturePath = path.join(directory, "environment.json");
+      const openCodePath = path.join(directory, "fake-opencode.mjs");
+      const scopedKeys = [
+        "AMFAA_ROOM_COMMAND_URL",
+        "AMFAA_ROOM_COMMAND_TOKEN",
+        "AMFAA_ROOM_COMMANDS",
+        "AMFAA_ROOM_HISTORY_URL",
+        "AMFAA_ROOM_HISTORY_TOKEN",
+        "AMFAA_ROOM_DIAGNOSTICS_URL",
+        "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+      ];
+      const blockedKeys = ["GITHUB_TOKEN", "OPENAI_API_KEY", "DATABASE_URL"];
+      await writeFile(openCodePath, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const scopedKeys = ${JSON.stringify(scopedKeys)};
+const blockedKeys = ${JSON.stringify(blockedKeys)};
+writeFileSync(process.env.AMFAA_TEST_CAPTURE_PATH, JSON.stringify({
+  scoped: Object.fromEntries(scopedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
+  blocked: Object.fromEntries(blockedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
+  commands: JSON.parse(process.env.AMFAA_ROOM_COMMANDS || "[]"),
+}));
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok" } }) + "\\n");
+`, { mode: 0o755 });
+      const childScript = `
+const { runAgent } = await import("./server/agent-runner.ts");
+const { DEFAULT_PARTICIPANT_STYLES } = await import("./shared/chat-style.ts");
+const participant = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+const state = {
+  messages: [], sessions: {}, status: "idle",
+  roster: { schemaVersion: 3, revision: 1, entries: [participant] },
+  settings: { roomName: "Room", topic: "Scoped tool smoke", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+};
+const context = {
+  historyTool: { configDirectory: ${JSON.stringify(directory)}, url: "http://127.0.0.1/history", token: "history-placeholder" },
+  commandTool: { url: "http://127.0.0.1/command", token: "command-placeholder", allowedCommands: ["help", "gh"], guide: "ROOM COMMANDS" },
+  diagnosticsTool: { url: "http://127.0.0.1/diagnostics", token: "diagnostics-placeholder" },
+};
+const result = await runAgent("codex-sol", state, "Verify scoped tools.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, context);
+process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId }));
+`;
+
+      const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND: openCodePath,
+          AMFAA_TEST_CAPTURE_PATH: capturePath,
+          GITHUB_TOKEN: "github-placeholder",
+          OPENAI_API_KEY: "provider-placeholder",
+          DATABASE_URL: "postgres://placeholder",
+        },
+        timeout: 15_000,
+      });
+      const capture = JSON.parse(await readFile(capturePath, "utf8"));
+
+      expect(JSON.parse(stdout)).toEqual({ text: "room-tool-environment-ok", sessionId: "ses_room_tool_smoke" });
+      expect(capture).toEqual({
+        scoped: Object.fromEntries(scopedKeys.map((key) => [key, true])),
+        blocked: Object.fromEntries(blockedKeys.map((key) => [key, false])),
+        commands: ["help", "gh"],
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("preserves only an explicitly trusted confined-writer environment", async () => {
     const environment = {
       PATH: process.env.PATH,
