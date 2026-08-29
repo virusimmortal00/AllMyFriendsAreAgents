@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -31,6 +32,13 @@ jobs:
       - name: Install Linux confinement test dependency
         run: sudo apt-get update && sudo apt-get install --no-install-recommends --yes bubblewrap
       - run: pnpm install --frozen-lockfile
+      - name: Enforce upstream integration contracts
+        run: pnpm run check:integration-contracts -- --verify-upstream
+        env:
+          INTEGRATION_CONTRACT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          INTEGRATION_CONTRACT_HEAD_SHA: ${{ github.sha }}
+          INTEGRATION_CONTRACT_REQUIRE_REVIEW: ${{ github.event_name == 'pull_request' }}
+          INTEGRATION_CONTRACT_PR_BODY: ${{ github.event.pull_request.body }}
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
       - name: Type-check and build production assets

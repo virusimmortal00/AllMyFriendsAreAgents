@@ -1,0 +1,48 @@
+name: OpenCode upstream watch
+
+on:
+  schedule:
+    - cron: "17 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify audited OpenCode release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compare latest and audited releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          audited_tag="$(node -p "require('./integration-contracts/opencode.json').upstream.auditedTag")"
+          latest_tag="$(gh api repos/anomalyco/opencode/releases/latest --jq .tag_name)"
+          if [ "$latest_tag" != "$audited_tag" ]; then
+            echo "Latest OpenCode release is $latest_tag; audited release is $audited_tag. Review upstream source before expanding the supported range."
+            exit 1
+          fi
+      - name: Verify immutable upstream source evidence
+        run: pnpm exec tsx scripts/check-integration-contracts.ts --all --verify-upstream
+      - name: Download audited provider-free binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          audited_tag="$(node -p "require('./integration-contracts/opencode.json').upstream.auditedTag")"
+          contract_dir="$RUNNER_TEMP/opencode-contract"
+          mkdir -p "$contract_dir"
+          gh release download "$audited_tag" --repo anomalyco/opencode --pattern opencode-linux-x64.tar.gz --dir "$contract_dir"
+          tar -xzf "$contract_dir/opencode-linux-x64.tar.gz" -C "$contract_dir"
+          pnpm run check:opencode-binary -- --command "$contract_dir/opencode"
