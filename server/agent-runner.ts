@@ -323,6 +323,7 @@ interface RunProcessOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
+  scopedToolEnvironment?: NodeJS.ProcessEnv;
   trustedEnvironment?: boolean;
   supervisor?: AgentProcessSupervisor;
   scope?: string | readonly string[];
@@ -346,17 +347,43 @@ function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
   }
 }
 
+const SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS = [
+  "AMFAA_ROOM_COMMAND_URL",
+  "AMFAA_ROOM_COMMAND_TOKEN",
+  "AMFAA_ROOM_COMMANDS",
+  "AMFAA_ROOM_HISTORY_URL",
+  "AMFAA_ROOM_HISTORY_TOKEN",
+  "AMFAA_ROOM_DIAGNOSTICS_URL",
+  "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+] as const;
+const SCOPED_AGENT_TOOL_ENVIRONMENT_KEY_SET = new Set<string>(SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS);
+
 function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
   return Object.fromEntries(Object.entries(environment).filter(([name]) => {
     const normalizedName = name.toUpperCase();
     return !normalizedName.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
       && !normalizedName.startsWith("AGENTWIRE_")
+      && !SCOPED_AGENT_TOOL_ENVIRONMENT_KEY_SET.has(normalizedName)
       && normalizedName !== "DATABASE_URL"
       && !/(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)(?:$|_)/.test(normalizedName)
       && normalizedName !== "GITHUB_AUTH"
       && normalizedName !== "GH_ENTERPRISE_TOKEN"
       && !["PGPASSWORD", "PGPASSFILE", "MYSQL_PWD"].includes(normalizedName);
   }));
+}
+
+function scopedAgentToolEnvironment(environment: NodeJS.ProcessEnv = {}) {
+  return Object.fromEntries(SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS.flatMap((name) => {
+    const value = environment[name];
+    return typeof value === "string" && value.length > 0 ? [[name, value]] : [];
+  }));
+}
+
+function agentChildProcessEnvironment(options: Pick<RunProcessOptions, "environment" | "scopedToolEnvironment" | "trustedEnvironment">) {
+  return {
+    ...(options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment)),
+    ...scopedAgentToolEnvironment(options.scopedToolEnvironment),
+  };
 }
 
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
@@ -366,7 +393,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     supervisor.assertOpen();
     const child = spawn(command, args, {
       cwd,
-      env: options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment),
+      env: agentChildProcessEnvironment(options),
       shell: false,
       detached: process.platform !== "win32",
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -680,6 +707,10 @@ export async function runAgent(
         ...invocation.env,
         ...(context?.historyTool ? {
           OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
+        } : {}),
+      };
+      const scopedToolEnvironment = {
+        ...(context?.historyTool ? {
           AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
           AMFAA_ROOM_HISTORY_TOKEN: context.historyTool.token,
         } : {}),
@@ -695,6 +726,7 @@ export async function runAgent(
       };
       return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
         environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length), Boolean(context?.diagnosticsTool)),
+        scopedToolEnvironment,
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
       });
@@ -777,4 +809,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, agentChildProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };

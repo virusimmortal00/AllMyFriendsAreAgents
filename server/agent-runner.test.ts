@@ -349,11 +349,72 @@ describe("OpenCode runtime safety", () => {
       GH_TOKEN: "gh-secret",
       GITHUB_TOKEN: "github-secret",
       OPENAI_API_KEY: "provider-secret",
+      AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+      AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+      AMFAA_ROOM_COMMANDS: '["gh"]',
+      AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+      AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+      AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: "diagnostics-secret",
       SOME_PASSWORD: "password-secret",
       PGPASSWORD: "postgres-secret",
       PgPassFile: "/private/postgres-password-file",
       MYSQL_PWD: "mysql-secret",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
+  });
+
+  it("passes only the complete scoped room-tool environment alongside a filtered agent environment", async () => {
+    const environment = {
+      PATH: process.env.PATH,
+      GITHUB_TOKEN: "github-secret",
+      OPENAI_API_KEY: "provider-secret",
+      DATABASE_URL: "postgres://live",
+      OTHER_TOKEN: "other-secret",
+      AMFAA_ROOM_COMMAND_TOKEN: "unscoped-command-secret",
+    };
+    const scopedToolEnvironment = {
+      AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+      AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+      AMFAA_ROOM_COMMANDS: '["gh","help"]',
+      AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+      AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+      AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: "diagnostics-secret",
+      GITHUB_TOKEN: "scoped-github-secret",
+      OPENAI_API_KEY: "scoped-provider-secret",
+      DATABASE_URL: "postgres://scoped-live",
+      OTHER_TOKEN: "scoped-other-secret",
+    };
+    const keys = [
+      "AMFAA_ROOM_COMMAND_URL",
+      "AMFAA_ROOM_COMMAND_TOKEN",
+      "AMFAA_ROOM_COMMANDS",
+      "AMFAA_ROOM_HISTORY_URL",
+      "AMFAA_ROOM_HISTORY_TOKEN",
+      "AMFAA_ROOM_DIAGNOSTICS_URL",
+      "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+      "GITHUB_TOKEN",
+      "OPENAI_API_KEY",
+      "DATABASE_URL",
+      "OTHER_TOKEN",
+    ];
+    const command = ["-e", `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map((key) => [key, Object.hasOwn(process.env, key)]))))`];
+
+    const result = await __testing.runProcess(process.execPath, command, process.cwd(), { environment, scopedToolEnvironment });
+
+    expect(JSON.parse(result.stdout)).toEqual({
+      AMFAA_ROOM_COMMAND_URL: true,
+      AMFAA_ROOM_COMMAND_TOKEN: true,
+      AMFAA_ROOM_COMMANDS: true,
+      AMFAA_ROOM_HISTORY_URL: true,
+      AMFAA_ROOM_HISTORY_TOKEN: true,
+      AMFAA_ROOM_DIAGNOSTICS_URL: true,
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: true,
+      GITHUB_TOKEN: false,
+      OPENAI_API_KEY: false,
+      DATABASE_URL: false,
+      OTHER_TOKEN: false,
+    });
   });
 
   it("preserves only an explicitly trusted confined-writer environment", async () => {
