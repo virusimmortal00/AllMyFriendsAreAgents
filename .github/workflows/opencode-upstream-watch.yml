@@ -1,0 +1,60 @@
+name: OpenCode upstream watch
+
+on:
+  schedule:
+    - cron: "17 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify audited OpenCode release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compare latest and audited releases
+        id: releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          audited_tag="$(node -p "require('./integration-contracts/opencode.json').upstream.auditedTag")"
+          latest_tag="$(gh api repos/anomalyco/opencode/releases/latest --jq .tag_name)"
+          echo "audited_tag=$audited_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          test "$latest_tag" = "$audited_tag" && echo "drift=false" >> "$GITHUB_OUTPUT" || echo "drift=true" >> "$GITHUB_OUTPUT"
+      - name: Fail when upstream source review is required
+        if: steps.releases.outputs.drift == 'true'
+        env:
+          AUDITED_TAG: ${{ steps.releases.outputs.audited_tag }}
+          LATEST_TAG: ${{ steps.releases.outputs.latest_tag }}
+        run: |
+          echo "## OpenCode upstream drift" >> "$GITHUB_STEP_SUMMARY"
+          echo "Latest release: $LATEST_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Audited release: $AUDITED_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Review upstream source before expanding the supported range. Public follow-up requires separate maintainer approval." >> "$GITHUB_STEP_SUMMARY"
+          echo "Latest OpenCode release is $LATEST_TAG; audited release is $AUDITED_TAG. Review upstream source before expanding the supported range."
+          exit 1
+      - name: Verify immutable upstream source evidence
+        run: pnpm exec tsx scripts/check-integration-contracts.ts --all --verify-upstream
+      - name: Download audited provider-free binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          audited_tag="$(node -p "require('./integration-contracts/opencode.json').upstream.auditedTag")"
+          contract_dir="$RUNNER_TEMP/opencode-contract"
+          mkdir -p "$contract_dir"
+          gh release download "$audited_tag" --repo anomalyco/opencode --pattern opencode-linux-x64.tar.gz --dir "$contract_dir"
+          tar -xzf "$contract_dir/opencode-linux-x64.tar.gz" -C "$contract_dir"
+          pnpm run check:opencode-binary -- --command "$contract_dir/opencode"

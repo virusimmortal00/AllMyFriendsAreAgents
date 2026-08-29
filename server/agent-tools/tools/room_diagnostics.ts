@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
 const streams = ["server-service-lifecycle", "opencode-harness", "openrouter-provider", "generations", "capability-decisions", "security-audit"] as const;
 
-export default tool({
+const roomDiagnosticsTool: ToolDefinition = tool({
   description: "Query bounded, server-authorized room diagnostics. The server fixes participant, room, project, time, count, byte, visibility, and redaction policy.",
   args: {
     window: tool.schema.enum(["last-15-minutes", "last-hour", "last-day"]),
@@ -35,3 +35,5 @@ export default tool({
     return JSON.stringify(await response.json(), null, 2);
   },
 });
+
+export default roomDiagnosticsTool;

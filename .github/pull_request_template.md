@@ -25,6 +25,16 @@ Describe the user-visible outcome and the failure mode this change addresses.
 
 If a contract must change, update the standard, its executable guard, and its regression test in this pull request. Do not bypass the guard with a type assertion or by weakening/removing a test.
 
+## OpenCode upstream review
+
+Complete this section when `pnpm check:integration-contracts` reports an
+affected surface. It may remain not applicable for unrelated changes.
+
+Tag: N/A
+Commit: N/A
+Surfaces: N/A
+Result: Not applicable; no mapped OpenCode integration surface changed.
+
 ## Public record review
 
 - [ ] The description is understandable without private conversations or local

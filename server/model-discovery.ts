@@ -15,6 +15,7 @@ export const DISCOVERY_TIMEOUT_MS = 10_000;
 export const DISCOVERY_OUTPUT_LIMIT = 1_048_576;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
 export const MINIMUM_OPENCODE_VERSION = "1.18.18";
+export const MAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25";
 const OPENCODE_PROTOCOL = "opencode-cli-jsonl-v1" as const;
 const OPENCODE_CAPABILITIES = ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const;
 
@@ -81,13 +82,17 @@ export function parseOpenCodeRuntimeVersion(stdout: string) {
   const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${match[4] ? `-${match[4]}` : ""}${match[5] ? `+${match[5]}` : ""}`;
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
   const minimum = MINIMUM_OPENCODE_VERSION.split(".").map(Number);
-  const firstDifference = parts.findIndex((part, index) => part !== minimum[index]);
-  const atLeastMinimum = firstDifference === -1 ? !match[4] : parts[firstDifference] > minimum[firstDifference];
+  const maximum = MAXIMUM_AUDITED_OPENCODE_VERSION.split(".").map(Number);
+  const compare = (boundary: readonly number[]) => {
+    const firstDifference = parts.findIndex((part, index) => part !== boundary[index]);
+    return firstDifference === -1 ? 0 : parts[firstDifference] > boundary[firstDifference] ? 1 : -1;
+  };
+  const compatible = !match[4] && compare(minimum) >= 0 && compare(maximum) <= 0;
   return {
     version,
-    compatible: parts[0] === minimum[0] && atLeastMinimum,
+    compatible,
     protocol: OPENCODE_PROTOCOL,
-    capabilities: OPENCODE_CAPABILITIES,
+    capabilities: compatible ? OPENCODE_CAPABILITIES : [],
   };
 }
 
@@ -236,8 +241,8 @@ export class ModelDiscoveryService {
         models: [],
         ...(runtime ? { runtime } : {}),
         diagnostic: runtime
-          ? `OpenCode ${runtime.version} is incompatible; install ${MINIMUM_OPENCODE_VERSION} or a newer compatible 1.x release.`
-          : "OpenCode returned an unrecognized version; install a supported 1.x release.",
+          ? `OpenCode ${runtime.version} is outside the source-audited range ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}; install ${MAXIMUM_AUDITED_OPENCODE_VERSION} or update the upstream integration contract.`
+          : `OpenCode returned an unrecognized version; install a release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}.`,
         discoveredAt,
       };
     }

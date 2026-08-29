@@ -13,7 +13,9 @@
     "dev:web": "vite",
     "github:app:registration-url": "tsx scripts/github-app-registration.ts",
     "build": "tsc -b --force && vite build",
-    "check:quality": "pnpm run check:ui-standards && pnpm run build && pnpm test",
+    "check:quality": "pnpm run check:integration-contracts && pnpm run check:ui-standards && pnpm run build && pnpm test",
+    "check:integration-contracts": "tsx scripts/check-integration-contracts.ts --run-tests",
+    "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",
     "check:ui-standards": "vitest run src/ui-standards.test.tsx src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",
     "canary:investigations": "tsx scripts/investigation-canary.ts",
     "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
@@ -40,6 +42,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
+    "@opencode-ai/plugin": "1.18.25",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.5",
     "@types/express": "5.0.3",

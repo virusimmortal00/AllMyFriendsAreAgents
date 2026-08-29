@@ -1,2 +1,6 @@
 allowBuilds:
   esbuild: true
+  msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - '@opencode-ai/plugin@1.18.25'
+  - '@opencode-ai/sdk@1.18.25'

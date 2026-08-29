@@ -64,6 +64,13 @@ existing Vite/bundler import style.
 - Search for the existing type, service, route, component, and nearest tests
   before introducing a new abstraction. Extend canonical code paths rather than
   creating a parallel implementation.
+- Files mapped by `integration-contracts/opencode.json` consume behavior from
+  OpenCode's public source. Before editing one, run
+  `pnpm check:integration-contracts -- --inspect-files <repository-relative-path>`,
+  inspect every reported upstream path at an exact commit, update the review
+  record, and run the reported contract tests.
+  Follow `docs/integrations/opencode.md`; documentation or memory alone is not
+  compatibility evidence.
 - Keep changes bounded to the requested outcome. Avoid speculative refactors,
   compatibility shims, new dependencies, or broad formatting passes unless they
   are required by the task.
