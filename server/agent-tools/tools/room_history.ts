@@ -1,6 +1,6 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
-export default tool({
+const roomHistoryTool: ToolDefinition = tool({
   description: "Retrieve exact verbatim room messages from durable history. Use this when a summary is insufficient or an older ruling/decision must be quoted exactly.",
   args: {
     after: tool.schema.string().max(200).optional().describe("Return messages after this message ID. Omit to start at the beginning."),
@@ -18,3 +18,5 @@ export default tool({
     return JSON.stringify(await response.json(), null, 2);
   },
 });
+
+export default roomHistoryTool;

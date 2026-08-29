@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
-import { DISCOVERY_OUTPUT_LIMIT, MINIMUM_OPENCODE_VERSION, ModelDiscoveryService, parseOpenCodeModelCatalog, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
+import { DISCOVERY_OUTPUT_LIMIT, MAXIMUM_AUDITED_OPENCODE_VERSION, MINIMUM_OPENCODE_VERSION, ModelDiscoveryService, parseOpenCodeModelCatalog, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
 
 describe("OpenCode model discovery", () => {
   it("preserves provider/model and variant identities", () => {
@@ -64,12 +64,18 @@ describe("OpenCode model discovery", () => {
     expect(parseOpenCodeRuntimeVersion("1.18.18-rc.1\n")).toMatchObject({ version: "1.18.18-rc.1", compatible: false });
     expect(parseOpenCodeRuntimeVersion("1.18.18\n")).toMatchObject({ compatible: true });
     expect(parseOpenCodeRuntimeVersion("1.18.18+build.1\n")).toMatchObject({ version: "1.18.18+build.1", compatible: true });
-    expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion(`${MAXIMUM_AUDITED_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion("1.18.26-rc.1\n")).toMatchObject({ compatible: false, capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("1.18.26\n")).toMatchObject({ compatible: false, capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: false, capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("2.0.0\n")).toMatchObject({ compatible: false });
     expect(parseOpenCodeRuntimeVersion("unexpected")).toBeUndefined();
     const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.17\n", stderr: "" }));
     await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({ status: "runtime_incompatible", runtime: { version: "1.18.17", compatible: false }, models: [] });
     expect(execute).toHaveBeenCalledTimes(1);
+    const future = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.26\n", stderr: "" }));
+    await expect(new ModelDiscoveryService(future).discover()).resolves.toMatchObject({ status: "runtime_incompatible", diagnostic: expect.stringContaining("source-audited range"), models: [] });
+    expect(future).toHaveBeenCalledTimes(1);
   });
 
   it("distinguishes CLI, authentication, configuration, and malformed output errors", async () => {
