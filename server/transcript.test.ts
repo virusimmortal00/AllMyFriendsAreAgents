@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { transcriptFor } from "./transcript.js";
 import type { RoomMessage, RoomState } from "./types.js";
+import { commandMessageText } from "../shared/command-message.js";
 
 function state(messages: RoomMessage[]): RoomState {
   return {
@@ -87,6 +88,29 @@ describe("agent transcript context", () => {
     const scoped = await transcriptFor({ ...state(messages), roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "topic" }] } }, { agentId: "codex-sol" });
     expect(scoped.text).toContain("public marker");
     expect(scoped.text).not.toContain("private help marker");
+  });
+
+  it("keeps command detail out of agent context while retaining one compact activity line", async () => {
+    const summary = "— Sol ran /gh — Read-only repository query";
+    const detail = "GitHub PR #144\nPrivate result detail that should stay on demand.";
+    const messages: RoomMessage[] = [
+      { id: "topic", speaker: "system", kind: "topic", text: "Room topic: Test", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "command-delivery:new-gh:0", speaker: "system", kind: "command", text: commandMessageText(summary, detail), timestamp: "2026-08-19T12:00:01Z" },
+      { id: "command-delivery:legacy-gh:0", speaker: "system", kind: "chat", text: "Legacy GitHub result detail", timestamp: "2026-08-19T12:00:02Z" },
+    ];
+
+    const full = transcriptFor(state(messages));
+    expect(full).toContain(summary);
+    expect(full).not.toContain("Private result detail");
+    expect(full).not.toContain("Legacy GitHub result detail");
+
+    const scoped = await transcriptFor({
+      ...state(messages),
+      roster: { schemaVersion: 3, revision: 1, entries: [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, lastSeenMessageId: "topic" }] },
+    }, { agentId: "codex-sol" });
+    expect(scoped.text).toContain(summary);
+    expect(scoped.text).not.toContain("Private result detail");
+    expect(scoped.text).not.toContain("Legacy GitHub result detail");
   });
 
   it("keeps an up-to-date agent prompt independent of transcript length", async () => {

@@ -24,6 +24,7 @@ import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared
 import { ProviderMark } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
+import { commandMessageDisclosure } from "../shared/command-message";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -421,17 +422,30 @@ const TranscriptMessage = memo(function TranscriptMessage({
   magnification: number;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
+  const commandDisclosure = commandMessageDisclosure(message);
   const visibleText = isAgentId(message.speaker)
     ? visibleAgentChatText(message.text)
     : visibleAgentText(message.text);
   return (
-    <article className={`message message--${message.kind || "chat"}`}>
+    <article className={`message message--${commandDisclosure ? "command" : message.kind || "chat"}`}>
       <time>[{formatTime(message.timestamp)}]</time>
       <div>
-        <strong className={`speaker speaker--${message.speaker}`}>{message.speakerName || participantScreenName(message.speaker)}:</strong>{" "}
-        <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
-          <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
-        </span>
+        {commandDisclosure ? (
+          <details className="command-disclosure">
+            <summary>
+              <span className="command-disclosure__summary">{messageText(commandDisclosure.summary, onOpenImprovement)}</span>
+              {commandDisclosure.detail ? <span className="command-disclosure__hint">View result</span> : null}
+            </summary>
+            {commandDisclosure.detail ? <div className="command-disclosure__detail">{messageText(commandDisclosure.detail, onOpenImprovement)}</div> : null}
+          </details>
+        ) : (
+          <>
+            <strong className={`speaker speaker--${message.speaker}`}>{message.speakerName || participantScreenName(message.speaker)}:</strong>{" "}
+            <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
+              <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
+            </span>
+          </>
+        )}
       </div>
     </article>
   );

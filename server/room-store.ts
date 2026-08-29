@@ -374,13 +374,13 @@ export class RoomStore implements RoomRepository {
     return structuredClone(message);
   }
 
-  async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number }) {
+  async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number; kind?: RoomMessage["kind"] }) {
     const id = `command-delivery:${attemptId}:${sequence}`;
     const existing = this.state.messages.find((message) => message.id === id);
     if (existing) return structuredClone(existing);
     const participant = styledParticipant(speaker);
     const messageStyle = participant ? sanitizeChatStyle(style, this.state.settings.participantStyles[participant] || DEFAULT_PARTICIPANT_STYLES["codex-sol"]) : undefined;
-    const message: RoomMessage = { id, speaker, text: text.trim(), timestamp: new Date().toISOString(), kind: "chat", ...(messageStyle ? { style: messageStyle } : {}), ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}), ...(speaker !== "you" && speaker !== "system" ? { speakerName: AGENT_PROFILES[speaker]?.conversationalName || speaker } : {}) };
+    const message: RoomMessage = { id, speaker, text: text.trim(), timestamp: new Date().toISOString(), kind: burst?.kind || "chat", ...(messageStyle ? { style: messageStyle } : {}), ...(burst ? { burstId: burst.burstId, sequence: burst.sequence } : {}), ...(speaker !== "you" && speaker !== "system" ? { speakerName: AGENT_PROFILES[speaker]?.conversationalName || speaker } : {}) };
     this.state.messages.push(message); await this.save(); return structuredClone(message);
   }
 

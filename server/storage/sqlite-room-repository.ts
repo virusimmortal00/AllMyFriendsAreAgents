@@ -192,7 +192,7 @@ function storedSpeaker(value: string): SpeakerId {
 }
 
 function storedKind(value: string | null): RoomMessage["kind"] {
-  return value === "chat" || value === "review" || value === "status" || value === "topic" ? value : undefined;
+  return value === "chat" || value === "review" || value === "status" || value === "topic" || value === "command" ? value : undefined;
 }
 
 function messageFromRow(row: MessageRow, participantStyles: RoomSettings["participantStyles"]): RoomMessage {
@@ -543,9 +543,9 @@ export class SqliteRoomRepository implements RoomRepository {
     const state=this.snapshot(); const message={...messageFor(state,"system",text,"status"),id}; this.insertMessage(message); state.messages.push(message); this.state=state; return structuredClone(message);
   }
 
-  async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number }) {
+  async addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number; kind?: RoomMessage["kind"] }) {
     const id=`command-delivery:${attemptId}:${sequence}`; const existing=this.state?.messages.find((message)=>message.id===id); if(existing)return structuredClone(existing);
-    const state=this.snapshot(); const message={...messageFor(state,speaker,text,"chat",style,burst),id}; this.insertMessage(message); state.messages.push(message); this.state=state; return structuredClone(message);
+    const state=this.snapshot(); const message={...messageFor(state,speaker,text,burst?.kind || "chat",style,burst),id}; this.insertMessage(message); state.messages.push(message); this.state=state; return structuredClone(message);
   }
 
   async addPrivateCommandResponseOnce(submissionId: string, humanId: string, text: string) {

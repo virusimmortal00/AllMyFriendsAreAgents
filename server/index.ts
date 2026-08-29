@@ -63,6 +63,7 @@ import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { CommandRuntime } from "./command-runtime.js";
 import { registerCommandRoutes, submitHumanCommand } from "./command-api.js";
 import { COMMAND_CATALOG_REVISION, effectiveAllowedCommands, LEGACY_ROOM_COMMANDS, normalizeCommandPermissions, roomCommandGuide, ROOM_COMMANDS } from "../shared/command-domain.js";
+import { commandMessageText } from "../shared/command-message.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker } from "./room-command-tool.js";
 import { registerRoomDiagnosticsToolRoute, RoomDiagnosticsToolBroker, type RoomDiagnosticsCapabilityBinding } from "./room-diagnostics-tool.js";
 import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
@@ -1040,7 +1041,7 @@ const commandRuntime = new CommandRuntime({
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
   githubRead:githubReadService,
-  publishGhResult:async(executionId,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",text);broadcast();},
+  publishGhResult:async(executionId,summary,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",commandMessageText(summary,text),undefined,{burstId:executionId,sequence:0,kind:"command"});broadcast();},
 });
 const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
@@ -1059,7 +1060,7 @@ const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>
   deliverTask:async()=>undefined,
   publishStatus:async(auditId,text)=>{await room.repository.addCommandAuditMessageOnce(auditId,text);},
   githubRead:githubReadService,
-  publishGhResult:async(executionId,text)=>{await room.repository.addCommandDeliveryMessageOnce(executionId,0,"system",text);},
+  publishGhResult:async(executionId,summary,text)=>{await room.repository.addCommandDeliveryMessageOnce(executionId,0,"system",commandMessageText(summary,text),undefined,{burstId:executionId,sequence:0,kind:"command"});},
   capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
   operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
 })):undefined;
