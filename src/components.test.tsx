@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { AgentSettingsDialog, ChatComposer, RoomControls, RoomRoster, Transcript, WorkshopDialog } from "./components";
 import { LoadingScreen, NameEntry } from "./App";
+import { commandMessageText } from "../shared/command-message";
 
 describe("RoomRoster", () => {
   it("renders a simple list of the people currently in the room", () => {
@@ -325,6 +326,38 @@ describe("ChatComposer", () => {
 });
 
 describe("Transcript message styling", () => {
+  it("collapses GitHub command detail behind an inline disclosure", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[
+          {
+            id: "command-delivery:new-gh:0",
+            speaker: "system",
+            kind: "command",
+            text: commandMessageText("— Sol ran /gh — Read-only repository query", "GitHub PR #144\n[Open PR](https://github.com/example/project/pull/144)"),
+            timestamp: "2026-08-19T12:00:00.000Z",
+          },
+          {
+            id: "command-delivery:legacy-gh:0",
+            speaker: "system",
+            kind: "chat",
+            text: "Legacy GitHub result",
+            timestamp: "2026-08-19T12:01:00.000Z",
+          },
+        ]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html.match(/<details class="command-disclosure">/g)).toHaveLength(2);
+    expect(html).toContain("— Sol ran /gh — Read-only repository query");
+    expect(html).toContain("GitHub command result");
+    expect(html.match(/View result/g)).toHaveLength(2);
+    expect(html).toContain('<a class="message-link" href="https://github.com/example/project/pull/144"');
+    expect(html).not.toContain("speaker--system");
+  });
+
   it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
     const html = renderToStaticMarkup(
       <Transcript

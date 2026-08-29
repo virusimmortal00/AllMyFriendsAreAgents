@@ -41,7 +41,7 @@ export interface RoomMessage {
   speaker: SpeakerId;
   text: string;
   timestamp: string;
-  kind?: "chat" | "review" | "status" | "topic";
+  kind?: "chat" | "review" | "status" | "topic" | "command";
   style?: ChatStyle;
   burstId?: string;
   sequence?: number;
