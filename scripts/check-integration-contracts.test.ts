@@ -61,10 +61,13 @@ describe("OpenCode integration contract guard", () => {
   });
 
   it("requires a new review revision and every relevant upstream path", () => {
-    expect(validateReview(contract, contract.surfaces, 2)).toEqual([]);
-    expect(validateReview(contract, contract.surfaces, 3)).toContain("increment review.revision above 3");
+    const previousReview = { ...contract.review, revision: 2, reviewedOn: "2026-08-27", result: "The previous source audit documented a different implementation change." };
+    expect(validateReview(contract, contract.surfaces, previousReview)).toEqual([]);
+    expect(validateReview(contract, contract.surfaces, contract.review)).toContain("increment review.revision above 3");
+    expect(validateReview(contract, contract.surfaces, { ...previousReview, result: contract.review.result })).toContain("replace review.result with fresh source-audit evidence");
+    expect(validateReview(contract, contract.surfaces, { ...previousReview, reviewedOn: "2026-08-29" })).toContain("keep review.reviewedOn on or after 2026-08-29");
     const missing = { ...contract, review: { ...contract.review, revision: 4, paths: ["upstream/run.ts"] } };
-    expect(validateReview(missing, contract.surfaces, 3)).toContain("record upstream review path upstream/tool.ts");
+    expect(validateReview(missing, contract.surfaces, previousReview)).toContain("record upstream review path upstream/tool.ts");
   });
 
   it("rejects a minimum version above the audited version", () => {

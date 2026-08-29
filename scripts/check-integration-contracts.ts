@@ -79,9 +79,12 @@ export function requiredUpstreamPaths(surfaces: readonly IntegrationSurface[]) {
   return [...new Set(surfaces.flatMap((surface) => surface.upstream))].sort();
 }
 
-export function validateReview(contract: OpenCodeIntegrationContract, surfaces: readonly IntegrationSurface[], baseRevision = 0) {
+export function validateReview(contract: OpenCodeIntegrationContract, surfaces: readonly IntegrationSurface[], baseReview?: OpenCodeIntegrationContract["review"]) {
   const errors: string[] = [];
+  const baseRevision = baseReview?.revision || 0;
   if (contract.review.revision <= baseRevision) errors.push(`increment review.revision above ${baseRevision}`);
+  if (baseReview && contract.review.result === baseReview.result) errors.push("replace review.result with fresh source-audit evidence");
+  if (baseReview && contract.review.reviewedOn < baseReview.reviewedOn) errors.push(`keep review.reviewedOn on or after ${baseReview.reviewedOn}`);
   const recorded = new Set(contract.review.paths);
   for (const path of requiredUpstreamPaths(surfaces)) if (!recorded.has(path)) errors.push(`record upstream review path ${path}`);
   return errors;
@@ -177,11 +180,11 @@ function changedFiles(base: string, head: string) {
   return [...new Set([...committed, ...working, ...untracked])].sort();
 }
 
-function baseReviewRevision(base: string) {
-  if (!base) return 0;
+function baseReview(base: string) {
+  if (!base) return undefined;
   const text = git(["show", `${base}:${OPENCODE_CONTRACT_PATH}`]);
-  if (!text) return 0;
-  return parseContract(text).review.revision;
+  if (!text) return undefined;
+  return parseContract(text).review;
 }
 
 async function verifyUpstream(contract: OpenCodeIntegrationContract, paths: readonly string[]) {
@@ -232,7 +235,7 @@ async function main() {
   }
 
   if (!all && !inspectOnly) {
-    const errors = validateReview(contract, surfaces, baseReviewRevision(base));
+    const errors = validateReview(contract, surfaces, baseReview(base));
     if (!changed.includes(OPENCODE_CONTRACT_PATH)) errors.unshift(`change ${OPENCODE_CONTRACT_PATH} with the source-review evidence`);
     if (process.env.INTEGRATION_CONTRACT_REQUIRE_REVIEW === "true") errors.push(...validatePullRequestEvidence(contract, surfaces, process.env.INTEGRATION_CONTRACT_PR_BODY || ""));
     if (errors.length) throw new Error(`OpenCode upstream review is incomplete:\n- ${errors.join("\n- ")}`);
