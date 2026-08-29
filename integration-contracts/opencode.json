@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "integration": "opencode",
+  "upstream": {
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "minimumVersion": "1.18.18",
+    "auditedVersion": "1.18.25",
+    "auditedTag": "v1.18.25",
+    "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
+  },
+  "review": {
+    "revision": 1,
+    "reviewedOn": "2026-08-28",
+    "result": "OpenCode v1.18.25 preserves the consumed CLI JSONL, model-catalog, inline-permission, and custom-tool contracts. Its run loop now tracks child sessions when answering permission requests; the room lane remains fail-closed because its inline permission map denies unspecified tools.",
+    "paths": [
+      "packages/opencode/src/cli/cmd/models.ts",
+      "packages/opencode/src/cli/cmd/run.ts",
+      "packages/opencode/src/config/config.ts",
+      "packages/opencode/src/provider/provider.ts",
+      "packages/opencode/src/session/message-v2.ts",
+      "packages/plugin/package.json",
+      "packages/plugin/src/tool.ts"
+    ]
+  },
+  "surfaces": [
+    {
+      "id": "cli-jsonl",
+      "description": "OpenCode run arguments, JSONL events, sessions, variants, errors, and provider telemetry.",
+      "local": [
+        "server/agent-runner.ts",
+        "server/context-summarizer.ts",
+        "server/provider-failure.ts"
+      ],
+      "upstream": [
+        "packages/opencode/src/cli/cmd/run.ts",
+        "packages/opencode/src/session/message-v2.ts",
+        "packages/opencode/src/provider/provider.ts"
+      ],
+      "tests": [
+        "server/agent-runner.test.ts",
+        "server/context-summarizer.test.ts",
+        "server/provider-health.test.ts"
+      ]
+    },
+    {
+      "id": "model-discovery",
+      "description": "Runtime version bounds and the human-formatted models --verbose compatibility parser.",
+      "local": [
+        "server/model-discovery.ts",
+        "shared/model-discovery.ts"
+      ],
+      "upstream": [
+        "packages/opencode/src/cli/cmd/models.ts",
+        "packages/opencode/src/provider/provider.ts"
+      ],
+      "tests": [
+        "server/model-discovery.test.ts"
+      ]
+    },
+    {
+      "id": "permissions-and-tools",
+      "description": "Inline OpenCode permissions, the custom-tool API, and the server-owned tool configuration directory.",
+      "local": [
+        "server/agent-tools/**",
+        "server/agent-runner.ts",
+        "tsconfig.node.json"
+      ],
+      "upstream": [
+        "packages/opencode/src/config/config.ts",
+        "packages/plugin/package.json",
+        "packages/plugin/src/tool.ts"
+      ],
+      "tests": [
+        "server/agent-runner.test.ts",
+        "server/room-command-tool.test.ts",
+        "server/room-diagnostics-tool.test.ts"
+      ]
+    },
+    {
+      "id": "mcp-adapter",
+      "description": "The mergeable OpenCode MCP configuration and consultation-skill adapter.",
+      "local": [
+        "plugins/all-my-friends-are-agents/adapters/opencode/**"
+      ],
+      "upstream": [
+        "packages/opencode/src/config/config.ts"
+      ],
+      "tests": [
+        "server/universal-plugin-package.test.ts",
+        "server/consultation-e2e.test.ts"
+      ]
+    }
+  ]
+}
