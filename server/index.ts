@@ -697,8 +697,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
-        commandTool: activeAgent ? commandToolContext(activeAgent, before) : undefined,
-        diagnosticsTool: activeAgent ? diagnosticsToolContext(activeAgent) : undefined,
+        refreshScopedTools: activeAgent ? () => ({
+          commandTool: commandToolContext(activeAgent, roomSnapshot()),
+          diagnosticsTool: diagnosticsToolContext(activeAgent),
+        }) : undefined,
       },
       sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
     );
@@ -968,7 +970,11 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       generationJournal, signal, undefined, activeGenerations,
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
-      { historyTool: roomHistoryTool, commandTool: commandToolContext(agent, before), diagnosticsTool: diagnosticsToolContext(agent), operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
+      {
+        historyTool: roomHistoryTool,
+        refreshScopedTools: () => ({ commandTool: commandToolContext(agent, roomSnapshot()), diagnosticsTool: diagnosticsToolContext(agent) }),
+        operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
+      },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
     );
     const providerRecovered = await providerHealth.recordSuccess(providerId);

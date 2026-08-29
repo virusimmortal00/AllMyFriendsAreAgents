@@ -468,31 +468,52 @@ describe("OpenCode runtime safety", () => {
       const blockedKeys = ["GITHUB_TOKEN", "OPENAI_API_KEY", "DATABASE_URL"];
       await writeFile(openCodePath, `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
+if (process.argv.includes("--session")) {
+  process.stderr.write("session ses_stale not found " + process.env.AMFAA_ROOM_COMMAND_TOKEN + "\\n");
+  process.exit(1);
+}
 const scopedKeys = ${JSON.stringify(scopedKeys)};
 const blockedKeys = ${JSON.stringify(blockedKeys)};
 writeFileSync(process.env.AMFAA_TEST_CAPTURE_PATH, JSON.stringify({
   scoped: Object.fromEntries(scopedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
   blocked: Object.fromEntries(blockedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
   commands: JSON.parse(process.env.AMFAA_ROOM_COMMANDS || "[]"),
+  freshBinding: process.env.AMFAA_ROOM_COMMAND_TOKEN === "command-fresh-placeholder" && process.env.AMFAA_ROOM_DIAGNOSTICS_TOKEN === "diagnostics-fresh-placeholder",
 }));
-process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok" } }) + "\\n");
+process.stderr.write(process.env.AMFAA_ROOM_HISTORY_TOKEN + " " + process.env.AMFAA_ROOM_DIAGNOSTICS_URL + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok " + process.env.AMFAA_ROOM_COMMAND_TOKEN } }) + "\\n");
 `, { mode: 0o755 });
       const childScript = `
 const { runAgent } = await import("./server/agent-runner.ts");
 const { DEFAULT_PARTICIPANT_STYLES } = await import("./shared/chat-style.ts");
 const participant = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+const epoch = "deployment-v1:" + "a".repeat(64);
 const state = {
-  messages: [], sessions: {}, status: "idle",
+  messages: [], sessions: { "codex-sol": { id: "ses_stale", permission: "read-only", configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }), codeEpoch: epoch } }, status: "idle",
   roster: { schemaVersion: 3, revision: 1, entries: [participant] },
   settings: { roomName: "Room", topic: "Scoped tool smoke", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+  deployment: { schemaVersion: 1, commitSha: "b".repeat(40), reference: { kind: "branch", name: "main" }, worktree: "clean", epoch, observedAt: "2026-08-29T00:00:00.000Z" },
 };
+const journalEntries = [];
+const journal = { append: async (entry) => { journalEntries.push(entry); } };
+let refreshCount = 0;
+let invalidations = 0;
 const context = {
   historyTool: { configDirectory: ${JSON.stringify(directory)}, url: "http://127.0.0.1/history", token: "history-placeholder" },
-  commandTool: { url: "http://127.0.0.1/command", token: "command-placeholder", allowedCommands: ["help", "gh"], guide: "ROOM COMMANDS" },
-  diagnosticsTool: { url: "http://127.0.0.1/diagnostics", token: "diagnostics-placeholder" },
+  refreshScopedTools: () => {
+    refreshCount += 1;
+    const binding = state.sessions["codex-sol"]?.id || "fresh";
+    return {
+      commandTool: { url: "http://127.0.0.1/command", token: "command-" + binding + "-placeholder", allowedCommands: ["help", "gh"], guide: "ROOM COMMANDS" },
+      diagnosticsTool: { url: "http://127.0.0.1/diagnostics", token: "diagnostics-" + binding + "-placeholder" },
+    };
+  },
 };
-const result = await runAgent("codex-sol", state, "Verify scoped tools.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, context);
-process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId }));
+const sessionLifecycle = { invalidate: async (agent) => { invalidations += 1; delete state.sessions[agent]; } };
+const result = await runAgent("codex-sol", state, "Verify scoped tools.", false, journal, undefined, undefined, undefined, sessionLifecycle, undefined, undefined, undefined, undefined, context);
+const retained = JSON.stringify(journalEntries);
+const leaks = ["command-ses_stale-placeholder", "command-fresh-placeholder", "history-placeholder", "diagnostics-fresh-placeholder", "http://127.0.0.1/command", "http://127.0.0.1/history", "http://127.0.0.1/diagnostics"].some((value) => retained.includes(value));
+process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, journalLeaksScopedValues: leaks }));
 `;
 
       const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
@@ -509,11 +530,18 @@ process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessi
       });
       const capture = JSON.parse(await readFile(capturePath, "utf8"));
 
-      expect(JSON.parse(stdout)).toEqual({ text: "room-tool-environment-ok", sessionId: "ses_room_tool_smoke" });
+      expect(JSON.parse(stdout)).toEqual({
+        text: "room-tool-environment-ok [REDACTED]",
+        sessionId: "ses_room_tool_smoke",
+        refreshCount: 2,
+        invalidations: 1,
+        journalLeaksScopedValues: false,
+      });
       expect(capture).toEqual({
         scoped: Object.fromEntries(scopedKeys.map((key) => [key, true])),
         blocked: Object.fromEntries(blockedKeys.map((key) => [key, false])),
         commands: ["help", "gh"],
+        freshBinding: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
