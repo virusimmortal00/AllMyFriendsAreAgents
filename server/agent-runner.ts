@@ -43,6 +43,7 @@ export interface AgentContextRuntime {
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
   readonly diagnosticsTool?: { readonly url: string; readonly token: string };
+  readonly refreshScopedTools?: () => Pick<AgentContextRuntime, "commandTool" | "diagnosticsTool">;
   readonly operationLog?: OperationLog;
 }
 
@@ -323,6 +324,8 @@ interface RunProcessOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   environment?: NodeJS.ProcessEnv;
+  scopedToolEnvironment?: NodeJS.ProcessEnv;
+  redactOutputValues?: readonly string[];
   trustedEnvironment?: boolean;
   supervisor?: AgentProcessSupervisor;
   scope?: string | readonly string[];
@@ -346,17 +349,104 @@ function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals) {
   }
 }
 
+const SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS = [
+  "AMFAA_ROOM_COMMAND_URL",
+  "AMFAA_ROOM_COMMAND_TOKEN",
+  "AMFAA_ROOM_COMMANDS",
+  "AMFAA_ROOM_HISTORY_URL",
+  "AMFAA_ROOM_HISTORY_TOKEN",
+  "AMFAA_ROOM_DIAGNOSTICS_URL",
+  "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+] as const;
+const SCOPED_AGENT_TOOL_ENVIRONMENT_KEY_SET = new Set<string>(SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS);
+const SCOPED_AGENT_TOOL_OUTPUT_REDACTION_KEYS = SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS.filter((name) => name.endsWith("_URL") || name.endsWith("_TOKEN"));
+
 function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
   return Object.fromEntries(Object.entries(environment).filter(([name]) => {
     const normalizedName = name.toUpperCase();
     return !normalizedName.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")
       && !normalizedName.startsWith("AGENTWIRE_")
+      && !SCOPED_AGENT_TOOL_ENVIRONMENT_KEY_SET.has(normalizedName)
       && normalizedName !== "DATABASE_URL"
       && !/(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)(?:$|_)/.test(normalizedName)
       && normalizedName !== "GITHUB_AUTH"
       && normalizedName !== "GH_ENTERPRISE_TOKEN"
       && !["PGPASSWORD", "PGPASSFILE", "MYSQL_PWD"].includes(normalizedName);
   }));
+}
+
+function scopedAgentToolEnvironment(environment: NodeJS.ProcessEnv = {}) {
+  return Object.fromEntries(SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS.flatMap((name) => {
+    const value = environment[name];
+    return typeof value === "string" && value.length > 0 ? [[name, value]] : [];
+  }));
+}
+
+function scopedAgentToolOutputRedactionValues(environment: NodeJS.ProcessEnv = {}) {
+  return SCOPED_AGENT_TOOL_OUTPUT_REDACTION_KEYS.flatMap((name) => {
+    const value = environment[name];
+    return typeof value === "string" && value.length > 0 ? [value] : [];
+  });
+}
+
+function agentChildProcessEnvironment(options: Pick<RunProcessOptions, "environment" | "scopedToolEnvironment" | "trustedEnvironment">) {
+  return {
+    ...(options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment)),
+    ...scopedAgentToolEnvironment(options.scopedToolEnvironment),
+  };
+}
+
+function redactExactOutputValues(value: string, exactValues: readonly string[] = []) {
+  return [...new Set(exactValues.filter((candidate) => candidate.length > 0))]
+    .sort((left, right) => right.length - left.length)
+    .reduce((output, candidate) => output.replaceAll(candidate, "[REDACTED]"), value);
+}
+
+function capturedProcessResult(stdout: string, stderr: string, exactValues: readonly string[] = []): ProcessResult {
+  return {
+    stdout: redactExactOutputValues(stdout, exactValues),
+    stderr: redactExactOutputValues(stderr, exactValues),
+  };
+}
+
+const SCOPED_AGENT_TOOL_REQUIREMENTS = {
+  roomCommand: ["AMFAA_ROOM_COMMAND_URL", "AMFAA_ROOM_COMMAND_TOKEN", "AMFAA_ROOM_COMMANDS"],
+  roomHistory: ["AMFAA_ROOM_HISTORY_URL", "AMFAA_ROOM_HISTORY_TOKEN"],
+  roomDiagnostics: ["AMFAA_ROOM_DIAGNOSTICS_URL", "AMFAA_ROOM_DIAGNOSTICS_TOKEN"],
+} as const;
+
+type ScopedAgentTool = keyof typeof SCOPED_AGENT_TOOL_REQUIREMENTS;
+type ScopedAgentToolState = "not-configured" | "ready" | "missing";
+
+function scopedAgentToolReadiness(
+  environment: NodeJS.ProcessEnv,
+  expected: Readonly<Record<ScopedAgentTool, boolean>>,
+): Record<ScopedAgentTool, ScopedAgentToolState> {
+  return Object.fromEntries(Object.entries(SCOPED_AGENT_TOOL_REQUIREMENTS).map(([tool, names]) => [
+    tool,
+    !expected[tool as ScopedAgentTool]
+      ? "not-configured"
+      : names.every((name) => typeof environment[name] === "string" && environment[name]!.length > 0) ? "ready" : "missing",
+  ])) as Record<ScopedAgentTool, ScopedAgentToolState>;
+}
+
+async function logScopedAgentToolReadiness(
+  operationLog: OperationLog | undefined,
+  generationId: string,
+  agentId: AgentId,
+  environment: NodeJS.ProcessEnv,
+  expected: Readonly<Record<ScopedAgentTool, boolean>>,
+) {
+  const readiness = scopedAgentToolReadiness(environment, expected);
+  const missing = Object.values(readiness).includes("missing");
+  await logOperationSafely(operationLog, missing ? "error" : "info", "agent.tool-policy.environment", {
+    generationId,
+    agentId,
+    outcome: missing ? "failed" : "configured",
+    reason: missing ? "scoped-tool-environment-missing" : "scoped-tool-environment-ready",
+    ...readiness,
+  });
+  return readiness;
 }
 
 function runProcess(command: string, args: string[], cwd: string, options: RunProcessOptions = {}): Promise<ProcessResult> {
@@ -366,7 +456,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     supervisor.assertOpen();
     const child = spawn(command, args, {
       cwd,
-      env: options.trustedEnvironment ? options.environment : agentProcessEnvironment(options.environment),
+      env: agentChildProcessEnvironment(options),
       shell: false,
       detached: process.platform !== "win32",
       stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -395,12 +485,11 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
       fail(error);
     };
     const cancel = () => {
-      void terminateWith(new ProcessCancelledError({ stdout, stderr, exitCode: child.exitCode }));
+      void terminateWith(new ProcessCancelledError({ ...capturedProcessResult(stdout, stderr, options.redactOutputValues), exitCode: child.exitCode }));
     };
     const timer = setTimeout(() => {
       void terminateWith(new ProcessExecutionError(`${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`, {
-        stdout,
-        stderr,
+        ...capturedProcessResult(stdout, stderr, options.redactOutputValues),
         exitCode: null,
       }));
     }, timeoutMs);
@@ -410,7 +499,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
     });
     child.stderr!.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-OUTPUT_LIMIT);
-      const detected = options.stderrFailure?.(stderr);
+      const detected = options.stderrFailure?.(redactExactOutputValues(stderr, options.redactOutputValues));
       if (detected) void terminateWith(detected);
     });
     child.on("error", (error) => {
@@ -424,10 +513,10 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
       if (settled || terminating) return;
       settled = true;
       cleanup();
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new ProcessExecutionError(friendlyProcessError(command, code, stderr.trim() || stdout.trim()), {
-        stdout,
-        stderr,
+      const captured = capturedProcessResult(stdout, stderr, options.redactOutputValues);
+      if (code === 0) resolve(captured);
+      else reject(new ProcessExecutionError(friendlyProcessError(command, code, captured.stderr.trim() || captured.stdout.trim()), {
+        ...captured,
         exitCode: code,
       }));
     });
@@ -593,6 +682,12 @@ function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEn
   return decision.kind === "reuse" ? decision.session : undefined;
 }
 
+function refreshAgentScopedTools(context: AgentContextRuntime | undefined) {
+  if (!context?.refreshScopedTools) return context;
+  const tools = context.refreshScopedTools();
+  return { ...context, commandTool: tools.commandTool, diagnosticsTool: tools.diagnosticsTool };
+}
+
 export async function runAgent(
   agent: AgentId,
   state: RoomState,
@@ -632,7 +727,8 @@ export async function runAgent(
   if (sessionDecision.kind === "invalidate" && storedSession) {
     await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
   }
-  const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, context);
+  let activeContext = refreshAgentScopedTools(context);
+  const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, activeContext);
   const secureWriterRequested = permission === "writable"
     && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
   if (secureWriterRequested && !writerGrant) throw new Error("Writable startup failed: verified Git broker grant is unavailable");
@@ -649,7 +745,7 @@ export async function runAgent(
     storedSessionEpoch: storedSession?.codeEpoch,
     sessionId: storedSession?.id,
   });
-  await logOperationSafely(context?.operationLog, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
+  await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
   await journal?.append({
     type: "generation.started",
     generationId,
@@ -678,26 +774,40 @@ export async function runAgent(
       const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
       const environment = {
         ...invocation.env,
-        ...(context?.historyTool ? {
-          OPENCODE_CONFIG_DIR: context.historyTool.configDirectory,
-          AMFAA_ROOM_HISTORY_URL: context.historyTool.url,
-          AMFAA_ROOM_HISTORY_TOKEN: context.historyTool.token,
-        } : {}),
-        ...(context?.commandTool ? {
-          AMFAA_ROOM_COMMAND_URL: context.commandTool.url,
-          AMFAA_ROOM_COMMAND_TOKEN: context.commandTool.token,
-          AMFAA_ROOM_COMMANDS: JSON.stringify(context.commandTool.allowedCommands),
-        } : {}),
-        ...(context?.diagnosticsTool ? {
-          AMFAA_ROOM_DIAGNOSTICS_URL: context.diagnosticsTool.url,
-          AMFAA_ROOM_DIAGNOSTICS_TOKEN: context.diagnosticsTool.token,
+        ...(activeContext?.historyTool ? {
+          OPENCODE_CONFIG_DIR: activeContext.historyTool.configDirectory,
         } : {}),
       };
-      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, {
-        environment: opencodeEnvironment(environment, permission, Boolean(context?.commandTool?.allowedCommands.length), Boolean(context?.diagnosticsTool)),
+      const scopedToolEnvironment = {
+        ...(activeContext?.historyTool ? {
+          AMFAA_ROOM_HISTORY_URL: activeContext.historyTool.url,
+          AMFAA_ROOM_HISTORY_TOKEN: activeContext.historyTool.token,
+        } : {}),
+        ...(activeContext?.commandTool ? {
+          AMFAA_ROOM_COMMAND_URL: activeContext.commandTool.url,
+          AMFAA_ROOM_COMMAND_TOKEN: activeContext.commandTool.token,
+          AMFAA_ROOM_COMMANDS: JSON.stringify(activeContext.commandTool.allowedCommands),
+        } : {}),
+        ...(activeContext?.diagnosticsTool ? {
+          AMFAA_ROOM_DIAGNOSTICS_URL: activeContext.diagnosticsTool.url,
+          AMFAA_ROOM_DIAGNOSTICS_TOKEN: activeContext.diagnosticsTool.token,
+        } : {}),
+      };
+      const processOptions = {
+        environment: opencodeEnvironment(environment, permission, Boolean(activeContext?.commandTool?.allowedCommands.length), Boolean(activeContext?.diagnosticsTool)),
+        scopedToolEnvironment,
+        redactOutputValues: scopedAgentToolOutputRedactionValues(scopedToolEnvironment),
         trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
         timeoutMs: runTimeout(permission, includeDiff),
-      });
+      } satisfies RunProcessOptions;
+      await logScopedAgentToolReadiness(
+        activeContext?.operationLog,
+        generationId,
+        agent,
+        agentChildProcessEnvironment(processOptions),
+        { roomCommand: Boolean(activeContext?.commandTool), roomHistory: Boolean(activeContext?.historyTool), roomDiagnostics: Boolean(activeContext?.diagnosticsTool) },
+      );
+      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, processOptions);
     };
     let result: ProcessResult;
     try {
@@ -705,6 +815,7 @@ export async function runAgent(
     } catch (error) {
       if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
       await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
+      activeContext = refreshAgentScopedTools(context);
       await journal?.append({
         type: "generation.retry", generationId, agent,
         reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
@@ -723,7 +834,7 @@ export async function runAgent(
       ...openCodeJournalMetadata(parsed),
       cliStdout: result.stdout, cliStderr: result.stderr,
     });
-    await logOperationSafely(context?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
+    await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
     return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
   } catch (error) {
     if (error instanceof ProcessCancelledError) {
@@ -756,7 +867,7 @@ export async function runAgent(
         cliStderr: error.process.stderr,
       } : {}),
     });
-    await logOperationSafely(context?.operationLog, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
+    await logOperationSafely(activeContext?.operationLog, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
     if (failedProtocol?.errors[0]) throw new ProviderInvocationError(failedProtocol.errors[0]);
     throw error;
   } finally {
@@ -777,4 +888,4 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, scopedAgentToolOutputRedactionValues, agentChildProcessEnvironment, redactExactOutputValues, scopedAgentToolReadiness, logScopedAgentToolReadiness, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
@@ -349,11 +349,203 @@ describe("OpenCode runtime safety", () => {
       GH_TOKEN: "gh-secret",
       GITHUB_TOKEN: "github-secret",
       OPENAI_API_KEY: "provider-secret",
+      AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+      AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+      AMFAA_ROOM_COMMANDS: '["gh"]',
+      AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+      AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+      AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: "diagnostics-secret",
       SOME_PASSWORD: "password-secret",
       PGPASSWORD: "postgres-secret",
       PgPassFile: "/private/postgres-password-file",
       MYSQL_PWD: "mysql-secret",
     })).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
+  });
+
+  it("passes only the complete scoped room-tool environment alongside a filtered agent environment", async () => {
+    const environment = {
+      PATH: process.env.PATH,
+      GITHUB_TOKEN: "github-secret",
+      OPENAI_API_KEY: "provider-secret",
+      DATABASE_URL: "postgres://live",
+      OTHER_TOKEN: "other-secret",
+      AMFAA_ROOM_COMMAND_TOKEN: "unscoped-command-secret",
+    };
+    const scopedToolEnvironment = {
+      AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+      AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+      AMFAA_ROOM_COMMANDS: '["gh","help"]',
+      AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+      AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+      AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: "diagnostics-secret",
+      GITHUB_TOKEN: "scoped-github-secret",
+      OPENAI_API_KEY: "scoped-provider-secret",
+      DATABASE_URL: "postgres://scoped-live",
+      OTHER_TOKEN: "scoped-other-secret",
+    };
+    const keys = [
+      "AMFAA_ROOM_COMMAND_URL",
+      "AMFAA_ROOM_COMMAND_TOKEN",
+      "AMFAA_ROOM_COMMANDS",
+      "AMFAA_ROOM_HISTORY_URL",
+      "AMFAA_ROOM_HISTORY_TOKEN",
+      "AMFAA_ROOM_DIAGNOSTICS_URL",
+      "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+      "GITHUB_TOKEN",
+      "OPENAI_API_KEY",
+      "DATABASE_URL",
+      "OTHER_TOKEN",
+    ];
+    const command = ["-e", `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map((key) => [key, Object.hasOwn(process.env, key)]))))`];
+
+    const result = await __testing.runProcess(process.execPath, command, process.cwd(), { environment, scopedToolEnvironment });
+
+    expect(JSON.parse(result.stdout)).toEqual({
+      AMFAA_ROOM_COMMAND_URL: true,
+      AMFAA_ROOM_COMMAND_TOKEN: true,
+      AMFAA_ROOM_COMMANDS: true,
+      AMFAA_ROOM_HISTORY_URL: true,
+      AMFAA_ROOM_HISTORY_TOKEN: true,
+      AMFAA_ROOM_DIAGNOSTICS_URL: true,
+      AMFAA_ROOM_DIAGNOSTICS_TOKEN: true,
+      GITHUB_TOKEN: false,
+      OPENAI_API_KEY: false,
+      DATABASE_URL: false,
+      OTHER_TOKEN: false,
+    });
+  });
+
+  it("reports bounded room-tool subprocess readiness without credential or endpoint values", async () => {
+    const environment = __testing.agentChildProcessEnvironment({
+      environment: { PATH: process.env.PATH, GITHUB_TOKEN: "github-secret" },
+      scopedToolEnvironment: {
+        AMFAA_ROOM_COMMAND_URL: "http://127.0.0.1/command",
+        AMFAA_ROOM_COMMAND_TOKEN: "command-secret",
+        AMFAA_ROOM_COMMANDS: '["gh"]',
+        AMFAA_ROOM_HISTORY_URL: "http://127.0.0.1/history",
+        AMFAA_ROOM_HISTORY_TOKEN: "history-secret",
+        AMFAA_ROOM_DIAGNOSTICS_URL: "http://127.0.0.1/diagnostics",
+      },
+    });
+    const operationLog = vi.fn();
+
+    await __testing.logScopedAgentToolReadiness(
+      operationLog,
+      "generation-1",
+      "codex-sol",
+      environment,
+      { roomCommand: true, roomHistory: true, roomDiagnostics: true },
+    );
+
+    expect(operationLog).toHaveBeenCalledWith("error", "agent.tool-policy.environment", {
+      generationId: "generation-1",
+      agentId: "codex-sol",
+      outcome: "failed",
+      reason: "scoped-tool-environment-missing",
+      roomCommand: "ready",
+      roomHistory: "ready",
+      roomDiagnostics: "missing",
+    });
+    expect(JSON.stringify(operationLog.mock.calls)).not.toMatch(/command-secret|history-secret|github-secret|127\.0\.0\.1/);
+  });
+
+  it("wires the complete scoped room-tool family through a real runAgent subprocess", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "amfaa-room-tool-env-"));
+    try {
+      const capturePath = path.join(directory, "environment.json");
+      const openCodePath = path.join(directory, "fake-opencode.mjs");
+      const scopedKeys = [
+        "AMFAA_ROOM_COMMAND_URL",
+        "AMFAA_ROOM_COMMAND_TOKEN",
+        "AMFAA_ROOM_COMMANDS",
+        "AMFAA_ROOM_HISTORY_URL",
+        "AMFAA_ROOM_HISTORY_TOKEN",
+        "AMFAA_ROOM_DIAGNOSTICS_URL",
+        "AMFAA_ROOM_DIAGNOSTICS_TOKEN",
+      ];
+      const blockedKeys = ["GITHUB_TOKEN", "OPENAI_API_KEY", "DATABASE_URL"];
+      await writeFile(openCodePath, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+if (process.argv.includes("--session")) {
+  process.stderr.write("session ses_stale not found " + process.env.AMFAA_ROOM_COMMAND_TOKEN + "\\n");
+  process.exit(1);
+}
+const scopedKeys = ${JSON.stringify(scopedKeys)};
+const blockedKeys = ${JSON.stringify(blockedKeys)};
+writeFileSync(process.env.AMFAA_TEST_CAPTURE_PATH, JSON.stringify({
+  scoped: Object.fromEntries(scopedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
+  blocked: Object.fromEntries(blockedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
+  commands: JSON.parse(process.env.AMFAA_ROOM_COMMANDS || "[]"),
+  freshBinding: process.env.AMFAA_ROOM_COMMAND_TOKEN === "command-fresh-placeholder" && process.env.AMFAA_ROOM_DIAGNOSTICS_TOKEN === "diagnostics-fresh-placeholder",
+}));
+process.stderr.write(process.env.AMFAA_ROOM_HISTORY_TOKEN + " " + process.env.AMFAA_ROOM_DIAGNOSTICS_URL + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok " + process.env.AMFAA_ROOM_COMMAND_TOKEN } }) + "\\n");
+`, { mode: 0o755 });
+      const childScript = `
+const { runAgent } = await import("./server/agent-runner.ts");
+const { DEFAULT_PARTICIPANT_STYLES } = await import("./shared/chat-style.ts");
+const participant = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+const epoch = "deployment-v1:" + "a".repeat(64);
+const state = {
+  messages: [], sessions: { "codex-sol": { id: "ses_stale", permission: "read-only", configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }), codeEpoch: epoch } }, status: "idle",
+  roster: { schemaVersion: 3, revision: 1, entries: [participant] },
+  settings: { roomName: "Room", topic: "Scoped tool smoke", writableAgent: "nobody", conversationEnergy: "balanced", projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
+  deployment: { schemaVersion: 1, commitSha: "b".repeat(40), reference: { kind: "branch", name: "main" }, worktree: "clean", epoch, observedAt: "2026-08-29T00:00:00.000Z" },
+};
+const journalEntries = [];
+const journal = { append: async (entry) => { journalEntries.push(entry); } };
+let refreshCount = 0;
+let invalidations = 0;
+const context = {
+  historyTool: { configDirectory: ${JSON.stringify(directory)}, url: "http://127.0.0.1/history", token: "history-placeholder" },
+  refreshScopedTools: () => {
+    refreshCount += 1;
+    const binding = state.sessions["codex-sol"]?.id || "fresh";
+    return {
+      commandTool: { url: "http://127.0.0.1/command", token: "command-" + binding + "-placeholder", allowedCommands: ["help", "gh"], guide: "ROOM COMMANDS" },
+      diagnosticsTool: { url: "http://127.0.0.1/diagnostics", token: "diagnostics-" + binding + "-placeholder" },
+    };
+  },
+};
+const sessionLifecycle = { invalidate: async (agent) => { invalidations += 1; delete state.sessions[agent]; } };
+const result = await runAgent("codex-sol", state, "Verify scoped tools.", false, journal, undefined, undefined, undefined, sessionLifecycle, undefined, undefined, undefined, undefined, context);
+const retained = JSON.stringify(journalEntries);
+const leaks = ["command-ses_stale-placeholder", "command-fresh-placeholder", "history-placeholder", "diagnostics-fresh-placeholder", "http://127.0.0.1/command", "http://127.0.0.1/history", "http://127.0.0.1/diagnostics"].some((value) => retained.includes(value));
+process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, journalLeaksScopedValues: leaks }));
+`;
+
+      const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND: openCodePath,
+          AMFAA_TEST_CAPTURE_PATH: capturePath,
+          GITHUB_TOKEN: "github-placeholder",
+          OPENAI_API_KEY: "provider-placeholder",
+          DATABASE_URL: "postgres://placeholder",
+        },
+        timeout: 15_000,
+      });
+      const capture = JSON.parse(await readFile(capturePath, "utf8"));
+
+      expect(JSON.parse(stdout)).toEqual({
+        text: "room-tool-environment-ok [REDACTED]",
+        sessionId: "ses_room_tool_smoke",
+        refreshCount: 2,
+        invalidations: 1,
+        journalLeaksScopedValues: false,
+      });
+      expect(capture).toEqual({
+        scoped: Object.fromEntries(scopedKeys.map((key) => [key, true])),
+        blocked: Object.fromEntries(blockedKeys.map((key) => [key, false])),
+        commands: ["help", "gh"],
+        freshBinding: true,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("preserves only an explicitly trusted confined-writer environment", async () => {
