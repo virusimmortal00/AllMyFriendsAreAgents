@@ -17,7 +17,7 @@ import { improvementReferences } from "../shared/workshop";
 import type { WorkshopResponse } from "./types";
 import { workshopLayout } from "./workshop-dialog";
 import { reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageMention } from "../shared/mentions";
-import { useDismissibleLayer, useModalOverlay } from "./overlay";
+import { useDismissibleLayer } from "./overlay";
 import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import type { RoomAgentRoster } from "../shared/roster";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
@@ -25,6 +25,8 @@ import { ProviderMark } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
 import { commandMessageDisclosure } from "../shared/command-message";
+import { DialogFrame } from "./dialog-frame";
+import { VIEWS, viewAttributes, type ViewDefinition } from "./view-registry";
 
 function chatStyleProperties(style: ChatStyle, magnification = 100): CSSProperties {
   return {
@@ -50,6 +52,7 @@ export function ConfirmationDialog({
   busy = false,
   error = "",
   returnFocusTo,
+  view = VIEWS.confirmation,
   onConfirm,
   onCancel,
 }: {
@@ -60,35 +63,21 @@ export function ConfirmationDialog({
   busy?: boolean;
   error?: string;
   returnFocusTo: HTMLElement | null;
+  view?: ViewDefinition;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const titleId = useId();
   const descriptionId = useId();
   const requestCancel = () => { if (!busy) onCancel(); };
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestCancel, returnFocusTo);
 
   return (
-    <div className="modal-backdrop confirmation-backdrop" onMouseDown={onBackdropMouseDown}>
-      <section
-        ref={dialogRef}
-        className="agent-settings-window confirmation-window"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-        onKeyDown={onDialogKeyDown}
-      >
-        <header className="agent-settings-titlebar"><h2 id={titleId}>{title}</h2></header>
-        <div className="confirmation-body" id={descriptionId}>{description}</div>
+    <DialogFrame title={title} closeLabel={null} role="alertdialog" ariaDescribedBy={descriptionId} className="confirmation-window" backdropClassName="confirmation-backdrop" bodyClassName="confirmation-body" returnFocusTo={returnFocusTo} onClose={requestCancel} view={view} actionsClassName="confirmation-actions" actions={<>
+      <button type="button" className="classic-button" disabled={busy} onClick={requestCancel}>Cancel</button>
+      <button type="button" className="classic-button confirmation-confirm" disabled={busy} onClick={onConfirm}>{busy ? busyLabel : confirmLabel}</button>
+    </>}>
+        <div id={descriptionId}>{description}</div>
         {error ? <p className="confirmation-error" role="alert">{error}</p> : null}
-        <footer className="agent-settings-actions confirmation-actions">
-          <button type="button" className="classic-button" disabled={busy} onClick={requestCancel}>Cancel</button>
-          <button type="button" className="classic-button confirmation-confirm" disabled={busy} onClick={onConfirm}>{busy ? busyLabel : confirmLabel}</button>
-        </footer>
-      </section>
-    </div>
+    </DialogFrame>
   );
 }
 
@@ -242,20 +231,10 @@ export function AgentSettingsDialog({
     ? ` ${effectiveHealth.retrySource === "provider" ? "Provider retry time" : "Automatic retry eligible"}: ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(effectiveHealth.retryAt))}.`
     : "";
   const requestClose = onClose;
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose);
   const capability = implementationCapability || { eligible: false, available: false, unavailableReason: "participant-ineligible" as const };
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={onBackdropMouseDown}
-    >
-      <section ref={dialogRef} className="agent-settings-window" role="dialog" aria-modal="true" aria-labelledby="agent-settings-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar">
-          <h2 id="agent-settings-title">Agent Settings</h2>
-          <button type="button" aria-label="Close agent settings" onClick={requestClose}>×</button>
-        </header>
-        <div className="agent-settings-body">
+    <DialogFrame title="Agent Settings" closeLabel="Close agent settings" bodyClassName="agent-settings-body" view={VIEWS.agentStatus} onClose={requestClose} actions={<button type="button" className="classic-button" onClick={requestClose}>Close</button>}>
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
             <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />
@@ -274,12 +253,7 @@ export function AgentSettingsDialog({
             </p>
             <p>Room conversation and reviews always stay read-only. Source changes require an explicit governed handoff to a separate implementation worker.</p>
           </fieldset>
-        </div>
-        <footer className="agent-settings-actions">
-          <button type="button" className="classic-button" onClick={requestClose}>Close</button>
-        </footer>
-      </section>
-    </div>
+    </DialogFrame>
   );
 }
 
@@ -552,7 +526,7 @@ export function PollCards({ polls, disabled = false, pending = null, error = "",
 }) {
   const open = polls.filter((poll) => poll.state === "OPEN");
   if (!open.length) return null;
-  return <section className="poll-cards" aria-label="Room polls" aria-live="polite">
+  return <section className="poll-cards" aria-label="Room polls" aria-live="polite" {...viewAttributes(VIEWS.pollCards)}>
     {error ? <p role="alert" className="poll-card__error">{error}</p> : null}
     {open.map((poll) => <article className="poll-card" key={poll.pollId}>
       <header><h3>{poll.question}</h3><span className="poll-card__state">Open</span></header>
@@ -565,17 +539,15 @@ export function PollCards({ polls, disabled = false, pending = null, error = "",
 
 export function WorkshopDialog({ data, loading, missing, error = "", connected = true, onRetry, onClose, returnFocusTo = null }: { data: WorkshopResponse | null; loading: boolean; missing: boolean; error?: string; connected?: boolean; onRetry?: () => void; onClose: () => void; returnFocusTo?: HTMLElement | null }) {
   const view = data?.improvement;
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
+  const registeredView = loading || missing || error || !view ? VIEWS.improvementWorkshopRecovery : VIEWS.improvementWorkshop;
   const [presentation, setPresentation] = useState(() => workshopLayout(typeof window === "undefined" ? 1024 : window.innerWidth));
   useEffect(() => {
     const updatePresentation = () => setPresentation(workshopLayout(window.innerWidth));
     window.addEventListener("resize", updatePresentation);
     return () => window.removeEventListener("resize", updatePresentation);
   }, []);
-  return <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-    <section ref={dialogRef} className="workshop-window" role="dialog" aria-modal="true" aria-labelledby="workshop-title" tabIndex={-1} onKeyDown={onDialogKeyDown} data-responsive-layout="workshop" data-presentation={presentation}>
-      <header className="agent-settings-titlebar"><h2 id="workshop-title">Improvement workshop</h2><button type="button" aria-label="Close improvement workshop" onClick={onClose}>×</button></header>
-      <div className="workshop-body" aria-live="polite">
+  return <DialogFrame title="Improvement workshop" closeLabel="Close improvement workshop" className="workshop-window" bodyClassName="workshop-body" returnFocusTo={returnFocusTo} onClose={onClose} view={registeredView} dataResponsiveLayout="workshop" dataPresentation={presentation} actions={<button type="button" className="classic-button" onClick={onClose}>Close</button>}>
+      <div aria-live="polite">
         {loading ? <p role="status">Loading improvement…</p> : missing ? <p role="status">This improvement is unavailable or was deleted (verified not found).</p> : error || !view ? <div className="workshop-recovery" role="alert">
           <p><strong>Could not load this improvement.</strong> {error || "The room returned an incomplete response."}</p>
           {!connected ? <p>Retry is unavailable while the room is reconnecting.</p> : null}
@@ -587,17 +559,11 @@ export function WorkshopDialog({ data, loading, missing, error = "", connected =
           <h3>Evidence</h3><ul>{view.evidence.length ? view.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.description}</a></li>) : <li>No evidence recorded.</li>}</ul>
         </>}
       </div>
-      <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
-    </section>
-  </div>;
+  </DialogFrame>;
 }
 
 export function HelpDialog({ onClose }: { onClose: () => void }) {
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose);
-  return <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-    <section ref={dialogRef} className="help-window" role="dialog" aria-modal="true" aria-labelledby="help-title" tabIndex={-1} onKeyDown={onDialogKeyDown}>
-      <header className="agent-settings-titlebar"><h2 id="help-title">Help</h2><button type="button" aria-label="Close help" onClick={onClose}>×</button></header>
-      <div className="help-body">
+  return <DialogFrame title="Help" closeLabel="Close help" className="help-window" bodyClassName="help-body" view={VIEWS.help} onClose={onClose} actions={<button type="button" className="classic-button" onClick={onClose}>Close</button>}>
         <h3>Getting around</h3>
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
@@ -605,10 +571,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
-      </div>
-      <footer className="agent-settings-actions"><button type="button" className="classic-button" onClick={onClose}>Close</button></footer>
-    </section>
-  </div>;
+  </DialogFrame>;
 }
 
 interface ChatComposerProps {
@@ -796,7 +759,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         </div>
       </div>
       {formatPopover === "text" || formatPopover === "background" ? (
-        <div ref={formatPopoverElement} className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`} style={formatPopoverPosition ?? { visibility: "hidden" }}>
+        <div ref={formatPopoverElement} className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`} style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(formatPopover === "text" ? VIEWS.textColorPalette : VIEWS.highlightColorPalette)}>
           <strong>{formatPopover === "text" ? "Text color" : "Message highlight"}</strong>
           <span>Basic colors:</span>
           <div className="aim-color-grid">
@@ -829,7 +792,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         </div>
       ) : null}
       {formatPopover === "emoji" ? (
-        <div ref={formatPopoverElement} className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker" style={formatPopoverPosition ?? { visibility: "hidden" }}>
+        <div ref={formatPopoverElement} className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker" style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(VIEWS.classicSmileyPicker)}>
           {AIM_SMILEYS.map((smiley) => (
             <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
               <img src={smiley.src} alt="" aria-hidden="true" />
@@ -906,7 +869,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         }}
       />
       {matchingMentions.length ? (
-        <div ref={mentionSuggestions} id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant">
+        <div ref={mentionSuggestions} id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant" {...viewAttributes(VIEWS.mentionSuggestions)}>
           {matchingMentions.map((candidate, index) => (
             <button
               type="button"
@@ -937,6 +900,7 @@ interface RoomControlsProps extends RoomSettingsInput {
   disabled: boolean;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;
   onCancel?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
   showTitle?: boolean;
   propertySheet?: boolean;
@@ -949,6 +913,7 @@ export function RoomControls({
   disabled,
   onSave,
   onCancel,
+  onDirtyChange,
   onSaved,
   showTitle = true,
   propertySheet = false,
@@ -967,6 +932,10 @@ export function RoomControls({
     setDraft(current);
     setSaveError("");
   }, [roomName, topic, conversationEnergy]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function cancel() {
     setDraft(current);
@@ -1002,9 +971,10 @@ export function RoomControls({
   }
 
   return (
-    <aside className="controls-panel beveled-inset" aria-label="Room controls">
-      {showTitle ? <PanelTitle>Room Settings</PanelTitle> : null}
+    <aside className="controls-panel beveled-inset" aria-label="General room properties">
+      {showTitle ? <PanelTitle>Room Properties</PanelTitle> : null}
       <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
+      <div className="room-properties-page-content">
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
@@ -1047,8 +1017,9 @@ export function RoomControls({
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
-      {saveError ? <p className="room-settings-error" role="alert">Could not save room settings. {saveError}</p> : null}
-      {saving ? <p className="room-settings-status" role="status">Saving room settings…</p> : saved ? <p className="room-settings-status" role="status">Room settings saved.</p> : null}
+      {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
+      {saving ? <p className="room-settings-status" role="status">Saving room properties…</p> : saved ? <p className="room-settings-status" role="status">Room properties saved.</p> : null}
+      </div>
       <div className="room-settings-actions">
         {propertySheet ? <>
           <button type="submit" className="classic-button" data-default-button disabled={!valid || locked}>{saving ? "Saving…" : "OK"}</button>
@@ -1061,26 +1032,5 @@ export function RoomControls({
       </div>
       </form>
     </aside>
-  );
-}
-
-export function RoomSettingsDialog({
-  returnFocusTo,
-  onClose,
-  ...controls
-}: RoomControlsProps & { returnFocusTo: HTMLElement | null; onClose: () => void }) {
-  const titleId = useId();
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
-
-  return (
-    <div className="modal-backdrop room-settings-backdrop" onMouseDown={onBackdropMouseDown}>
-      <section ref={dialogRef} className="agent-settings-window room-settings-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar">
-          <h2 id={titleId}>Room Properties</h2>
-          <button type="button" aria-label="Close Room Properties" onClick={onClose}>×</button>
-        </header>
-        <RoomControls {...controls} showTitle={false} propertySheet onCancel={onClose} onSaved={onClose} />
-      </section>
-    </div>
   );
 }

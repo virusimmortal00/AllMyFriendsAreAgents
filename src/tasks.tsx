@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task, TaskParticipantRole, TaskReferenceKind } from "../shared/task-domain";
 import { ApiRequestError, createRoomTask, loadTask, loadTasks, sendContinuationWorkRequest, taskAction, updateRoomTask, type TaskDetailResponse } from "./api";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 export function TasksMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) {
   return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Tasks</button>;
@@ -78,10 +79,10 @@ export function Tasks({ refreshKey = 0 }: { refreshKey?: number }) {
     finally { setBusy(false); }
   }
 
-  return <section className="tasks-panel beveled-inset" aria-label="Room tasks">
-    <header className="tasks-header"><h2>Room tasks</h2>{selected ? <button type="button" className="classic-button" onClick={() => setSelected(null)}>Back to list</button> : null}</header>
-    {notice ? <div className="task-notice" role="status">{notice}</div> : null}{error ? <div className="task-error" role="alert">{error}</div> : null}
-    <div className="tasks-body">
+  return <section className="workspace-view tasks-panel beveled-inset" aria-label="Room tasks" {...viewAttributes(selected ? VIEWS.roomTaskDetail : VIEWS.roomTasksList)}>
+    <header className="workspace-view__header tasks-header"><h2>Room tasks</h2>{selected ? <button type="button" className="classic-button" onClick={() => setSelected(null)}>Back to list</button> : null}</header>
+    <div className="workspace-view__body tasks-body">
+      {notice ? <div className="task-notice" role="status">{notice}</div> : null}{error ? <div className="task-error" role="alert">{error}</div> : null}
       {loading && !detail ? <p role="status">Loading tasks…</p> : !selected ? <>
         <form className="task-create" onSubmit={create}><h3>Create task</h3><label>Title<input required maxLength={160} value={createTitle} onChange={(event) => setCreateTitle(event.target.value)} /></label><label>Description<textarea maxLength={8000} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} /></label><button className="classic-button" disabled={busy || !createTitle.trim()}>Create task</button></form>
         <TaskList items={items} onOpen={setSelected} />

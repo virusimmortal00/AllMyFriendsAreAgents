@@ -176,12 +176,15 @@ export interface RoomConfiguration {
 export interface RoomConfigurationResponse {
   settings: RoomConfiguration;
   defaults?: { basePromptText: string };
-  modelDiscovery?: ModelDiscoveryResult;
   routingEvidence?: import("../shared/preflight").PreflightEvidence;
 }
 
 export async function loadRoomConfiguration(): Promise<RoomConfigurationResponse> {
   return request("/api/room/settings", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+
+export async function loadRoomConfigurationModels(): Promise<ModelDiscoveryResult> {
+  return request("/api/room/settings/models", { method: "GET", cache: "no-store" }, 15_000).then((response) => response.json());
 }
 
 export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean>; preflightMode: import("../shared/preflight").PreflightMode }>): Promise<{ settings: RoomConfiguration }> {

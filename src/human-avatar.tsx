@@ -1,7 +1,8 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import type { HumanPresence } from "./types";
-import { useModalOverlay } from "./overlay";
+import { DialogFrame } from "./dialog-frame";
+import { VIEWS } from "./view-registry";
 
 function initials(name: string) {
   return name.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toLocaleUpperCase() || "You";
@@ -59,7 +60,6 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
   onProfileChange: (profile: { name: string; avatarUrl?: string }) => Promise<void>;
   onClose: () => void;
 }) {
-  const titleId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(human.name);
   const [avatarUrl, setAvatarUrl] = useState(human.avatarUrl);
@@ -69,7 +69,6 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
   const cleanName = name.trim().replace(/\s+/g, " ");
   const changed = cleanName !== human.name || avatarUrl !== human.avatarUrl;
   const requestClose = () => { if (!locked) onClose(); };
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose, returnFocusTo);
 
   async function chooseFile(file: File | undefined) {
     if (!file || locked) return;
@@ -96,19 +95,13 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
   }
 
   return (
-    <div className="modal-backdrop human-avatar-backdrop" onMouseDown={onBackdropMouseDown}>
-      <section ref={dialogRef} className="agent-settings-window human-avatar-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar"><h2 id={titleId}>Your profile</h2><button type="button" aria-label="Close profile settings" disabled={locked} onClick={requestClose}>×</button></header>
-        <div className="human-avatar-body">
+    <DialogFrame title="Your profile" closeLabel="Close profile settings" closeDisabled={locked} className="human-avatar-window" backdropClassName="human-avatar-backdrop" bodyClassName="human-avatar-body" returnFocusTo={returnFocusTo} onClose={requestClose} view={VIEWS.yourProfile} actionsClassName="human-profile-footer" actions={<><button type="button" className="classic-button" disabled={locked} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" data-default-button disabled={locked || !changed || !cleanName} onClick={() => void saveProfile()}>{busy ? "Saving…" : "Save profile"}</button></>}>
           <HumanAvatar name={cleanName || human.name} avatarUrl={avatarUrl} />
           <label className="human-profile-name">Display name<input data-dialog-initial-focus className="classic-input" maxLength={32} value={name} aria-invalid={!cleanName} onChange={(event) => { setName(event.target.value); setError(""); }} /></label>
           <input ref={inputRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { void chooseFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
           <div className="human-avatar-actions"><button type="button" className="classic-button" disabled={locked} onClick={() => inputRef.current?.click()}>{processing ? "Processing…" : avatarUrl ? "Choose another image" : "Choose image"}</button>{avatarUrl ? <button type="button" className="classic-button human-avatar-remove" disabled={locked} onClick={() => { setAvatarUrl(undefined); setError(""); }}>Remove photo</button> : null}</div>
           <small>Your name and image appear together in participant lists. Images are cropped to a square and stored as a compact room thumbnail.</small>
           {error ? <p role="alert">{error}</p> : null}
-        </div>
-        <footer className="agent-settings-actions human-profile-footer"><button type="button" className="classic-button" disabled={locked} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" data-default-button disabled={locked || !changed || !cleanName} onClick={() => void saveProfile()}>{busy ? "Saving…" : "Save profile"}</button></footer>
-      </section>
-    </div>
+    </DialogFrame>
   );
 }

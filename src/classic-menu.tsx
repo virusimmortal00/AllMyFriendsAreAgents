@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { viewAttributes, type ViewDefinition } from "./view-registry";
 
 export interface ClassicMenuCommand {
   type?: "command";
@@ -19,6 +20,7 @@ export interface ClassicMenuDefinition {
   label: string;
   accessKey: string;
   disabled?: boolean;
+  view?: ViewDefinition;
   items: ClassicMenuItem[];
 }
 
@@ -186,6 +188,7 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
           className="dropdown-menu"
           role="menu"
           aria-label={menu.label}
+          {...(menu.view ? viewAttributes(menu.view) : {})}
           onKeyDown={(event) => onMenuKeyDown(event, index)}
         >{menu.items.map((item, itemIndex) => item.type === "separator"
           ? <div className="menu-separator" role="separator" key={`separator-${itemIndex}`} />

@@ -49,7 +49,7 @@ describe("user-editable settings", () => {
     await user.type(roomName, "Saved Room");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     view.rerender(<RoomControls roomName="Saved Room" topic="Original topic" conversationEnergy="balanced" disabled={false} onSave={onSave} />);
-    expect(screen.getByRole("status").textContent).toBe("Room settings saved.");
+    expect(screen.getByRole("status").textContent).toBe("Room properties saved.");
   });
 
   it("renders implementation status as read-only server state with no mutation control", () => {

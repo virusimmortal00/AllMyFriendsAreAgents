@@ -443,6 +443,8 @@ describe("rendered reconnect recovery", () => {
 
     await chooseMenuItem(user, "Room", "Room properties...");
     const dialog = screen.getByRole("dialog", { name: "Room Properties" });
+    expect(within(dialog).getByRole("tab", { name: "General" })).toBeTruthy();
+    expect(within(dialog).getByRole("tab", { name: "Agent behavior" })).toBeTruthy();
     const roomName = within(dialog).getByRole("textbox", { name: "Room name" });
     await user.clear(roomName);
     await user.type(roomName, "Editable Room");
@@ -522,6 +524,7 @@ describe("rendered reconnect recovery", () => {
     const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
     expect(roomMenu.queryByRole("menuitem", { name: "People..." })).toBeNull();
     expect(roomMenu.queryByRole("menuitem", { name: "Change name..." })).toBeNull();
+    expect(roomMenu.queryByRole("menuitem", { name: "Room settings..." })).toBeNull();
     expect(roomMenu.getByRole("menuitem", { name: "Manage agents..." })).toBeTruthy();
     expect(roomMenu.getByRole("menuitem", { name: "GitHub integration..." })).toBeTruthy();
     for (const name of ["Continue discussion", "Start roundtable", "Review with all agents"]) {

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react
 import { authorizeHeartbeat, emergencyStopHeartbeat, loadHeartbeat, loadImprovement, loadImprovements } from "./api";
 import { ConfirmationDialog } from "./components";
 import type { GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, ImprovementStatusContract } from "./types";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 export type ImprovementsRoute = { view: "list"; scope: "active" | "all" } | { view: "detail"; id: string } | { view: "missing"; id: string };
 
@@ -56,6 +57,7 @@ function Detail({ item }: { item: GovernedImprovementDetail }) {
 }
 
 export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; onNavigate: (route: ImprovementsRoute, options?: { focusHeading?: boolean }) => void }) {
+  const registeredView = route.view === "detail" ? VIEWS.improvementDetail : route.view === "missing" ? VIEWS.improvementNotFound : VIEWS.improvementsList;
   const scope = route.view === "list" ? route.scope : "active";
   const [items, setItems] = useState<readonly GovernedImprovementSummary[]>([]);
   const [detail, setDetail] = useState<GovernedImprovementDetail | null>(null);
@@ -119,9 +121,9 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
     }
   }
 
-  return <section className="improvements-panel beveled-inset" data-responsive-layout="improvements">
-    <header className="improvements-header"><h2 data-route-heading tabIndex={-1}>Improvements</h2><div role="tablist" aria-label="Improvement lists"><button ref={(element) => { tabRefs.current[0] = element; }} type="button" role="tab" id="improvements-tab-active" aria-controls="improvements-content" aria-selected={selectedTab === 0} tabIndex={selectedTab === 0 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 0)} onClick={() => selectTab(0)}>Active</button><button ref={(element) => { tabRefs.current[1] = element; }} type="button" role="tab" id="improvements-tab-all" aria-controls="improvements-content" aria-selected={selectedTab === 1} tabIndex={selectedTab === 1 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 1)} onClick={() => selectTab(1)}>All</button></div></header>
-    <div id="improvements-content" className="improvements-body" role="tabpanel" aria-labelledby={selectedTab === 0 ? "improvements-tab-active" : "improvements-tab-all"}>
+  return <section className="workspace-view improvements-panel beveled-inset" data-responsive-layout="improvements" {...viewAttributes(registeredView)}>
+    <header className="workspace-view__header improvements-header"><h2 data-route-heading tabIndex={-1}>Improvements</h2><div role="tablist" aria-label="Improvement lists"><button ref={(element) => { tabRefs.current[0] = element; }} type="button" role="tab" id="improvements-tab-active" aria-controls="improvements-content" aria-selected={selectedTab === 0} tabIndex={selectedTab === 0 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 0)} onClick={() => selectTab(0)}>Active</button><button ref={(element) => { tabRefs.current[1] = element; }} type="button" role="tab" id="improvements-tab-all" aria-controls="improvements-content" aria-selected={selectedTab === 1} tabIndex={selectedTab === 1 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 1)} onClick={() => selectTab(1)}>All</button></div></header>
+    <div id="improvements-content" className="workspace-view__body improvements-body" role="tabpanel" aria-labelledby={selectedTab === 0 ? "improvements-tab-active" : "improvements-tab-all"}>
       <section className="heartbeat-control" aria-label="Bounded heartbeat controls">
         <div><strong>Bounded heartbeat:</strong> {!heartbeat ? "Unavailable" : heartbeat.runtime.emergencyStopped ? "EMERGENCY STOPPED" : heartbeat.runtime.enabled ? heartbeat.active ? "Running bounded work" : "Authorized, awaiting cadence" : "Disabled"}</div>
         {heartbeat && <><small>Policy {heartbeat.policy.version} · every {Math.round(heartbeat.policy.cadenceMs / 1000)}s · concurrency {heartbeat.policy.maxConcurrency} · at most {heartbeat.policy.maxDispatchedPerRun} actions/run · {heartbeat.policy.maxAttemptsPerRevision} attempts · {Math.round(heartbeat.policy.timeBudgetMs / 1000)}s budget · capabilities {heartbeat.policy.permittedCapabilities.join(", ")}</small><div className="heartbeat-actions"><button ref={heartbeatStopTrigger} type="button" className="classic-button heartbeat-stop" aria-haspopup="dialog" aria-expanded={confirmHeartbeatStop} disabled={heartbeatBusy || heartbeat.runtime.emergencyStopped} onClick={() => { setHeartbeatError(""); setConfirmHeartbeatStop(true); }}>Emergency stop heartbeat</button>{heartbeat.configured && !heartbeat.runtime.enabled && <button type="button" className="classic-button" disabled={heartbeatBusy} onClick={() => void changeHeartbeat("authorize")}>Authorize heartbeat</button>}</div></>}
