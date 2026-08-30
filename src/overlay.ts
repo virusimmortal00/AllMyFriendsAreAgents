@@ -26,7 +26,7 @@ function lockBodyScroll() {
 
 function focusableElements(container: HTMLElement | null) {
   return [...(container?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) || [])]
-    .filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    .filter((element) => !element.closest("[hidden], [inert], [aria-hidden=\"true\"]"));
 }
 
 export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: () => void, returnFocusTo: HTMLElement | null = null, active = true) {

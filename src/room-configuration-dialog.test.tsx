@@ -75,6 +75,70 @@ describe("RoomConfigurationDialog", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("/api/room/settings/models");
   });
 
+  it("keeps a General draft open when OK is used from Agent behavior", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      settings: {
+        configurationRevision: 0,
+        basePromptRevision: 0,
+        basePromptText: "Default merit rule",
+        summarizerModel: null,
+        summarizerPromptText: "Summarize {{transcript}}",
+        summarizerPromptRevision: 0,
+        featureFlags: {},
+        preflightMode: "off",
+        updatedAt: null,
+      },
+      defaults: { basePromptText: "Default merit rule" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+
+    const roomName = screen.getByRole("textbox", { name: "Room name" });
+    await user.clear(roomName);
+    await user.type(roomName, "Draft room name");
+    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
+    expect(await screen.findByRole("heading", { name: "Summarizer" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "OK" }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
+    expect((screen.getByRole("textbox", { name: "Room name" }) as HTMLInputElement).value).toBe("Draft room name");
+  });
+
+  it("keeps an Agent behavior draft open when OK is used from General", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      settings: {
+        configurationRevision: 0,
+        basePromptRevision: 0,
+        basePromptText: "Default merit rule",
+        summarizerModel: null,
+        summarizerPromptText: "Summarize {{transcript}}",
+        summarizerPromptRevision: 0,
+        featureFlags: {},
+        preflightMode: "off",
+        updatedAt: null,
+      },
+      defaults: { basePromptText: "Default merit rule" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+
+    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
+    const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
+    await user.clear(prompt);
+    await user.type(prompt, "Draft merit rule");
+    await user.click(screen.getByRole("tab", { name: "General" }));
+    await user.click(screen.getByRole("button", { name: "OK" }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "Agent behavior" }).getAttribute("aria-selected")).toBe("true");
+    expect((screen.getByLabelText("Prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Draft merit rule");
+  });
+
   it("retries a failed model catalog request without closing the chooser", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

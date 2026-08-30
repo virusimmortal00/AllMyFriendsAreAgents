@@ -55,6 +55,14 @@ function StackedOverlayFlow() {
   </>;
 }
 
+function HiddenPanelFlow() {
+  const { dialogRef, onDialogKeyDown } = useModalOverlay(() => undefined);
+  return <section ref={dialogRef} role="dialog" aria-label="Tabbed dialog" tabIndex={-1} onKeyDown={onDialogKeyDown}>
+    <div hidden><button type="button">Hidden action</button></div>
+    <button type="button">Visible action</button>
+  </section>;
+}
+
 describe("overlay foundation", () => {
   it("focuses, traps, closes, restores focus, and unlocks scrolling for modal dialogs", async () => {
     const user = userEvent.setup();
@@ -85,6 +93,15 @@ describe("overlay foundation", () => {
     expect(screen.getByRole("dialog")).toBe(dialog);
     fireEvent.mouseDown(dialog.parentElement!);
     expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("excludes controls inside hidden panels from initial focus and the focus trap", async () => {
+    const user = userEvent.setup();
+    render(<HiddenPanelFlow />);
+    const visibleAction = screen.getByRole("button", { name: "Visible action" });
+    await waitFor(() => expect(document.activeElement).toBe(visibleAction));
+    await user.tab();
+    expect(document.activeElement).toBe(visibleAction);
   });
 
   it("dismisses popovers from outside press and Escape and restores the trigger", async () => {

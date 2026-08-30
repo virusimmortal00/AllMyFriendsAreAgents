@@ -900,6 +900,7 @@ interface RoomControlsProps extends RoomSettingsInput {
   disabled: boolean;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;
   onCancel?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onSaved?: () => void;
   showTitle?: boolean;
   propertySheet?: boolean;
@@ -912,6 +913,7 @@ export function RoomControls({
   disabled,
   onSave,
   onCancel,
+  onDirtyChange,
   onSaved,
   showTitle = true,
   propertySheet = false,
@@ -930,6 +932,10 @@ export function RoomControls({
     setDraft(current);
     setSaveError("");
   }, [roomName, topic, conversationEnergy]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function cancel() {
     setDraft(current);

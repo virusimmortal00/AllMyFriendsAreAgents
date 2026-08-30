@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
 import { ApiRequestError, loadRoomConfiguration, loadRoomConfigurationModels, updateRoomConfiguration, type RoomConfiguration } from "./api";
@@ -17,7 +17,7 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
   onClose: () => void;
 }
 
-function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose: () => void }) {
+function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [saved, setSaved] = useState<RoomConfiguration>();
   const [basePromptText, setBasePromptText] = useState("");
   const [basePromptEnabled, setBasePromptEnabled] = useState(true);
@@ -37,6 +37,10 @@ function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose:
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     if (!active || saved) return;
@@ -149,15 +153,19 @@ function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose:
 
 export function RoomPropertiesDialog({ returnFocusTo, onClose, ...general }: RoomPropertiesDialogProps) {
   const [page, setPage] = useState<PropertiesPage>("general");
+  const [generalDirty, setGeneralDirty] = useState(false);
+  const [agentBehaviorDirty, setAgentBehaviorDirty] = useState(false);
+  const finishGeneral = useCallback(() => agentBehaviorDirty ? setPage("agent-behavior") : onClose(), [agentBehaviorDirty, onClose]);
+  const finishAgentBehavior = useCallback(() => generalDirty ? setPage("general") : onClose(), [generalDirty, onClose]);
   return <DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
     <div className="classic-tabs" role="tablist" aria-label="Room property pages">
       <button type="button" role="tab" id="room-properties-general-tab" aria-selected={page === "general"} aria-controls="room-properties-general-panel" onClick={() => setPage("general")}>General</button>
       <button type="button" role="tab" id="room-properties-agent-tab" aria-selected={page === "agent-behavior"} aria-controls="room-properties-agent-panel" onClick={() => setPage("agent-behavior")}>Agent behavior</button>
     </div>
     <section role="tabpanel" id="room-properties-general-panel" aria-labelledby="room-properties-general-tab" hidden={page !== "general"}>
-      <RoomControls {...general} showTitle={false} propertySheet onCancel={onClose} onSaved={onClose} />
+      <RoomControls {...general} showTitle={false} propertySheet onCancel={onClose} onDirtyChange={setGeneralDirty} onSaved={finishGeneral} />
     </section>
-    <RoomConfigurationPanel active={page === "agent-behavior"} onClose={onClose} />
+    <RoomConfigurationPanel active={page === "agent-behavior"} onClose={finishAgentBehavior} onDirtyChange={setAgentBehaviorDirty} />
   </DialogFrame>;
 }
 
