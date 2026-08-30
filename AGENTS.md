@@ -4,6 +4,10 @@
 
 1. Read the issue or task, then the smallest relevant public design or planning
    document. Do not load all of `docs/planning/` by default.
+   For visible interface work, read `docs/design/ui-standards.md` and locate the
+   affected stable view IDs in `docs/design/responsive-view-audit.md` before
+   editing. Register a genuinely new view in `src/view-registry.ts`, attach it
+   to its rendered root, and add its audit row as `Pending` before implementation.
 2. Check `git status` before editing. Preserve existing and unrelated changes.
 3. Use Node.js 24 or newer and pnpm. CI uses pnpm 10 and `pnpm-lock.yaml` is the
    authoritative dependency lock. Do not run `npm install` or regenerate the
@@ -105,7 +109,12 @@ git diff --check
 ```
 
 For visible interface changes, also run the app and verify the affected flow in
-a browser at the relevant desktop or mobile size. For authorization, storage,
+a browser at Phone, Tablet, Short laptop, and Desktop checkpoints defined in
+`docs/design/responsive-view-audit.md`, unless the change provably cannot affect
+layout or interaction at a checkpoint. Record the affected IDs and evidence in
+the audit and pull request. View identities must come from `src/view-registry.ts`
+through a shared surface or `viewAttributes`; do not duplicate raw ID/name/state
+strings in product components. For authorization, storage,
 protocol, or retry behavior, test denial and recovery paths as well as success.
 If a required check cannot run, report the exact reason and what remains
 unverified; do not describe an unrun check as passing.

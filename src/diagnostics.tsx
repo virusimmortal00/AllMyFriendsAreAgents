@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ApiRequestError, loadOwnerCapabilityDiagnostics, queryOwnerDiagnostics, type CapabilityDiagnosticsResponse, type OwnerDiagnosticChunk, type OwnerDiagnosticRecord, type OwnerDiagnosticsResult } from "./api";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 const streams = ["server-service-lifecycle", "opencode-harness", "openrouter-provider", "generations", "capability-decisions", "security-audit"] as const;
 const scopes = ["self", "room", "project", "operator"] as const;
@@ -71,8 +72,9 @@ export function Diagnostics() {
     finally { setLoading(false); }
   }
 
-  return <section className="tasks-workspace diagnostics-workspace" aria-label="Owner diagnostics">
-    <header className="tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
+  return <section className="workspace-view tasks-workspace diagnostics-workspace" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
+    <header className="workspace-view__header tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
+    <div className="workspace-view__body diagnostics-body">
     <div className="diagnostics-controls">
       <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
       <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
@@ -80,11 +82,11 @@ export function Diagnostics() {
       <button type="button" className="classic-button" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
     </div>
     {error ? <p className="diagnostics-error" role="alert">{error}</p> : null}
-    {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <>
+    {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <section {...viewAttributes(VIEWS.ownerDiagnosticsResults)}>
       <p role="status">{visibleRecords.length} bounded records · {result.scannedBytes} bytes scanned{result.malformedRecords ? ` · ${result.malformedRecords} malformed records skipped` : ""}{result.scanLimitReached ? " · scan bound reached" : ""}</p>
       <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} onClick={() => setSelected(item)}><strong>{item.event}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
       {result.nextCursor ? <button type="button" className="classic-button" disabled={loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
-    </>}
+    </section>}
     {selected ? <article className="diagnostic-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><pre>{safe(selected.content)}</pre>{selected.correlationId ? <button type="button" className="classic-button" disabled={loading} onClick={() => { setCorrelation(selected.correlationId || ""); setStream("all"); void load(undefined, selected.correlationId, "all"); }}>Trace correlation across all streams</button> : null}</article> : null}
     <section className="diagnostic-detail capability-inspector" aria-label="Owner capability inspector">
       <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested.</p>
@@ -94,5 +96,6 @@ export function Diagnostics() {
         <div className="diagnostics-results">{Object.values(capabilities.agents).map((agent) => <article key={agent.agentId}><strong>{agent.agentId}</strong><p>Effective commands: {agent.effectiveCommands.join(", ") || "none"}</p><ul>{Object.entries(agent.capabilities).map(([name, status]) => <li key={name}>{name}: {status.effective ? "effective" : `unavailable (${status.reason.replaceAll("_", " ")})`}{status.contract ? ` · ${status.contract}` : ""}</li>)}</ul></article>)}</div>
         <div className="diagnostics-results" role="region" aria-label="Capability audit events">{capabilities.audit.map((event) => <article key={event.id}><strong>{event.capability} · {event.outcome}</strong><span>{event.agentId} · {new Date(event.timestamp).toLocaleString()}{event.reason ? ` · ${safe(event.reason)}` : ""}</span></article>)}</div></> : null}
     </section>
+    </div>
   </section>;
 }

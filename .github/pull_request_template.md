@@ -19,6 +19,10 @@ Describe the user-visible outcome and the failure mode this change addresses.
 ## UI contract review
 
 - [ ] No UI impact, or the applicable rules in `docs/design/ui-standards.md` were checked.
+- [ ] Affected stable view IDs are listed in the change description; genuinely new views were added to `src/view-registry.ts`, attached to production markup, and registered in the audit as `Pending` before implementation.
+- [ ] Phone, Tablet, Short laptop, and Desktop were checked for every affected view, or the description explains why a checkpoint cannot be affected.
+- [ ] The affected audit rows answer screen use, navigation, retro style, proportion, empty area, scroll/actions, and outcome with explicit P/T/L/D coverage.
+- [ ] Cross-cutting behavior uses a shared primitive; feature-local CSS is limited to content-specific composition.
 - [ ] `View` contains presentation controls only; full-workspace destinations use `Window`.
 - [ ] Every workspace replacement, overlay, and nested detail has an obvious visible exit and keyboard-safe behavior.
 - [ ] Controls have accessible names, correct roles, focus behavior, and responsive coverage.

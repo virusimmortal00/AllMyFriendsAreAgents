@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiRequestError,
   bootstrapControlPlane,
@@ -12,7 +12,6 @@ import {
   type RosterCatalogEntry,
   type RosterResponse,
 } from "./api";
-import { useModalOverlay } from "./overlay";
 import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
 import { selectedModelAvailability, type ModelDiscoveryResult } from "../shared/model-discovery";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
@@ -22,6 +21,8 @@ import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
+import { DialogFrame } from "./dialog-frame";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
   initialRoster: RoomAgentRoster;
@@ -32,13 +33,13 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   onSaved: (roster: RoomAgentRoster) => void;
   onClose: () => void;
 }) {
-  const titleId = useId();
   const [baseRevision, setBaseRevision] = useState(() => positiveRosterRevision(initialRoster.revision, 1));
   const [entries, setEntries] = useState<RoomAgentRosterEntry[]>(() => [...initialRoster.entries]);
   const [savedEntries, setSavedEntries] = useState<RoomAgentRosterEntry[]>(() => [...initialRoster.entries]);
   const [catalog, setCatalog] = useState<readonly RosterCatalogEntry[]>([]);
   const [modelDiscovery, setModelDiscovery] = useState<ModelDiscoveryResult>();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => initialSelectedAgentId || initialRoster.entries[0]?.agentId || null);
+  const [mobilePane, setMobilePane] = useState<"list" | "detail">(() => initialSelectedAgentId || initialRoster.entries.length === 0 ? "detail" : "list");
   const [changingModelForAgentId, setChangingModelForAgentId] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<{ agentId: string; returnFocusTo: HTMLButtonElement } | null>(null);
   const [discardRequest, setDiscardRequest] = useState(false);
@@ -68,7 +69,6 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     if (hasDraftChanges) setDiscardRequest(true);
     else onClose();
   };
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(requestClose, returnFocusTo);
 
   useEffect(() => {
     closed.current = false;
@@ -247,10 +247,10 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   }
 
   return (
-    <div className="modal-backdrop roster-backdrop" onMouseDown={onBackdropMouseDown}>
-      <section ref={dialogRef} className="agent-settings-window roster-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-        <header className="agent-settings-titlebar"><h2 id={titleId}>Manage room agents</h2><button type="button" aria-label="Close roster manager" disabled={saving} onClick={requestClose}>×</button></header>
-        <div className={`roster-body${controlStatus ? " roster-body--authentication" : ""}`}>
+    <>
+      <DialogFrame title="Manage room agents" closeLabel="Close roster manager" closeDisabled={saving} className="roster-window" backdropClassName="roster-backdrop" bodyClassName={`roster-body${controlStatus ? " roster-body--authentication" : ""}`} returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={controlStatus ? "authentication" : "roster"} view={controlStatus ? VIEWS.manageAgentsSignIn : VIEWS.manageAgentsRoster} actionsClassName="roster-actions" actions={controlStatus
+        ? <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button>
+        : <><span className={`roster-actions__status${hasDraftChanges ? " roster-actions__status--dirty" : ""}`}>{hasDraftChanges ? "Unsaved roster changes" : "No unsaved changes"}</span><button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" disabled={saving || loading || !hasDraftChanges || Boolean(conflict) || duplicateNames.size > 0} onClick={() => void save()}>{saving ? "Saving…" : "Save roster"}</button></>}>
           <p>Build the room’s agent team. Each alias is paired with the model maker and the provider that gives this room access.</p>
           {controlStatus ? (
             <form className="roster-control-form" onSubmit={(event) => { event.preventDefault(); if (controlAuthenticationReady && !saving) void authenticateControl(); }}>
@@ -265,7 +265,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
               </fieldset>
             </form>
           ) : (
-            <div className="roster-workspace">
+            <div className="roster-workspace" data-mobile-pane={mobilePane}>
               <aside className="roster-rail" aria-label="Configured agents">
                 <header className="roster-rail__header"><span><strong>Your agents</strong><small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small></span><label>View<select aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label></header>
                 {loading ? <p className="roster-empty" role="status">Loading roster…</p> : (
@@ -281,7 +281,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         <Fragment key={entry.agentId}>
                         {groupLabel && groupLabel !== previousGroupLabel ? <div className="roster-group-label" role="presentation">{groupLabel}</div> : null}
                         <div className={`roster-editor-row presence-row${isSelected ? " presence-row--active" : ""}${entry.enabled ? "" : " roster-editor-row--disabled"}`} role="listitem">
-                          <button type="button" className="roster-agent-select" aria-pressed={isSelected} aria-label={`View ${name} configuration`} onClick={() => { setSelectedAgentId(entry.agentId); setChangingModelForAgentId(null); }}>
+                          <button type="button" className="roster-agent-select" aria-pressed={isSelected} aria-label={`View ${name} configuration`} onClick={() => { setSelectedAgentId(entry.agentId); setChangingModelForAgentId(null); setMobilePane("detail"); }}>
                             <span className={`presence-status${entry.enabled ? "" : " presence-status--offline"}`} aria-hidden="true" />
                             <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
                             <span className="presence-identity"><strong className="speaker" title={name}>{name}</strong><small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small><small className={`roster-agent-state${entry.enabled ? "" : " roster-agent-state--inactive"}`}>{entry.enabled ? "Active in room" : "Deactivated"}</small></span>
@@ -291,16 +291,17 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         </Fragment>
                       );
                     })}
-                    {entries.length === 0 ? <div className="roster-empty roster-empty-journey"><strong>Create your first agent</strong><span><b>1.</b> Choose a model on the right.</span><span><b>2.</b> Give the agent an alias.</span><span><b>3.</b> Save the roster to add it to the room.</span></div> : null}
+                    {entries.length === 0 ? <div className="roster-empty roster-empty-journey"><strong>Create your first agent</strong><span><b>1.</b> Choose a model.</span><span><b>2.</b> Give the agent an alias.</span><span><b>3.</b> Save the roster to add it to the room.</span><button type="button" className="roster-explore-button roster-empty-journey__action" onClick={() => setMobilePane("detail")}>Choose a model →</button></div> : null}
                   </div>
                 )}
                 {entries.length > 0 ? <footer className="roster-rail__footer">{selectedAgentId === null
                   ? <button type="button" className="roster-explore-button roster-explore-button--secondary" onClick={() => { setSelectedAgentId(entries[0]?.agentId || null); setChangingModelForAgentId(null); }}>← Back to your agents</button>
-                  : <button type="button" className="roster-explore-button" onClick={() => { setSelectedAgentId(null); setChangingModelForAgentId(null); }}>＋ Add another agent</button>}
+                  : <button type="button" className="roster-explore-button" onClick={() => { setSelectedAgentId(null); setChangingModelForAgentId(null); setMobilePane("detail"); }}>＋ Add another agent</button>}
                 </footer> : null}
               </aside>
 
-              <main ref={detailPaneRef} className="roster-detail-pane">
+              <main ref={detailPaneRef} className="roster-detail-pane" {...viewAttributes(selectedEntry ? VIEWS.manageAgentsDetail : VIEWS.manageAgentsModelPicker)}>
+                <button type="button" className="roster-mobile-back" onClick={() => setMobilePane("list")}>← Your agents</button>
                 {selectedEntry && selectedReference ? (
                   <section className="roster-config-workspace" aria-labelledby="roster-config-heading">
                     {draftCreatedAgentIds.has(selectedEntry.agentId) ? <p className="roster-draft-notice" role="status"><strong>{selectedName} is ready in this draft.</strong> Review the settings, then choose <b>Save roster</b> to add this agent to the room.</p> : null}
@@ -313,7 +314,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       <section className="roster-current-model" aria-labelledby="current-model-heading">
                         <header><span><strong id="current-model-heading">Model</strong><small>{friendlyModelName(selectedReference.modelId)} from {providerDisplayName(modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId))}</small></span><button type="button" className="classic-button" aria-expanded={changingModelForAgentId === selectedEntry.agentId} onClick={() => setChangingModelForAgentId((current) => current === selectedEntry.agentId ? null : selectedEntry.agentId)}>{changingModelForAgentId === selectedEntry.agentId ? "Done" : "Change model"}</button></header>
                         {!selectedModel && selectedReference.modelId ? <p className="roster-model-unavailable">The configured model is not in the current catalog. Choose another model to change it.</p> : null}
-                        {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
+                        {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} view={VIEWS.manageAgentsModelPicker} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
                       </section>
                       <div className="roster-model-options"><label>Variant / reasoning effort<select value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => { const { reasoningEffort: _legacyEffort, ...entry } = selectedEntry; replaceAt(selectedIndex, { ...entry, variant: event.target.value || undefined }); }}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
                       <section className="roster-capabilities" aria-label={`Effective capabilities for ${selectedName}`}>
@@ -358,7 +359,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         <p className="roster-discovery-intro">Compare model makers, access providers, popularity, capabilities, context, and live pricing. The maker builds the model; the provider gives this room access to it.</p>
                         <div className="roster-discovery-status"><strong>{modelDiscovery?.status || "loading"}</strong>{modelDiscovery?.diagnostic ? <span>{modelDiscovery.diagnostic}</span> : null}<button type="button" disabled={refreshing} onClick={() => { setRefreshing(true); void refreshModelDiscovery().then(setModelDiscovery).catch((reason) => setError(reason instanceof Error ? reason.message : "Discovery refresh failed.")).finally(() => setRefreshing(false)); }}>{refreshing ? "Refreshing…" : "Refresh"}</button><button type="button" onClick={() => { void initiateProviderSetup().then((result: { command?: string[]; instruction?: string }) => setSetupInstruction(`${result.instruction || "Run on the server host:"} ${(result.command || []).join(" ")}`)).catch((reason) => setError(reason instanceof Error ? reason.message : "Provider setup could not be initiated.")); }}>OpenCode setup instructions</button></div>
                         {setupInstruction ? <p className="roster-diagnostic" role="status">{setupInstruction}</p> : null}
-                        <RichModelPicker models={discoveredModels} providerId="" modelId="" onChange={(model) => { setNewProvider(model.providerId || ""); setNewModel(model.modelId); setNewVariant(""); }} />
+                        <RichModelPicker models={discoveredModels} providerId="" modelId="" view={VIEWS.manageAgentsModelPicker} onChange={(model) => { setNewProvider(model.providerId || ""); setNewModel(model.modelId); setNewVariant(""); }} />
                       </>
                     )}
                   </section>
@@ -366,14 +367,12 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
               </main>
             </div>
           )}
-          {error ? <p className="roster-error" role="alert">{error}</p> : null}
+          {error ? <p className="roster-error" role="alert" {...(conflict ? viewAttributes(VIEWS.manageAgentsConflict) : {})}>{error}</p> : null}
           {conflict ? <button type="button" className="classic-button roster-reload" disabled={saving} onClick={useLatest}>Load latest roster</button> : null}
-        </div>
-        <footer className="agent-settings-actions roster-actions"><span className={`roster-actions__status${hasDraftChanges ? " roster-actions__status--dirty" : ""}`}>{hasDraftChanges ? "Unsaved roster changes" : "No unsaved changes"}</span><button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" disabled={saving || loading || !hasDraftChanges || Boolean(conflict) || duplicateNames.size > 0 || Boolean(controlStatus)} onClick={() => void save()}>{saving ? "Saving…" : "Save roster"}</button></footer>
-      </section>
+      </DialogFrame>
       {deleteRequest ? <ConfirmationDialog title="Delete agent configuration?" description={<><p>This will remove the agent’s alias, model selection, and room settings when you save the roster.</p><p>To keep the configuration for later, cancel and deactivate the agent instead.</p></>} confirmLabel="Delete configuration" returnFocusTo={deleteRequest.returnFocusTo} onConfirm={() => { removeAgent(deleteRequest.agentId); setDeleteRequest(null); }} onCancel={() => setDeleteRequest(null)} /> : null}
-      {discardRequest ? <ConfirmationDialog title="Discard roster changes?" description={<><p>Your unsaved aliases, model selections, activation changes, and added or deleted agents will be lost.</p><p>Choose Cancel to keep editing, or discard the draft to close the manager.</p></>} confirmLabel="Discard changes" returnFocusTo={null} onConfirm={onClose} onCancel={() => setDiscardRequest(false)} /> : null}
-    </div>
+      {discardRequest ? <ConfirmationDialog title="Discard roster changes?" description={<><p>Your unsaved aliases, model selections, activation changes, and added or deleted agents will be lost.</p><p>Choose Cancel to keep editing, or discard the draft to close the manager.</p></>} confirmLabel="Discard changes" returnFocusTo={null} onConfirm={onClose} onCancel={() => setDiscardRequest(false)} view={VIEWS.unsavedChangesConfirmation} /> : null}
+    </>
   );
 }
 

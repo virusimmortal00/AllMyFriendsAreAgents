@@ -4,10 +4,13 @@ import { describe, expect, it } from "vitest";
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const components = readFileSync(new URL("./components.tsx", import.meta.url), "utf8");
 const mobileStyles = styles.slice(styles.indexOf("@media (max-width: 720px) {"));
+const tabletStyles = styles.slice(styles.indexOf("@media (min-width: 721px) and (max-width: 820px) {"), styles.indexOf("@media (max-width: 720px) {"));
 
 describe("mobile layout contract", () => {
   it("keeps the application and chat inside the dynamic viewport", () => {
     expect(mobileStyles).toContain("height: 100dvh");
+    expect(styles).toMatch(/\.desktop \{[^}]*height: 100dvh;[^}]*min-height: 0;/s);
+    expect(styles).toMatch(/@media \(max-width: 1050px\) \{[\s\S]*?\.app-window \{[^}]*height: calc\(100dvh - 24px\);[^}]*min-height: 0;/s);
     expect(styles).toMatch(/\.app-window \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(mobileStyles).toMatch(/\.workspace \{[^}]*min-height: 0;[^}]*overflow: hidden;/s);
     expect(mobileStyles).toMatch(/\.chat-panel \{[^}]*height: 100%;[^}]*minmax\(0, 1fr\)/s);
@@ -15,9 +18,23 @@ describe("mobile layout contract", () => {
     expect(styles).toMatch(/\.composer textarea \{[^}]*width: 100%;[^}]*min-width: 0;/s);
   });
 
+  it("centers the primary window with balanced safe-area margins", () => {
+    expect(mobileStyles).toMatch(/\.desktop \{[^}]*display: grid;[^}]*place-items: center;/s);
+    expect(mobileStyles).toMatch(/\.desktop \{[^}]*padding-top: max\(6px, env\(safe-area-inset-top\)\);[^}]*padding-right: max\(6px, env\(safe-area-inset-right\)\);[^}]*padding-bottom: max\(6px, env\(safe-area-inset-bottom\)\);[^}]*padding-left: max\(6px, env\(safe-area-inset-left\)\);/s);
+    expect(mobileStyles).toMatch(/\.app-window \{[^}]*width: 100%;[^}]*height: 100%;[^}]*max-height: 100%;/s);
+    expect(mobileStyles).not.toMatch(/\.app-window \{[^}]*height: 100dvh;/s);
+  });
+
   it("keeps the compact classic menu bar visible instead of turning it into a mobile scroller", () => {
     expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow: visible;/s);
-    expect(mobileStyles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*white-space: nowrap;/s);
+    expect(mobileStyles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*min-height: 40px;[^}]*white-space: nowrap;/s);
+    expect(mobileStyles).toMatch(/\.dropdown-menu button \{[^}]*min-height: 40px;/s);
+  });
+
+  it("keeps navigation and dialog actions touchable at tablet widths", () => {
+    expect(tabletStyles).toMatch(/\.menu-bar > \.menu-wrap > button, \.dropdown-menu button \{[^}]*min-height: 40px;/s);
+    expect(tabletStyles).toMatch(/\.classic-tabs \[role="tab"\], \.dialog-actions \.classic-button, \.workspace-view__header \.classic-button \{[^}]*min-height: 40px;/s);
+    expect(tabletStyles).toMatch(/\.classic-input, \.classic-select, \.github-control-login input, \.github-integration-card select \{[^}]*min-height: 40px;/s);
   });
 
   it("contains long room names and message content", () => {
@@ -31,8 +48,19 @@ describe("mobile layout contract", () => {
 
   it("uses dialogs for secondary room controls and removes the desktop rail on mobile", () => {
     expect(mobileStyles).toMatch(/\.right-rail \{[^}]*display: none;/s);
-    expect(mobileStyles).toMatch(/\.room-settings-window \.controls-panel \{[^}]*max-height:/s);
+    expect(mobileStyles).toMatch(/\.room-properties-body \.controls-panel \{[^}]*margin:/s);
     expect(styles).toMatch(/\.human-avatar-window \{[^}]*width:/s);
+    expect(styles).toMatch(/\.dialog-window \{[^}]*grid-template-rows: auto minmax\(0, 1fr\) auto;[^}]*overflow: hidden;/s);
+    expect(styles).toMatch(/\.dialog-body \{[^}]*min-height: 0;[^}]*overflow: auto;/s);
+    expect(mobileStyles).toMatch(/\.modal-backdrop \.dialog-window \{[^}]*width: 100%;[^}]*max-height: 100%;[^}]*align-self: center;[^}]*justify-self: center;/s);
+    expect(mobileStyles).toMatch(/\.dialog-actions \.classic-button \{[^}]*min-height: 44px;/s);
+  });
+
+  it("turns the roster manager into a single-pane master-detail flow", () => {
+    expect(mobileStyles).toMatch(/\.roster-workspace \{[^}]*display: block;[^}]*overflow: hidden;/s);
+    expect(mobileStyles).toContain('.roster-workspace[data-mobile-pane="list"] > .roster-detail-pane');
+    expect(mobileStyles).toContain('.roster-workspace[data-mobile-pane="detail"] > .roster-rail');
+    expect(mobileStyles).toMatch(/\.roster-mobile-back \{[^}]*display: block;[^}]*min-height: 40px;/s);
   });
 
   it("uses horizontally scrollable formatting controls instead of wrapping", () => {
@@ -59,6 +87,7 @@ describe("mobile layout contract", () => {
   it("gives non-chat workflows the full workspace", () => {
     expect(mobileStyles).toMatch(/\.tasks-panel \{[^}]*width: 100%;[^}]*height: 100%;/s);
     expect(styles).toMatch(/\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
+    expect(styles).toMatch(/@media \(max-width: 1050px\) \{[\s\S]*?\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(mobileStyles).toMatch(/\.task-columns form \{[^}]*grid-template-columns: 1fr;/s);
   });
 });

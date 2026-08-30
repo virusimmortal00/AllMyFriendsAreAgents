@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { acknowledgeInvestigationInbox, investigationAction, loadInvestigationInbox, loadInvestigations, setInvestigationPolicy } from "./api";
 import type { InvestigationDashboard, InvestigationInboxEntry } from "./types";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 export function InvestigationsMenuControl({ active, onOpen }: { active: boolean; onOpen: () => void }) { return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}>Investigations</button>; }
 export function Investigations({ refreshKey }: { refreshKey: number }) {
@@ -8,8 +9,9 @@ export function Investigations({ refreshKey }: { refreshKey: number }) {
   const refresh = useCallback(async () => { const requestGeneration = ++generation.current; activeRequest.current?.abort(); const controller = new AbortController(); activeRequest.current = controller; try { const next = await loadInvestigations(controller.signal); const owners = [...new Set(next.jobs.map((job) => job.owner))]; const entries = Object.fromEntries(await Promise.all(owners.map(async (owner) => [owner, await loadInvestigationInbox(owner, controller.signal)]))); if (requestGeneration !== generation.current || controller.signal.aborted) return; setData(next); setInbox(entries); setError(""); } catch (failure) { if (requestGeneration === generation.current && !controller.signal.aborted) setError(failure instanceof Error ? failure.message : "Could not load investigations."); } finally { if (activeRequest.current === controller) activeRequest.current = null; } }, []);
   useEffect(() => { let stopped = false; let timer: number | undefined; const poll = async () => { await refresh(); if (!stopped) timer = window.setTimeout(() => void poll(), 2_000); }; void poll(); return () => { stopped = true; generation.current += 1; activeRequest.current?.abort(); if (timer !== undefined) window.clearTimeout(timer); }; }, [refresh, refreshKey]);
   const mutate = async (operation: () => Promise<unknown>) => { try { await operation(); await refresh(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Investigation changed."); } };
-  return <section className="tasks-workspace continuation-workspace" aria-label="Background investigations">
-    <header className="tasks-header"><div><h2>Background Investigations</h2><p>One bounded read-only lane per agent. Findings wait here and never post into the room automatically.</p></div>{data?.policy ? <label><input type="checkbox" checked={data.policy.enabled} onChange={(event) => void mutate(() => setInvestigationPolicy(data.policy.revision, event.target.checked))} /> Investigations enabled</label> : null}</header>
+  return <section className="workspace-view tasks-workspace continuation-workspace" aria-label="Background investigations" {...viewAttributes(VIEWS.backgroundInvestigations)}>
+    <header className="workspace-view__header tasks-header"><div><h2>Background Investigations</h2><p>One bounded read-only lane per agent. Findings wait here and never post into the room automatically.</p></div>{data?.policy ? <label><input type="checkbox" checked={data.policy.enabled} onChange={(event) => void mutate(() => setInvestigationPolicy(data.policy.revision, event.target.checked))} /> Investigations enabled</label> : null}</header>
+    <div className="workspace-view__body continuation-body">
     {data?.policy ? <p><small>Global concurrency {data.policy.maxConcurrentGlobal} · default budget {data.policy.defaultBudget.tokenLimit} tokens / {data.policy.defaultBudget.toolCallLimit} tools / {Math.round(data.policy.defaultBudget.timeMs / 1000)} seconds</small></p> : null}
     {error ? <div className="error-strip" role="alert">{error}</div> : null}
     {!data && !error ? <p className="task-empty" role="status">Loading investigation status…</p> : data && !data.jobs.length ? <p className="task-empty">No investigations.</p> : data?.jobs.map((job) => <article className="task-card" key={job.investigationId}>
@@ -22,5 +24,6 @@ export function Investigations({ refreshKey }: { refreshKey: number }) {
       {(job.status === "BLOCKED" || job.status === "CHECKPOINTED") ? <button className="classic-button" onClick={() => void mutate(() => investigationAction(job.investigationId, "resume"))}>Resume</button> : null}
       {(inbox[job.owner] || []).filter((entry) => entry.investigationId === job.investigationId).map((entry) => <div className="continuation-inbox-entry" key={entry.inboxEntryId}><strong>Agent inbox · {entry.status}</strong><p>{entry.summary}</p>{entry.unresolvedQuestions.length ? <p><strong>Unresolved:</strong> {entry.unresolvedQuestions.join("; ")}</p> : null}<small>{entry.evidenceRefs.length} evidence reference(s) · expires {new Date(entry.expiresAt).toLocaleString()}</small>{entry.status === "UNREAD" ? <button className="classic-button" onClick={() => void mutate(() => acknowledgeInvestigationInbox(entry.inboxEntryId, false))}>Acknowledge</button> : null}{entry.status !== "CLOSED" && entry.status !== "ARCHIVED" ? <button className="classic-button" onClick={() => void mutate(() => acknowledgeInvestigationInbox(entry.inboxEntryId, true))}>Close</button> : null}</div>)}
     </article>)}
+    </div>
   </section>;
 }

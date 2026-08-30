@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
-import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, RoomSettingsDialog, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
+import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
@@ -27,11 +27,12 @@ import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agen
 import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
-import { RoomConfigurationDialog } from "./room-configuration-dialog";
+import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { Diagnostics } from "./diagnostics";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
+import { VIEWS, viewAttributes } from "./view-registry";
 
 type LocalWorkspaceName = Exclude<WorkspaceName, "Improvements">;
 
@@ -83,9 +84,10 @@ function saveHumanProfile(human: HumanPresence | null) {
 }
 
 export function LoadingScreen({ error = "", joining = false, retrying = false, onRetry, onCancel }: { error?: string; joining?: boolean; retrying?: boolean; onRetry?: () => void; onCancel?: () => void }) {
+  const view = joining && error ? VIEWS.joinRecovery : VIEWS.startup;
   return (
     <main className="desktop">
-      <section className="loading-window" aria-label="AllMyFriendsAreAgents loading">
+      <section className="loading-window" aria-label="AllMyFriendsAreAgents loading" {...viewAttributes(view)}>
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1>AllMyFriendsAreAgents</h1>
@@ -108,7 +110,7 @@ export function NameEntry({ error = "", onJoin }: { error?: string; onJoin: (nam
   const [name, setName] = useState("");
   return (
     <main className="desktop">
-      <section className="loading-window" aria-label="Join AllMyFriendsAreAgents">
+      <section className="loading-window" aria-label="Join AllMyFriendsAreAgents" {...viewAttributes(VIEWS.joinRoom)}>
         <header className="window-titlebar">
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1>AllMyFriendsAreAgents</h1>
@@ -137,8 +139,7 @@ export default function App() {
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(() => typeof window === "undefined" ? null : loadPendingSend(window.localStorage, loadHumanProfile()?.id));
   const [resendingPending, setResendingPending] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
-  const [roomConfigurationOpen, setRoomConfigurationOpen] = useState(false);
+  const [roomPropertiesOpen, setRoomPropertiesOpen] = useState(false);
   const [githubIntegrationOpen, setGitHubIntegrationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -178,8 +179,7 @@ export default function App() {
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
-  const roomSettingsTrigger = useRef<HTMLButtonElement | null>(null);
-  const roomConfigurationTrigger = useRef<HTMLElement | null>(null);
+  const roomPropertiesTrigger = useRef<HTMLElement | null>(null);
   const githubIntegrationTrigger = useRef<HTMLElement | null>(null);
   const profileTrigger = useRef<HTMLElement | null>(null);
   const roomRevealed = useRef(false);
@@ -745,13 +745,9 @@ export default function App() {
     setAgentListSort(sort);
     saveAgentListSort(typeof window === "undefined" ? undefined : window.localStorage, sort);
   }, []);
-  const openRoomSettings = useCallback((trigger: HTMLButtonElement) => {
-    roomSettingsTrigger.current = trigger;
-    setRoomSettingsOpen(true);
-  }, []);
-  const openRoomConfiguration = useCallback((trigger: HTMLElement) => {
-    roomConfigurationTrigger.current = trigger;
-    setRoomConfigurationOpen(true);
+  const openRoomProperties = useCallback((trigger: HTMLElement) => {
+    roomPropertiesTrigger.current = trigger;
+    setRoomPropertiesOpen(true);
   }, []);
   const openGitHubIntegration = useCallback((trigger: HTMLElement) => {
     githubIntegrationTrigger.current = trigger;
@@ -782,9 +778,9 @@ export default function App() {
       id: "room",
       label: "Room",
       accessKey: "R",
+      view: VIEWS.roomMenu,
       items: [
-        { label: "Room properties...", accessKey: "P", onSelect: openRoomSettings },
-        { label: "Room settings...", accessKey: "S", onSelect: openRoomConfiguration },
+        { label: "Room properties...", accessKey: "P", onSelect: openRoomProperties },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { label: "GitHub integration...", accessKey: "G", onSelect: openGitHubIntegration },
         { type: "separator" },
@@ -800,7 +796,7 @@ export default function App() {
         presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
         presentationCommand({ label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification }),
     ]),
-    defineWindowMenu([
+    { ...defineWindowMenu([
         workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
         workspaceCommand({ label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setWorkspaceView(null); navigateImprovements({ view: "list", scope: "active" }); } }),
         workspaceCommand({ label: "Tasks", accessKey: "T", checked: workspaceView === "Tasks", onSelect: () => { if (workspaceView !== "Tasks") showWorkspace("Tasks"); } }),
@@ -808,13 +804,13 @@ export default function App() {
         workspaceCommand({ label: "Investigations", accessKey: "n", checked: workspaceView === "Investigations", onSelect: () => { if (workspaceView !== "Investigations") showWorkspace("Investigations"); } }),
         workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
         workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
-    ]),
+    ]), view: VIEWS.windowMenu },
     {
       id: "help",
       label: "Help",
       accessKey: "H",
       items: [
-        { label: "Help topics", accessKey: "H", shortcut: "F1", onSelect: () => { setRoomSettingsOpen(false); setHelpOpen(true); } },
+        { label: "Help topics", accessKey: "H", shortcut: "F1", onSelect: () => { setRoomPropertiesOpen(false); setHelpOpen(true); } },
       ],
     },
   ];
@@ -855,23 +851,23 @@ export default function App() {
           <span className="app-icon" aria-hidden="true">AW</span>
           <h1><span className="title-long">AllMyFriendsAreAgents — </span>{room.settings.roomName}</h1>
         </header>
-        <ClassicMenuBar menus={menus} onHelp={() => { setRoomSettingsOpen(false); setHelpOpen(true); }} />
+        <ClassicMenuBar menus={menus} onHelp={() => { setRoomPropertiesOpen(false); setHelpOpen(true); }} />
 
-        {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true">{connectionNotice}</div> : null}
+        {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true" {...viewAttributes(VIEWS.connectionNotices)}>{connectionNotice}</div> : null}
         <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
           {activeWorkspaceName ? <WorkspaceSurface name={activeWorkspaceName} onClose={showChat}>
             {workspaceContent}
           </WorkspaceSurface> : <>
-          <section className="chat-panel beveled-inset">
+          <section className="chat-panel beveled-inset" {...viewAttributes(VIEWS.roomChat)} data-responsive-view-id={VIEWS.compactRoomChat.id} data-responsive-view-name={VIEWS.compactRoomChat.name} data-responsive-view-state={VIEWS.compactRoomChat.state}>
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomSettings} onManageRoster={openRoster} />
+            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
-              <div className="pending-send" role="status">
+              <div className="pending-send" role="status" {...viewAttributes(VIEWS.pendingSendRecovery)}>
                 <span><strong>Not sent — send now?</strong> {pendingSend.text}</span>
                 <button type="button" className="classic-button" disabled={!connected || resendingPending} onClick={resendPending}>{resendingPending ? "Sending…" : "Send now"}</button>
                 <button type="button" className="classic-button" disabled={resendingPending} onClick={returnPendingToDraft}>Keep as draft</button>
@@ -891,8 +887,7 @@ export default function App() {
           </>}
         </div>
 
-        {roomSettingsOpen ? <RoomSettingsDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomSettingsTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomSettingsOpen(false)} /> : null}
-        {roomConfigurationOpen ? <RoomConfigurationDialog returnFocusTo={roomConfigurationTrigger.current} onClose={() => setRoomConfigurationOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
         {githubIntegrationOpen ? <GitHubIntegrationDialog returnFocusTo={githubIntegrationTrigger.current} onClose={() => setGitHubIntegrationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
@@ -922,12 +917,12 @@ export default function App() {
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
 
-        {actionPending ? <div className="error-strip error-strip--pending" role="status"><span>{roomActionLabel(actionPending.action, actionPending.target)} is being requested. Other room actions are unavailable until it finishes.</span></div> : null}
-        {actionFailure ? <div className="error-strip" role="alert">
+        {actionPending ? <div className="error-strip error-strip--pending" role="status" {...viewAttributes(VIEWS.connectionNotices)}><span>{roomActionLabel(actionPending.action, actionPending.target)} is being requested. Other room actions are unavailable until it finishes.</span></div> : null}
+        {actionFailure ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}>
           <span><strong>{roomActionLabel(actionFailure.action, actionFailure.target)} failed.</strong> {actionFailure.message} {!connected ? "Retry is unavailable while reconnecting." : !actionFailure.retrySafe ? "The result may be unknown, so retrying could duplicate the action." : actionFailure.attempt > 0 ? "The retry failed; close this error or choose a new action." : ""}</span>
           {actionFailure.retrySafe && actionFailure.attempt === 0 ? <button type="button" className="error-strip__retry" disabled={!connected || Boolean(actionPending)} onClick={() => invoke(actionFailure.action, actionFailure.target, 1)}>Retry once</button> : null}
           <button type="button" aria-label="Dismiss action error" disabled={Boolean(actionPending)} onClick={() => setActionFailure(null)}>×</button>
-        </div> : clientError || room.error ? <div className="error-strip" role="alert"><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
+        </div> : clientError || room.error ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>

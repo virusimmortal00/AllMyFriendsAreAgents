@@ -19,7 +19,8 @@ describe("room settings API", () => {
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
-    const discovery = { discover: async () => ({ status: "available", discoveredAt: "2026-08-27T00:00:00.000Z", models: [{ providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", displayName: "Muse Spark 1.2 Contributor Free", provenance: "opencode-catalog", variants: [{ id: "minimal", displayName: "Minimal" }] }] }) } as unknown as ModelDiscoveryService;
+    let discoverCalls = 0;
+    const discovery = { discover: async () => { discoverCalls += 1; return { status: "available", discoveredAt: "2026-08-27T00:00:00.000Z", models: [{ providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", displayName: "Muse Spark 1.2 Contributor Free", provenance: "opencode-catalog", variants: [{ id: "minimal", displayName: "Minimal" }] }] }; } } as unknown as ModelDiscoveryService;
     const app = express();
     let promotionEligible = false;
     app.use(express.json());
@@ -37,6 +38,10 @@ describe("room settings API", () => {
       const defaults = await (await fetch(`${base}/api/room/settings`)).json() as { settings: { basePromptText: string; basePromptRevision: number; summarizerModel: { modelId: string } }; routingEvidence: { promotionEligible: boolean } };
       expect(defaults.settings).toMatchObject({ configurationRevision: 0, basePromptText: DEFAULT_ROOM_BASE_PROMPT, basePromptRevision: 0, preflightMode: "off", summarizerModel: { modelId: "muse-spark-1.2-contributor-free" } });
       expect(defaults.routingEvidence.promotionEligible).toBe(false);
+      expect(discoverCalls).toBe(0);
+      const models = await (await fetch(`${base}/api/room/settings/models`)).json() as { models: unknown[] };
+      expect(models.models).toHaveLength(1);
+      expect(discoverCalls).toBe(1);
       expect((await put({ basePromptText: "x" }, false)).status).toBe(403);
       expect((await put({ basePromptText: "x".repeat(4_001) })).status).toBe(400);
       expect((await put({ summarizerModel: { providerId: "missing", modelId: "unknown" }, summarizerPromptText: "{{transcript}}" })).status).toBe(400);

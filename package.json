@@ -16,7 +16,7 @@
     "check:quality": "pnpm run check:integration-contracts && pnpm run check:ui-standards && pnpm run build && pnpm test",
     "check:integration-contracts": "tsx scripts/check-integration-contracts.ts --run-tests",
     "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",
-    "check:ui-standards": "vitest run src/ui-standards.test.tsx src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",
+    "check:ui-standards": "vitest run src/ui-standards.test.tsx src/layout-structure.test.tsx src/responsive-view-audit.test.ts src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",
     "canary:investigations": "tsx scripts/investigation-canary.ts",
     "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
     "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",

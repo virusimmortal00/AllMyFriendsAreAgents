@@ -33,12 +33,20 @@ export function registerRoomSettingsRoutes(input: {
 
   app.get("/api/room/settings", async (request, response) => {
     if (!authorizeView(request, response)) return;
+    const [settings, evidence] = await Promise.all([
+      store.getRoomConfiguration(),
+      routingEvidence?.(),
+    ]);
     response.set("Cache-Control", "no-store").json({
-      settings: await store.getRoomConfiguration(),
+      settings,
       defaults: { basePromptText: DEFAULT_ROOM_BASE_PROMPT },
-      modelDiscovery: await discovery.discover(),
-      ...(routingEvidence ? { routingEvidence: await routingEvidence() } : {}),
+      ...(evidence ? { routingEvidence: evidence } : {}),
     });
+  });
+
+  app.get("/api/room/settings/models", async (request, response) => {
+    if (!authorizeView(request, response)) return;
+    response.set("Cache-Control", "no-store").json(await discovery.discover());
   });
 
   app.put("/api/room/settings", async (request, response) => {

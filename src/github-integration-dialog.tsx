@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ApiRequestError,
   bootstrapControlPlane,
@@ -18,12 +18,19 @@ import {
   type GitHubIntegrationStatus,
   type GitHubRepositoryCatalog,
 } from "./api";
-import { useModalOverlay } from "./overlay";
+import { DialogFrame } from "./dialog-frame";
+import { VIEWS } from "./view-registry";
 
 type ControlStatus = { claimed: boolean; bootstrapConfigured: boolean };
 
+// GitHub mark from Primer Octicons: https://primer.style/octicons/icon/mark-github-24/
+function GitHubMark({ size = 24 }: { size?: number }) {
+  return <svg aria-hidden="true" className="github-mark" width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943" />
+  </svg>;
+}
+
 export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocusTo: HTMLElement | null; onClose: () => void }) {
-  const titleId = useId();
   const [authentication, setAuthentication] = useState<"checking" | "required" | "ready">("checking");
   const [controlStatus, setControlStatus] = useState<ControlStatus>();
   const [bootstrapSecret, setBootstrapSecret] = useState("");
@@ -37,7 +44,6 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
   const readyConnection = integration?.connections.find((connection) => connection.state === "ready");
 
   const loadDashboard = useCallback(async () => {
@@ -155,16 +161,27 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
   const authenticationReady = Boolean(controlStatus && username.trim().length >= 3 && password.length >= 12
     && (controlStatus.claimed || (controlStatus.bootstrapConfigured && bootstrapSecret.trim())));
   const selectedRepository = catalog?.repositories.find((repository) => String(repository.githubRepositoryId) === selectedRepositoryId);
+  const projectRepository = project?.binding?.repository || project?.repository.repository;
+  const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
+  const repositoryCount = catalog?.repositories.length || 0;
+  const currentView = authentication === "required" && controlStatus
+    ? controlStatus.claimed ? VIEWS.githubAdminSignIn : VIEWS.githubClaimOwner
+    : authorization?.state === "authorizing"
+      ? VIEWS.githubDeviceAuth
+      : !readyConnection
+        ? VIEWS.githubConnect
+        : project?.repository.configured
+          ? VIEWS.githubConfiguredRepo
+          : project && repositoryCount === 0
+            ? VIEWS.githubEmptyRepo
+            : VIEWS.githubChooseRepo;
 
-  return <div className="modal-backdrop room-settings-backdrop" onMouseDown={onBackdropMouseDown}>
-    <section ref={dialogRef} className="agent-settings-window github-integration-window" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onDialogKeyDown}>
-      <header className="agent-settings-titlebar"><h2 id={titleId}>GitHub Integration</h2><button type="button" aria-label="Close GitHub Integration" disabled={working} onClick={onClose}>×</button></header>
-      <div className="github-integration-body">
+  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={onClose} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={onClose}>Close</button>}>
         {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
         {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
         {authentication === "required" && controlStatus ? <form className="github-control-login" onSubmit={(event) => { event.preventDefault(); if (authenticationReady) void authenticate(); }}>
           <h3>{controlStatus.claimed ? "Server administrator sign in" : "Claim server owner"}</h3>
-          <p>GitHub connection and repository choices are server administration settings. Rooms inherit the selected project repository and never receive credentials.</p>
+          <p>{controlStatus.claimed ? "Sign in to manage this server's GitHub connection." : "Create the administrator account that will manage this server."}</p>
           {!controlStatus.claimed ? <label>Local bootstrap secret<input type="password" autoComplete="off" value={bootstrapSecret} onChange={(event) => setBootstrapSecret(event.target.value)} disabled={!controlStatus.bootstrapConfigured} /></label> : null}
           <label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
           <label>Password<input type="password" autoComplete={controlStatus.claimed ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
@@ -172,34 +189,33 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
           <button type="submit" className="classic-button" disabled={!authenticationReady || working}>{working ? "Authenticating…" : controlStatus.claimed ? "Sign in" : "Claim owner"}</button>
         </form> : null}
         {authentication === "ready" && integration ? <>
-          <section className="github-integration-card" aria-labelledby="github-server-heading">
-            <h3 id="github-server-heading">Server connection</h3>
-            {integration.app ? <p><strong>{integration.app.name}</strong> is the reusable public App for this server. No client secret, private key, PAT, or room environment variable is required.</p> : <p role="alert">This build does not contain a reviewed GitHub App identity.</p>}
-            {integration.app ? <a className="classic-button github-install-link" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Install or configure repositories</a> : null}
-            {readyConnection ? <div className="github-status-row"><span><strong>Connected as {readyConnection.githubUser.login}</strong><small>Device-user token · encrypted locally · revision {readyConnection.revision}</small></span><span className="github-status-badge">Ready</span></div> : integration.app ? <button type="button" className="classic-button" disabled={working} onClick={() => void connect()}>{working ? "Starting…" : "Connect with GitHub"}</button> : null}
+          <fieldset className="github-integration-card classic-group">
+            <legend>GitHub account</legend>
+            <div className="github-account-summary">
+              <span className="github-brand-mark"><GitHubMark size={32} /></span>
+              <span className="github-account-copy"><h3>{readyConnection ? "GitHub connected" : "Connect GitHub"}</h3><p>{readyConnection ? <>Signed in as <strong>@{readyConnection.githubUser.login}</strong></> : "Connect your account to choose a repository for this project."}</p></span>
+              {readyConnection ? <span className="classic-status">Connected</span> : integration.app ? <button type="button" className="classic-button github-connect-button" disabled={working} onClick={() => void connect()}>{working ? "Starting…" : "Connect GitHub"}</button> : null}
+            </div>
+            {!integration.app ? <p role="alert">GitHub connections are unavailable in this build.</p> : null}
+            {integration.app && readyConnection ? <a className="classic-link github-secondary-link" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Manage repository access</a> : null}
             {authorization?.state === "authorizing" && authorization.challenge ? <div className="github-device-challenge" role="status">
-              <strong>Enter code {authorization.challenge.userCode}</strong>
-              <a className="classic-button" href={authorization.challenge.verificationUri} target="_blank" rel="noreferrer">Open GitHub authorization</a>
-              <small>This window will update automatically after GitHub approval. The code expires at {new Date(authorization.expiresAt).toLocaleTimeString()}.</small>
-            </div> : authorization && authorization.state !== "ready" ? <p role="alert">GitHub authorization ended with state {authorization.state.replaceAll("-", " ")}.</p> : null}
-          </section>
-          {readyConnection ? <section className="github-integration-card" aria-labelledby="github-repositories-heading">
-            <div className="github-card-heading"><span><h3 id="github-repositories-heading">Available repositories</h3><small>{catalog ? `${catalog.repositories.length} from ${catalog.installations.length} installation${catalog.installations.length === 1 ? "" : "s"}` : "Catalog not loaded"}</small></span><button type="button" className="classic-button" disabled={working} onClick={() => void refreshCatalog(readyConnection)}>{working ? "Refreshing…" : "Refresh"}</button></div>
-            {catalog?.repositories.length ? <label>Repository<select value={selectedRepositoryId} onChange={(event) => setSelectedRepositoryId(event.target.value)} disabled={Boolean(project?.repository.configured)}>
-              {catalog.repositories.map((repository) => <option key={repository.githubRepositoryId} value={repository.githubRepositoryId}>{repository.owner}/{repository.name} · {repository.visibility}</option>)}
-            </select></label> : <p>Install the App on at least one repository, then refresh this catalog.</p>}
-          </section> : null}
-          {readyConnection && project ? <section className="github-integration-card" aria-labelledby="github-project-heading">
-            <h3 id="github-project-heading">Current project</h3>
-            {project.repository.configured ? <div className="github-status-row"><span><strong>{project.binding?.repository || project.repository.repository}</strong><small>Inherited by every room attached to this project. Rooms cannot override the repository or credential.</small></span><span className="github-status-badge">Verified</span></div> : <>
-              <p>{selectedRepository ? `Verify this server checkout against ${selectedRepository.owner}/${selectedRepository.name}, then make it available to every room attached to the project.` : "Choose an available repository for this project."}</p>
-              {project.defaults ? <dl className="github-project-defaults"><dt>Checkout</dt><dd>{project.defaults.checkoutPath}</dd><dt>Agent worktrees</dt><dd>{project.defaults.worktreeRoot}</dd></dl> : <p role="alert">This project does not publish server-derived checkout defaults yet.</p>}
-              <button type="button" className="classic-button" disabled={!selectedRepository || !project.defaults || working} onClick={() => void configureProject()}>{working ? "Verifying…" : "Use for this project"}</button>
-            </>}
-          </section> : null}
+              <span><strong>Enter code {authorization.challenge.userCode}</strong><small>Enter this code only at github.com. This window updates automatically.</small></span>
+              <a className="classic-button" href={authorization.challenge.verificationUri} target="_blank" rel="noreferrer">Continue on GitHub</a>
+            </div> : authorization && authorization.state !== "ready" ? <p role="alert">GitHub connection {authorization.state.replaceAll("-", " ")}.</p> : null}
+          </fieldset>
+          {readyConnection && project ? <fieldset className="github-integration-card classic-group">
+            <legend>Project repository</legend>
+            {!project.repository.configured ? <div className="github-card-heading"><small>{repositoryCount} {repositoryCount === 1 ? "repository" : "repositories"} available</small><button type="button" className="classic-button github-refresh-button" disabled={working} onClick={() => void refreshCatalog(readyConnection)}>{working ? "Refreshing…" : "Refresh"}</button></div> : null}
+            {project.repository.configured && projectRepositoryPath ? <div className="github-repository-summary classic-summary">
+              <span className="github-repository-icon" aria-hidden="true" />
+              <span><a className="classic-link" href={`https://github.com/${projectRepositoryPath}`} target="_blank" rel="noreferrer">{projectRepositoryPath}</a><small>Used by every room in this project.</small></span>
+              <span className="classic-status">Configured</span>
+            </div> : catalog?.repositories.length ? <>
+              <label>Repository<select value={selectedRepositoryId} onChange={(event) => setSelectedRepositoryId(event.target.value)}>{catalog.repositories.map((repository) => <option key={repository.githubRepositoryId} value={repository.githubRepositoryId}>{repository.owner}/{repository.name} · {repository.visibility}</option>)}</select></label>
+              {!project.defaults ? <p role="alert">This project is not ready to configure a repository.</p> : null}
+              <button type="button" className="classic-button github-use-repository-button" disabled={!selectedRepository || !project.defaults || working} onClick={() => void configureProject()}>{working ? "Configuring…" : "Use repository"}</button>
+            </> : <div className="github-empty-repositories classic-summary"><p><strong>No repositories available.</strong><small>Choose which repositories this app can access, then refresh.</small></p>{integration.app ? <a className="classic-button" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Choose repositories on GitHub</a> : null}</div>}
+          </fieldset> : null}
         </> : null}
-      </div>
-      <footer className="agent-settings-actions"><button type="button" className="classic-button" disabled={working} onClick={onClose}>Close</button></footer>
-    </section>
-  </div>;
+  </DialogFrame>;
 }

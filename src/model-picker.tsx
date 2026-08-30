@@ -4,6 +4,7 @@ import { modelKey } from "../shared/model-discovery";
 import { modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { loadModelOfferDetails } from "./api";
 import { ProviderMark } from "./provider-mark";
+import { viewAttributes, type ViewDefinition } from "./view-registry";
 
 type ModelFilter = "all" | "popular" | "free" | "tools" | "vision" | "reasoning";
 type ModelSort = "recommended" | "popular" | "price" | "newest" | "name";
@@ -77,6 +78,7 @@ export function RichModelPicker({
   onChange,
   title = "Choose the agent’s model",
   description = "The model shapes what your agent is good at. A provider is the service that gives you access to it.",
+  view,
 }: {
   models: readonly DiscoveredModel[];
   providerId: string;
@@ -84,6 +86,7 @@ export function RichModelPicker({
   onChange: (model: DiscoveredModel) => void;
   title?: string;
   description?: string;
+  view?: ViewDefinition;
 }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
@@ -122,7 +125,7 @@ export function RichModelPicker({
   const sale = offerDetails?.offers.reduce((best, offer) => Math.max(best, offer.discount || 0), 0) || 0;
 
   return (
-    <section className="model-picker" aria-labelledby="model-picker-title">
+    <section className="model-picker" aria-labelledby="model-picker-title" {...(view ? viewAttributes(view) : {})}>
       <div className="model-picker__intro">
         <div><strong id="model-picker-title">{title}</strong><span>{description}</span></div>
         <span className="model-picker__count">{models.length} available</span>
