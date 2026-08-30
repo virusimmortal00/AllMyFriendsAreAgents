@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
@@ -41,7 +41,7 @@ const catalog = {
   }],
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("GitHubIntegrationDialog", () => {
   it("shows the server connection and binds a catalog repository to the current project", async () => {
@@ -109,5 +109,39 @@ describe("GitHubIntegrationDialog", () => {
     expect(await screen.findByRole("button", { name: "Connect GitHub" })).toBeTruthy();
     const bootstrapCall = fetchMock.mock.calls.find(([path]) => path === "/api/control/bootstrap");
     expect(JSON.parse(String(bootstrapCall?.[1]?.body))).toEqual({ bootstrapSecret: "bootstrap-secret", username: "server-owner", password: "strong-local-password" });
+  });
+
+  it("blocks every dialog dismissal path while repository configuration is in progress", async () => {
+    let resolveConfiguration!: (response: Response) => void;
+    const configurationResponse = new Promise<Response>((resolve) => { resolveConfiguration = resolve; });
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/control/me") return json({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
+      if (path === "/api/control/integrations/github") return json({ app: { name: "All My Friends Are Agents", slug: "all-my-friends-are-agents", clientId: "Iv23test" }, connections: [connection] });
+      if (path === "/api/control/projects/current/repository" && init?.method === "GET") return json({ repository: { configured: false }, defaults: { checkoutPath: "/srv/amfaa", worktreeRoot: "/srv/worktrees", policyRevision: 1 } });
+      if (path.startsWith("/api/control/integrations/github/repositories?")) return json({ catalog });
+      if (path === "/api/control/projects/current/repository" && init?.method === "PUT") return configurationResponse;
+      return json({ error: `Unexpected request: ${path}` }, 500);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    render(<GitHubIntegrationDialog returnFocusTo={null} onClose={onClose} />);
+    await user.click(await screen.findByRole("button", { name: "Use repository" }));
+    expect(await screen.findByRole("button", { name: "Configuring…" })).toBeTruthy();
+
+    await user.keyboard("{Escape}");
+    fireEvent.mouseDown(screen.getByRole("dialog", { name: "GitHub" }).parentElement!);
+    expect(onClose).not.toHaveBeenCalled();
+
+    resolveConfiguration(json({
+      binding: { projectId: "project-one", revision: 1, state: "ready", connectionId: connection.connectionId, installationId: 157_360_466, githubRepositoryId: 1_234, repository: "github.com/virusimmortal00/AllMyFriendsAreAgents", updatedAt: "2026-08-30T12:00:00.000Z" },
+      repository: { configured: true, revision: 1, state: "verified", repository: "github.com/virusimmortal00/AllMyFriendsAreAgents" },
+    }));
+    expect(await screen.findByText("Configured")).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "GitHub" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

@@ -164,6 +164,7 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
   const projectRepository = project?.binding?.repository || project?.repository.repository;
   const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
   const repositoryCount = catalog?.repositories.length || 0;
+  const requestClose = () => { if (!working) onClose(); };
   const currentView = authentication === "required" && controlStatus
     ? controlStatus.claimed ? VIEWS.githubAdminSignIn : VIEWS.githubClaimOwner
     : authorization?.state === "authorizing"
@@ -176,7 +177,7 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
             ? VIEWS.githubEmptyRepo
             : VIEWS.githubChooseRepo;
 
-  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={onClose} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={onClose}>Close</button>}>
+  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
         {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
         {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
         {authentication === "required" && controlStatus ? <form className="github-control-login" onSubmit={(event) => { event.preventDefault(); if (authenticationReady) void authenticate(); }}>
