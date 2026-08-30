@@ -58,13 +58,8 @@ function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose:
     return () => { current = false; };
   }, [active, retryCount]);
 
-  async function showModels() {
-    if (choosingModel) {
-      setChoosingModel(false);
-      return;
-    }
-    setChoosingModel(true);
-    if (modelsLoaded || modelsLoading) return;
+  async function fetchModels() {
+    if (modelsLoading) return;
     setModelsLoading(true);
     setModelError("");
     try {
@@ -76,6 +71,12 @@ function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose:
     } finally {
       setModelsLoading(false);
     }
+  }
+
+  function toggleModels() {
+    const shouldShow = !choosingModel;
+    setChoosingModel(shouldShow);
+    if (shouldShow && !modelsLoaded && !modelsLoading) void fetchModels();
   }
 
   async function save(closeAfter: boolean) {
@@ -119,9 +120,9 @@ function RoomConfigurationPanel({ active, onClose }: { active: boolean; onClose:
         <section className="room-configuration-card classic-group" aria-labelledby="summarizer-heading">
           <h3 id="summarizer-heading">Summarizer</h3>
           <p>Used only for cold starts and large deltas. Verbatim history remains the source of truth.</p>
-          <div className="room-configuration-model"><strong>{modelLabel}</strong><button type="button" className="classic-button" onClick={() => void showModels()}>{choosingModel ? "Hide models" : "Choose model…"}</button></div>
+          <div className="room-configuration-model"><strong>{modelLabel}</strong><button type="button" className="classic-button" onClick={toggleModels}>{choosingModel ? "Hide models" : "Choose model…"}</button></div>
           {choosingModel && modelsLoading ? <p role="status">Loading available models…</p> : null}
-          {choosingModel && modelError ? <p role="alert" className="room-settings-error">{modelError} <button type="button" className="classic-button" onClick={() => { setChoosingModel(false); void showModels(); }}>Retry</button></p> : null}
+          {choosingModel && modelError ? <p role="alert" className="room-settings-error">{modelError} <button type="button" className="classic-button" onClick={() => void fetchModels()}>Retry</button></p> : null}
           {choosingModel && modelsLoaded ? <RichModelPicker models={models} providerId={summarizerModel?.providerId || ""} modelId={summarizerModel?.modelId || ""} title="Choose the room summarizer" description="This internal model creates bounded cold-start navigation summaries." view={VIEWS.roomSummarizerModelPicker} onChange={(model) => { setSummarizerModel({ ...(model.providerId ? { providerId: model.providerId } : {}), modelId: model.modelId }); setChoosingModel(false); }} /> : null}
           <label>Prompt template<textarea rows={9} maxLength={8000} value={summarizerPromptText} onChange={(event) => setSummarizerPromptText(event.target.value)} /></label>
           <small>Revision {saved.summarizerPromptRevision}. Keep {"{{transcript}}"} where verbatim input should be inserted. DeepSeek V4 Flash remains the built-in failover route.</small>

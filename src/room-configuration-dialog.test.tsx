@@ -74,4 +74,37 @@ describe("RoomConfigurationDialog", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/room/settings/models");
   });
+
+  it("retries a failed model catalog request without closing the chooser", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        settings: {
+          configurationRevision: 0,
+          basePromptRevision: 0,
+          basePromptText: "Default merit rule",
+          summarizerModel: null,
+          summarizerPromptText: "Summarize {{transcript}}",
+          summarizerPromptRevision: 0,
+          featureFlags: {},
+          preflightMode: "off",
+          updatedAt: null,
+        },
+        defaults: { basePromptText: "Default merit rule" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockRejectedValueOnce(new Error("Catalog unavailable"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "available", discoveredAt: "2026-08-30T00:00:00Z", models: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<RoomConfigurationDialog returnFocusTo={null} onClose={vi.fn()} />);
+    expect(await screen.findByRole("heading", { name: "Summarizer" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Choose model…" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("connection was interrupted");
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/room/settings/models");
+    expect(screen.getByRole("button", { name: "Hide models" })).toBeTruthy();
+    expect(await screen.findByText("0 available")).toBeTruthy();
+  });
 });

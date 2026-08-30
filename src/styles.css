@@ -889,7 +889,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .menu-bar > button, .menu-bar > .menu-wrap { flex: 0 0 auto; }
   .menu-bar > .menu-wrap > button { width: 100%; }
   .menu-bar > .menu-wrap > button { min-height: 40px; padding: 2px 8px; font-size: 13px; white-space: nowrap; }
-  .dropdown-menu { position: absolute; z-index: 40; top: 20px; left: 0; right: auto; min-width: 220px; }
+  .dropdown-menu { position: absolute; z-index: 40; top: 100%; left: 0; right: auto; min-width: 220px; }
   .menu-wrap:last-child .dropdown-menu { left: auto; right: 0; }
   .dropdown-menu button { min-height: 40px; padding: 5px 8px 5px 4px; font-size: 13px; }
   .workspace { min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; padding: 4px; overflow: hidden; }

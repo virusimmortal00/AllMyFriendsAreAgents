@@ -28,6 +28,7 @@ describe("mobile layout contract", () => {
   it("keeps the compact classic menu bar visible instead of turning it into a mobile scroller", () => {
     expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow: visible;/s);
     expect(mobileStyles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*min-height: 40px;[^}]*white-space: nowrap;/s);
+    expect(mobileStyles).toMatch(/\.dropdown-menu \{[^}]*top: 100%;/s);
     expect(mobileStyles).toMatch(/\.dropdown-menu button \{[^}]*min-height: 40px;/s);
   });
 
