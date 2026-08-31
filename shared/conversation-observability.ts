@@ -1,3 +1,5 @@
+import type { YieldReason } from "./message-format.js";
+
 export const CONVERSATION_EVENT_VERSION = 1 as const;
 export const CONVERSATION_EVENT_MAX_BYTES = 8 * 1024;
 export const CONVERSATION_EVIDENCE_ID_MAX_LENGTH = 256;
@@ -96,4 +98,32 @@ export interface GenerationDeliverySummary {
   unconfirmedBurstCount: number;
   acknowledgedMessageIds: string[];
 }
-import type { YieldReason } from "./message-format.js";
+export type ConversationPhase = "opening" | "follow-up" | "conversation-floor" | "synthesis" | "objection" | "reconciliation";
+export type ConversationTerminalReason = "cancelled" | "no-visible-output" | "broadcast-settled-response"
+  | "conversation-floor-completed" | "no-explicit-unresolved-state" | "open-without-second-responder"
+  | "safety-ceiling" | "synthesis-no-response" | "synthesis-settled" | "blocked-input"
+  | "no-material-objection" | "reconciliation-no-response" | "reconciliation-settled"
+  | "unresolved-reconciliation" | "queue-exhausted" | "follow-up-limit" | "run-failed";
+
+/** Additive observation: engine policy counters are not proof of persisted delivery. */
+export interface ConversationRunSummary {
+  eventVersion: 1;
+  engine: "energy" | "legacy";
+  reason: ConversationTerminalReason;
+  phase: ConversationPhase;
+  engineSettled: boolean | null;
+  counts: {
+    attemptedTurns: number; respondedTurns: number; yieldedTurns: number;
+    noResponseTurns: number; failedTurns: number; cancelledTurns: number; skippedTurns: number;
+    declaredSettledTurns: number; effectiveSettledTurns: number;
+    confirmedDeliveredBursts: number; confirmedUndeliveredBursts: number; unconfirmedBursts: number;
+    turnsWithoutDeliveryEvidence: number;
+  };
+  policy: {
+    responseTurns: number; visibleMessages: number; energySpent: number;
+    hardTurnCeiling: number | null; hardMessageCeiling: number | null;
+    turnCeilingReached: boolean; messageCeilingReached: boolean;
+    followUps: number | null; maxFollowUps: number | null; followUpLimitReached: boolean;
+  };
+  pending: { candidates: number; mentions: number; activeTurns: number; disposition: "none" | "not-scheduled" | "abandoned" };
+}

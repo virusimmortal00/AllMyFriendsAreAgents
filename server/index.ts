@@ -754,6 +754,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
   const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
+  if (evidence) evidence.interpretation = parsed.diagnostics;
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,

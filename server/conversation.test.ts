@@ -440,7 +440,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "low", performTurn, () => 0);
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
 
@@ -592,7 +592,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn).toHaveBeenCalledTimes(5);
     expect(performTurn.mock.calls[2][0].instruction).toContain("discussion synthesizer");
     expect(performTurn.mock.calls[3][0].instruction).toContain("material omission");
@@ -607,7 +607,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
+    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision.", summary: expect.any(Object) });
   });
 
   it("offers every agent one concise turn when the human invites the whole room", async () => {
@@ -666,7 +666,7 @@ describe("conversation energy", () => {
       concurrencyLimit: 3,
     });
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
 
@@ -790,7 +790,7 @@ describe("conversation energy", () => {
     expect(performTurn).toHaveBeenCalledTimes(2);
     second.resolve({ cancelled: true });
 
-    await expect(conversation).resolves.toEqual({ settled: false });
+    await expect(conversation).resolves.toEqual({ settled: false, summary: expect.any(Object) });
     expect(performTurn).toHaveBeenCalledTimes(2);
   });
 
