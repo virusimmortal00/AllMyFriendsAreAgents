@@ -6,6 +6,6 @@ export function withConversationRun<T>(run: () => T): T {
   return withLogContext({ runId: randomUUID(), spanId: randomBytes(8).toString("hex"), turnId: undefined, generationId: undefined, attemptOrdinal: undefined }, run);
 }
 
-export function withConversationTurn<T>(agentId: string, turn: () => T): T {
-  return withLogContext({ turnId: randomUUID(), spanId: randomBytes(8).toString("hex"), agentId, generationId: undefined, attemptOrdinal: undefined }, turn);
+export function withConversationTurn<T>(agentId: string, turn: () => T, turnId: string = randomUUID()): T {
+  return withLogContext({ turnId, spanId: randomBytes(8).toString("hex"), agentId, generationId: undefined, attemptOrdinal: undefined }, turn);
 }

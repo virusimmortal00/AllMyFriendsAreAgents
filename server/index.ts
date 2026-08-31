@@ -12,13 +12,14 @@ import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledErro
 import { AgentHealthRegistry } from "./agent-health.js";
 import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn, type TurnResult } from "./conversation.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { withGenerationDelivery } from "./generation-delivery.js";
 import { withConversationRun, withConversationTurn } from "./conversation-context.js";
+import { observeConversationRun } from "./conversation-run-observer.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
@@ -662,22 +663,22 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn): Promise<TurnResult> {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
   const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
   if (!agentStillEnabled()) {
-    return { cancelled: true };
+    return { cancelled: true, outcomeReason: "agent-disabled" };
   }
-  if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
+  if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true, outcomeReason: "agent-health-unavailable" };
   const sharedReservation = activeAgent ? reserveCanonicalGeneration(activeAgent) : undefined;
-  if (activeAgent && !sharedReservation) return { failed: true };
+  if (activeAgent && !sharedReservation) return { failed: true, outcomeReason: "generation-capacity-unavailable" };
   const providerAttempt = providerId ? providerHealth.claimAttempt(providerId) : "regular";
   if (providerAttempt === "blocked") {
     sharedReservation?.release();
-    return { failed: true };
+    return { failed: true, outcomeReason: "provider-health-unavailable" };
   }
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
@@ -718,11 +719,11 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (!agentStillEnabled()) {
       if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
       await store.clearSession(agent);
-      return { cancelled: true };
+      return { cancelled: true, outcomeReason: "agent-disabled" };
     }
     if (isAgentGenerationCancelledError(error)) {
       if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
-      return { cancelled: true };
+      return { cancelled: true, outcomeReason: "cancelled" };
     }
     if (!activeAgent) throw error;
     const providerFailure = providerId ? classifyProviderScopedFailure(error, providerId) : undefined;
@@ -738,7 +739,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     }
     void structuredLogger.log("error", "agent.command.failed", { agentId: agent, error });
     broadcast();
-    return { failed: true };
+    return { failed: true, outcomeReason: providerFailure ? "provider-failed" : evidence?.attemptOrdinal ? "generation-failed" : "preparation-failed" };
   } finally {
     sharedReservation?.release();
     generationCancellation.dispose();
@@ -747,7 +748,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
     if (providerRecovered) broadcast();
-    return { cancelled: true };
+    return { cancelled: true, outcomeReason: "agent-disabled" };
   }
   const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
   if (providerRecovered || participantRecovered) scheduleHealthRefresh();
@@ -894,11 +895,11 @@ async function performTurn(turn: ConversationTurn) {
       roomActivity.interrupt();
       throw error;
     }
-  });
+  }, turn.observation?.turnId);
 }
 
 async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
-  return withConversationRun(async () => {
+  return withConversationRun(() => observeConversationRun(loggingFoundation, staged ? "energy" : "legacy", async (observer) => {
     const snapshot = store.snapshot();
     const energy = snapshot.settings.conversationEnergy;
     await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
@@ -907,12 +908,13 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
       await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
         ...broadcastPolicy,
         concurrencyLimit: Math.max(1, concurrencyLimit),
+        observer,
       });
       return;
     }
     const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
-  });
+    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit), undefined, observer);
+  }));
 }
 
 async function runJob(job: () => Promise<void>, propagateFailure = false) {
