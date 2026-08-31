@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { validGitHubHttpDiagnostic } from "../../shared/github-http-diagnostic.js";
 import { normalizeJsonCommandState, validCommandReassignment, validGhExecution, validPoll, validSubmission } from "./command-storage.js";
 
 describe("command storage validation", () => {
@@ -36,6 +37,12 @@ describe("command storage validation", () => {
     expect(normalizeJsonCommandState({ ghExecutions: [execution] }).ghExecutions).toEqual([execution]);
     for (const fields of [{ httpStatus: 99 }, { httpStatus: 600 }, { httpStatus: 401.5 }, { githubRequestId: "Bearer fictional-token" }]) {
       expect(validGhExecution({ ...execution, diagnostics: [{ ...diagnostic, ...fields }] })).toBe(false);
+    }
+    for (const diagnostic of [null, undefined, 1, true, "invalid", [], [1]]) {
+      expect(validGitHubHttpDiagnostic(diagnostic)).toBe(false);
+      const malformed = { ...execution, diagnostics: [diagnostic] };
+      expect(validGhExecution(malformed as never)).toBe(false);
+      expect(normalizeJsonCommandState({ ghExecutions: [malformed] }).ghExecutions).toEqual([]);
     }
   });
 });
