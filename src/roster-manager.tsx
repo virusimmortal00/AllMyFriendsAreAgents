@@ -73,7 +73,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   useEffect(() => {
     closed.current = false;
     void loadRoster().then(async (response) => {
-      if (response.modelDiscovery) await loadControlMe();
+      if (!response.access && response.modelDiscovery) await loadControlMe();
       if (closed.current) return;
       setBaseRevision((current) => positiveRosterRevision(response.roster.revision, current));
       setEntries([...response.roster.entries]);

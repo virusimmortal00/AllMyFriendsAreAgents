@@ -107,7 +107,9 @@ Every new and resumed invocation pins the selected model. OpenCode receives `--m
 
 ### Claim the server owner before configuring providers
 
-Room screen names and presence cookies are deliberately not administrative identity. Set a long random `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` on the server, open **Manage room agents**, and use that proof once to create the durable `OWNER` credential. Existing rooms keep ordinary chat and history working but fail closed for model discovery, roster changes, and provider setup until bootstrap completes.
+Joined human room members can use **Manage room agents** without owner credentials, including before an owner is claimed. Members can add, remove, rename, enable or disable agents, select available models, refresh the model catalog, and change room-command grants. The server checks membership and a separate room-session CSRF token for mutations. These defaults apply to the existing canonical-room roster endpoints; named-room roster endpoints are not yet implemented. Fine-grained room administration remains future work.
+
+Room membership is not administrative identity: provider setup, credentials, integration configuration, and owner diagnostics still require their existing control-plane authority. Set a long random `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET` on the server, open **Room → GitHub integration...**, and use that proof once to create the durable `OWNER` credential. Agent command grants remain bounded by server capabilities and do not authorize direct source writes.
 
 The owner can create durable `ADMIN` or `MEMBER` identities and delegate narrow capabilities. Privileged requests are checked server-side and mutating requests require a per-session CSRF token; grant changes immediately invalidate the affected privileged sessions. Control identities, password hashes, and redacted audit events live in a mode-`0600` control-plane file separate from public room presence and profiles.
 

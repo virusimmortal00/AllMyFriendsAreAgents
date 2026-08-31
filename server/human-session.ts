@@ -6,12 +6,19 @@ export const HUMAN_SESSION_COOKIE = "amfaa_human_session";
 
 export class HumanSessions {
   private readonly sessions = new Map<string, string>();
+  private readonly csrfTokens = new Map<string, string>();
 
   issue(humanId: string) {
     for (const [token, existing] of this.sessions) if (existing === humanId) return token;
     const token = randomUUID();
     this.sessions.set(token, humanId);
+    this.csrfTokens.set(humanId, randomUUID());
     return token;
+  }
+
+  csrfToken(cookieHeader?: string) {
+    const humanId = this.humanId(cookieHeader);
+    return humanId ? this.csrfTokens.get(humanId) : undefined;
   }
 
   humanId(cookieHeader?: string) {
