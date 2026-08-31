@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
+import type { ConversationJobSource } from "../shared/conversation-observability.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
@@ -19,6 +20,7 @@ import { GenerationJournal } from "./generation-journal.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
+import { enqueueObservedConversation } from "./conversation-observability.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
@@ -604,12 +606,15 @@ function developerRoomDescriptor() {
   };
 }
 
-function enqueueDeveloperConversation() {
+function enqueueConversation(key: string, source: ConversationJobSource, triggerMessageId: string | null, run: (state: ReturnType<typeof roomSnapshot>) => Promise<void>) {
+  return enqueueObservedConversation({ queue: jobs, logging: loggingFoundation, snapshot: roomSnapshot, activity: roomActivity, runJob }, { key, source, triggerMessageId }, run);
+}
+
+function enqueueDeveloperConversation(triggerMessageId: string) {
   broadcast();
-  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
+  enqueueConversation("developer-message-conversation", "developer-message", triggerMessageId, async (conversationState) => {
     await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
+  });
 }
 
 async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string, idempotency: { key: string; requestDigest: string }) {
@@ -633,7 +638,7 @@ async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper,
     name: authenticated.member.displayName,
     clientMessageId,
   });
-  enqueueDeveloperConversation();
+  enqueueDeveloperConversation(message.id);
   return { kind: "ok" as const, value: { accepted: true, message } };
 }
 
@@ -643,7 +648,7 @@ async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, te
     id: authenticated.member.memberId,
     name: authenticated.member.displayName,
   });
-  enqueueDeveloperConversation();
+  enqueueDeveloperConversation(message.id);
   return { accepted: true, message, room: developerRoomView() };
 }
 
@@ -1421,10 +1426,9 @@ app.post("/api/messages", async (request, response) => {
   }
   broadcast();
 
-  jobs.enqueue("message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
+  enqueueConversation("message-conversation", "room-message", accepted.message.id, async (conversationState) => {
     await performConversation(await preflightTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
+  });
   return response.status(202).json(messageMutationAcknowledgement(accepted, continuation));
 });
 
@@ -1544,7 +1548,7 @@ app.post("/api/actions", async (request, response) => {
   }
 
   const agents: AgentId[] = target === "all" || target === "both" ? currentEnabledAgents() : [target];
-  jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
+  enqueueConversation(`action:${action}:${target}`, "room-action", null, async () => {
     const turns = agents.map((agent) => ({
       agent,
       instruction: action === "continue"
@@ -1557,7 +1561,7 @@ app.post("/api/actions", async (request, response) => {
       includeDiff: action === "review",
     }));
     await performConversation(turns, action === "continue");
-  }));
+  });
   return response.status(202).json({ accepted: true });
 });
 

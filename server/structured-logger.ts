@@ -8,6 +8,7 @@ export interface LogContext {
   traceId: string;
   spanId: string;
   requestId?: string;
+  jobId?: string;
   correlationId?: string;
   operationId?: string;
   generationId?: string;

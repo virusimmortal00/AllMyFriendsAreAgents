@@ -9,7 +9,8 @@ updated: 2026-08-31
 
 Canonical issue: [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
 This is the adopted, experimentally checked implementation design, not a
-replacement tracker. Acceptance remains pending implementation. Baseline inspected: commit
+replacement tracker. Slice 1 is implemented; later acceptance remains pending.
+Research baseline inspected: commit
 `e1c5b9cf5b3371c27f2784b59b3fdd7c1153d7fc`.
 
 ## Outcome
@@ -71,7 +72,15 @@ separate scope decision.
 
 ## Current state
 
-Verified by source inspection unless otherwise noted:
+Slice 1 now captures enqueue-time context and emits versioned admission,
+dispatch, coalescing, rejection, shutdown-drop, and snapshot-consumption evidence.
+Both HTTP message paths and explicit room actions use the same tested boundary.
+No raw-evidence visibility, routing policy, or provider behavior changed.
+
+Later slices remain unimplemented: parser/delivery/terminal summaries, full
+run/turn/attempt propagation, decision observers, stderr severity, and whole-trace
+navigation. The findings below describe the **research baseline before slice 1**,
+verified by source inspection unless otherwise noted:
 
 | Surface | Implemented behavior and gap |
 | --- | --- |
@@ -140,6 +149,7 @@ promise rejection without awaiting it if an adapter violates that contract.
 | Event | Semantic owner | Stream | Essential payload |
 | --- | --- | --- | --- |
 | `conversation.job.decision` | Conversation-job queue admission boundary | `generations` | Admission identity, incoming request/trace, action/reason, queued activity/message revision, accepted job identity or retained-job link for coalescing |
+| `conversation.job.consumed` | Accepted job's snapshot-read boundary | `generations` | Admission/job identity, original trigger, queued snapshot evidence, and the snapshot actually passed to conversation work |
 | `conversation.run.started` | `performConversation` orchestration boundary | `generations` | Mode, effective policy/revision, bounded candidate IDs/count, broadcast flags, concurrency, initial counters |
 | `conversation.turn.decision` | Branch in the active runner | `generations` | Decision/turn/source identities, selection family, action/reason, queue/active/pair/budget state |
 | `conversation.turn.finished` | Runner's turn accounting boundary | `generations` | Turn and generation link if allocated, status, confirmed delivery and uncertainty counts, effective continuation/state, elapsed time, stable failure/skip category |
@@ -429,10 +439,11 @@ all required responsive checkpoints.
 
 ## Next action
 
-Implement in small, dependency-ordered slices; no runtime changes are made by this
-proposal:
+Continue in dependency-ordered slices. Slice 1 is implemented; the next bounded
+step is slice 2's canonical facts and correlation, with focused tests and atomic
+commits:
 
-1. **Queue-context fix and admission evidence.** Fix the reproduced
+1. **Queue-context fix and admission evidence (implemented).** Fix the reproduced
    defect where a queued job inherits the preceding request's logging context:
    capture context at enqueue time and restore it when that job executes. This
    slice is not complete with a reproduction test alone. Require a provider-free
@@ -502,6 +513,36 @@ does not need to change the OpenCode transport or redo text-part assembly.
   browser checkpoints. No live provider or paid canary is needed.
 
 ## Evidence
+
+### Slice 1 implementation verification
+
+The context-isolation tests failed against the baseline and passed after binding
+accepted callbacks at enqueue time. Queue tests cover FIFO order, duplicate
+admission, original-context shutdown drops, closed-queue rejection, and observer
+throw/rejection/stall. Integration fixtures use the production observation boundary
+and logger to verify newer consumed snapshots, preserved background identity,
+semantic coalescing isolation, slow sinks, original job errors, serialized-size
+bounds (including JSON-escaped IDs), and failed snapshot reads without fabricated
+consumption. A fresh query reader round-trips real files through OWNER and denied
+project access while preserving useful raw evidence and removing a secret sentinel.
+
+On 2026-08-31, all 21 focused queue/observation tests passed. The full quality gate
+passed integration guardrails, UI checks, the production build, and 164 test files
+with 1,119 passing tests and one skipped test. The standalone server type check,
+planning self-check, active frontmatter/section validation, and whitespace checks
+also passed. Re-running the research probe retained zero ceiling violations over
+1,536 scenarios and now observed correct unwrapped queue contexts.
+
+```bash
+pnpm exec vitest run server/job-queue.test.ts server/conversation-observability.test.ts
+pnpm exec tsc -p tsconfig.node.json --noEmit
+pnpm run check:quality
+pnpm check:planning-docs -- --self-check
+git diff --check
+```
+
+No mapped OpenCode integration surface or visible interface was changed in this
+slice. No live provider call, deployment, or real-room mutation was required.
 
 ### Tested design findings
 

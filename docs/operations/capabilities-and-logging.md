@@ -86,6 +86,43 @@ Serialization is centralized, recursive, and evidence-preserving. Authorized ass
 
 The structured facade emits startup/shutdown and HTTP boundary events; provider generation and actual room-command lease/tool decisions; assignment reconciliation, lease, manifest, and tool-policy decisions; GitHub store/adapter and read-cache lifecycle; and storage/migration checks. Before each OpenCode subprocess starts, `agent.tool-policy.environment` records only `ready`, `missing`, or `not-configured` for room command, history, and diagnostics. A `scoped-tool-environment-missing` reason identifies failures that occur before a broker request, without recording an endpoint, token, manifest, or other environment value. If OpenCode reports a missing persisted session, the server clears it, remints scoped command and diagnostics leases against the fresh attempt, and retries once without `--session`. Startup manifest, lease, tool-policy, and GitHub read-cache snapshots are emitted even when no agent or command is invoked. Direct console output remains only in standalone import and confined Git-broker CLI helpers where stdout/stderr is their user/protocol surface; the server runtime uses the facade.
 
+### Conversation queue evidence
+
+The `generations` stream includes two operator-visible, version-1 event types for
+room-message, developer-message, and explicit room-action jobs:
+
+| Event | Meaning |
+| --- | --- |
+| `conversation.job.decision` | `queued`/`eligible`, `started`/`queue-ready`, `coalesced`/`key-already-pending`, or `rejected`/`dropped` with `queue-closed`. Admission precedes dispatch or rejection; shutdown records pending-job drops. |
+| `conversation.job.consumed` | An accepted job read the snapshot passed to conversation work. This is not a run-completion or delivery-success event. |
+
+Every admission has an `admissionId`, every decision has a `decisionId`, and only
+accepted jobs get a `jobId`. A coalesced admission has `jobId: null` and a
+`retainedJobId` linking to the pending job it did not replace. `pendingCount`
+excludes the active job. Distinct decisions retain their semantic identity even
+when request envelopes or other payload fields otherwise match.
+
+`triggerMessageId` identifies the actual submitted message when known; explicit
+actions leave it null. `queued` and `consumed` each contain the latest message ID,
+latest human-message ID, and process-local activity revision at that boundary.
+They can differ: a pending job can consume messages newer than its trigger.
+The activity revision is not a durable database version or a message count.
+Absent evidence is null. Optional identity strings exceeding 256 characters are
+omitted with an explicit `omittedDetailCount`; generated admission/job/decision
+identities remain intact. These fixed-shape records fit the 8 KiB structured-event
+budget and contain no message text. Existing raw-evidence bounds are unchanged.
+
+Queued callbacks and shutdown disposition preserve their enqueue-time trace,
+including absence of a request ID for background work. New background conversation
+admissions establish a trace without fabricating an HTTP request. Observers enqueue
+without awaiting destination writes; a failed observer cannot replace a job error.
+Existing log drops, independent retention, or a crash can leave evidence incomplete.
+
+Select operator visibility in OWNER diagnostics to include these records alongside
+authorized raw evidence. Run/turn terminal summaries and whole-trace UI navigation
+are subsequent slices of [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150),
+not implied by queue admission or consumption.
+
 ## Troubleshooting and agent-visible behavior
 
 - `model_unavailable`: refresh discovery and select a listed provider/model/variant.
