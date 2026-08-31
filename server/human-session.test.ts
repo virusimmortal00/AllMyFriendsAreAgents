@@ -19,6 +19,19 @@ function response() {
 }
 
 describe("human sessions", () => {
+  it("issues a separate stable CSRF token bound to each opaque session", () => {
+    const sessions = new HumanSessions();
+    const first = sessions.issue("human-a");
+    const second = sessions.issue("human-b");
+    const firstCookie = `${HUMAN_SESSION_COOKIE}=${first}`;
+    expect(sessions.csrfToken(firstCookie)).toBeTruthy();
+    expect(sessions.csrfToken(firstCookie)).not.toBe(first);
+    expect(sessions.csrfToken(firstCookie)).not.toBe(sessions.csrfToken(`${HUMAN_SESSION_COOKIE}=${second}`));
+    expect(sessions.issue("human-a")).toBe(first);
+    expect(sessions.csrfToken()).toBeUndefined();
+    expect(sessions.csrfToken(`${HUMAN_SESSION_COOKIE}=unknown`)).toBeUndefined();
+    expect(new HumanSessions().csrfToken(firstCookie)).toBeUndefined();
+  });
   it("ignores a caller-supplied participant ID and binds a new opaque session", () => {
     const humans = new HumanPresenceRegistry();
     const sessions = new HumanSessions();

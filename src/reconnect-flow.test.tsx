@@ -400,6 +400,8 @@ describe("rendered reconnect recovery", () => {
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       roster,
+      access: { kind: "room-member", csrfToken: "member-csrf" },
+      modelDiscovery: { status: "available", models: [] },
       catalog: [
         { agentId: "codex-sol", provider: "openai", modelId: "gpt-5.6-sol", conversationalName: "Sol" },
         { agentId: "claude-opus", provider: "anthropic", modelId: "claude-opus-5", conversationalName: "Opus" },

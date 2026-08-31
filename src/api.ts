@@ -5,7 +5,7 @@ import type { CommandMutationAcknowledgement, MessageMutationAcknowledgement, Ro
 import type { MessageMention } from "../shared/mentions";
 import type { Task, TaskChange } from "../shared/task-domain";
 import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashboard, InvestigationInboxEntry } from "./types";
-import type { RoomAgentRoster, RoomAgentRosterEntry } from "../shared/roster";
+import type { RoomAgentRoster, RoomAgentRosterEntry, RoomRosterAccess } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
@@ -14,6 +14,7 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 const GITHUB_DISCOVERY_TIMEOUT_MS = 30_000;
 let controlCsrfToken = "";
+let rosterCsrfToken = "";
 const pollVoteIds = new Map<string,string>();
 const pollCloseIds = new Map<string,string>();
 
@@ -136,6 +137,7 @@ export interface RosterCatalogEntry {
 }
 
 export interface RosterResponse {
+  readonly access?: RoomRosterAccess;
   readonly roster: RoomAgentRoster;
   readonly catalog: readonly RosterCatalogEntry[];
   readonly modelDiscovery?: ModelDiscoveryResult;
@@ -144,7 +146,7 @@ export interface RosterResponse {
 }
 
 export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
-  return request("/api/model-discovery/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
+  return request("/api/model-discovery/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": rosterCsrfToken || controlCsrfToken }, body: "{}" }).then((response) => response.json());
 }
 
 export async function loadModelOfferDetails(providerId: string, modelId: string, signal?: AbortSignal): Promise<ModelOfferDetails> {
@@ -154,11 +156,14 @@ export async function loadModelOfferDetails(providerId: string, modelId: string,
 }
 
 export async function loadRoster(): Promise<RosterResponse> {
-  return request("/api/roster", { method: "GET", cache: "no-store" }).then((response) => response.json());
+  rosterCsrfToken = "";
+  const result: RosterResponse = await request("/api/roster", { method: "GET", cache: "no-store" }).then((response) => response.json());
+  rosterCsrfToken = result.access?.csrfToken || "";
+  return result;
 }
 
 export async function updateRoster(expectedRevision: number, entries: readonly RoomAgentRosterEntry[]): Promise<RosterResponse> {
-  return request("/api/roster", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
+  return request("/api/roster", { method: "PUT", headers: { "X-AMFAA-CSRF": rosterCsrfToken || controlCsrfToken }, body: JSON.stringify({ expectedRevision, entries }) }).then((response) => response.json());
 }
 
 export interface RoomConfiguration {
@@ -197,7 +202,12 @@ export async function loadControlMe() { const result = await request("/api/contr
 export async function controlLogin(username: string, password: string) { const result = await request("/api/control/login", { method: "POST", body: JSON.stringify({ username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
 export async function bootstrapControlPlane(bootstrapSecret: string, username: string, password: string) { const result = await request("/api/control/bootstrap", { method: "POST", body: JSON.stringify({ bootstrapSecret, username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
 export async function loadProviderSetup() { return request("/api/provider-setup", { method: "GET", cache: "no-store" }).then((response) => response.json()); }
-export async function initiateProviderSetup() { return request("/api/provider-setup/initiate", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json()); }
+export async function initiateProviderSetup() {
+  // Roster access no longer initializes an administrator session. Step up only
+  // when this separate provider-configuration action is explicitly requested.
+  await loadControlMe();
+  return request("/api/provider-setup/initiate", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json());
+}
 export async function refreshProviderSetup() { return request("/api/provider-setup/refresh", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: "{}" }).then((response) => response.json() as Promise<ModelDiscoveryResult>); }
 export async function loadControlPrincipals() { return request("/api/control/principals", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ principals: ControlPrincipal[] }>); }
 export async function createControlPrincipal(username: string, password: string, role: "ADMIN" | "MEMBER", capabilities: string[]) { return request("/api/control/principals", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ username, password, role, capabilities }) }).then((response) => response.json() as Promise<ControlPrincipal>); }

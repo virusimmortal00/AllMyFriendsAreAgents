@@ -12,6 +12,24 @@ const catalog = [
 ] as const;
 
 describe("roster manager", () => {
+  it("loads and saves as a room member without requesting owner credentials", async () => {
+    const roster = { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster, catalog, modelDiscovery: { status: "available", models: [] }, access: { kind: "room-member", csrfToken: "member-csrf" } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: false }] }, catalog }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByRole("textbox", { name: "Username" })).toBeNull();
+    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 5 })));
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/roster", "/api/roster"]);
+    expect(new Headers(fetchMock.mock.calls[1][1].headers).get("X-AMFAA-CSRF")).toBe("member-csrf");
+  });
+
   it("preserves a requested /gh grant while showing missing server configuration on narrow layouts", async () => {
     const capabilityStatuses = { "codex-sol": { agentId: "codex-sol", policyRevision: 1, capabilities: {
       conversation: { configured: true, runtimeAvailable: true, effective: true, reason: "available", guidance: "Enable the agent." },
