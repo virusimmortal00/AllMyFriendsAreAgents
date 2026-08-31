@@ -7,6 +7,7 @@ import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type Pr
 import { DialogFrame } from "./dialog-frame";
 import { RoomControls, type RoomSettingsInput } from "./components";
 import { VIEWS } from "./view-registry";
+import { GitHubIntegrationDialog } from "./github-integration-dialog";
 
 type PropertiesPage = "general" | "agent-behavior";
 
@@ -17,7 +18,7 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
   onClose: () => void;
 }
 
-function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void }) {
+function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void; onSignIn: (trigger: HTMLButtonElement) => void }) {
   const [saved, setSaved] = useState<RoomConfiguration>();
   const [basePromptText, setBasePromptText] = useState("");
   const [basePromptEnabled, setBasePromptEnabled] = useState(true);
@@ -36,6 +37,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: bo
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [signInRequired, setSignInRequired] = useState(false);
   const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode]);
 
   useEffect(() => {
@@ -90,6 +92,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: bo
     }
     setSaving(true);
     setError("");
+    setSignInRequired(false);
     try {
       const nextBasePrompt = basePromptEnabled ? basePromptText : null;
       const update = {
@@ -103,7 +106,9 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: bo
       setSaved(result.settings);
       if (closeAfter) onClose();
     } catch (failure) {
-      setError(failure instanceof ApiRequestError && failure.status === 401 ? "Sign in as a server administrator through Manage agents, then try again." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
+      const requiresSignIn = failure instanceof ApiRequestError && failure.status === 401;
+      setSignInRequired(requiresSignIn);
+      setError(requiresSignIn ? "Sign in as a server administrator in the GitHub settings dialog, close it, then apply your changes again. Your draft will stay open." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
     } finally { setSaving(false); }
   }
 
@@ -111,7 +116,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: bo
   return <section className="room-configuration-panel" role="tabpanel" id="room-properties-agent-panel" aria-labelledby="room-properties-agent-tab" hidden={!active}>
     <div className="room-properties-page-content">
       {loading ? <p role="status">Loading agent behavior…</p> : null}
-      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
+      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{signInRequired ? <button type="button" className="classic-button" onClick={(event) => onSignIn(event.currentTarget)}>Administrator sign-in…</button> : null}{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
       {!loading && saved ? <>
         <section className="room-configuration-card classic-group" aria-labelledby="base-prompt-heading">
           <h3 id="base-prompt-heading">Base Prompt</h3>
@@ -152,12 +157,13 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: bo
 }
 
 export function RoomPropertiesDialog({ returnFocusTo, onClose, ...general }: RoomPropertiesDialogProps) {
+  const [signInTrigger, setSignInTrigger] = useState<HTMLButtonElement | null>(null);
   const [page, setPage] = useState<PropertiesPage>("general");
   const [generalDirty, setGeneralDirty] = useState(false);
   const [agentBehaviorDirty, setAgentBehaviorDirty] = useState(false);
   const finishGeneral = useCallback(() => agentBehaviorDirty ? setPage("agent-behavior") : onClose(), [agentBehaviorDirty, onClose]);
   const finishAgentBehavior = useCallback(() => generalDirty ? setPage("general") : onClose(), [generalDirty, onClose]);
-  return <DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
+  return <><DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
     <div className="classic-tabs" role="tablist" aria-label="Room property pages">
       <button type="button" role="tab" id="room-properties-general-tab" aria-selected={page === "general"} aria-controls="room-properties-general-panel" onClick={() => setPage("general")}>General</button>
       <button type="button" role="tab" id="room-properties-agent-tab" aria-selected={page === "agent-behavior"} aria-controls="room-properties-agent-panel" onClick={() => setPage("agent-behavior")}>Agent behavior</button>
@@ -165,12 +171,13 @@ export function RoomPropertiesDialog({ returnFocusTo, onClose, ...general }: Roo
     <section role="tabpanel" id="room-properties-general-panel" aria-labelledby="room-properties-general-tab" hidden={page !== "general"}>
       <RoomControls {...general} showTitle={false} propertySheet onCancel={onClose} onDirtyChange={setGeneralDirty} onSaved={finishGeneral} />
     </section>
-    <RoomConfigurationPanel active={page === "agent-behavior"} onClose={finishAgentBehavior} onDirtyChange={setAgentBehaviorDirty} />
-  </DialogFrame>;
+    <RoomConfigurationPanel active={page === "agent-behavior"} onClose={finishAgentBehavior} onDirtyChange={setAgentBehaviorDirty} onSignIn={setSignInTrigger} />
+  </DialogFrame>{signInTrigger ? <GitHubIntegrationDialog returnFocusTo={signInTrigger} onClose={() => setSignInTrigger(null)} /> : null}</>;
 }
 
 export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocusTo: HTMLElement | null; onClose: () => void }) {
-  return <DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesAgentBehavior}>
-    <RoomConfigurationPanel active onClose={onClose} />
-  </DialogFrame>;
+  const [signInTrigger, setSignInTrigger] = useState<HTMLButtonElement | null>(null);
+  return <><DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesAgentBehavior}>
+    <RoomConfigurationPanel active onClose={onClose} onSignIn={setSignInTrigger} />
+  </DialogFrame>{signInTrigger ? <GitHubIntegrationDialog returnFocusTo={signInTrigger} onClose={() => setSignInTrigger(null)} /> : null}</>;
 }

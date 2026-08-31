@@ -193,6 +193,7 @@ export async function loadRoomConfigurationModels(): Promise<ModelDiscoveryResul
 }
 
 export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean>; preflightMode: import("../shared/preflight").PreflightMode }>): Promise<{ settings: RoomConfiguration }> {
+  await loadControlMe();
   return request("/api/room/settings", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(update) }).then((response) => response.json());
 }
 

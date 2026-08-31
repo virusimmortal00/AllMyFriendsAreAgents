@@ -243,17 +243,19 @@ describe("authoritative logging foundation", () => {
   });
 
   it("assigns application events to one subsystem owner and rotates on an independent time bound", async () => {
-    const { destinations, logging } = await memoryFoundation();
+    const { destinations, logging } = await memoryFoundation({ roomId: "room" });
     const facade = new ApplicationLoggerFacade(logging);
     await facade.log("info", "server.startup.completed", { outcome: "ready" });
     await facade.log("info", "agent.tool-policy.snapshot", { outcome: "configured" });
     await facade.log("warn", "room-command-tool.lease", { outcome: "rejected", reason: "expired" });
+    await facade.log("info", "room.roster.audit.changed", { roomId: "room", actorKind: "room-member", actorId: "member", previousRevision: 1, nextRevision: 2, visibility: "operator" });
     await facade.log("warn", "openrouter.provider.rate-limited", { outcome: "deferred" });
     await facade.log("info", "opencode.harness.started", { outcome: "started" });
     await logging.flush();
     expect(records(destinations.get("server-service-lifecycle")!).map(({ event }) => event)).toEqual(["server.startup.completed"]);
     expect(records(destinations.get("capability-decisions")!).map(({ event }) => event)).toEqual(["agent.tool-policy.snapshot"]);
-    expect(records(destinations.get("security-audit")!).map(({ event }) => event)).toEqual(["room-command-tool.lease"]);
+    expect(records(destinations.get("security-audit")!).map(({ event }) => event)).toEqual(["room-command-tool.lease", "room.roster.audit.changed"]);
+    expect(records(destinations.get("security-audit")!)[1]).toMatchObject({ roomId: "room", actorKind: "room-member", actorId: "member", previousRevision: 1, nextRevision: 2, visibility: "operator" });
     expect(records(destinations.get("openrouter-provider")!).map(({ event }) => event)).toEqual(["openrouter.provider.rate-limited"]);
     expect(records(destinations.get("opencode-harness")!).map(({ event }) => event)).toEqual(["opencode.harness.started"]);
 

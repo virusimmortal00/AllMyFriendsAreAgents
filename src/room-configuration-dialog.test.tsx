@@ -24,6 +24,7 @@ describe("RoomConfigurationDialog", () => {
         defaults: { basePromptText: "Default merit rule" },
         routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0, promotionEligible: false },
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(Response.json({ principal: { role: "OWNER" }, csrfToken: "control-proof" }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ settings: { basePromptRevision: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
@@ -38,8 +39,67 @@ describe("RoomConfigurationDialog", () => {
     await user.type(screen.getByLabelText("Prompt", { selector: "textarea" }), "Custom merit rule");
     await user.click(screen.getByRole("button", { name: "OK" }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/room/settings");
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ basePromptText: "Custom merit rule" });
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/control/me");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/room/settings");
+    expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get("X-AMFAA-CSRF")).toBe("control-proof");
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ basePromptText: "Custom merit rule" });
+  });
+
+  it.each([true, false])("preserves drafts through administrator recovery (claimed=%s)", async (claimed) => {
+    const settings = { configurationRevision: 0, basePromptRevision: 0, basePromptText: "Default rule", summarizerModel: null, summarizerPromptText: "Summarize {{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "off", updatedAt: null };
+    let authenticated = false;
+    let loginAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/control/me") return authenticated ? Response.json({ principal: { role: "OWNER" }, csrfToken: "fresh-control-proof" }) : Response.json({ error: "Authentication required" }, { status: 401 });
+      if (url === "/api/control/status") return Response.json({ claimed, bootstrapConfigured: true });
+      if (url === "/api/control/login" || url === "/api/control/bootstrap") {
+        if (++loginAttempts === 1) return Response.json({ error: "Invalid administrator credentials" }, { status: 401 });
+        authenticated = true;
+        return Response.json({ principal: { role: "OWNER" }, csrfToken: "login-control-proof" });
+      }
+      if (url === "/api/control/integrations/github") return Response.json({ connections: [] });
+      if (url === "/api/control/projects/current/repository") return Response.json({ error: "Not configured" }, { status: 404 });
+      if (url === "/api/room/settings") return Response.json({ settings: init?.method === "PUT" ? { ...settings, ...JSON.parse(String(init.body)) } : settings });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
+    const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
+    await user.clear(prompt);
+    await user.type(prompt, "Draft room rule");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    const signIn = await screen.findByRole("button", { name: "Administrator sign-in…" });
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    await user.click(signIn);
+    await screen.findByRole("heading", { name: claimed ? "Server administrator sign in" : "Claim server owner" });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "GitHub" })).toBeNull();
+    expect(document.activeElement).toBe(signIn);
+    expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(signIn);
+    const username = await screen.findByLabelText("Username");
+    await user.type(username, "test-admin");
+    await user.type(screen.getByLabelText("Password"), "synthetic-test-password");
+    if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "synthetic-bootstrap-secret");
+    await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
+    expect(await screen.findByText("Invalid administrator credentials")).toBeTruthy();
+    expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
+    await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
+    await screen.findByRole("heading", { name: "Connect GitHub" });
+    await user.click(screen.getByRole("button", { name: "Close GitHub integration" }));
+    expect(document.activeElement).toBe(signIn);
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.queryByRole("alert")).toBeNull();
+    const saved = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(saved?.[1]?.body))).toEqual({ basePromptText: "Draft room rule" });
+    expect(new Headers(saved?.[1]?.headers).get("X-AMFAA-CSRF")).toBe("fresh-control-proof");
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("opens on General immediately and loads agent settings and models only when requested", async () => {
