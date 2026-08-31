@@ -1,8 +1,9 @@
 import type { AgentId, RoomState } from "./types.js";
-import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
+import { stripUnsupportedEmojiWithDiagnostics } from "../shared/aim-smileys.js";
+import type { ObservedConversationState, TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
-import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatText, type YieldReason } from "../shared/message-format.js";
+import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatTextWithDiagnostics, type YieldReason } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
 
@@ -11,6 +12,7 @@ export interface ConversationTurn {
   instruction: string;
   includeDiff?: boolean;
   visibleMessageLimit?: number;
+  visibleMessageLimitSource?: VisibleMessageLimitSource;
   preflight?: {
     decisionId: string;
     shadowSuppressed: boolean;
@@ -32,6 +34,7 @@ export interface TurnResult {
 export interface InvestigationRequest { objective: string; trigger: string; evidenceRefs: Array<{ kind: "project_artifact" | "observability"; ref: string; label?: string }> }
 
 export interface ParsedAgentTurn {
+  diagnostics: TurnInterpretationDiagnostics;
   visibleMessages: string[];
   replyCandidates: AgentId[];
   mentionedAgents: AgentId[];
@@ -45,7 +48,7 @@ export interface ParsedAgentTurn {
   dispositionMalformed?: boolean;
 }
 
-export type ConversationState = "settled" | "open" | "blocked";
+export type ConversationState = ObservedConversationState;
 
 export interface ConversationRunResult {
   pauseReason?: string;
@@ -184,25 +187,63 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
   });
 }
 
-export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS): ParsedAgentTurn {
+export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS, limitSource: VisibleMessageLimitSource = visibleMessageLimit === 3 ? "default-burst-cap" : "caller-limit"): ParsedAgentTurn {
   const speakerName = AGENT_PROFILES[agent]?.conversationalName;
+  const originalLength = text.length;
   text = stripAgentSelfLabel(text, speakerName);
   const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
   const investigationRequest = parseInvestigationRequest(text);
   const disposition = parseTurnDisposition(text);
-  if (disposition.status === "malformed" || disposition.status === "valid" && disposition.action === "yield" || isNoResponseNeeded(text)) {
+  const suppressionReason = disposition.status === "malformed" ? "malformed-disposition"
+    : disposition.status === "valid" && disposition.action === "yield" ? "structured-yield"
+    : isNoResponseNeeded(text) ? "legacy-no-response" : null;
+  const effectiveLimit = Math.trunc(Math.max(0, Math.min(3, visibleMessageLimit))) || 0;
+  const diagnostics: TurnInterpretationDiagnostics = {
+    parserRevision: 1, dispositionStatus: disposition.status,
+    dispositionAction: disposition.status === "valid" ? disposition.action : null,
+    yieldReason: disposition.status === "valid" && disposition.action === "yield" ? disposition.reason : null,
+    suppressionReason, declaredConversationState: declaredState ?? null, effectiveConversationState: null,
+    continuationWorthy: false, requestedVisibleMessageLimit: Number.isFinite(visibleMessageLimit) ? visibleMessageLimit : null,
+    effectiveVisibleMessageLimit: effectiveLimit, limitSource,
+    burstAccounting: "not-evaluated", parsedBurstCount: null, removedBurstCount: null,
+    eligibleBurstCount: null, retainedBurstCount: null, truncatedBurstCount: null,
+    removals: { protocolDirectives: 0, protocolCharacters: 0, workflowPrefaceParagraphs: 0, workflowPrefaceCharacters: 0,
+      speakerLabelCharacters: originalLength - text.length, unsupportedEmojiGraphemes: 0, unsupportedEmojiCharacters: 0,
+      whitespaceCharacters: 0, emptyBursts: 0, legacyNoResponseBursts: 0 },
+  };
+  if (suppressionReason) {
     return {
+      diagnostics,
       visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false,
       ...(disposition.status === "valid" && disposition.action === "yield" ? { yieldReason: disposition.reason } : {}),
       ...(disposition.status === "malformed" ? { dispositionMalformed: true } : {}),
     };
   }
-  const visibleMessages = visibleAgentChatText(text, speakerName)
-    .split(NEXT_MESSAGE)
-    .map((message) => stripAgentSelfLabel(message, speakerName))
-    .map(stripUnsupportedEmoji)
-    .filter((message) => message && message !== "NO_RESPONSE_NEEDED")
-    .slice(0, Math.max(0, Math.min(3, visibleMessageLimit)));
+  const visible = visibleAgentChatTextWithDiagnostics(text, speakerName);
+  diagnostics.removals.protocolDirectives = visible.protocolDirectives;
+  diagnostics.removals.protocolCharacters = visible.protocolCharacters;
+  diagnostics.removals.workflowPrefaceParagraphs = visible.workflowPrefaceParagraphs;
+  diagnostics.removals.workflowPrefaceCharacters = visible.workflowPrefaceCharacters;
+  diagnostics.removals.speakerLabelCharacters += visible.speakerLabelCharacters;
+  diagnostics.removals.whitespaceCharacters = visible.whitespaceCharacters;
+  const bursts = visible.text.split(NEXT_MESSAGE);
+  const eligible = bursts.map((message) => {
+    const withoutLabel = stripAgentSelfLabel(message, speakerName);
+    diagnostics.removals.speakerLabelCharacters += message.length - withoutLabel.length;
+    const withoutEmoji = stripUnsupportedEmojiWithDiagnostics(withoutLabel);
+    diagnostics.removals.unsupportedEmojiGraphemes += withoutEmoji.removedGraphemes;
+    diagnostics.removals.unsupportedEmojiCharacters += withoutEmoji.removedCharacters;
+    diagnostics.removals.whitespaceCharacters += withoutEmoji.whitespaceCharacters;
+    return withoutEmoji.text;
+  }).filter((message) => {
+    if (!message) { diagnostics.removals.emptyBursts++; return false; }
+    if (message === "NO_RESPONSE_NEEDED") { diagnostics.removals.legacyNoResponseBursts++; return false; }
+    return true;
+  });
+  const visibleMessages = eligible.slice(0, effectiveLimit);
+  Object.assign(diagnostics, { burstAccounting: "evaluated", parsedBurstCount: bursts.length,
+    removedBurstCount: bursts.length - eligible.length, eligibleBurstCount: eligible.length,
+    retainedBurstCount: visibleMessages.length, truncatedBurstCount: eligible.length - visibleMessages.length });
   const combinedText = visibleMessages.join("\n");
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
   const mentionedAgents = otherAgents.filter((candidate) => {
@@ -211,16 +252,19 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     return namePattern.test(combinedText);
   });
   const styleUpdate = currentStyle ? extractStyleDirective(text, currentStyle) : undefined;
+  diagnostics.effectiveConversationState = declaredState ?? null;
+  diagnostics.continuationWorthy = visibleMessages.length > 0 && (mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText));
   return {
+    diagnostics,
     visibleMessages,
     replyCandidates: visibleMessages.length > 0 ? otherAgents : [],
     mentionedAgents,
     visibleMessageCount: visibleMessages.length,
-    continuationWorthy: visibleMessages.length > 0 && (mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText)),
+    continuationWorthy: diagnostics.continuationWorthy,
     ...(declaredState ? { conversationState: declaredState } : {}),
     ...(styleUpdate ? { styleUpdate } : {}),
     ...(investigationRequest ? { investigationRequest } : {}),
-    ...(disposition.status === "valid" ? { disposition: disposition.action } : {}),
+    ...(disposition.status === "valid" && disposition.action === "speak" ? { disposition: disposition.action } : {}),
   };
 }
 

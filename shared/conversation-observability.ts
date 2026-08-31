@@ -50,3 +50,34 @@ export type ConversationJobConsumedEvent = ConversationJobEvidence & {
 };
 
 export type ConversationJobEvent = ConversationJobDecisionEvent | ConversationJobConsumedEvent;
+
+export type ObservedConversationState = "settled" | "open" | "blocked";
+export type VisibleMessageLimitSource = "default-burst-cap" | "caller-limit" | "remaining-budget" | "opening" | "conversation-floor" | "synthesis" | "objection" | "reconciliation";
+
+export interface TurnInterpretationDiagnostics {
+  parserRevision: 1;
+  dispositionStatus: "missing" | "valid" | "malformed";
+  dispositionAction: "speak" | "yield" | null;
+  yieldReason: YieldReason | null;
+  suppressionReason: "structured-yield" | "malformed-disposition" | "legacy-no-response" | null;
+  declaredConversationState: ObservedConversationState | null;
+  effectiveConversationState: ObservedConversationState | null;
+  continuationWorthy: boolean;
+  requestedVisibleMessageLimit: number | null;
+  effectiveVisibleMessageLimit: number;
+  limitSource: VisibleMessageLimitSource;
+  burstAccounting: "evaluated" | "not-evaluated";
+  parsedBurstCount: number | null;
+  removedBurstCount: number | null;
+  eligibleBurstCount: number | null;
+  retainedBurstCount: number | null;
+  truncatedBurstCount: number | null;
+  /** Characters use UTF-16 code units, like string.length; unlike units are not summed. */
+  removals: {
+    protocolDirectives: number; protocolCharacters: number;
+    workflowPrefaceParagraphs: number; workflowPrefaceCharacters: number;
+    speakerLabelCharacters: number; unsupportedEmojiGraphemes: number; unsupportedEmojiCharacters: number;
+    whitespaceCharacters: number; emptyBursts: number; legacyNoResponseBursts: number;
+  };
+}
+import type { YieldReason } from "./message-format.js";

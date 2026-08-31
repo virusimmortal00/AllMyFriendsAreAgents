@@ -660,7 +660,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
@@ -752,11 +752,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
-  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents());
+  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
     agent,
+    interpretation: parsed.diagnostics,
     visibleMessages: parsed.visibleMessages,
     visibleMessageCount: parsed.visibleMessages.length,
     visibleCharacters: parsed.visibleMessages.reduce((total, message) => total + message.length, 0),

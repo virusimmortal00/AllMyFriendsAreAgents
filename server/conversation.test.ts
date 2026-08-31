@@ -41,6 +41,7 @@ describe("agent turn parsing", () => {
 
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex-sol", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: ["Claude, what do you think?"],
       replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
       mentionedAgents: ["claude-sonnet"],
@@ -65,6 +66,7 @@ describe("agent turn parsing", () => {
 
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude-sonnet", "NO_RESPONSE_NEEDED")).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: [],
       replyCandidates: [],
       mentionedAgents: [],
@@ -102,6 +104,7 @@ describe("agent turn parsing", () => {
       "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#ED36FF\",\"backgroundColor\":\"#ECECEC\",\"bold\":true,\"italic\":false,\"underline\":false}",
       DEFAULT_PARTICIPANT_STYLES["claude-sonnet"],
     )).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: ["A useful answer."],
       replyCandidates: AGENT_IDS.filter((agent) => agent !== "claude-sonnet"),
       mentionedAgents: [],
