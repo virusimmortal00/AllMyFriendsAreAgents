@@ -1,6 +1,6 @@
 import path from "node:path";
 import { defaultGitHubCredentialKeyPath, loadBundledGitHubAppConfiguration, type BundledGitHubAppConfiguration } from "./github-app-configuration.js";
-import { EncryptedGitHubCredentialVault } from "./github-credential-vault.js";
+import { EncryptedGitHubCredentialVault, type OpenEncryptedGitHubCredentialVaultInput } from "./github-credential-vault.js";
 import { GitHubDeviceAuthorizationCoordinator } from "./github-device-authorization.js";
 import { GitHubDeviceFlowClient } from "./github-device-flow.js";
 import { BoundGitHubCredentialProvider, GitHubIntegrationStore } from "./github-integration-store.js";
@@ -22,6 +22,7 @@ export async function openGitHubIntegrationRuntime(input: {
   readonly dataDirectory: string;
   readonly configurationPath?: string;
   readonly credentialKeyPath?: string;
+  readonly onRefreshEvent?: OpenEncryptedGitHubCredentialVaultInput["onRefreshEvent"];
 }): Promise<GitHubIntegrationRuntime | undefined> {
   const configuration = await loadBundledGitHubAppConfiguration(input.configurationPath ?? path.join(input.projectRoot, "config/github-app.json"));
   if (!configuration) return undefined;
@@ -31,6 +32,7 @@ export async function openGitHubIntegrationRuntime(input: {
     vaultPath: path.join(input.dataDirectory, "github-credentials.enc"),
     keyPath: input.credentialKeyPath ?? defaultGitHubCredentialKeyPath(input.projectRoot),
     refresh: (token) => deviceFlow.refresh(token),
+    onRefreshEvent: input.onRefreshEvent,
   });
   const credentials = new BoundGitHubCredentialProvider(integrations, vault);
   const authorizations = new GitHubDeviceAuthorizationCoordinator(deviceFlow, integrations, vault);

@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EncryptedGitHubCredentialVault, type GitHubDeviceUserVaultCredential } from "./github-credential-vault.js";
+import { EncryptedGitHubCredentialVault, type GitHubCredentialRefreshEvent, type GitHubDeviceUserVaultCredential } from "./github-credential-vault.js";
 
 const roots: string[] = [];
 const firstTime = "2026-08-28T14:00:00.000Z";
@@ -103,7 +103,8 @@ describe("encrypted GitHub credential vault", () => {
     const now = "2026-08-28T22:00:00.000Z";
     const refresh = vi.fn(async () => ({ accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
       tokenType: "bearer" as const, expiresInSeconds: 28_800, refreshTokenExpiresInSeconds: 15_897_600 }));
-    const options = { vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => now, refresh };
+    const events: GitHubCredentialRefreshEvent[] = [];
+    const options = { vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => now, refresh, onRefreshEvent: (event: GitHubCredentialRefreshEvent) => events.push(event) };
     const one = await EncryptedGitHubCredentialVault.open(options);
     const two = await EncryptedGitHubCredentialVault.open(options);
     expect(one.available("github-secret-one")).toBe(true);
@@ -116,6 +117,11 @@ describe("encrypted GitHub credential vault", () => {
     } });
     expect(await reopened.read("github-secret-one")).toEqual(values[0]);
     expect(await readFile(f.vaultPath, "utf8")).not.toMatch(/ghu_|ghr_/);
+    expect(events).toEqual([
+      { correlationId: expect.any(String), outcome: "attempted", reason: null, credentialRevision: 1 },
+      { correlationId: events[0]!.correlationId, outcome: "completed", reason: null, credentialRevision: 2 },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/ghu_|ghr_|github-secret-one/);
   });
 
   it("never returns expired credentials without a usable refresh path", async () => {
@@ -141,10 +147,54 @@ describe("encrypted GitHub credential vault", () => {
     const refresh = vi.fn().mockRejectedValueOnce(new Error("raw ghr_secret_must_not_escape"))
       .mockResolvedValueOnce({ accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
         tokenType: "bearer", expiresInSeconds: 28_800, refreshTokenExpiresInSeconds: 15_897_600 });
-    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-29T00:00:00.000Z", refresh });
+    const events: GitHubCredentialRefreshEvent[] = [];
+    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-29T00:00:00.000Z", refresh,
+      onRefreshEvent: (event) => events.push(event) });
     expect(await vault.read("github-secret-one")).toBeUndefined();
     expect(vault.readCredential("github-secret-one")).toMatchObject({ revision: 1, credential: credential() });
     expect(await vault.read("github-secret-one")).toMatchObject({ revision: "vault:2", token: "ghu_rotated_access_1234567890" });
+    expect(events.map(({ outcome, reason }) => ({ outcome, reason }))).toEqual([
+      { outcome: "attempted", reason: null }, { outcome: "failed", reason: "upstream" },
+      { outcome: "attempted", reason: null }, { outcome: "completed", reason: null },
+    ]);
+    expect(events[0]!.correlationId).toBe(events[1]!.correlationId);
+    expect(events[2]!.correlationId).toBe(events[3]!.correlationId);
+    expect(events[0]!.correlationId).not.toBe(events[2]!.correlationId);
+    expect(JSON.stringify(events)).not.toMatch(/raw|ghr_|ghu_|github-secret-one/);
+  });
+
+  it.each(["invalid-response", "storage-failed"] as const)("audits %s without releasing a replacement token", async (reason) => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const events: GitHubCredentialRefreshEvent[] = [];
+    const refresh = vi.fn(async () => {
+      if (reason === "storage-failed") {
+        // Prevent the atomic rename using only this test's temporary vault path.
+        await rm(f.vaultPath);
+        await mkdir(f.vaultPath);
+      }
+      return { accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
+        tokenType: "bearer" as const, expiresInSeconds: reason === "invalid-response" ? -1 : 28_800, refreshTokenExpiresInSeconds: 15_897_600 };
+    });
+    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-29T00:00:00.000Z", refresh,
+      onRefreshEvent: (event) => events.push(event) });
+    expect(await vault.read("github-secret-one")).toBeUndefined();
+    expect(events).toEqual([
+      { correlationId: expect.any(String), outcome: "attempted", reason: null, credentialRevision: 1 },
+      { correlationId: events[0]!.correlationId, outcome: "failed", reason, credentialRevision: 1 },
+    ]);
+    expect(vault.readCredential("github-secret-one")).toMatchObject({ revision: 1, credential: credential() });
+  });
+
+  it("keeps credential resolution independent of an unavailable audit sink", async () => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const onRefreshEvent = vi.fn().mockRejectedValue(new Error("sink unavailable"));
+    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-29T00:00:00.000Z", onRefreshEvent,
+      refresh: async () => ({ accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
+        tokenType: "bearer", expiresInSeconds: 28_800, refreshTokenExpiresInSeconds: 15_897_600 }) });
+    expect(await vault.read("github-secret-one")).toMatchObject({ revision: "vault:2" });
+    expect(onRefreshEvent).toHaveBeenCalledTimes(2);
   });
 
   it("reloads deletions before reading through an older vault instance", async () => {
