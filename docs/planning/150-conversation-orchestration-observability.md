@@ -9,7 +9,7 @@ updated: 2026-08-31
 
 Canonical issue: [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
 This is the adopted, experimentally checked implementation design, not a
-replacement tracker. Slice 1 is implemented; later acceptance remains pending.
+replacement tracker. Slices 1 and 2 are implemented; later acceptance remains pending.
 Research baseline inspected: commit
 `e1c5b9cf5b3371c27f2784b59b3fdd7c1153d7fc`.
 
@@ -77,9 +77,14 @@ dispatch, coalescing, rejection, shutdown-drop, and snapshot-consumption evidenc
 Both HTTP message paths and explicit room actions use the same tested boundary.
 No raw-evidence visibility, routing policy, or provider behavior changed.
 
-Later slices remain unimplemented: parser/delivery/terminal summaries, full
-run/turn/attempt propagation, decision observers, stderr severity, and whole-trace
-navigation. The findings below describe the **research baseline before slice 1**,
+Slice 2 adds measured parser diagnostics, guarded delivery accounting, additive
+branch-derived terminal summaries, and run/turn/attempt correlation. The terminal
+summaries are returned by the engines and available to a non-awaiting callback;
+their runtime event adapters are intentionally part of slice 3. Existing energy
+settlement flags, prose pause reasons, follow-up policy, and raw evidence remain.
+
+Later slices remain unimplemented: decision/run/turn observers, stderr severity,
+and whole-trace navigation. The findings below describe the **research baseline before slice 1**,
 verified by source inspection unless otherwise noted:
 
 | Surface | Implemented behavior and gap |
@@ -439,9 +444,9 @@ all required responsive checkpoints.
 
 ## Next action
 
-Continue in dependency-ordered slices. Slice 1 is implemented; the next bounded
-step is slice 2's canonical facts and correlation, with focused tests and atomic
-commits:
+Continue in dependency-ordered slices. Slices 1 and 2 are implemented; the next
+bounded step is slice 3's structured observation and severity, consuming the
+canonical facts without duplicating scheduling policy:
 
 1. **Queue-context fix and admission evidence (implemented).** Fix the reproduced
    defect where a queued job inherits the preceding request's logging context:
@@ -454,7 +459,7 @@ commits:
    queued-versus-consumed activity/message evidence. Establish shared versioned
    event/reason contracts and regression fixtures for semantic coalescing. Do not
    postpone the actual context fix to a later instrumentation slice.
-2. **Canonical facts and correlation.** Thread run/turn/attempt identity into
+2. **Canonical facts and correlation (implemented).** Thread run/turn/attempt identity into
    generation, harness, and provider payloads. Measure the existing parser's
    transformations. Implement the delivery ledger and guarded finalization;
    return actual delivery facts on cancellation/failure. Add compatible typed
@@ -543,6 +548,72 @@ git diff --check
 
 No mapped OpenCode integration surface or visible interface was changed in this
 slice. No live provider call, deployment, or real-room mutation was required.
+
+### Slice 2 implementation verification
+
+The canonical parser now returns versioned diagnostics alongside unchanged
+visible/routing results. It measures the actual normalization, filtering, and
+truncation pipeline; early suppression uses null/not-evaluated burst counts.
+Declared state remains separate from effective state, including a SETTLED marker
+on a yielded turn. Removal character counts use UTF-16 code units; emoji grapheme
+and burst counts are separate units, not interchangeable totals.
+
+`server/generation-delivery.ts` observes existing persistence calls without
+retrying or suppressing them. Each post-interpretation exit attempts one final
+record, including thrown writes and later cursor/disposition failures. Counts
+partition retained output into acknowledged, unattempted, and unconfirmed units.
+Cancellation returns actual delivery facts without changing the scheduler's
+visible-message count. A run-local evidence channel preserves facts on thrown
+paths without replacing the original error. Acknowledged IDs do not prove new
+insertion: the command repository may return an existing message, and its current
+API cannot distinguish insertion from replay. No insertion total is invented.
+
+Both engines expose branch-derived summaries. The energy engine's existing
+settled flag remains distinct from declared/effective settlement, failures,
+cancellation, actual delivery, and individual ceiling flags. Tests retain even
+the existing settled-on-cancelled-objection behavior. Legacy semantic settlement
+is null. Failure summaries include completed concurrent work after the engine's
+existing drain, and pending candidates remain visible. Skipped-turn counts in
+this slice cover explicit energy mention suppression; detailed admission and
+deferred-work decisions remain slice 3 work.
+
+Run/turn scopes preserve enqueue-time job/request/trace identity. OpenCode
+subprocess attempts share a turn and generation during missing-session retry;
+the failed resume is attempt 1 and the fresh invocation is attempt 2. Ordinals
+do not describe retries internal to the provider. Generation, provider, harness,
+and tool records retain the same domain identities in their semantic payloads,
+preventing identical-log coalescing across distinct work. Older records without
+these identities remain readable as unknown rather than synthesized.
+
+Before editing `server/agent-runner.ts`, all reported CLI and permission/tool
+source paths were inspected at OpenCode commit
+`cb7d8b2f5e44876ef98b661dc10590c915af3a9f` (v1.18.25). Review revision 3 records
+the unchanged transport contract. The synthetic subprocess fixture verifies the
+actual missing-session recovery path, scoped-tool reminting, identity continuity,
+and credential filtering without invoking a live provider.
+
+Focused commands:
+
+```bash
+pnpm exec vitest run server/conversation-interpretation.test.ts server/generation-delivery.test.ts server/conversation-run-summary.test.ts server/conversation-context.test.ts
+pnpm exec vitest run server/conversation.test.ts server/agent-runner.test.ts server/authoritative-logging.test.ts server/generation-journal.test.ts
+pnpm exec tsc -p tsconfig.node.json --noEmit
+pnpm run check:quality
+pnpm check:planning-docs -- --self-check
+git diff --check
+```
+
+On 2026-08-31, the full quality gate passed the OpenCode contract tests, UI
+guardrails, production build, and 168 test files: 1,157 passing tests and one
+skipped test. This slice adds 38 tests. Server type checking and the planning
+self-check also passed. The provider-free scheduler probe still covers 1,536
+scenarios without a message-ceiling violation; convergence tests additionally
+freeze turn order, visible limits, and RNG call counts.
+
+No interface layout, authorization rule, storage schema, provider CLI argument,
+or routing policy changes are included. No live-provider or real-room mutation
+was required. Structured-only causal reconstruction remains a later acceptance
+check, not a claim established by these canonical facts alone.
 
 ### Tested design findings
 

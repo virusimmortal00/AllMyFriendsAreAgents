@@ -119,9 +119,47 @@ without awaiting destination writes; a failed observer cannot replace a job erro
 Existing log drops, independent retention, or a crash can leave evidence incomplete.
 
 Select operator visibility in OWNER diagnostics to include these records alongside
-authorized raw evidence. Run/turn terminal summaries and whole-trace UI navigation
-are subsequent slices of [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150),
-not implied by queue admission or consumption.
+authorized raw evidence. Queue admission or consumption does not prove delivery
+or completion.
+
+### Conversation interpretation, delivery, and identity
+
+`generation.interpreted.interpretation` contains versioned parser diagnostics:
+disposition validity/action, suppression reason, declared and effective state,
+continuation, effective message limit/source, actual filtering counts, and burst
+truncation. Early suppressed output has null burst counts with
+`burstAccounting: "not-evaluated"`, not fictional zero parsed units. Character
+counts use UTF-16 code units; emoji graphemes and bursts are counted separately.
+Existing interpreted text and authorized raw evidence are retained.
+
+`generation.delivery` attempts one guarded final record after interpretation,
+including empty output, partial cancellation, and thrown persistence or later
+state-update paths. `retainedBurstCount` equals the sum of
+`confirmedDeliveredBurstCount`, `confirmedUndeliveredBurstCount`, and
+`unconfirmedBurstCount`. An unconfirmed write may have committed before rejecting;
+do not treat it as definite non-delivery. `acknowledgedMessageIds` identify returned
+room messages, including idempotent replay results. They do not establish how many
+new messages were inserted. `deliveredMessageCount` remains a compatibility alias
+for confirmed logical delivery units. A crash or failed sink can still leave a
+missing final record; an attempted finalization is not a durability guarantee.
+
+Conversation jobs now carry a fresh `runId`, each attempted turn has a `turnId`,
+and subprocess evidence carries `attemptOrdinal` alongside `generationId`.
+Pre-generation gates have no generation/attempt identity. A missing-session
+retry keeps its turn and generation IDs, with ordinal 1 on failed-resume evidence
+and 2 on the fresh invocation. These are local subprocess attempts, not
+provider-internal retry counts. Later runs and turns receive new IDs even when
+the provider session is reused. Payload identities survive projection into the
+generation, provider, and harness/tool streams and distinguish otherwise identical
+records for coalescing. Missing identities on older records remain unknown.
+
+Both scheduling engines also return typed terminal summaries for runtime
+instrumentation. `engineSettled` is the existing engine flag, not proof of
+consensus; legacy absence is null. Separate counters report failed/cancelled
+turns, explicit settlement, confirmed delivery, and uncertainty. Run/turn event
+adapters, detailed scheduling decisions, stderr severity correction, and
+whole-trace UI navigation remain subsequent slices of
+[#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
 
 ## Troubleshooting and agent-visible behavior
 
