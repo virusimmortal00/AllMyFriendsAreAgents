@@ -11,6 +11,8 @@ export interface GenerationJournalEvent {
   runId?: string;
   turnId?: string;
   attemptOrdinal?: number;
+  /** Only an already-structured diagnostic level; never inferred from stderr prose. */
+  stderrSeverity?: "info" | "warn" | "error";
   timestamp?: string;
   [key: string]: unknown;
 }
@@ -41,7 +43,9 @@ export class GenerationJournal {
         ...generation
       } = event;
       const context = { generationId: event.generationId, correlationId: event.generationId, agentId: event.agent, selfId: event.agent, visibility: "project" as const };
-      this.logging.log("generations", event.type === "generation.failed" ? "error" : "info", event.type, { ...evidence, ...generation }, context);
+      const level = event.type === "generation.failed" || (event.type === "generation.delivery" && event.outcome === "failed") ? "error"
+        : event.type === "generation.retry" || (event.type === "generation.interpreted" && (event.interpretation as { dispositionStatus?: string } | undefined)?.dispositionStatus === "malformed") ? "warn" : "info";
+      this.logging.log("generations", level, event.type, { ...evidence, ...generation }, context);
       if (cliStdout !== undefined) {
         this.logging.log("opencode-harness", "info", "opencode.stdout", { ...evidence, output: cliStdout, generationEvent: event.type }, context);
         for (const line of String(cliStdout).split("\n")) {
@@ -54,7 +58,11 @@ export class GenerationJournal {
           }
         }
       }
-      if (cliStderr !== undefined) this.logging.log("opencode-harness", "warn", "opencode.stderr", { ...evidence, output: cliStderr, generationEvent: event.type }, context);
+      if (typeof cliStderr === "string" && cliStderr.trim().length > 0) {
+        const severity = event.type === "generation.failed" ? "error" : event.type === "generation.retry" ? "warn"
+          : event.type === "generation.cancelled" ? "info" : event.stderrSeverity || "info";
+        this.logging.log("opencode-harness", severity, "opencode.stderr", { ...evidence, output: cliStderr, generationEvent: event.type }, context);
+      }
       if (providerErrors !== undefined || providerUsage !== undefined || providerCostUsd !== undefined || routing !== undefined || rateLimit !== undefined || cooldown !== undefined || error !== undefined || event.type === "generation.failed") {
         this.logging.log("openrouter-provider", providerErrors !== undefined || event.type === "generation.failed" ? "error" : "info", providerErrors !== undefined || event.type === "generation.failed" ? "provider.exchange.failed" : "provider.exchange.observed", {
           ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
