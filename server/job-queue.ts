@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 export type QueuedJob = () => Promise<void>;
 
 interface PendingJob {
@@ -17,7 +19,9 @@ export class CoalescingJobQueue {
   enqueue(key: string, run: QueuedJob) {
     if (this.closed) return false;
     if (this.running && this.pending.some((job) => job.key === key)) return false;
-    this.pending.push({ key, run });
+    // The drain belongs to the first job; later jobs must restore their own
+    // enqueue-time context, including the absence of a request context.
+    this.pending.push({ key, run: AsyncLocalStorage.bind(run) });
     if (!this.running) void this.drain();
     return true;
   }
