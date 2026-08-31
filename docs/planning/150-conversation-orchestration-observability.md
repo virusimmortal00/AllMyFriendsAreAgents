@@ -9,7 +9,7 @@ updated: 2026-08-31
 
 Canonical issue: [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
 This is the adopted, experimentally checked implementation design, not a
-replacement tracker. Slices 1 and 2 are implemented; later acceptance remains pending.
+replacement tracker. Slices 1–3 are implemented; the OWNER workflow slice remains pending.
 Research baseline inspected: commit
 `e1c5b9cf5b3371c27f2784b59b3fdd7c1153d7fc`.
 
@@ -78,13 +78,15 @@ Both HTTP message paths and explicit room actions use the same tested boundary.
 No raw-evidence visibility, routing policy, or provider behavior changed.
 
 Slice 2 adds measured parser diagnostics, guarded delivery accounting, additive
-branch-derived terminal summaries, and run/turn/attempt correlation. The terminal
-summaries are returned by the engines and available to a non-awaiting callback;
-their runtime event adapters are intentionally part of slice 3. Existing energy
+branch-derived terminal summaries, and run/turn/attempt correlation. Slice 3 now
+consumes these facts in bounded, non-awaiting runtime event adapters. Existing energy
 settlement flags, prose pause reasons, follow-up policy, and raw evidence remain.
 
-Later slices remain unimplemented: decision/run/turn observers, stderr severity,
-and whole-trace navigation. The findings below describe the **research baseline before slice 1**,
+Slice 3 records branch-owned decisions, turn outcomes, run start/completion, and
+pending-entry disposition; stderr severity follows known outcomes. A provider-free
+fixture reconstructs a complete structured round through the existing OWNER query.
+Whole-trace interface navigation and its browser/recovery acceptance remain
+unimplemented. The findings below describe the **research baseline before slice 1**,
 verified by source inspection unless otherwise noted:
 
 | Surface | Implemented behavior and gap |
@@ -444,9 +446,8 @@ all required responsive checkpoints.
 
 ## Next action
 
-Continue in dependency-ordered slices. Slices 1 and 2 are implemented; the next
-bounded step is slice 3's structured observation and severity, consuming the
-canonical facts without duplicating scheduling policy:
+Continue in dependency-ordered slices. Slices 1–3 are implemented; the next
+bounded step is slice 4's OWNER whole-trace workflow and reconstruction checks:
 
 1. **Queue-context fix and admission evidence (implemented).** Fix the reproduced
    defect where a queued job inherits the preceding request's logging context:
@@ -466,7 +467,7 @@ canonical facts without duplicating scheduling policy:
    terminal summaries for both engines before observers depend on them. Freeze
    current routing, turn order, transcript output, and RNG invocation counts.
    Pin the OpenCode source contract before editing mapped integration surfaces.
-3. **Structured observation and severity.** Consume canonical facts at each
+3. **Structured observation and severity (implemented).** Consume canonical facts at each
    scheduling and terminal branch. Cover both engines, deferred/replaced/dropped
    work, pre-generation gates, concurrent draining, and exceptional exits. Route
    through the existing logger with bounded, non-awaiting observers; fix empty
@@ -575,7 +576,7 @@ the existing settled-on-cancelled-objection behavior. Legacy semantic settlement
 is null. Failure summaries include completed concurrent work after the engine's
 existing drain, and pending candidates remain visible. Skipped-turn counts in
 this slice cover explicit energy mention suppression; detailed admission and
-deferred-work decisions remain slice 3 work.
+deferred-work decisions were added in slice 3.
 
 Run/turn scopes preserve enqueue-time job/request/trace identity. OpenCode
 subprocess attempts share a turn and generation during missing-session retry;
@@ -612,8 +613,71 @@ freeze turn order, visible limits, and RNG call counts.
 
 No interface layout, authorization rule, storage schema, provider CLI argument,
 or routing policy changes are included. No live-provider or real-room mutation
-was required. Structured-only causal reconstruction remains a later acceptance
-check, not a claim established by these canonical facts alone.
+was required. Structured-only causal reconstruction was not established by these
+canonical facts alone; the slice 3 verification below exercises that path.
+
+### Slice 3 implementation verification
+
+Both engines now emit typed configuration, decision, turn-finished, and summary
+facts. The orchestration boundary publishes one run start and completion attempt
+through the existing generations stream. Each semantic event has a monotonic
+`runEventSequence`; completion includes `attemptedEventCount`. A preparation
+failure before engine initialization has null configuration/summary, not invented
+policy or success. Its start record retains the boundary's actual start time.
+
+Scheduling facts retain pending-entry identity, source turn/generation/message
+links where known, preflight decision IDs, actual consumed random draws and
+thresholds, pair caps, queue/active state, and effective budgets. Current mentions
+remain labeled `legacy-name-match`. Deferred replacement links the old and new
+pending identities; residual entries receive terminal drop reasons. Observer
+copies prevent a callback from mutating engine-owned facts. No observer reads
+prompts or selects a participant.
+
+Turn records distinguish health/capacity refusals, provider or preparation
+failure, cancellation, malformed disposition, valid yield, visible output, and
+uncertain delivery. Pre-invocation gates do not invent a generation or delivery.
+Once a generation ID exists, a refused start reservation is a typed cancellation,
+with `invocationStarted: false`; the run-local actual attempt remains absent.
+OpenCode's pinned source paths were re-inspected before this mapped runner change,
+and review revision 4 records the unchanged transport/permission contract.
+
+An exceptional legacy callback path was also reproduced: a synchronous throw
+could bypass the existing rejected-promise drain. The finalizer now waits for
+already-started peers, emits their outcomes before the run summary, starts no
+additional work, and rethrows the original error. Normal scheduling, transcript
+output, settlement semantics, and RNG use remain unchanged.
+
+New metadata records stay within the 8 KiB serialized test budget at the maximum
+32-participant roster, including JSON-escaped identities. Optional identity
+detail is omitted with explicit counts; existing raw evidence has no new cap.
+Backpressure and observer throw/rejection/stall do not block the run. A transport
+loss fixture verifies sequence gaps and a final attempted-event total without
+mistaking dropped logs for scheduler decisions.
+
+The real-file OWNER query fixture uses pagination and a newly constructed reader
+to reconstruct a yield, four parsed bursts capped to three, the existing pair-cap
+drop, and the terminal reason using only structured events. It separately proves
+that useful prompts/output remain available, a credential sentinel is removed,
+generation/provider/harness identities join, and a project-only caller cannot
+read operator events. This establishes server-side reconstruction, not the
+unimplemented whole-trace interface or its responsive/browser acceptance.
+
+On 2026-08-31, the final local quality gate passed the pinned integration tests,
+UI guardrails, production build, and 170 test files: 1,191 passing tests and one
+skipped test. This slice adds 34 tests. Server type checking, planning self-check,
+and whitespace validation passed. The 1,536-scenario provider-free scheduler
+probe again reported no ceiling violations and preserved queue-context isolation.
+No visible interface or storage-schema change required a manual browser or
+migration check; no live provider, deployment, or real-room mutation was used.
+
+```bash
+pnpm exec vitest run server/conversation-decisions.test.ts server/conversation-run-observer.test.ts server/generation-journal.test.ts
+pnpm exec vitest run server/conversation.test.ts server/conversation-run-summary.test.ts server/agent-runner.test.ts
+pnpm run check:quality
+pnpm check:planning-docs -- --self-check
+pnpm exec tsx scripts/research-conversation-observability.ts
+git diff --check
+```
 
 ### Tested design findings
 
@@ -654,8 +718,8 @@ The persist-then-throw case is synthetic fault injection demonstrating ambiguous
 acknowledgement, not a reproduced storage durability defect. Journal retry probes
 exercise routing, not a live OpenCode missing-session retry; source inspection
 established that the existing retry reuses the generation ID. Typed observers,
-new terminal events, and the final structured-only round do not exist yet and
-remain implementation acceptance checks.
+terminal events, and structured-only reconstruction were absent from that research
+baseline; their later implementation evidence is recorded above.
 
 ### Local verification of the baseline
 

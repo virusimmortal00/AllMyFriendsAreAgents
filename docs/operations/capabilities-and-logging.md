@@ -156,10 +156,58 @@ records for coalescing. Missing identities on older records remain unknown.
 Both scheduling engines also return typed terminal summaries for runtime
 instrumentation. `engineSettled` is the existing engine flag, not proof of
 consensus; legacy absence is null. Separate counters report failed/cancelled
-turns, explicit settlement, confirmed delivery, and uncertainty. Run/turn event
-adapters, detailed scheduling decisions, stderr severity correction, and
-whole-trace UI navigation remain subsequent slices of
+turns, explicit settlement, confirmed delivery, and uncertainty. These summaries
+now feed the runtime records below. Whole-trace UI navigation remains the final
+slice of
 [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
+
+### Conversation decisions and completion
+
+The generations stream now includes operator-visible `conversation.run.started`,
+`conversation.turn.decision`, `conversation.turn.finished`, and
+`conversation.run.completed` records. `runId` is their correlation ID; `traceId`
+also links the queued job and the existing generation/provider/harness evidence.
+Raw records keep generation-level correlation IDs. No exact query is silently
+broadened to a whole-trace search.
+
+Each decision has a `decisionId`; `pendingDecisionId` persists from queue/defer
+through start, replacement, or drop. `relatedDecisionId` links a replaced pending
+entry to its successor's pending identity. A turn ID is allocated on start, not
+for discarded work. Source turn/generation/message IDs are retained when known.
+Current name-based mentions are labeled `legacy-name-match`, not a new address
+classifier. Target flags reflect the runner's scheduling sets, not the presence
+of a live OS process. Random-draw fields report the draw actually consumed; no
+additional draw is made for logging.
+
+`conversation.turn.finished` records parser and delivery facts without copying
+message text. Health/capacity gates have outcome `blocked` while preserving the
+engine's original failure flag separately; they are not provider failures.
+Confirmed delivery and uncertain acknowledgement remain visible even when the
+turn or subsequent state update fails. Expected cancellation and valid yield are
+informational; malformed disposition is a warning; actual failures are errors.
+
+`conversation.run.completed` is the sole authoritative terminal emission attempt.
+It follows active-turn draining and pending-entry disposition. Its summary keeps
+the original settlement flag distinct from evidence. A preparation exception
+before engine initialization records null configuration/summary and a bounded
+error category; it does not invent a provider failure. Full errors remain in
+their existing diagnostic owner stream.
+
+`runEventSequence` is monotonic within a run, and the final
+`attemptedEventCount` includes the completion event. Missing sequences, an absent
+start/end, unfinished pagination, or unavailable retained raw records indicate an
+incomplete view. Counts describe emission attempts, not guaranteed persistence.
+Do not confuse a scheduler `dropped` decision with the logging transport's drop
+counter. New structured metadata is bounded with `omittedDetailCount`; there is
+no new truncation cap on existing prompts or process output.
+
+Empty or whitespace-only stderr emits no event. Non-empty stderr keeps its
+original redacted text: successful/unclassified output is `info`, a retried
+failure is `warn`, final process failure is `error`, and expected cancellation is
+`info`. Explicit structured diagnostic levels can classify otherwise-unclassified
+output; words such as "error" in arbitrary stderr do not set severity. A refused
+generation-start reservation is cancellation with `invocationStarted: false`,
+not a failed subprocess.
 
 ## Troubleshooting and agent-visible behavior
 
