@@ -28,6 +28,17 @@ function candidatesForAllAgents(): ConversationTurn[] {
 }
 
 describe("agent turn parsing", () => {
+  it("normalizes only the current speaker's leading label without changing burst limits", () => {
+    expect(parseAgentTurn("codex-sol", '[SOL] First.\n<<<NEXT>>>\n[Sol] Second.\n<<<NEXT>>>\n[aside] Third.\nTURN_DISPOSITION: {"action":"speak"}', undefined, 2)).toMatchObject({
+      visibleMessages: ["First.", "Second."], disposition: "speak",
+    });
+    expect(parseAgentTurn("codex-sol", '[SOL] TURN_DISPOSITION: {"action":"yield","reason":"already_covered"}')).toMatchObject({
+      visibleMessages: [], yieldReason: "already_covered",
+    });
+    expect(parseAgentTurn("codex-sol", "Plan mode is active.\n\n[SOL] A useful answer.").visibleMessages).toEqual(["A useful answer."]);
+    expect(parseAgentTurn("codex-sol", "[aside] A useful answer.").visibleMessages).toEqual(["[aside] A useful answer."]);
+  });
+
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex-sol", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
       visibleMessages: ["Claude, what do you think?"],

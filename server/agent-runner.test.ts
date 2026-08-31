@@ -10,6 +10,7 @@ import { roomCommandGuide } from "../shared/command-domain.js";
 import { ProviderInvocationError, providerFailureCode, providerRetryAfterMs } from "./provider-failure.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import type { RoomState } from "./types.js";
+import { parseAgentTurn } from "./conversation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,13 +27,105 @@ describe("OpenCode runtime contract", () => {
     ]);
   });
 
-  it("parses OpenCode JSON events and preserves multi-part text", () => {
+  it("keeps separate completed text parts separate when identity is unavailable", () => {
     expect(__testing.parseOpenCodeOutput([
       JSON.stringify({ type: "step_start", sessionID: "ses_open", part: { type: "step-start" } }),
       JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "One " } }),
       "non-protocol progress",
       JSON.stringify({ type: "text", sessionID: "ses_open", part: { type: "text", text: "answer." } }),
-    ].join("\n"))).toMatchObject({ sessionId: "ses_open", text: "One answer.", cost: 0, toolCalls: 0, steps: 0, errors: [] });
+    ].join("\n"))).toMatchObject({ sessionId: "ses_open", text: "One \n\nanswer.", cost: 0, toolCalls: 0, steps: 0, errors: [] });
+  });
+
+  it("preserves source-audited message and part boundaries through room delivery", async () => {
+    const fixture = JSON.parse(await readFile(new URL("./fixtures/opencode-completed-text-parts.json", import.meta.url), "utf8"));
+    const contract = JSON.parse(await readFile(new URL("../integration-contracts/opencode.json", import.meta.url), "utf8"));
+    expect(fixture.provenance.commit).toBe(contract.upstream.auditedCommit);
+    expect(fixture.provenance.tag).toBe(contract.upstream.auditedTag);
+    expect(contract.review.paths).toEqual(expect.arrayContaining(fixture.provenance.paths));
+    const parsed = __testing.parseOpenCodeOutput(fixture.events.map((event: unknown) => JSON.stringify(event)).join("\n"));
+    expect(parsed).toMatchObject({
+      text: 'Plan mode is active. This is not a coding task.\n\nThe answer is a map.\n\nTURN_DISPOSITION: {"action":"speak"}\n\nCONVERSATION_STATE: SETTLED',
+      toolCalls: 2, steps: 3, finishReason: "stop",
+    });
+    expect(parseAgentTurn("codex-sol", parsed.text)).toMatchObject({
+      visibleMessages: ["The answer is a map."], disposition: "speak", conversationState: "settled",
+    });
+  });
+
+  it("replaces repeated completed snapshots in place without merging distinct identities", () => {
+    const textEvent = (messageID: string, id: string, text: string, sessionID = "ses_example") => JSON.stringify({
+      type: "text", sessionID, part: { type: "text", sessionID, messageID, id, text, time: { start: 1, end: 2 } },
+    });
+    const parsed = __testing.parseOpenCodeOutput([
+      textEvent("msg_first", "prt_first", "First."),
+      textEvent("msg_first", "prt_second", "Second."),
+      textEvent("msg_second", "prt_first", "Second."),
+      textEvent("msg_first", "prt_first", "Updated first."),
+      textEvent("msg_first", "prt_first", "Updated first."),
+      textEvent("msg_first", "prt_first", "Other session.", "ses_other"),
+    ].join("\n"));
+    expect(parsed.text).toBe("Updated first.\n\nSecond.\n\nSecond.\n\nOther session.");
+  });
+
+  it("does not treat deltas, reasoning, tool output, or malformed text as completed chat", () => {
+    const parsed = __testing.parseOpenCodeOutput([
+      "progress", "null", "{broken",
+      JSON.stringify({ type: "text", part: { type: "text", text: { value: "Not text" } } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "Incomplete", time: { start: 1 } } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "Bad time", time: null } }),
+      JSON.stringify({ type: "message.part.delta", properties: { delta: "A delta" } }),
+      JSON.stringify({ type: "reasoning", part: { type: "reasoning", text: "Reasoning is not room chat." } }),
+      JSON.stringify({ type: "tool_use", part: { type: "tool", state: { status: "completed", output: "Tool output" } } }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "[aside] Ordinary chat." } }),
+    ].join("\n"));
+    expect(parsed.text).toBe("[aside] Ordinary chat.");
+  });
+
+  it("preserves content on both sides of a tool without requiring a terminal-only answer", () => {
+    const parts = ["A useful first observation.\nA second line.", "A useful follow-up."];
+    const events = parts.map((text, index) => ({
+      type: "text", sessionID: "ses_example", part: { type: "text", messageID: `msg_${index}`, id: `prt_${index}`, text },
+    }));
+    const stdout = [
+      JSON.stringify(events[0]),
+      JSON.stringify({ type: "tool_use", part: { type: "tool", state: { status: "completed" } } }),
+      JSON.stringify(events[1]),
+    ].join("\n");
+    const parsed = __testing.parseOpenCodeOutput(stdout);
+    expect(parsed.text).toBe(parts.join("\n\n"));
+    expect(parseAgentTurn("codex-sol", parsed.text).visibleMessages).toEqual([parts.join("\n\n")]);
+  });
+
+  it("uses separate-part fallback for incomplete or malformed identity without dropping chat", () => {
+    const stdout = [
+      { id: "prt_shared", messageID: "msg_shared" },
+      { id: "prt_shared", messageID: "msg_shared" },
+      { id: "prt_shared", messageID: 17, sessionID: "ses_example" },
+      { id: "prt_shared", messageID: 17, sessionID: "ses_example" },
+    ].map((identity) => JSON.stringify({ type: "text", part: { ...identity, type: "text", text: "Same text." } })).join("\n");
+    expect(__testing.parseOpenCodeOutput(stdout).text).toBe(Array(4).fill("Same text.").join("\n\n"));
+  });
+
+  it("lets an empty completed snapshot replace earlier text without leaving a phantom paragraph", () => {
+    const stdout = ["Old text.", ""].map((text) => JSON.stringify({
+      type: "text", sessionID: "ses_example", part: { type: "text", messageID: "msg_example", id: "prt_example", text },
+    })).join("\n");
+    expect(__testing.parseOpenCodeOutput(stdout).text).toBe("");
+  });
+
+  it.each([
+    { directive: undefined, expected: ["A useful answer."] },
+    { directive: 'TURN_DISPOSITION: {"action":"speak"}', expected: ["A useful answer."] },
+    { directive: 'TURN_DISPOSITION: {"action":"yield","reason":"already_covered"}', expected: [] },
+    { directive: "TURN_DISPOSITION: {not-json}", expected: [] },
+    { directive: 'TURN_DISPOSITION: {"action":"speak"}\nTURN_DISPOSITION: {"action":"speak"}', expected: [] },
+  ])("retains disposition compatibility for a separate tool-free part: $directive", ({ directive, expected }) => {
+    const parts = ["A useful answer.", directive].filter((text) => text !== undefined);
+    const stdout = parts.map((text, index) => JSON.stringify({
+      type: "text", sessionID: "ses_example",
+      part: { type: "text", id: `prt_${index}`, messageID: "msg_example", text, time: { start: 1, end: 2 } },
+    })).join("\n");
+    expect(parseAgentTurn("codex-sol", __testing.parseOpenCodeOutput(stdout).text).visibleMessages).toEqual(expected);
   });
 
   it("extracts bounded provider usage, tool, finish, and error diagnostics", () => {

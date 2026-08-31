@@ -61,3 +61,56 @@ not broaden the room lane's authority.
 The repository pins `@opencode-ai/plugin` to the audited version and type-checks
 `server/agent-tools/` as part of the normal build. This ensures that custom tools
 cannot silently drift outside the quality gate.
+
+## CLI text-part assembly
+
+The 2026-08-30 review re-inspected v1.18.25 at the recorded commit. The CLI run
+loop emits `text` only from a completed `message.part.updated` text part with an
+end time. The session processor accumulates provider deltas before publishing
+that snapshot; `message.part.delta` is not projected into CLI `text` events.
+Each part carries `sessionID`, `messageID`, and `id`. The minimum supported
+v1.18.18 revision (`31406ccc51b4bd2a4e1e086b2bcaa5f7f804f26d`) has the same
+completed-text CLI projection.
+
+Consequently, separate CLI text events must not be treated as token fragments.
+The room runner preserves complete part contents and first-seen part order,
+replacing repeated snapshots by the compound session/message/part identity.
+Distinct parts, including parts within one assistant message, are separated by
+blank lines. Equal text under different identities is not deduplicated. Empty
+replacement snapshots remove earlier text without creating empty paragraphs.
+Reasoning, tool output, and delta events never become room chat.
+
+Compatibility behavior is explicit:
+
+- Without complete string identities, each text event remains a separate part;
+  it is neither guessed to be a delta nor deduplicated by content.
+- Missing timing remains accepted for compatibility. An explicitly supplied
+  timing record without a finite positive end time is not a completed part.
+- Non-string text and non-protocol progress are ignored. Existing provider
+  failure, cancellation, and empty-response handling remain unchanged.
+- The external runner result remains a string. Both pre-tool and post-tool
+  visible text remain eligible for delivery under existing filters and limits;
+  this fix does not select only the terminal assistant message.
+- Missing `TURN_DISPOSITION` retains legacy text compatibility. Malformed or
+  duplicate directives suppress the turn; valid yield directives stay silent.
+  Restored paragraph boundaries let the existing leading-preface filter work.
+  Exact current-speaker prefixes are removed only at the start of an outgoing
+  message, not by deleting arbitrary brackets or searching inside prose/code.
+  None of these cases introduces a model retry.
+
+`server/fixtures/opencode-completed-text-parts.json` is fictional, provider-free
+source-contract evidence, not a recorded provider conversation. Its provenance
+is checked against the contract by `server/agent-runner.test.ts`.
+
+The upstream session API supports a `json_schema` output format through a
+required `StructuredOutput` tool, but the audited `run --format json` path does
+not request that format: its `json` flag controls event serialization only.
+Moving to typed SDK/server messages or schema-constrained room output remains
+part of #70 rather than expanding this parser correction into a transport change.
+
+Source anchors at the audited commit:
+
+- [CLI completed-part projection and prompt request](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/cli/cmd/run.ts#L678-L876)
+- [Provider delta accumulation and text completion](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/processor.ts#L486-L531)
+- [Text-part identity and output formats](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/schema/src/v1/session.ts#L65-L116)
+- [Assistant-message creation and structured output](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/prompt.ts#L1186-L1318)
