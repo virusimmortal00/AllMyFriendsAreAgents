@@ -232,6 +232,26 @@ describe("OpenCode runtime contract", () => {
     expect(__testing.isMissingOpenCodeSessionError(new Error("session ses_old not found"))).toBe(true);
     expect(__testing.isMissingOpenCodeSessionError(new Error("provider request timed out"))).toBe(false);
   });
+
+  it("journals a refused generation-start reservation as cancellation without spawning a subprocess", async () => {
+    const participant = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Alpha", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    };
+    const journal = { append: vi.fn(async () => {}) };
+    const lifecycle = { start: vi.fn(), finish: vi.fn() };
+    const evidence: { generationId?: string; attemptOrdinal?: number } = {};
+    await expect(runAgent(participant.agentId, state, "Fixture start cancellation", false,
+      journal as unknown as import("./generation-journal.js").GenerationJournal,
+      undefined, undefined, lifecycle, undefined, undefined, undefined, undefined, undefined, undefined,
+      { onGenerationStart: async () => false, evidence },
+    )).rejects.toMatchObject({ name: "AgentGenerationCancelledError" });
+    expect(lifecycle.start).not.toHaveBeenCalled();
+    expect(lifecycle.finish).toHaveBeenCalledOnce();
+    expect(evidence.generationId).toBeDefined(); expect(evidence.attemptOrdinal).toBeUndefined();
+    expect(journal.append.mock.calls.map((args) => (args as unknown as [{ type: string }])[0].type)).toEqual(["session.fresh", "generation.started", "generation.cancelled"]);
+  });
 });
 
 describe("agent permissions", () => {

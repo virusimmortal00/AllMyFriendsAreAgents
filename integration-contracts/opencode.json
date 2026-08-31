@@ -9,9 +9,9 @@
     "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
   },
   "review": {
-    "revision": 3,
+    "revision": 4,
     "reviewedOn": "2026-08-31",
-    "result": "Re-inspected all cli-jsonl and permissions-and-tools source paths at the unchanged v1.18.25 audited commit before adding local run, turn, and invocation-attempt correlation. CLI arguments, environment filtering, permission rules, custom tools, session reuse and missing-session retry behavior remain unchanged. Attempt ordinals identify local subprocess invocations, not provider-internal retries. The CLI emits completed text-part snapshots with session/message/part identity, not deltas; session StructuredOutput is not requested by run --format json. The previous model-catalog review remains unchanged. Tests use synthetic subprocess and source-contract fixtures, not live-provider evidence.",
+    "result": "Re-inspected every reported upstream path at the unchanged v1.18.25 audited commit before correcting local generation-start cancellation journaling. OpenCode represents aborts separately from API failures, finalizes interrupted assistant messages, emits completed text snapshots, and reports CLI request errors with a failing exit code. The server's refused reservation happens before subprocess invocation and is now journaled as cancellation using its typed local error, not stderr keyword matching. CLI arguments, model listing, inline permissions, custom tools, session reuse, and missing-session retry remain unchanged. Tests are synthetic source-contract and local subprocess evidence, not live-provider captures.",
     "paths": [
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",

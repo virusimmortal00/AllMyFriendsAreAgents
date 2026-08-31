@@ -864,6 +864,10 @@ export async function runAgent(
       await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
       return { sessionId, text: parsed.text, generationId, attemptOrdinal, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
     } catch (error) {
+      if (error instanceof AgentGenerationCancelledError) {
+        await append({ type: "generation.cancelled", generationId, agent, durationMs: Date.now() - startedAt, reason: "generation-start-cancelled", invocationStarted: false });
+        throw error;
+      }
       if (error instanceof ProcessCancelledError) {
         const parsed = parseOpenCodeOutput(error.process.stdout);
         if (parsed.text) commandControl?.onPartial?.(parsed.text);
