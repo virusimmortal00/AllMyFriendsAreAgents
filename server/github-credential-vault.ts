@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import { chmod, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SecretVaultReader } from "./github-credential-provider.js";
+import type { GitHubDeviceFlowTransport } from "./github-device-flow.js";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const USER_ACCESS_TOKEN = /^ghu_[A-Za-z0-9_]{10,1000}$/;
@@ -58,6 +59,7 @@ export interface OpenEncryptedGitHubCredentialVaultInput {
   readonly vaultPath: string;
   readonly keyPath: string;
   readonly now?: () => string;
+  readonly refresh?: GitHubDeviceFlowTransport["refresh"];
 }
 
 const EMPTY: PlaintextVaultState = { schemaVersion: 1, credentials: [] };
@@ -72,13 +74,15 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
   readonly #key: Buffer;
   readonly #keyId: string;
   readonly #now: () => string;
+  readonly #refresh?: GitHubDeviceFlowTransport["refresh"];
   #state: PlaintextVaultState;
 
-  private constructor(readonly vaultPath: string, readonly keyPath: string, key: Buffer, state: PlaintextVaultState, now: () => string) {
+  private constructor(readonly vaultPath: string, readonly keyPath: string, key: Buffer, state: PlaintextVaultState, now: () => string, refresh?: GitHubDeviceFlowTransport["refresh"]) {
     this.#key = key;
     this.#keyId = createHash("sha256").update(key).digest("hex");
     this.#state = state;
     this.#now = now;
+    this.#refresh = refresh;
   }
 
   static async open(input: OpenEncryptedGitHubCredentialVaultInput) {
@@ -88,23 +92,46 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
     const keyId = createHash("sha256").update(key).digest("hex");
     const existing = await readRegularFile(input.vaultPath);
     const state = existing === undefined ? EMPTY : decryptState(existing, key, keyId);
-    const vault = new EncryptedGitHubCredentialVault(input.vaultPath, input.keyPath, key, state, input.now ?? (() => new Date().toISOString()));
+    const vault = new EncryptedGitHubCredentialVault(input.vaultPath, input.keyPath, key, state, input.now ?? (() => new Date().toISOString()), input.refresh);
     if (existing === undefined) await vault.persist(state);
     else await chmod(input.vaultPath, 0o600);
     return vault;
   }
 
   available(reference: string) {
-    return SAFE_ID.test(reference) && this.#state.credentials.some((record) => record.reference === reference && record.credential !== null);
+    const credential = this.record(reference)?.credential;
+    const now = Date.parse(canonicalNow(this.#now));
+    return Boolean(credential && (Date.parse(credential.accessTokenExpiresAt) > now
+      || credential.kind === "github-device-user" && this.#refresh && Date.parse(credential.refreshTokenExpiresAt) > now));
   }
 
   async read(reference: string) {
-    const record = this.record(reference);
-    return record ? {
-      token: record.credential.accessToken,
-      revision: `vault:${record.revision}`,
-      provider: record.credential.kind,
-    } : undefined;
+    if (!SAFE_ID.test(reference)) return undefined;
+    // Reload and serialize with rotation/deletion, including other vault instances.
+    // Refresh tokens are single-use; persist the replacement pair before returning it.
+    return this.mutate(async () => {
+      let record = this.record(reference);
+      if (!record) return undefined;
+      const now = Date.parse(canonicalNow(this.#now));
+      if (Date.parse(record.credential.accessTokenExpiresAt) <= now) {
+        const credential = record.credential;
+        if (credential.kind !== "github-device-user" || !this.#refresh || Date.parse(credential.refreshTokenExpiresAt) <= now) return undefined;
+        const startedAt = now;
+        const refreshed = await this.#refresh(credential.refreshToken).catch(() => undefined);
+        if (!refreshed || !Number.isSafeInteger(refreshed.expiresInSeconds) || !refreshed.expiresInSeconds || refreshed.expiresInSeconds < 1 || refreshed.expiresInSeconds > 86_400
+          || !refreshed.refreshToken || !Number.isSafeInteger(refreshed.refreshTokenExpiresInSeconds) || !refreshed.refreshTokenExpiresInSeconds
+          || refreshed.refreshTokenExpiresInSeconds < 1 || refreshed.refreshTokenExpiresInSeconds > 366 * 86_400) return undefined;
+        const nextCredential: GitHubDeviceUserVaultCredential = {
+          kind: "github-device-user", accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken,
+          accessTokenExpiresAt: new Date(startedAt + refreshed.expiresInSeconds * 1_000).toISOString(),
+          refreshTokenExpiresAt: new Date(startedAt + refreshed.refreshTokenExpiresInSeconds * 1_000).toISOString(),
+        };
+        if (!validCredential(nextCredential) || Date.parse(nextCredential.accessTokenExpiresAt) <= Date.parse(canonicalNow(this.#now))) return undefined;
+        record = { ...record, revision: record.revision + 1, credential: nextCredential, updatedAt: canonicalNow(this.#now) };
+        await this.persist({ schemaVersion: 1, credentials: this.#state.credentials.map((item) => item.reference === reference ? record! : item) });
+      }
+      return { token: record.credential.accessToken, revision: `vault:${record.revision}`, provider: record.credential.kind };
+    });
   }
 
   readCredential(reference: string) {
@@ -157,7 +184,7 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
     return record?.credential ? record as StoredCredential & { credential: GitHubVaultCredential } : undefined;
   }
 
-  private mutate(work: () => Promise<CredentialVaultMutationResult>): Promise<CredentialVaultMutationResult> {
+  private mutate<T>(work: () => Promise<T>): Promise<T> {
     const queueKey = `${this.vaultPath}\u0000${this.keyPath}`;
     const previous = VAULT_MUTATION_QUEUES.get(queueKey) ?? Promise.resolve();
     const operation = previous.then(async () => {

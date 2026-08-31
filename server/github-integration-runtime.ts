@@ -26,12 +26,14 @@ export async function openGitHubIntegrationRuntime(input: {
   const configuration = await loadBundledGitHubAppConfiguration(input.configurationPath ?? path.join(input.projectRoot, "config/github-app.json"));
   if (!configuration) return undefined;
   const integrations = await GitHubIntegrationStore.open(input.dataDirectory);
+  const deviceFlow = new GitHubDeviceFlowClient(configuration.clientId);
   const vault = await EncryptedGitHubCredentialVault.open({
     vaultPath: path.join(input.dataDirectory, "github-credentials.enc"),
     keyPath: input.credentialKeyPath ?? defaultGitHubCredentialKeyPath(input.projectRoot),
+    refresh: (token) => deviceFlow.refresh(token),
   });
   const credentials = new BoundGitHubCredentialProvider(integrations, vault);
-  const authorizations = new GitHubDeviceAuthorizationCoordinator(new GitHubDeviceFlowClient(configuration.clientId), integrations, vault);
+  const authorizations = new GitHubDeviceAuthorizationCoordinator(deviceFlow, integrations, vault);
   const catalogs = new GitHubRepositoryCatalogService(integrations, vault, new GitHubRepositoryCatalogClient());
   return { configuration, integrations, vault, credentials, authorizations, catalogs };
 }

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EncryptedGitHubCredentialVault, type GitHubDeviceUserVaultCredential } from "./github-credential-vault.js";
 
 const roots: string[] = [];
@@ -39,7 +39,7 @@ describe("encrypted GitHub credential vault", () => {
     expect((await stat(f.vaultPath)).mode & 0o777).toBe(0o600);
     expect((await stat(f.keyPath)).mode & 0o777).toBe(0o600);
 
-    const reopened = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath });
+    const reopened = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => firstTime });
     await expect(reopened.read("github-secret-one")).resolves.toEqual({ token: "ghu_access_token_1234567890", revision: "vault:1", provider: "github-device-user" });
     expect(reopened.readCredential("github-secret-one")).toMatchObject({ revision: 1, credential: { refreshToken: "ghr_refresh_token_1234567890" } });
   });
@@ -95,5 +95,63 @@ describe("encrypted GitHub credential vault", () => {
     await f.vault.put("github-secret-one", 0, credential());
     expect(JSON.stringify(f.vault)).not.toMatch(/ghu_access|ghr_refresh|github-secret-one/);
     expect(JSON.stringify(f.vault.list())).not.toMatch(/ghu_access|ghr_refresh/);
+  });
+
+  it("refreshes once across concurrent readers and reopened instances, and durably rotates both tokens", async () => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const now = "2026-08-28T22:00:00.000Z";
+    const refresh = vi.fn(async () => ({ accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
+      tokenType: "bearer" as const, expiresInSeconds: 28_800, refreshTokenExpiresInSeconds: 15_897_600 }));
+    const options = { vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => now, refresh };
+    const one = await EncryptedGitHubCredentialVault.open(options);
+    const two = await EncryptedGitHubCredentialVault.open(options);
+    expect(one.available("github-secret-one")).toBe(true);
+    const values = await Promise.all([one.read("github-secret-one"), one.read("github-secret-one"), two.read("github-secret-one")]);
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(credential().refreshToken);
+    for (const value of values) expect(value).toMatchObject({ token: "ghu_rotated_access_1234567890", revision: "vault:2" });
+    const reopened = await EncryptedGitHubCredentialVault.open({ ...options, refresh: undefined });
+    expect(reopened.readCredential("github-secret-one")).toMatchObject({ revision: 2, credential: {
+      refreshToken: "ghr_rotated_refresh_1234567890", accessTokenExpiresAt: "2026-08-29T06:00:00.000Z",
+    } });
+    expect(await reopened.read("github-secret-one")).toEqual(values[0]);
+    expect(await readFile(f.vaultPath, "utf8")).not.toMatch(/ghu_|ghr_/);
+  });
+
+  it("never returns expired credentials without a usable refresh path", async () => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const options = { vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-28T22:00:00.000Z" };
+    const noRefresh = await EncryptedGitHubCredentialVault.open(options);
+    expect(noRefresh.available("github-secret-one")).toBe(false);
+    expect(await noRefresh.read("github-secret-one")).toBeUndefined();
+    const refresh = vi.fn();
+    const expiredPair = await EncryptedGitHubCredentialVault.open({ ...options, refresh, now: () => credential().refreshTokenExpiresAt });
+    expect(expiredPair.available("github-secret-one")).toBe(false);
+    expect(await expiredPair.read("github-secret-one")).toBeUndefined();
+    expect(refresh).not.toHaveBeenCalled();
+    await f.vault.put("github-installation", 0, { kind: "github-app-installation", accessToken: "ghs_installation_1234567890", accessTokenExpiresAt: firstTime });
+    expect(await expiredPair.read("github-installation")).toBeUndefined();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on refresh errors and can recover without overwriting the old pair", async () => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const refresh = vi.fn().mockRejectedValueOnce(new Error("raw ghr_secret_must_not_escape"))
+      .mockResolvedValueOnce({ accessToken: "ghu_rotated_access_1234567890", refreshToken: "ghr_rotated_refresh_1234567890",
+        tokenType: "bearer", expiresInSeconds: 28_800, refreshTokenExpiresInSeconds: 15_897_600 });
+    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => "2026-08-29T00:00:00.000Z", refresh });
+    expect(await vault.read("github-secret-one")).toBeUndefined();
+    expect(vault.readCredential("github-secret-one")).toMatchObject({ revision: 1, credential: credential() });
+    expect(await vault.read("github-secret-one")).toMatchObject({ revision: "vault:2", token: "ghu_rotated_access_1234567890" });
+  });
+
+  it("reloads deletions before reading through an older vault instance", async () => {
+    const f = await fixture();
+    await f.vault.put("github-secret-one", 0, credential());
+    const second = await EncryptedGitHubCredentialVault.open({ vaultPath: f.vaultPath, keyPath: f.keyPath, now: () => firstTime });
+    await second.delete("github-secret-one", 1);
+    expect(await f.vault.read("github-secret-one")).toBeUndefined();
   });
 });

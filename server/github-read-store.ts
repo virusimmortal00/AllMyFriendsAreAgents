@@ -1,3 +1,4 @@
+import type { GitHubHttpDiagnostic } from "../shared/github-http-diagnostic.js";
 import { GitHubReadFailure, type GitHubEndpointFamily, type GitHubReadAdapter, type GitHubReadQuery, type GitHubSanitizedValue } from "./github-read-adapter.js";
 
 export const DEFAULT_GITHUB_READ_TTL_MS = 60_000;
@@ -6,7 +7,7 @@ export const DEFAULT_GITHUB_READ_MAX_ACTIVE = 4;
 export const DEFAULT_GITHUB_READ_MAX_QUEUED = 32;
 
 export interface MonotonicClock { now(): number }
-export interface GitHubReadDiagnostic { readonly family: GitHubEndpointFamily; readonly cache: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: import("./github-read-adapter.js").GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
+export interface GitHubReadDiagnostic extends GitHubHttpDiagnostic { readonly family: GitHubEndpointFamily; readonly cache: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: import("./github-read-adapter.js").GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
 export interface GitHubReadOutcome { readonly value: GitHubSanitizedValue; readonly diagnostic: GitHubReadDiagnostic }
 export interface GitHubReadCacheEvent extends GitHubReadDiagnostic { readonly outcome: "completed" | "failed" }
 interface Entry { value: GitHubSanitizedValue; expiresAt: number; touched: number }
@@ -39,7 +40,7 @@ export class GitHubReadStore {
     if(existing&&now<existing.expiresAt){existing.touched=++this.touches;const outcome={value:structuredClone(existing.value),diagnostic:{family:query.family,cache:"hit" as const,queueDelayMs:0,rateLimited:false,truncated:Boolean("truncated" in existing.value&&existing.value.truncated),failureKind:null,statusClass:"none" as const,correlationId:correlation(query.family,++this.sequence)}};if(authorize)await authorize();this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}
     if(live){const outcome=await live.promise;if(authorize)await authorize();const coalesced={value:structuredClone(outcome.value),diagnostic:{...outcome.diagnostic,cache:"coalesced" as const,correlationId:correlation(query.family,++this.sequence)}};this.report({...coalesced.diagnostic,outcome:"completed"});return coalesced;}
     const pending=this.schedule(key,adapter,query,cache==="refresh",authorize);this.pending.set(key,{promise:pending,refresh:cache==="refresh"});
-    try{const outcome=await pending;this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}catch(error){const failure=error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none");this.report({family:query.family,cache,queueDelayMs:0,rateLimited:failure.kind==="rate-limited",truncated:false,failureKind:failure.kind,statusClass:failure.statusClass,correlationId:correlation(query.family,++this.sequence),outcome:"failed"});throw error;}finally{this.pending.delete(key);}
+    try{const outcome=await pending;this.report({...outcome.diagnostic,outcome:"completed"});return outcome;}catch(error){const failure=error instanceof GitHubReadFailure?error:new GitHubReadFailure("upstream","none");this.report({family:query.family,cache,queueDelayMs:0,rateLimited:failure.kind==="rate-limited",truncated:false,failureKind:failure.kind,statusClass:failure.statusClass,...failure.http,correlationId:correlation(query.family,++this.sequence),outcome:"failed"});throw error;}finally{this.pending.delete(key);}
   }
 
   private schedule(key:string,adapter:GitHubReadAdapter,query:GitHubReadQuery,refresh:boolean,authorize?:()=>Promise<void>):Promise<GitHubReadOutcome>{

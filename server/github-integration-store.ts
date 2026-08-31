@@ -334,6 +334,12 @@ export class BoundGitHubCredentialProvider implements GitHubCredentialProvider {
       && record.installationId === binding.installationId && record.canonical === binding.repository)) return undefined;
     const secret = await this.#vault.read(connection.secretReference);
     if (!secret?.token || secret.provider !== connection.authMode) return undefined;
+    // Credential refresh can wait on GitHub. Authority must still match afterward.
+    const latestBinding = this.#integrations.bindingForProject(request.projectId);
+    const latestConnection = this.#integrations.connection(connection.connectionId);
+    if (latestBinding?.bindingId !== binding.bindingId || latestBinding.revision !== binding.revision
+      || latestConnection?.revision !== connection.revision || latestConnection.secretReference !== connection.secretReference
+      || !this.available(request.projectId, request.credentialReference)) return undefined;
     return {
       token: secret.token,
       provider: connection.authMode,
