@@ -1,4 +1,5 @@
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction.js";
+import type { GitHubHttpDiagnostic } from "../shared/github-http-diagnostic.js";
 
 export const GITHUB_API_ORIGIN = "https://api.github.com";
 export const GITHUB_READ_TIMEOUT_MS = 8_000;
@@ -34,7 +35,7 @@ export type GitHubFailureKind = "forbidden" | "not-found" | "rate-limited" | "ti
   | "room-not-found" | "general-room" | "project-not-found" | "connection-missing" | "connection-disabled" | "connection-unverified"
   | "connection-stale" | "connection-drift" | "credential-missing";
 export class GitHubReadFailure extends Error {
-  constructor(readonly kind: GitHubFailureKind, readonly statusClass: "none" | "4xx" | "5xx", readonly retryAfterMs: number | null = null, readonly endpointFamily: GitHubEndpointFamily | null = null) { super(`GitHub read failed (${kind}).`); this.name = "GitHubReadFailure"; }
+  constructor(readonly kind: GitHubFailureKind, readonly statusClass: "none" | "4xx" | "5xx", readonly retryAfterMs: number | null = null, readonly endpointFamily: GitHubEndpointFamily | null = null, readonly http: GitHubHttpDiagnostic = {}) { super(`GitHub read failed (${kind}).`); this.name = "GitHubReadFailure"; }
 }
 
 export interface GitHubReadBinding { readonly owner: string; readonly repository: string; readonly defaultBranch: string; readonly token: string }
@@ -99,21 +100,26 @@ export class GitHubReadAdapter {
     try { response = await this.fetcher(url, { method:"GET", redirect:"error", body:undefined, signal:controller.signal, headers:{ Accept:"application/vnd.github+json", Authorization:`Bearer ${this.binding.token}`, "X-GitHub-Api-Version":"2022-11-28", "User-Agent":"all-my-friends-are-agents-read" } }); }
     catch (error) { throw new GitHubReadFailure(error instanceof DOMException && error.name === "AbortError" ? "timeout" : "upstream", "none"); }
     finally { clearTimeout(timer); }
+    const requestId = response.headers.get("x-github-request-id");
+    const http: GitHubHttpDiagnostic = { httpStatus: response.status,
+      ...(requestId && /^[A-Fa-f0-9:]{1,100}$/.test(requestId) && !requestId.includes(this.binding.token) ? { githubRequestId: requestId } : {}) };
+    const failure = (kind: GitHubFailureKind, statusClass: "none" | "4xx" | "5xx", retryAfterMs: number | null = null) =>
+      new GitHubReadFailure(kind, statusClass, retryAfterMs, query.family, http);
     if (!response.ok) {
       const statusClass = response.status >= 500 ? "5xx" : "4xx";
-      if (response.status === 404) throw new GitHubReadFailure("not-found", statusClass);
-      if (response.status === 429 || response.status === 403 && (response.headers.get("retry-after") || response.headers.get("x-ratelimit-remaining") === "0")) throw new GitHubReadFailure("rate-limited", statusClass, Math.min(60_000, Math.max(0, Number(response.headers.get("retry-after") || 0) * 1_000)) || null);
-      if (response.status === 403) throw new GitHubReadFailure("forbidden", statusClass);
-      throw new GitHubReadFailure("upstream", statusClass);
+      if (response.status === 404) throw failure("not-found", statusClass);
+      if (response.status === 429 || response.status === 403 && (response.headers.get("retry-after") || response.headers.get("x-ratelimit-remaining") === "0")) throw failure("rate-limited", statusClass, Math.min(60_000, Math.max(0, Number(response.headers.get("retry-after") || 0) * 1_000)) || null);
+      if (response.status === 403) throw failure("forbidden", statusClass);
+      throw failure("upstream", statusClass);
     }
     let payload: unknown;
-    try { payload = await response.json(); } catch { throw new GitHubReadFailure("invalid-response", "none"); }
-    try{payload=JSON.parse(JSON.stringify(payload).replaceAll(this.binding.token,"[REDACTED]"));}catch{throw new GitHubReadFailure("invalid-response","none");}
+    try { payload = await response.json(); } catch { throw failure("invalid-response", "none"); }
+    try{payload=JSON.parse(JSON.stringify(payload).replaceAll(this.binding.token,"[REDACTED]"));}catch{throw failure("invalid-response","none");}
     if (query.family === "recent-pulls") { const source=array(payload);const items=source.map(pull).filter((item):item is GhPullRequest=>Boolean(item)).slice(0,8);return {family:query.family,items,truncated:source.length>items.length}; }
     if (query.family === "recent-issues") { const source=array(payload);const valid=source.map(issue).filter((item):item is GhIssue=>Boolean(item));return {family:query.family,items:valid.slice(0,8),truncated:valid.length>8||source.length>=100}; }
     if (query.family === "recent-runs") { const source=array(object(payload).workflow_runs);return {family:query.family,items:source.slice(0,8).map(run),truncated:source.length>8}; }
-    if (query.family === "pull-request") { const item=pull(payload);if(!item)throw new GitHubReadFailure("invalid-response","none");return {family:query.family,item}; }
-    if (query.family === "issue") { const item=issue(payload);if(!item)throw new GitHubReadFailure("invalid-response","none");return {family:query.family,item}; }
+    if (query.family === "pull-request") { const item=pull(payload);if(!item)throw failure("invalid-response","none");return {family:query.family,item}; }
+    if (query.family === "issue") { const item=issue(payload);if(!item)throw failure("invalid-response","none");return {family:query.family,item}; }
     const source=array(object(payload).check_runs);return {family:query.family,items:source.slice(0,GH_MAX_COLLECTION).map(check),truncated:source.length>GH_MAX_COLLECTION};
   }
 }

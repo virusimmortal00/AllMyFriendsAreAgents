@@ -165,4 +165,20 @@ describe("server GitHub integration metadata", () => {
     } as SecretVaultReader & { token: string });
     expect(JSON.stringify(provider)).not.toMatch(/ghu_serialization_secret|vault-secret-one/);
   });
+
+  it("rejects a credential when its project binding is revoked while refresh is pending", async () => {
+    const f = await fixture(); await readyConnection(f.store); await readyCatalog(f.store);
+    const bound = await f.store.bindProject({ expectedRevision: 0, projectId: "project-one", connectionId: "github-server-one", installationId: 101,
+      githubRepositoryId: 201, repository: "github.com/example/one" });
+    if (bound.kind !== "ok") throw new Error("expected project binding");
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const provider = new BoundGitHubCredentialProvider(f.store, { available: () => true,
+      read: async () => { await pending; return { token: "ghu_rotated_1234567890", revision: "vault:2", provider: "github-device-user" }; } });
+    const resolution = provider.resolve({ projectId: "project-one", credentialReference: bound.value.bindingId,
+      connectionId: "repository-connection-one", connectionRevision: 1, repository: "github.com/example/one" });
+    await f.store.revokeBinding({ expectedRevision: 1, projectId: "project-one" });
+    release();
+    expect(await resolution).toBeUndefined();
+  });
 });

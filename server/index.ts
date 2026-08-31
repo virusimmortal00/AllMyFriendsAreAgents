@@ -218,7 +218,9 @@ const githubCredentialReference = process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_R
   || (repositoryCredential ? `github-connection:${createHash("sha256").update(repositoryCredential).digest("hex").slice(0, 24)}` : undefined);
 const serverHeldRepositoryCredentials = new ServerHeldRepositoryCredentials();
 if (repositoryCredential && githubCredentialReference) serverHeldRepositoryCredentials.register(currentProjectId, githubCredentialReference, repositoryCredential);
-const githubIntegrationRuntime = await openGitHubIntegrationRuntime({ projectRoot, dataDirectory: storageConfiguration.dataDirectory });
+const githubIntegrationRuntime = await openGitHubIntegrationRuntime({ projectRoot, dataDirectory: storageConfiguration.dataDirectory,
+  onRefreshEvent: (event) => structuredLogger.log(event.outcome === "failed" ? "warn" : "info", "github.credential.refresh", { ...event }),
+});
 const githubCredentials = new CascadingGitHubCredentialProvider([
   ...(githubIntegrationRuntime ? [githubIntegrationRuntime.credentials] : []),
   serverHeldRepositoryCredentials,

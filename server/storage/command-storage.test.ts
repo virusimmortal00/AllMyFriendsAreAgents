@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { normalizeJsonCommandState, validCommandReassignment, validPoll, validSubmission } from "./command-storage.js";
+import { validGitHubHttpDiagnostic } from "../../shared/github-http-diagnostic.js";
+import { normalizeJsonCommandState, validCommandReassignment, validGhExecution, validPoll, validSubmission } from "./command-storage.js";
 
 describe("command storage validation", () => {
   const createdAt = "2026-08-27T12:00:00.000Z";
@@ -25,5 +26,23 @@ describe("command storage validation", () => {
     const next = { ...current, attemptId: "two", attempt: 2, status: "queued" as const, reason: null };
     expect(() => validCommandReassignment({ expectedUpdatedAt: createdAt, current, next } as never)).not.toThrow();
     expect(validCommandReassignment({ expectedUpdatedAt: createdAt, current, next } as never)).toBe(false);
+  });
+
+  it("accepts absent legacy HTTP evidence and rejects unsafe new fields", () => {
+    const diagnostic = { endpointFamily: "issue" as const, cacheOutcome: "miss" as const, queueDelayMs: 0, rateLimited: false,
+      truncated: false, failureKind: "upstream" as const, statusClass: "4xx" as const, correlationId: "failure:upstream" };
+    const execution = { executionId: "execution", roomId: "room", submissionId: "submission", status: "failed" as const,
+      deliveryStatus: "delivered" as const, authorizationLease: "legacy-static", projection: null, renderedText: "Failed",
+      failureKind: "upstream" as const, diagnostics: [diagnostic], createdAt, updatedAt: createdAt };
+    expect(normalizeJsonCommandState({ ghExecutions: [execution] }).ghExecutions).toEqual([execution]);
+    for (const fields of [{ httpStatus: 99 }, { httpStatus: 600 }, { httpStatus: 401.5 }, { githubRequestId: "Bearer fictional-token" }]) {
+      expect(validGhExecution({ ...execution, diagnostics: [{ ...diagnostic, ...fields }] })).toBe(false);
+    }
+    for (const diagnostic of [null, undefined, 1, true, "invalid", [], [1]]) {
+      expect(validGitHubHttpDiagnostic(diagnostic)).toBe(false);
+      const malformed = { ...execution, diagnostics: [diagnostic] };
+      expect(validGhExecution(malformed as never)).toBe(false);
+      expect(normalizeJsonCommandState({ ghExecutions: [malformed] }).ghExecutions).toEqual([]);
+    }
   });
 });

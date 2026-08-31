@@ -1,3 +1,4 @@
+import type { GitHubHttpDiagnostic } from "../shared/github-http-diagnostic.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { CommandInvocation, RoomCommandName } from "../shared/command-domain.js";
 import type { GhCheck, GhIssue, GhPullRequest, GhRun, GitHubFailureKind } from "./github-read-adapter.js";
@@ -27,7 +28,7 @@ export type GhProjection =
   | { readonly kind: "pr"; readonly repository: string; readonly pull: GhPullRequest }
   | { readonly kind: "issue"; readonly repository: string; readonly issue: GhIssue }
   | { readonly kind: "ci"; readonly repository: string; readonly pullNumber: number | null; readonly checks: readonly GhCheck[]; readonly truncated: boolean };
-export interface GhExecutionDiagnostic { readonly endpointFamily: import("./github-read-adapter.js").GitHubEndpointFamily; readonly cacheOutcome: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
+export interface GhExecutionDiagnostic extends GitHubHttpDiagnostic { readonly endpointFamily: import("./github-read-adapter.js").GitHubEndpointFamily; readonly cacheOutcome: "hit" | "miss" | "coalesced" | "refresh"; readonly queueDelayMs: number; readonly rateLimited: boolean; readonly truncated: boolean; readonly failureKind: GitHubFailureKind | null; readonly statusClass: "none" | "4xx" | "5xx"; readonly correlationId: string }
 export interface CommandGhExecution { readonly executionId: string; readonly roomId: string; readonly submissionId: string; readonly status: "queued" | "completed" | "failed"; readonly deliveryStatus: "pending" | "delivered"; readonly authorizationLease: string | null; readonly projection: GhProjection | null; readonly renderedText: string | null; readonly failureKind: GitHubFailureKind | null; readonly diagnostics: readonly GhExecutionDiagnostic[]; readonly createdAt: string; readonly updatedAt: string }
 
 /** Deliberately returned only from authenticated command/diagnostic endpoints. */

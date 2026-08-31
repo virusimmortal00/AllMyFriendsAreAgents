@@ -52,9 +52,9 @@ export class RoomBoundGitHubReadService {
 
   failure(error: unknown, fallbackFamily: GitHubEndpointFamily = "recent-pulls") {
     const failure = error instanceof GitHubReadFailure ? error : new GitHubReadFailure("upstream", "none");
-    return { kind: failure.kind, text: githubReadFailureText(failure.kind), diagnostic: { endpointFamily: failure.endpointFamily || fallbackFamily,
+    return { kind: failure.kind, text: githubReadFailureText(failure.kind,failure.http.httpStatus), diagnostic: { endpointFamily: failure.endpointFamily || fallbackFamily,
       cacheOutcome: "miss" as const, queueDelayMs: 0, rateLimited: failure.kind === "rate-limited", truncated: false,
-      failureKind: failure.kind, statusClass: failure.statusClass, correlationId: `failure:${failure.kind}` } };
+      failureKind: failure.kind, statusClass: failure.statusClass, ...failure.http, correlationId: `failure:${failure.kind}` } };
   }
 
   inspect() { return this.store.inspect(); }

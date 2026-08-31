@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { RoomAgentRoster } from "../shared/roster.js";
 import { RoomStore } from "./room-store.js";
@@ -25,7 +25,8 @@ const roster = (permissions: "all" | "help" = "all"):RoomAgentRoster=>({schemaVe
   {agentId:"claude-sonnet",conversationalName:"Claude",modelId:"claude-sonnet-5",enabled:true,supportsProjectWrites:true,configurationRevision:1,commandPermissions:{allowAll:true,allowed:["task","pov","poll","help"]}},
 ]});
 async function settle(){ for(let index=0;index<8;index++)await new Promise<void>((resolve)=>setImmediate(resolve)); }
-async function eventually(assertion:()=>void|Promise<void>){let failure:unknown;for(let index=0;index<100;index++){try{await assertion();return;}catch(error){failure=error;await settle();}}throw failure;}
+// Durable writes need a wall-clock budget; event-loop turns can finish before filesystem I/O on CI.
+async function eventually(assertion:()=>void|Promise<void>){await vi.waitFor(assertion,{timeout:2_000,interval:10});}
 async function fixture(options:{clock?:FakeClock; roster?:()=>RoomAgentRoster; execute?:(agent:ActiveAgentId,prompt:string,hooks:CommandLaunchHooks)=>Promise<CommandExecutionResult>; deliver?:(attemptId:string,agent:ActiveAgentId,messages:readonly string[],result:CommandExecutionResult)=>Promise<void>; povExecute?:(agent:ActiveAgentId,prompt:string,signal:AbortSignal)=>Promise<CommandExecutionResult>; povDeliver?:(deliveryId:string,agent:ActiveAgentId,messages:readonly string[],result:CommandExecutionResult)=>Promise<void>; publish?:(id:string,text:string)=>Promise<void>; operationLog?:(level:"info"|"error",event:string,fields:Record<string,unknown>)=>Promise<unknown>|unknown; eligible?:(agent:ActiveAgentId)=>boolean;capacityOne?:boolean}={}){
   const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-command-runtime-"));roots.push(root);const store=await RoomStore.open(root,path.join(root,"state"));const clock=options.clock||new FakeClock();const statuses:string[]=[];const deliveries:Array<{agent:ActiveAgentId;messages:readonly string[]}>=[];const pov:ActiveAgentId[][]=[];
   let reserved=false;const published=new Set<string>();const runtime=new CommandRuntime({store,clock,stage1Ms:10,stage2Ms:20,roster:options.roster||(()=>roster()),canLaunch:options.eligible||(()=>!reserved),...(options.capacityOne?{reserveLaunch:()=>{if(reserved)return undefined;reserved=true;return{release(){reserved=false;}};}}:{}),executeTask:options.execute|| (async(agent,_prompt,hooks)=>{await hooks.active(`generation-${agent}`);return{generationId:`generation-${agent}`,visibleMessages:[`reply-${agent}`]};}),executePov:options.povExecute|| (async(agent)=>{pov.push([agent]);return{generationId:`pov-${agent}`,visibleMessages:[`pov-${agent}`]};}),deliverPov:options.povDeliver|| (async()=>undefined),publishStatus:options.publish|| (async(id,text)=>{if(!published.has(id)){published.add(id);statuses.push(text);}}),deliverTask:options.deliver|| (async(_attemptId,agent,messages)=>{deliveries.push({agent,messages});}),operationLog:options.operationLog});runtimes.push(runtime);
