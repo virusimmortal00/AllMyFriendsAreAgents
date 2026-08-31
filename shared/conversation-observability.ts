@@ -127,3 +127,60 @@ export interface ConversationRunSummary {
   };
   pending: { candidates: number; mentions: number; activeTurns: number; disposition: "none" | "not-scheduled" | "abandoned" };
 }
+
+export type ConversationSelection = "initial-candidate" | "legacy-name-match" | "ambient-continuation" | "fresh-candidate" | "conversation-floor" | "synthesis" | "objection" | "reconciliation";
+export type ConversationDecisionReason = "eligible" | "target-active" | "target-queued" | "target-already-responded"
+  | "pair-cap-reached" | "secondary-chance-missed" | "soft-budget-exhausted" | "participant-limit"
+  | "no-fresh-candidate" | "source-already-used" | "no-continuation-cue" | "hard-message-ceiling" | "hard-turn-ceiling"
+  | "follow-up-allowance-exhausted" | "deferred-replaced" | "run-cancelled" | "run-failed" | "run-ended" | "candidate-not-completed";
+export type ConversationTurnReason = "agent-disabled" | "agent-health-unavailable" | "generation-capacity-unavailable"
+  | "provider-health-unavailable" | "provider-failed" | "generation-failed" | "preparation-failed" | "turn-failed"
+  | "cancelled" | "delivered" | "yielded" | "malformed-disposition" | "no-visible-output" | DeliveryReason;
+
+export interface ConversationSelectionIdentity {
+  pendingDecisionId: string;
+  selectionFamily: ConversationSelection;
+  targetAgentId: string;
+  sourceAgentId: string | null;
+  sourceTurnId: string | null;
+  sourceGenerationId: string | null;
+  sourceMessageId: string | null;
+  turnId?: string;
+}
+
+export interface ConversationDecisionState {
+  phase: ConversationPhase;
+  queuedCount: number; activeCount: number; attemptedTurns: number; responseTurns: number;
+  visibleMessages: number; remainingMessageBudget: number | null; energySpent: number | null;
+  followUps: number | null; remainingFollowUps: number | null;
+  targetActive: boolean; targetQueued: boolean;
+}
+
+export interface ConversationConfiguration {
+  engine: "energy" | "legacy";
+  energy: string | null; policyRevision: 1;
+  candidateIds: string[]; candidateCount: number;
+  concurrencyLimit: number; participantLimit: number;
+  hardMessageCeiling: number | null; hardTurnCeiling: number | null; softMessageBudget: number | null;
+  secondaryChance: number | null; maxFollowUps: number | null;
+  inviteAll: boolean; stopOnSettledResponse: boolean; conversationalFloor: boolean;
+}
+
+export type ConversationFact =
+  | { kind: "configuration"; configuration: ConversationConfiguration }
+  | ({ kind: "decision"; decisionId: string; action: "queued" | "started" | "deferred" | "deduplicated" | "dropped" | "blocked";
+       reason: ConversationDecisionReason; relatedDecisionId: string | null;
+       pairCount: number | null; pairLimit: number | null; randomDraw: number | null; randomThreshold: number | null;
+       visibleMessageLimit: number | null; preflightDecisionId: string | null;
+     } & ConversationSelectionIdentity & ConversationDecisionState)
+  | { kind: "turn-finished"; turnId: string; pendingDecisionId: string; agentId: string;
+      generationId: string | null; attemptOrdinal: number | null; durationMs: number;
+      outcome: "responded" | "yielded" | "no-response" | "blocked" | "failed" | "cancelled";
+      reason: ConversationTurnReason;
+      engineFailed: boolean; engineCancelled: boolean; visibleMessageCount: number;
+      interpretation: Pick<TurnInterpretationDiagnostics, "parserRevision" | "dispositionStatus" | "dispositionAction" | "yieldReason" | "suppressionReason" | "declaredConversationState" | "effectiveConversationState" | "continuationWorthy" | "effectiveVisibleMessageLimit" | "limitSource" | "parsedBurstCount" | "retainedBurstCount" | "truncatedBurstCount"> | null;
+      delivery: Pick<GenerationDeliverySummary, "outcome" | "reason" | "retainedBurstCount" | "confirmedDeliveredBurstCount" | "confirmedUndeliveredBurstCount" | "unconfirmedBurstCount"> | null;
+    }
+  | { kind: "summary"; summary: ConversationRunSummary };
+
+export type ConversationObserver = (fact: ConversationFact) => unknown;

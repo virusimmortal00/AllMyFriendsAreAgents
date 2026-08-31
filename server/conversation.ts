@@ -2,6 +2,8 @@ import type { AgentId, RoomState } from "./types.js";
 import { stripUnsupportedEmojiWithDiagnostics } from "../shared/aim-smileys.js";
 import type { ConversationPhase, ConversationRunSummary, ConversationTerminalReason, GenerationDeliverySummary, ObservedConversationState, TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
 import { ConversationRunFacts } from "./conversation-run-facts.js";
+import { ConversationDecisions } from "./conversation-decisions.js";
+import type { ConversationObserver, ConversationSelectionIdentity, ConversationTurnReason } from "../shared/conversation-observability.js";
 import { observeSafely } from "./nonblocking-observer.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
@@ -20,11 +22,13 @@ export interface ConversationTurn {
     shadowSuppressed: boolean;
   };
   deliveryId?: string;
+  observation?: ConversationSelectionIdentity;
   /** Run-local observation channel; never a routing input or a log payload. */
   evidence?: { delivery?: GenerationDeliverySummary; interpretation?: TurnInterpretationDiagnostics; generationId?: string; attemptOrdinal?: number };
 }
 
 export interface TurnResult {
+  outcomeReason?: ConversationTurnReason;
   delivery?: GenerationDeliverySummary;
   interpretation?: TurnInterpretationDiagnostics;
   replyCandidates?: AgentId[];
@@ -328,7 +332,7 @@ export async function runEnergyConversation(
   energy: ConversationEnergy,
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   random: () => number = Math.random,
-  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; conversationalFloor?: boolean; concurrencyLimit?: number; onSummary?: (summary: ConversationRunSummary) => unknown } = {},
+  options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; conversationalFloor?: boolean; concurrencyLimit?: number; onSummary?: (summary: ConversationRunSummary) => unknown; observer?: ConversationObserver } = {},
 ): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
   const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
@@ -340,10 +344,10 @@ export async function runEnergyConversation(
   const hardTurnCeiling = scalesToWholeRoom
     ? Math.max(policy.hardTurnCeiling, candidates.length + convergenceReserve)
     : policy.hardTurnCeiling;
-  const remaining = [...candidates];
+  const remaining: ConversationTurn[] = [];
   const invited = new Set<AgentId>();
   const activeTurns = new Set<AgentId>();
-  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean; targetWasRunning?: boolean }> = [];
+  const pendingMentions: Array<{ source: AgentId; target: AgentId; includeDiff?: boolean; targetWasRunning?: boolean; observation: ConversationSelectionIdentity }> = [];
   const pairReplies = new Map<string, number>();
   const usedContinuationSources = new Set<number>();
   let lastOutcome: EnergyOutcome | undefined;
@@ -362,6 +366,12 @@ export async function runEnergyConversation(
   let phase: ConversationPhase = "opening";
   let terminalSummary: ConversationRunSummary | undefined;
   let unstartedOpenings = 0;
+  const decisions = new ConversationDecisions(options.observer, (agent) => ({
+    phase, queuedCount: remaining.length + pendingMentions.length + unstartedOpenings, activeCount: activeTurns.size,
+    attemptedTurns: facts.counts.attemptedTurns, responseTurns, visibleMessages: visibleMessagesDelivered,
+    remainingMessageBudget: hardMessageCeiling - visibleMessagesDelivered, energySpent, followUps: null, remainingFollowUps: null,
+    targetActive: activeTurns.has(agent as AgentId), targetQueued: remaining.some((turn) => turn.agent === agent) || pendingMentions.some((mention) => mention.target === agent),
+  }));
   const summarize = (reason: ConversationTerminalReason, engineSettled: boolean | null): ConversationRunSummary => ({
     eventVersion: 1, engine: "energy", reason, phase, engineSettled,
     counts: { ...facts.counts },
@@ -381,11 +391,12 @@ export async function runEnergyConversation(
   };
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
+    if (!turn.observation) turn = decisions.queue(turn, phase === "opening" ? "initial-candidate" : phase === "follow-up" ? "fresh-candidate" : phase, lastOutcome?.turn);
     invited.add(turn.agent);
     activeTurns.add(turn.agent);
-    const evidence: NonNullable<ConversationTurn["evidence"]> = {};
-    const observedTurn = { ...turn, evidence };
     facts.start();
+    const observedTurn = decisions.start(turn, Math.min(messageLimit, hardMessageCeiling - visibleMessagesDelivered));
+    const startedAt = Date.now();
     let result: TurnResult;
     try {
       result = await performTurn({
@@ -397,27 +408,32 @@ export async function runEnergyConversation(
     } catch (error) {
       activeTurns.delete(turn.agent);
       facts.complete(observedTurn, undefined, true);
+      decisions.finish(observedTurn, startedAt, undefined, true);
       throw error;
     }
     facts.complete(observedTurn, result);
     const activePeersAtCompletion = new Set(activeTurns);
     activeTurns.delete(turn.agent);
+    decisions.finish(observedTurn, startedAt, result);
     if (result.cancelled) cancelled = true;
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
     const responded = visibleMessageCount > 0;
     if (!responded && !result.cancelled && !result.failed) completedDeclines += 1;
-    const outcome = { turn, result, responded, key: nextOutcomeKey };
+    const outcome = { turn: observedTurn, result, responded, key: nextOutcomeKey };
     nextOutcomeKey += 1;
     if (responded) {
       responseTurns += 1;
       visibleMessagesDelivered += visibleMessageCount;
       energySpent += visibleMessageCount + Math.floor((responseTurns - 1) / 2);
       for (const target of result.mentionedAgents || []) {
-        if (target !== turn.agent) pendingMentions.push({
+        const requested = decisions.queue({ agent: target, instruction: "" }, "legacy-name-match", observedTurn);
+        if (target === turn.agent) decisions.drop(requested.observation!, "target-already-responded");
+        else pendingMentions.push({
           source: turn.agent,
           target,
           includeDiff: turn.includeDiff,
           targetWasRunning: activePeersAtCompletion.has(target),
+          observation: requested.observation!,
         });
       }
       lastOutcome = outcome;
@@ -453,6 +469,12 @@ export async function runEnergyConversation(
   };
 
   try {
+    decisions.emit({ kind: "configuration", configuration: {
+      engine: "energy", energy, policyRevision: 1, candidateIds: candidates.map(({ agent }) => agent), candidateCount: candidates.length,
+      concurrencyLimit, participantLimit, hardMessageCeiling, hardTurnCeiling, softMessageBudget: policy.softMessageBudget,
+      secondaryChance: policy.secondaryChance, maxFollowUps: null, inviteAll: Boolean(options.inviteAll), stopOnSettledResponse: Boolean(options.stopOnSettledResponse), conversationalFloor: Boolean(options.conversationalFloor),
+    } });
+    for (const turn of candidates) remaining.push(decisions.queue(turn, "initial-candidate"));
     const concurrentOpenings = concurrencyLimit > 1 && !options.stopOnSettledResponse;
     if (concurrentOpenings && remaining.length > 0) {
       const openingTurns = options.inviteAll ? remaining.splice(0) : [remaining.shift()!];
@@ -460,7 +482,9 @@ export async function runEnergyConversation(
         && openingTurns.length < participantLimit
         && remaining.length > 0) {
         secondaryAttempts += 1;
-        if (random() > policy.secondaryChance) {
+        const draw = random();
+        decisions.decision(remaining[0].observation!, draw > policy.secondaryChance ? "blocked" : "queued", draw > policy.secondaryChance ? "secondary-chance-missed" : "eligible", { randomDraw: draw, randomThreshold: policy.secondaryChance });
+        if (draw > policy.secondaryChance) {
           secondaryAttemptAlreadyFailed = true;
           break;
         }
@@ -501,13 +525,16 @@ export async function runEnergyConversation(
         const replyCount = pairReplies.get(pair) || 0;
         if (replyCount >= 2 || (!mention.targetWasRunning && lastOutcome?.turn.agent === mention.target)) {
           facts.counts.skippedTurns += 1;
+          decisions.drop(mention.observation, replyCount >= 2 ? "pair-cap-reached" : "target-already-responded", { pairCount: replyCount, pairLimit: 2 });
           continue;
         }
         pairReplies.set(pair, replyCount + 1);
+        decisions.decision(mention.observation, "queued", "eligible", { pairCount: replyCount, pairLimit: 2 });
         await record({
           agent: mention.target,
           instruction: followUpInstruction(mention.source, "direct"),
           includeDiff: mention.includeDiff,
+          observation: mention.observation,
         });
         continue;
       }
@@ -518,17 +545,23 @@ export async function runEnergyConversation(
       } else if (secondaryAttempts < participantLimit - 1
         && (policy.participantLimit === "all" || energySpent < policy.softMessageBudget)) {
         secondaryAttempts += 1;
-        if (random() <= policy.secondaryChance) {
+        const draw = random();
+        const next = remaining.find(({ agent }) => !invited.has(agent));
+        const selection = next ? decisions.select(next, "fresh-candidate", lastOutcome.turn).observation! : decisions.identity("", "fresh-candidate", lastOutcome.turn);
+        decisions.decision(selection, draw <= policy.secondaryChance && next ? "queued" : "blocked", draw > policy.secondaryChance ? "secondary-chance-missed" : next ? "eligible" : "no-fresh-candidate", { randomDraw: draw, randomThreshold: policy.secondaryChance });
+        if (draw <= policy.secondaryChance) {
           const index = nextFreshCandidate();
           if (index >= 0) {
             const [candidate] = remaining.splice(index, 1);
-            await record({
+            await record(decisions.select({
               ...candidate,
               instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
-            });
+            }, "fresh-candidate", lastOutcome.turn));
             continue;
           }
         }
+      } else {
+        decisions.decision(decisions.identity("", "fresh-candidate", lastOutcome.turn), "blocked", secondaryAttempts >= participantLimit - 1 ? "participant-limit" : "soft-budget-exhausted");
       }
 
       const projectedGenericCost = 1 + Math.floor(responseTurns / 2);
@@ -540,13 +573,16 @@ export async function runEnergyConversation(
         const index = nextFreshCandidate();
         if (index >= 0) {
           const [candidate] = remaining.splice(index, 1);
-          const continuation = await record({
+          const continuation = await record(decisions.select({
             ...candidate,
             instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
-          });
+          }, "ambient-continuation", lastOutcome.turn));
           if (explicitlyOpen && !continuation.responded) usedContinuationSources.delete(lastOutcome.key);
           continue;
         }
+        decisions.decision(decisions.identity("", "ambient-continuation", lastOutcome.turn), "blocked", "no-fresh-candidate");
+      } else {
+        decisions.decision(decisions.identity("", "ambient-continuation", lastOutcome.turn), "blocked", usedContinuationSources.has(lastOutcome.key) ? "source-already-used" : !lastOutcome.result.continuationWorthy ? "no-continuation-cue" : "soft-budget-exhausted");
       }
       break;
     }
@@ -586,7 +622,7 @@ export async function runEnergyConversation(
     phase = "objection";
     for (const agent of objectors) {
       if (cancelled || visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) break;
-      const objection = await record({ agent, instruction: objectionInstruction(synthesizer) }, 1);
+      const objection = await record(decisions.queue({ agent, instruction: objectionInstruction(synthesizer) }, "objection", synthesis.turn), 1);
       if (objection.result.conversationState === "blocked") {
         return finish("blocked-input", { settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
       }
@@ -598,7 +634,7 @@ export async function runEnergyConversation(
     }
 
     phase = "reconciliation";
-    const reconciliation = await record({ agent: synthesizer, instruction: reconciliationInstruction() }, 1);
+    const reconciliation = await record(decisions.queue({ agent: synthesizer, instruction: reconciliationInstruction() }, "reconciliation", synthesis.turn), 1);
     if (cancelled) return finish("cancelled", { settled: false });
     if (reconciliation.result.conversationState === "settled" || !reconciliation.responded) return finish(reconciliation.result.conversationState === "settled" ? "reconciliation-settled" : "reconciliation-no-response", { settled: true });
     return finish(reconciliation.result.conversationState === "blocked" ? "blocked-input" : "unresolved-reconciliation", {
@@ -608,7 +644,10 @@ export async function runEnergyConversation(
         : "The agents still have a material disagreement after a bounded synthesis round.",
     });
   } finally {
-    observeSafely(options.onSummary, terminalSummary || summarize("run-failed", null));
+    const summary = terminalSummary || summarize("run-failed", null);
+    decisions.end(summary.reason === "run-failed" ? "run-failed" : cancelled ? "run-cancelled" : summary.policy.messageCeilingReached ? "hard-message-ceiling" : summary.policy.turnCeilingReached ? "hard-turn-ceiling" : "run-ended");
+    decisions.emit({ kind: "summary", summary });
+    observeSafely(options.onSummary, summary);
   }
 }
 
@@ -625,10 +664,11 @@ export async function runAgentConversation(
   performTurn: (turn: ConversationTurn) => Promise<TurnResult>,
   concurrencyLimit = 3,
   onSummary?: (summary: ConversationRunSummary) => unknown,
+  observer?: ConversationObserver,
 ) {
-  const queued: ConversationTurn[] = [...initialTurns];
+  const queued: ConversationTurn[] = [];
   const pending = new Map<number, { turn: ConversationTurn; completion: Promise<CompletedTurn> }>();
-  const deferredMentions = new Map<AgentId, ConversationTurn>();
+  const deferredMentions = new Map<AgentId, { source: ConversationTurn; observation: ConversationSelectionIdentity }>();
   const completedOrder = new Map<AgentId, number>();
   let followUps = 0;
   let nextId = 0;
@@ -651,30 +691,39 @@ export async function runAgentConversation(
   });
   let activeCount = 0;
   let policyVisibleMessages = 0;
+  const decisions = new ConversationDecisions(observer, (agent) => ({
+    phase, queuedCount: queued.length, activeCount, attemptedTurns: facts.counts.attemptedTurns,
+    responseTurns: facts.counts.respondedTurns, visibleMessages: policyVisibleMessages, remainingMessageBudget: null, energySpent: null,
+    followUps, remainingFollowUps: maxFollowUps - followUps,
+    targetActive: [...pending.values()].some(({ turn }) => turn.agent === agent), targetQueued: queued.some((turn) => turn.agent === agent),
+  }));
 
   const startTurn = (turn: ConversationTurn) => {
     const id = nextId;
     nextId += 1;
-    const observedTurn = { ...turn, evidence: {} };
     facts.start();
     activeCount += 1;
+    const observedTurn = decisions.start(turn, turn.visibleMessageLimit ?? 3);
+    const startedAt = Date.now();
     let promise: Promise<TurnResult>;
     try { promise = performTurn(observedTurn); }
     catch (error) {
-      activeCount -= 1; facts.complete(observedTurn, undefined, true); throw error;
+      activeCount -= 1; facts.complete(observedTurn, undefined, true); decisions.finish(observedTurn, startedAt, undefined, true); throw error;
     }
     const completion = promise.then(
       (result) => {
         activeCount -= 1; facts.complete(observedTurn, result);
         policyVisibleMessages += Math.max(0, result.visibleMessageCount || 0);
-        return { id, turn, result };
+        decisions.finish(observedTurn, startedAt, result);
+        return { id, turn: observedTurn, result };
       },
       (error: unknown) => {
         activeCount -= 1; facts.complete(observedTurn, undefined, true);
-        return { id, turn, error };
+        decisions.finish(observedTurn, startedAt, undefined, true);
+        return { id, turn: observedTurn, error };
       },
     );
-    pending.set(id, { turn, completion });
+    pending.set(id, { turn: observedTurn, completion });
   };
 
   const fillAvailableSlots = () => {
@@ -685,6 +734,13 @@ export async function runAgentConversation(
     || [...pending.values()].some(({ turn }) => turn.agent === agent);
 
   try {
+    decisions.emit({ kind: "configuration", configuration: {
+      engine: "legacy", energy: null, policyRevision: 1, candidateIds: initialTurns.map(({ agent }) => agent), candidateCount: initialTurns.length,
+      concurrencyLimit: Math.max(1, Math.floor(concurrencyLimit)), participantLimit: initialTurns.length,
+      hardMessageCeiling: null, hardTurnCeiling: null, softMessageBudget: null, secondaryChance: null, maxFollowUps,
+      inviteAll: false, stopOnSettledResponse: false, conversationalFloor: false,
+    } });
+    for (const turn of initialTurns) queued.push(decisions.queue(turn, "initial-candidate"));
     fillAvailableSlots();
 
     while (pending.size > 0 || queued.length > 0) {
@@ -705,39 +761,55 @@ export async function runAgentConversation(
         deferredMentions.delete(completed.turn.agent);
         queued.unshift({
           agent: completed.turn.agent,
-          instruction: followUpInstruction(deferredMention.agent, "direct"),
-          includeDiff: deferredMention.includeDiff,
+          instruction: followUpInstruction(deferredMention.source.agent, "direct"),
+          includeDiff: deferredMention.source.includeDiff,
+          observation: deferredMention.observation,
         });
+        decisions.decision(deferredMention.observation, "queued", "eligible");
         followUps += 1;
       }
 
       const mentionedAgents = completed.result?.mentionedAgents || [];
-      for (const mentionedAgent of mentionedAgents) {
-        if (followUps >= maxFollowUps) break;
+      for (const [mentionIndex, mentionedAgent] of mentionedAgents.entries()) {
+        if (followUps >= maxFollowUps) {
+          for (const target of mentionedAgents.slice(mentionIndex)) decisions.decision(decisions.identity(target, "legacy-name-match", completed.turn), "blocked", "follow-up-allowance-exhausted");
+          break;
+        }
         if (agentIsScheduled(mentionedAgent)) {
-          deferredMentions.set(mentionedAgent, completed.turn);
+          const previous = deferredMentions.get(mentionedAgent);
+          const observation = decisions.defer(mentionedAgent, completed.turn, [...pending.values()].some(({ turn }) => turn.agent === mentionedAgent) ? "target-active" : "target-queued", previous?.observation);
+          deferredMentions.set(mentionedAgent, { source: completed.turn, observation });
           continue;
         }
-        queued.push({
+        queued.push(decisions.queue({
           agent: mentionedAgent,
           instruction: followUpInstruction(completed.turn.agent, "direct"),
           includeDiff: completed.turn.includeDiff,
-        });
+        }, "legacy-name-match", completed.turn));
         phase = "follow-up";
         followUps += 1;
       }
-      if (mentionedAgents.length > 0 || followUps >= maxFollowUps) continue;
+      if (mentionedAgents.length > 0 || followUps >= maxFollowUps) {
+        if (followUps >= maxFollowUps) for (const target of completed.result?.replyCandidates || []) decisions.decision(decisions.identity(target, "ambient-continuation", completed.turn), "blocked", "follow-up-allowance-exhausted");
+        continue;
+      }
 
       const replyCandidate = (completed.result?.replyCandidates || [])
-        .filter((candidate) => !agentIsScheduled(candidate))
-        .filter((candidate) => completedOrder.has(candidate))
+        .filter((candidate) => {
+          if (!agentIsScheduled(candidate)) return true;
+          decisions.decision(decisions.identity(candidate, "ambient-continuation", completed.turn), "blocked", [...pending.values()].some(({ turn }) => turn.agent === candidate) ? "target-active" : "target-queued"); return false;
+        })
+        .filter((candidate) => {
+          if (completedOrder.has(candidate)) return true;
+          decisions.decision(decisions.identity(candidate, "ambient-continuation", completed.turn), "blocked", "candidate-not-completed"); return false;
+        })
         .sort((left, right) => completedOrder.get(left)! - completedOrder.get(right)!)[0];
       if (!replyCandidate) continue;
-      queued.push({
+      queued.push(decisions.queue({
         agent: replyCandidate,
         instruction: followUpInstruction(completed.turn.agent, "substantive"),
         includeDiff: completed.turn.includeDiff,
-      });
+      }, "ambient-continuation", completed.turn));
       phase = "follow-up";
       followUps += 1;
       fillAvailableSlots();
@@ -745,6 +817,12 @@ export async function runAgentConversation(
     terminalSummary = summarize(followUps >= maxFollowUps ? "follow-up-limit" : "queue-exhausted");
     return { summary: terminalSummary };
   } finally {
-    observeSafely(onSummary, terminalSummary || summarize("run-failed"));
+    // A synchronous callback throw can bypass the normal rejected-promise drain.
+    // Finish already-started work before publishing a terminal observation.
+    if (activeCount > 0) await Promise.allSettled([...pending.values()].map(({ completion }) => completion));
+    const summary = terminalSummary || summarize("run-failed");
+    decisions.end(summary.reason === "run-failed" ? "run-failed" : followUps >= maxFollowUps ? "follow-up-allowance-exhausted" : "run-ended");
+    decisions.emit({ kind: "summary", summary });
+    observeSafely(onSummary, summary);
   }
 }
