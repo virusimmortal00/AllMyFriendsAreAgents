@@ -21,7 +21,7 @@ export interface ConversationTurn {
   };
   deliveryId?: string;
   /** Run-local observation channel; never a routing input or a log payload. */
-  evidence?: { delivery?: GenerationDeliverySummary; interpretation?: TurnInterpretationDiagnostics };
+  evidence?: { delivery?: GenerationDeliverySummary; interpretation?: TurnInterpretationDiagnostics; generationId?: string; attemptOrdinal?: number };
 }
 
 export interface TurnResult {

@@ -9,6 +9,9 @@ export interface LogContext {
   spanId: string;
   requestId?: string;
   jobId?: string;
+  runId?: string;
+  turnId?: string;
+  attemptOrdinal?: number;
   correlationId?: string;
   operationId?: string;
   generationId?: string;
@@ -102,6 +105,16 @@ export function sanitizeLogValue(value: unknown, _depth = 0, includeStack = fals
 }
 
 export function currentLogContext() { return storage.getStore(); }
+
+/** Domain identities remain payload fields so identical-log coalescing respects them. */
+export function conversationLogFields(context: Partial<LogContext> | undefined = currentLogContext()) {
+  return {
+    ...(context?.jobId ? { jobId: context.jobId } : {}),
+    ...(context?.runId ? { runId: context.runId } : {}),
+    ...(context?.turnId ? { turnId: context.turnId } : {}),
+    ...(context?.attemptOrdinal !== undefined ? { attemptOrdinal: context.attemptOrdinal } : {}),
+  };
+}
 
 export interface StructuredLogIdentity { schemaVersion: 1; service: string; serviceVersion: string; instanceId: string; deploymentCommit: string | null; deploymentEpoch: string | null; environment: string }
 

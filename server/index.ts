@@ -18,6 +18,7 @@ import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { withGenerationDelivery } from "./generation-delivery.js";
+import { withConversationRun, withConversationTurn } from "./conversation-context.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
@@ -711,7 +712,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
           diagnosticsTool: diagnosticsToolContext(activeAgent),
         }) : undefined,
       },
-      sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
+      { ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}), evidence },
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -758,6 +759,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
+    attemptOrdinal: result.attemptOrdinal,
     agent,
     interpretation: parsed.diagnostics,
     visibleMessages: parsed.visibleMessages,
@@ -773,6 +775,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (evidence) evidence.delivery = summary;
     return generationJournal.append({
       type: "generation.delivery", generationId: result.generationId, agent,
+      attemptOrdinal: result.attemptOrdinal,
       ...summary,
       deliveredMessageCount: summary.confirmedDeliveredBurstCount,
       totalVisibleMessages: parsed.visibleMessages.length,
@@ -884,28 +887,32 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
 }
 
 async function performTurn(turn: ConversationTurn) {
-  try {
-    return await performTurnUnchecked(turn);
-  } catch (error) {
-    roomActivity.interrupt();
-    throw error;
-  }
+  return withConversationTurn(turn.agent, async () => {
+    try {
+      return await performTurnUnchecked(turn);
+    } catch (error) {
+      roomActivity.interrupt();
+      throw error;
+    }
+  });
 }
 
 async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
-  const snapshot = store.snapshot();
-  const energy = snapshot.settings.conversationEnergy;
-  await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
-  broadcast();
-  if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
-      ...broadcastPolicy,
-      concurrencyLimit: Math.max(1, concurrencyLimit),
-    });
-    return;
-  }
-  const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-  await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
+  return withConversationRun(async () => {
+    const snapshot = store.snapshot();
+    const energy = snapshot.settings.conversationEnergy;
+    await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
+    broadcast();
+    if (staged) {
+      await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
+        ...broadcastPolicy,
+        concurrencyLimit: Math.max(1, concurrencyLimit),
+      });
+      return;
+    }
+    const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
+    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
+  });
 }
 
 async function runJob(job: () => Promise<void>, propagateFailure = false) {

@@ -9,9 +9,9 @@
     "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
   },
   "review": {
-    "revision": 2,
-    "reviewedOn": "2026-08-30",
-    "result": "Re-inspected v1.18.25 at the unchanged audited commit. The CLI emits complete text-part snapshots only after an end time, not provider deltas; the processor accumulates deltas before completion, and the typed schema carries session, message, and part identity. Distinct completed parts require boundaries even within one assistant message; repeated identities are snapshots, not append-only fragments. The session API supports JSON-schema output through StructuredOutput, but run --format json does not request it. Model-catalog, inline-permission, and custom-tool contracts remain unchanged. Fixtures are synthetic source-contract evidence, not a live-provider capture.",
+    "revision": 3,
+    "reviewedOn": "2026-08-31",
+    "result": "Re-inspected all cli-jsonl and permissions-and-tools source paths at the unchanged v1.18.25 audited commit before adding local run, turn, and invocation-attempt correlation. CLI arguments, environment filtering, permission rules, custom tools, session reuse and missing-session retry behavior remain unchanged. Attempt ordinals identify local subprocess invocations, not provider-internal retries. The CLI emits completed text-part snapshots with session/message/part identity, not deltas; session StructuredOutput is not requested by run --format json. The previous model-catalog review remains unchanged. Tests use synthetic subprocess and source-contract fixtures, not live-provider evidence.",
     "paths": [
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",
