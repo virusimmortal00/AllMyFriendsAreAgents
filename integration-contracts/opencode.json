@@ -9,17 +9,20 @@
     "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
   },
   "review": {
-    "revision": 1,
-    "reviewedOn": "2026-08-28",
-    "result": "OpenCode v1.18.25 preserves the consumed CLI JSONL, model-catalog, inline-permission, and custom-tool contracts. Its run loop now tracks child sessions when answering permission requests; the room lane remains fail-closed because its inline permission map denies unspecified tools.",
+    "revision": 2,
+    "reviewedOn": "2026-08-30",
+    "result": "Re-inspected v1.18.25 at the unchanged audited commit. The CLI emits complete text-part snapshots only after an end time, not provider deltas; the processor accumulates deltas before completion, and the typed schema carries session, message, and part identity. Distinct completed parts require boundaries even within one assistant message; repeated identities are snapshots, not append-only fragments. The session API supports JSON-schema output through StructuredOutput, but run --format json does not request it. Model-catalog, inline-permission, and custom-tool contracts remain unchanged. Fixtures are synthetic source-contract evidence, not a live-provider capture.",
     "paths": [
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",
       "packages/opencode/src/config/config.ts",
       "packages/opencode/src/provider/provider.ts",
       "packages/opencode/src/session/message-v2.ts",
+      "packages/opencode/src/session/processor.ts",
+      "packages/opencode/src/session/prompt.ts",
       "packages/plugin/package.json",
-      "packages/plugin/src/tool.ts"
+      "packages/plugin/src/tool.ts",
+      "packages/schema/src/v1/session.ts"
     ]
   },
   "surfaces": [
@@ -28,16 +31,22 @@
       "description": "OpenCode run arguments, JSONL events, sessions, variants, errors, and provider telemetry.",
       "local": [
         "server/agent-runner.ts",
+        "server/fixtures/opencode-completed-text-parts.json",
         "server/context-summarizer.ts",
         "server/provider-failure.ts"
       ],
       "upstream": [
         "packages/opencode/src/cli/cmd/run.ts",
         "packages/opencode/src/session/message-v2.ts",
+        "packages/opencode/src/session/processor.ts",
+        "packages/opencode/src/session/prompt.ts",
+        "packages/schema/src/v1/session.ts",
         "packages/opencode/src/provider/provider.ts"
       ],
       "tests": [
         "server/agent-runner.test.ts",
+        "server/conversation.test.ts",
+        "src/message-format.test.ts",
         "server/context-summarizer.test.ts",
         "server/provider-health.test.ts"
       ]

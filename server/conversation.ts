@@ -2,7 +2,7 @@ import type { AgentId, RoomState } from "./types.js";
 import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
-import { isNoResponseNeeded, parseTurnDisposition, visibleAgentChatText, type YieldReason } from "../shared/message-format.js";
+import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatText, type YieldReason } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
 
@@ -185,6 +185,8 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
 }
 
 export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS): ParsedAgentTurn {
+  const speakerName = AGENT_PROFILES[agent]?.conversationalName;
+  text = stripAgentSelfLabel(text, speakerName);
   const declaredState = CONVERSATION_STATE.exec(text)?.[1]?.toLowerCase() as ConversationState | undefined;
   const investigationRequest = parseInvestigationRequest(text);
   const disposition = parseTurnDisposition(text);
@@ -195,8 +197,9 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
       ...(disposition.status === "malformed" ? { dispositionMalformed: true } : {}),
     };
   }
-  const visibleMessages = visibleAgentChatText(text)
+  const visibleMessages = visibleAgentChatText(text, speakerName)
     .split(NEXT_MESSAGE)
+    .map((message) => stripAgentSelfLabel(message, speakerName))
     .map(stripUnsupportedEmoji)
     .filter((message) => message && message !== "NO_RESPONSE_NEEDED")
     .slice(0, Math.max(0, Math.min(3, visibleMessageLimit)));

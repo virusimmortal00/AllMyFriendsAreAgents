@@ -571,6 +571,7 @@ function opencodeArgs(permission: "read-only" | "writable", projectPath: string,
 function parseOpenCodeOutput(stdout: string) {
   let sessionId = "";
   const text: string[] = [];
+  const textPartIndexes = new Map<string, number>();
   const toolCalls = new Set<string>();
   const failedToolCalls = new Set<string>();
   const errors = providerFailuresFromOpenCodeOutput(stdout);
@@ -587,9 +588,12 @@ function parseOpenCodeOutput(stdout: string) {
         sessionID?: string;
         part?: {
           id?: string;
+          sessionID?: string;
+          messageID?: string;
           callID?: string;
           type?: string;
           text?: string;
+          time?: { end?: unknown };
           tool?: string;
           reason?: string;
           cost?: unknown;
@@ -597,8 +601,23 @@ function parseOpenCodeOutput(stdout: string) {
           state?: { status?: string };
         };
       };
-      if (event.sessionID) sessionId = event.sessionID;
-      if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
+      if (typeof event.sessionID === "string" && event.sessionID) sessionId = event.sessionID;
+      if (event.type === "text" && event.part?.type === "text" && typeof event.part.text === "string") {
+        const part = event.part;
+        const partText = event.part.text;
+        // The audited CLI emits completed snapshots, never token deltas. Missing
+        // timing/identity remains a compatibility case, but explicitly unfinished
+        // parts are not eligible for chat. See docs/integrations/opencode.md.
+        if (part.time !== undefined && !(typeof part.time?.end === "number" && Number.isFinite(part.time.end) && part.time.end > 0)) continue;
+        const identity = [part.sessionID ?? event.sessionID, part.messageID, part.id];
+        const key = identity.every((value) => typeof value === "string" && value.length > 0) ? JSON.stringify(identity) : undefined;
+        const index = key === undefined ? undefined : textPartIndexes.get(key);
+        if (index !== undefined) text[index] = partText;
+        else {
+          if (key !== undefined) textPartIndexes.set(key, text.length);
+          text.push(partText);
+        }
+      }
       if (event.type === "tool_use" && event.part?.type === "tool") {
         const id = event.part.callID || event.part.id || `${event.part.tool || "tool"}:${toolCalls.size}`;
         toolCalls.add(id);
@@ -625,7 +644,7 @@ function parseOpenCodeOutput(stdout: string) {
   }
   return {
     sessionId,
-    text: text.join(""),
+    text: text.filter((part) => part.length > 0).join("\n\n"),
     usage,
     cost,
     toolCalls: toolCalls.size,

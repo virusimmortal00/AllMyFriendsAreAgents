@@ -52,11 +52,17 @@ export function visibleAgentText(text: string): string {
     .trim();
 }
 
-export function visibleAgentChatText(text: string): string {
+export function stripAgentSelfLabel(text: string, speakerName?: string): string {
+  if (!speakerName) return text;
+  const prefix = /^\s*\[([^\]\r\n]+)\](?:[ \t]+|\r?\n|$)/.exec(text);
+  return prefix?.[1].toLowerCase() === speakerName.toLowerCase() ? text.slice(prefix[0].length).trimStart() : text;
+}
+
+export function visibleAgentChatText(text: string, speakerName?: string): string {
   const visible = visibleAgentText(text);
   const paragraphs = visible.split(/\n\s*\n/);
   while (paragraphs.length > 1 && INTERNAL_PREFACE.test(paragraphs[0])) paragraphs.shift();
-  return paragraphs.join("\n\n").trim();
+  return stripAgentSelfLabel(paragraphs.join("\n\n").trim(), speakerName);
 }
 
 export function isNoResponseNeeded(text: string): boolean {

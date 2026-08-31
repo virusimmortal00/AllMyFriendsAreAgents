@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { visibleAgentChatText, visibleAgentText } from "../shared/message-format";
+import { stripAgentSelfLabel, visibleAgentChatText, visibleAgentText } from "../shared/message-format";
 
 describe("visibleAgentText", () => {
   it("hides disposition metadata from existing transcript messages", () => {
@@ -24,5 +24,24 @@ describe("visibleAgentText", () => {
     expect(visibleAgentChatText("Solitaire, unironically.\n\nFree with every copy of Windows.")).toBe(
       "Solitaire, unironically.\n\nFree with every copy of Windows.",
     );
+  });
+
+  it("removes only an exact current-speaker label, including after a separate preface", () => {
+    expect(stripAgentSelfLabel("[ALPHA] Hello.", "Alpha")).toBe("Hello.");
+    expect(stripAgentSelfLabel("[Alpha]\nHello.", "Alpha")).toBe("Hello.");
+    expect(visibleAgentChatText("Plan mode is active.\n\n[ALPHA] Hello.", "Alpha")).toBe("Hello.");
+  });
+
+  it.each([
+    "[aside] Hello.", "[Alpha Beta] Hello.", "[Beta] Hello.",
+    "[Alpha](https://example.com) is a link.", "I saw [Alpha] earlier.",
+    "```text\n[Alpha] Literal example.\n```",
+  ])("preserves bracketed prose and Markdown that is not a self-label: %s", (text) => {
+    expect(stripAgentSelfLabel(text, "Alpha")).toBe(text);
+    expect(visibleAgentChatText(text, "Alpha")).toBe(text);
+  });
+
+  it("does not infer self identity when none is supplied", () => {
+    expect(visibleAgentChatText("[Alpha] Hello.")).toBe("[Alpha] Hello.");
   });
 });

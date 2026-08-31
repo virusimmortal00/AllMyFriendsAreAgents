@@ -1,0 +1,28 @@
+{
+  "provenance": {
+    "kind": "synthetic-source-contract",
+    "tag": "v1.18.25",
+    "commit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+    "paths": [
+      "packages/opencode/src/cli/cmd/run.ts",
+      "packages/opencode/src/session/processor.ts",
+      "packages/opencode/src/session/prompt.ts",
+      "packages/schema/src/v1/session.ts"
+    ],
+    "note": "Fictional content and identities; completed-part snapshots follow the audited CLI projection, not a captured provider session."
+  },
+  "events": [
+    { "type": "step_start", "sessionID": "ses_example", "part": { "id": "prt_start1", "sessionID": "ses_example", "messageID": "msg_first", "type": "step-start" } },
+    { "type": "text", "sessionID": "ses_example", "part": { "id": "prt_preface", "sessionID": "ses_example", "messageID": "msg_first", "type": "text", "text": "Plan mode is active. This is not a coding task.", "time": { "start": 1, "end": 2 } } },
+    { "type": "tool_use", "sessionID": "ses_example", "part": { "id": "prt_tool1", "sessionID": "ses_example", "messageID": "msg_first", "type": "tool", "callID": "call_first", "tool": "room_history", "state": { "status": "completed", "input": {}, "output": "Example history.", "title": "History", "metadata": {}, "time": { "start": 2, "end": 3 } } } },
+    { "type": "step_finish", "sessionID": "ses_example", "part": { "id": "prt_finish1", "sessionID": "ses_example", "messageID": "msg_first", "type": "step-finish", "reason": "tool-calls", "cost": 0, "tokens": { "input": 10, "output": 5, "reasoning": 0, "cache": { "read": 0, "write": 0 } } } },
+    { "type": "step_start", "sessionID": "ses_example", "part": { "id": "prt_start2", "sessionID": "ses_example", "messageID": "msg_second", "type": "step-start" } },
+    { "type": "text", "sessionID": "ses_example", "part": { "id": "prt_answer", "sessionID": "ses_example", "messageID": "msg_second", "type": "text", "text": "The answer is a map.", "time": { "start": 4, "end": 5 } } },
+    { "type": "tool_use", "sessionID": "ses_example", "part": { "id": "prt_tool2", "sessionID": "ses_example", "messageID": "msg_second", "type": "tool", "callID": "call_second", "tool": "read", "state": { "status": "completed", "input": {}, "output": "Example context.", "title": "Context", "metadata": {}, "time": { "start": 5, "end": 6 } } } },
+    { "type": "step_finish", "sessionID": "ses_example", "part": { "id": "prt_finish2", "sessionID": "ses_example", "messageID": "msg_second", "type": "step-finish", "reason": "tool-calls", "cost": 0, "tokens": { "input": 10, "output": 5, "reasoning": 0, "cache": { "read": 0, "write": 0 } } } },
+    { "type": "step_start", "sessionID": "ses_example", "part": { "id": "prt_start3", "sessionID": "ses_example", "messageID": "msg_final", "type": "step-start" } },
+    { "type": "text", "sessionID": "ses_example", "part": { "id": "prt_disposition", "sessionID": "ses_example", "messageID": "msg_final", "type": "text", "text": "TURN_DISPOSITION: {\"action\":\"speak\"}", "time": { "start": 7, "end": 8 } } },
+    { "type": "text", "sessionID": "ses_example", "part": { "id": "prt_state", "sessionID": "ses_example", "messageID": "msg_final", "type": "text", "text": "CONVERSATION_STATE: SETTLED", "time": { "start": 8, "end": 9 } } },
+    { "type": "step_finish", "sessionID": "ses_example", "part": { "id": "prt_finish3", "sessionID": "ses_example", "messageID": "msg_final", "type": "step-finish", "reason": "stop", "cost": 0, "tokens": { "input": 10, "output": 5, "reasoning": 0, "cache": { "read": 0, "write": 0 } } } }
+  ]
+}
