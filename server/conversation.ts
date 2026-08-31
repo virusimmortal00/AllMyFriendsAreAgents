@@ -1,6 +1,6 @@
 import type { AgentId, RoomState } from "./types.js";
 import { stripUnsupportedEmojiWithDiagnostics } from "../shared/aim-smileys.js";
-import type { ObservedConversationState, TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
+import type { GenerationDeliverySummary, ObservedConversationState, TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
 import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
 import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatTextWithDiagnostics, type YieldReason } from "../shared/message-format.js";
@@ -18,9 +18,13 @@ export interface ConversationTurn {
     shadowSuppressed: boolean;
   };
   deliveryId?: string;
+  /** Run-local observation channel; never a routing input or a log payload. */
+  evidence?: { delivery?: GenerationDeliverySummary };
 }
 
 export interface TurnResult {
+  delivery?: GenerationDeliverySummary;
+  interpretation?: TurnInterpretationDiagnostics;
   replyCandidates?: AgentId[];
   mentionedAgents?: AgentId[];
   visibleMessageCount?: number;

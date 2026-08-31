@@ -17,6 +17,7 @@ import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorState
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
+import { withGenerationDelivery } from "./generation-delivery.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
@@ -660,7 +661,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn) {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
@@ -766,155 +767,119 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
   });
-  if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
-
-  if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-    if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
-    await store.clearSession(agent);
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "room activity changed before delivery",
-      deliveredMessageCount: 0,
+  let firstDelayMs: number | undefined;
+  return withGenerationDelivery(parsed.visibleMessages.length, (summary) => {
+    if (evidence) evidence.delivery = summary;
+    return generationJournal.append({
+      type: "generation.delivery", generationId: result.generationId, agent,
+      ...summary,
+      deliveredMessageCount: summary.confirmedDeliveredBurstCount,
       totalVisibleMessages: parsed.visibleMessages.length,
+      firstDelayMs, generationDurationMs: result.durationMs,
     });
-    return { cancelled: true };
-  }
+  }, async (delivery) => {
+    if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
 
-  if (parsed.investigationRequest) {
-    const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
-    const evidenceRefs = [
-      ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
-      ...parsed.investigationRequest.evidenceRefs,
-    ];
-    await investigationService.request({
-      owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
-      signal: "AGENT_DECISION", evidenceRefs,
-      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
+    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+      if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
+      await store.clearSession(agent);
+      delivery.finish("cancelled", "activity-changed-before-delivery");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+
+    if (parsed.investigationRequest) {
+      const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
+      const evidenceRefs = [
+        ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
+        ...parsed.investigationRequest.evidenceRefs,
+      ];
+      await investigationService.request({
+        owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
+        signal: "AGENT_DECISION", evidenceRefs,
+        contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
+      });
+    }
+
+    const burstId = randomUUID();
+    const firstMessage = parsed.visibleMessages[0];
+    const generatedElapsed = Date.now() - pacingStartedAt;
+    const firstDelay = firstMessage
+      ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
+      : 0;
+    let burstStarted = false;
+    firstDelayMs = firstDelay;
+    const completed = await deliverBurst({
+      messages: parsed.visibleMessages,
+      activity: roomActivity,
+      revision: activityRevision,
+      firstDelayMs: firstDelay,
+      cancel: () => store.clearSession(agent),
+      deliver: async (visibleMessage, sequence) => {
+        if (!agentStillEnabled()) return false;
+        if (!burstStarted) {
+          await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
+          if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+          if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+          if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+          burstStarted = true;
+        }
+        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+        await delivery.write(sequence, () => deliveryId
+          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence})
+          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence}));
+        broadcast();
+      },
     });
-  }
-
-  const burstId = randomUUID();
-  const firstMessage = parsed.visibleMessages[0];
-  const generatedElapsed = Date.now() - pacingStartedAt;
-  const firstDelay = firstMessage
-    ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
-    : 0;
-  let burstStarted = false;
-  let deliveredMessageCount = 0;
-  const completed = await deliverBurst({
-    messages: parsed.visibleMessages,
-    activity: roomActivity,
-    revision: activityRevision,
-    firstDelayMs: firstDelay,
-    cancel: () => store.clearSession(agent),
-    deliver: async (visibleMessage, sequence) => {
-      if (!agentStillEnabled()) return false;
-      if (!burstStarted) {
-        await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
-        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-        if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-        burstStarted = true;
+    if (!completed) {
+      delivery.finish("cancelled", "burst-interrupted");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+    if (!roomActivity.isCurrent(activityRevision)) {
+      delivery.finish("cancelled", "activity-changed-after-delivery");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+    if (!burstStarted) {
+      if (!agentStillEnabled()) {
+        delivery.finish("cancelled", "agent-disabled");
+        return { cancelled: true, interpretation: parsed.diagnostics };
       }
-      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-      if(deliveryId)await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence});
-      else await store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence});
-      deliveredMessageCount += 1;
+      await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
+      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+        await store.clearSession(agent);
+        delivery.finish("cancelled", "activity-changed-during-session-save");
+        return { cancelled: true, interpretation: parsed.diagnostics };
+      }
+      if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+        await store.clearSession(agent);
+        delivery.finish("cancelled", "activity-changed-during-style-save");
+        return { cancelled: true, interpretation: parsed.diagnostics };
+      }
       broadcast();
-    },
-  });
-  if (!completed) {
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "new room activity interrupted a pending burst",
-      deliveredMessageCount,
-      totalVisibleMessages: parsed.visibleMessages.length,
-      firstDelayMs: firstDelay,
-      generationDurationMs: result.durationMs,
-    });
-    return { cancelled: true };
-  }
-  if (!roomActivity.isCurrent(activityRevision)) {
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "room activity changed after burst delivery",
-      deliveredMessageCount,
-      totalVisibleMessages: parsed.visibleMessages.length,
-      firstDelayMs: firstDelay,
-      generationDurationMs: result.durationMs,
-    });
-    return { cancelled: true };
-  }
-  if (!burstStarted) {
-    if (!agentStillEnabled()) return { cancelled: true };
-    await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
-    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-      await store.clearSession(agent);
-      await generationJournal.append({
-        type: "generation.delivery",
-        generationId: result.generationId,
-        agent,
-        outcome: "cancelled",
-        reason: "room activity changed while saving a silent response",
-        deliveredMessageCount,
-        totalVisibleMessages: parsed.visibleMessages.length,
-      });
-      return { cancelled: true };
     }
-    if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-      await store.clearSession(agent);
-      await generationJournal.append({
-        type: "generation.delivery",
-        generationId: result.generationId,
-        agent,
-        outcome: "cancelled",
-        reason: "room activity changed while saving agent preferences",
-        deliveredMessageCount,
-        totalVisibleMessages: parsed.visibleMessages.length,
-      });
-      return { cancelled: true };
+    delivery.finish(parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
+      parsed.visibleMessages.length === 0 ? "no-visible-output" : "burst-delivered");
+    if (!parsed.dispositionMalformed && activeAgent && rosterEpoch) {
+      await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
     }
-    broadcast();
-  }
-  await generationJournal.append({
-    type: "generation.delivery",
-    generationId: result.generationId,
-    agent,
-    outcome: parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
-    deliveredMessageCount,
-    totalVisibleMessages: parsed.visibleMessages.length,
-    firstDelayMs: firstDelay,
-    generationDurationMs: result.durationMs,
+    if (!parsed.dispositionMalformed && preflight) {
+      const existing = new Set(before.messages
+        .filter(({ kind }) => kind === undefined || kind === "chat" || kind === "review")
+        .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+      const spoke = parsed.visibleMessages.length > 0;
+      const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+      await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
+      await refreshPreflightEvidence();
+    }
+    return {
+      interpretation: parsed.diagnostics,
+      replyCandidates: parsed.replyCandidates,
+      mentionedAgents: parsed.mentionedAgents,
+      visibleMessageCount: parsed.visibleMessageCount,
+      continuationWorthy: parsed.continuationWorthy,
+      conversationState: parsed.conversationState,
+    };
   });
-  if (!parsed.dispositionMalformed && activeAgent && rosterEpoch) {
-    await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
-  }
-  if (!parsed.dispositionMalformed && preflight) {
-    const existing = new Set(before.messages
-      .filter(({ kind }) => kind === undefined || kind === "chat" || kind === "review")
-      .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
-    const spoke = parsed.visibleMessages.length > 0;
-    const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
-    await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
-    await refreshPreflightEvidence();
-  }
-  return {
-    replyCandidates: parsed.replyCandidates,
-    mentionedAgents: parsed.mentionedAgents,
-    visibleMessageCount: parsed.visibleMessageCount,
-    continuationWorthy: parsed.continuationWorthy,
-    conversationState: parsed.conversationState,
-  };
 }
 
 async function performTurn(turn: ConversationTurn) {

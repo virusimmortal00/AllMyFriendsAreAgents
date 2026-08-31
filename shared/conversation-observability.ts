@@ -80,4 +80,20 @@ export interface TurnInterpretationDiagnostics {
     whitespaceCharacters: number; emptyBursts: number; legacyNoResponseBursts: number;
   };
 }
+
+export type DeliveryReason = "burst-delivered" | "no-visible-output" | "activity-changed-before-delivery"
+  | "burst-interrupted" | "activity-changed-after-delivery" | "agent-disabled"
+  | "activity-changed-during-session-save" | "activity-changed-during-style-save"
+  | "post-interpretation-failed" | "message-write-unconfirmed";
+
+export interface GenerationDeliverySummary {
+  eventVersion: 1;
+  outcome: "delivered" | "no_response" | "cancelled" | "failed";
+  reason: DeliveryReason;
+  retainedBurstCount: number;
+  confirmedDeliveredBurstCount: number;
+  confirmedUndeliveredBurstCount: number;
+  unconfirmedBurstCount: number;
+  acknowledgedMessageIds: string[];
+}
 import type { YieldReason } from "./message-format.js";
