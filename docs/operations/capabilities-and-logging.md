@@ -157,9 +157,7 @@ Both scheduling engines also return typed terminal summaries for runtime
 instrumentation. `engineSettled` is the existing engine flag, not proof of
 consensus; legacy absence is null. Separate counters report failed/cancelled
 turns, explicit settlement, confirmed delivery, and uncertainty. These summaries
-now feed the runtime records below. Whole-trace UI navigation remains the final
-slice of
-[#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
+now feed the runtime records below.
 
 ### Conversation decisions and completion
 
@@ -208,6 +206,36 @@ failure is `warn`, final process failure is `error`, and expected cancellation i
 output; words such as "error" in arbitrary stderr do not set severity. A refused
 generation-start reservation is cancellation with `invocationStarted: false`,
 not a failed subprocess.
+
+### Owner whole-trace workflow
+
+Open **Window → Diagnostics** from a loopback browser signed in to a local OWNER
+session. Queries remain explicit and bounded to the last hour; the page does not
+load log evidence automatically.
+
+- Choose **Correlation ID** to preserve an exact legacy or generation-level
+  lookup. This selector is never silently converted into a trace query.
+- Choose **Trace ID (whole trace)** to query all six authoritative streams with
+  the exact trace selector. The stream control is disabled in this mode because
+  excluding a stream would make the label misleading.
+- From either a structured conversation decision or a raw generation/provider/
+  harness record, choose **Open whole trace**. This explicit action switches to
+  operator visibility and all streams so an OWNER can investigate in either
+  direction without changing the query service's authorization rules.
+- Use **Load next bounded page** until no cursor remains. Selector kind/value,
+  time window, visibility, and streams are retained by the cursor-bound query;
+  editing the visible controls does not substitute a different selector into an
+  outstanding cursor.
+
+The trace summary reports structured runs, detected sequence gaps, unpaired raw
+records, and decision links whose raw evidence is not loaded. A trace remains
+incomplete while pages remain. After the final page, raw evidence without a
+matching decision stays in the result list and is marked **Unpaired**. Missing
+evidence can result from independent retention, transport loss, legacy schema,
+or unfinished work; the inspector reports the cause as unknown unless the loaded
+records establish it. Existing recursive authentication-material redaction still
+applies, while useful prompts, output, parser facts, usage, cost, and routing
+evidence retain their established visibility and bounds.
 
 ## Troubleshooting and agent-visible behavior
 

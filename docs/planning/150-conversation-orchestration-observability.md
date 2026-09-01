@@ -679,6 +679,55 @@ pnpm exec tsx scripts/research-conversation-observability.ts
 git diff --check
 ```
 
+### Slice 4 implementation verification
+
+The existing OWNER diagnostics workspace now has distinct correlation-ID and
+trace-ID selector modes. Correlation queries remain exact. Whole-trace mode sends
+only the exact `traceId`, always queries all six authoritative streams, and keeps
+the original selector, time window, visibility, stream set, and cursor together
+across bounded pages. Selecting either a structured conversation record or raw
+generation/provider/harness evidence exposes the same explicit **Open whole
+trace** action; it uses the existing local OWNER operator scope rather than a new
+authorization path.
+
+Once all pages are loaded, the client reconstructs run completeness from
+`runEventSequence`, the start/completion pair, and `attemptedEventCount`. It also
+joins `conversation.turn.finished` to raw evidence by `generationId`. Raw records
+without a matching decision remain visible and are marked unpaired; decisions
+without loaded raw evidence are counted separately. Outstanding pagination is
+always incomplete. The interface states that the cause of missing evidence is
+unknown rather than choosing among retention, transport loss, legacy schema, or
+unfinished work.
+
+Focused tests cover exact selector separation, correlation and trace pagination,
+cursor-context preservation, both navigation directions, complete reconstruction,
+sequence gaps, missing raw links, unpaired evidence, large-record assembly, local
+OWNER authorization, and cross-visibility trace retrieval. The pre-existing query
+contract continues to cover selector rejection, cursor substitution, empty scan
+pages, old-schema coexistence, rotation overlap, and large raw evidence followed
+by older records.
+
+Browser verification used an isolated temporary JSON backend with synthetic,
+redacted-safe evidence and no live provider. WORK-10 and WORK-11 passed Phone
+(390×844), Tablet (768×1024), Short laptop (1024×600), and Desktop (1440×900).
+Phone controls wrapped without introducing viewport-specific height overrides,
+and the trace summary used two columns. Tablet, Short laptop, and Desktop retained
+the shared adjacent result/detail composition whenever the diagnostics container
+was at least 640px wide; narrower containers stacked the panes. Short laptop kept
+the close action visible while the workspace body owned vertical scrolling, and
+large-screen content remained centered within the shared 1100px bound. Commands
+and fields continued to use the application-wide pointer-capability density
+tokens. No checkpoint produced document-level horizontal overflow, and the
+browser console reported no warnings or errors.
+
+```bash
+pnpm exec vitest run src/diagnostics.test.tsx server/owner-diagnostics-api.test.ts server/diagnostics-query.contract.test.ts server/conversation-run-observer.test.ts
+pnpm run check:ui-standards
+pnpm run check:quality
+pnpm check:planning-docs -- --self-check
+git diff --check
+```
+
 ### Tested design findings
 
 The provider-free probe uses the actual queue, async-context helpers, conversation
