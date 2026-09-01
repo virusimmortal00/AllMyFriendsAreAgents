@@ -35,6 +35,28 @@ export const reviewSchema = z.object({
   }).strict()),
 }).strict();
 export type VisualRun = z.infer<typeof runSchema>;
+export type VisualReview = z.infer<typeof reviewSchema>;
+
+const receiptBase = z.object({
+  keys: z.array(key).min(1).max(3),
+  startedAt: z.iso.datetime(),
+  promptSha256: sha,
+  imageHashes: z.array(sha).min(1).max(3),
+}).strict();
+const completedReceipt = receiptBase.extend({
+  completedAt: z.iso.datetime(),
+  threadId: z.string().uuid(),
+  usage: z.object({ input_tokens: z.number().nonnegative(), cached_input_tokens: z.number().nonnegative(), output_tokens: z.number().nonnegative() }).strict(),
+  startupWarnings: z.array(z.literal("code-mode-host-disabled")),
+  status: z.literal("completed"),
+  verdictSha256: sha,
+}).strict();
+const failedReceipt = receiptBase.extend({ status: z.literal("failed"), error: z.string().min(1).max(300) }).strict();
+export const visualReceiptsSchema = z.object({
+  schemaVersion: z.literal(1), inputDigest: sha, cliVersion: z.string().regex(/^codex-cli [a-zA-Z0-9.+-]+$/),
+  auth: z.literal("chatgpt"), requestedModel: z.string().min(1).max(160),
+  receipts: z.array(z.union([completedReceipt, failedReceipt])),
+}).strict();
 
 export function hashBytes(bytes: Uint8Array | string) { return createHash("sha256").update(bytes).digest("hex"); }
 
@@ -84,6 +106,52 @@ export function validateVisualReview(runValue: unknown, reviewValue: unknown, cu
     if (item.reviewerAgentId === run.implementationAgentId) errors.push(`${capture.key}: implementation agent cannot approve its own screenshots.`);
     if (Date.parse(item.reviewedAt) < Date.parse(run.createdAt)) errors.push(`${capture.key}: review predates capture.`);
     for (const question of VISUAL_QUESTIONS) if (item.answers[question].verdict !== "pass") errors.push(`${capture.key}: ${question} failed visual review.`);
+  }
+  return errors;
+}
+
+export function validateVisualReceipts(
+  runValue: unknown,
+  reviewValue: unknown,
+  receiptsValue: unknown,
+  promptHash: (captures: VisualRun["captures"]) => string,
+) {
+  const run = runSchema.parse(runValue);
+  const review = reviewSchema.parse(reviewValue);
+  const document = visualReceiptsSchema.parse(receiptsValue);
+  const errors: string[] = [];
+  if (document.inputDigest !== run.inputDigest || document.inputDigest !== review.inputDigest) errors.push("The review receipts are stale.");
+  const completed = document.receipts.filter((receipt): receipt is z.infer<typeof completedReceipt> => receipt.status === "completed");
+  if (completed.length !== document.receipts.length) errors.push("A reviewer invocation failed; its images cannot be approved.");
+  if (new Set(completed.map((receipt) => receipt.threadId)).size !== completed.length) errors.push("Each completed receipt must represent a different fresh reviewer session.");
+  const receiptKeys = completed.flatMap((receipt) => receipt.keys);
+  if (new Set(receiptKeys).size !== receiptKeys.length || JSON.stringify([...receiptKeys].sort()) !== JSON.stringify(review.reviews.map((item) => item.key).sort())) {
+    errors.push("Completed reviewer receipts must cover every review exactly once.");
+  }
+  for (const receipt of completed) {
+    if (new Set(receipt.keys).size !== receipt.keys.length || receipt.imageHashes.length !== receipt.keys.length) {
+      errors.push("A reviewer receipt has duplicated keys or mismatched image hashes.");
+      continue;
+    }
+    const captures = receipt.keys.map((receiptKey) => run.captures.find((capture) => capture.key === receiptKey));
+    if (captures.some((capture) => !capture)) {
+      errors.push("A reviewer receipt references an unknown screenshot.");
+      continue;
+    }
+    const exactCaptures = captures as VisualRun["captures"];
+    if (exactCaptures.some((capture, index) => capture.screenshotSha256 !== receipt.imageHashes[index])) errors.push("A reviewer receipt is bound to different screenshot bytes.");
+    if (receipt.promptSha256 !== promptHash(exactCaptures)) errors.push("A reviewer receipt is bound to a different review prompt.");
+    if (Date.parse(receipt.startedAt) < Date.parse(run.createdAt) || Date.parse(receipt.completedAt) < Date.parse(receipt.startedAt)) errors.push("A reviewer receipt has an invalid capture or completion time.");
+    const reviewed = receipt.keys.map((receiptKey) => review.reviews.find((item) => item.key === receiptKey));
+    if (reviewed.some((item) => !item || item.reviewerAgentId !== `codex:${receipt.threadId}` || item.reviewedAt !== receipt.completedAt)) {
+      errors.push("A reviewer receipt does not match the recorded reviewer session and completion time.");
+      continue;
+    }
+    const verdict = { reviews: receipt.keys.map((receiptKey) => {
+      const item = review.reviews.find((candidate) => candidate.key === receiptKey)!;
+      return { key: item.key, inspectedImage: item.inspectedImage, answers: item.answers };
+    }) };
+    if (receipt.verdictSha256 !== hashBytes(JSON.stringify(verdict))) errors.push("A reviewer receipt does not match the recorded verdict.");
   }
   return errors;
 }

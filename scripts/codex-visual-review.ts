@@ -93,13 +93,18 @@ export function parseCodexResult(stdout: string, captures: VisualRun["captures"]
   const events = stdout.trim().split(/\r?\n/).map((line) => eventSchema.parse(JSON.parse(line)));
   if (events.some((event) => event.type === "error" || event.type === "turn.failed")) throw new Error("Codex reported a failed review turn.");
   const started = events.filter((event) => event.type === "thread.started");
+  const turnStarts = events.filter((event) => event.type === "turn.started");
   const completed = events.filter((event) => event.type === "turn.completed");
-  if (started.length !== 1 || completed.length !== 1) throw new Error("Codex did not complete exactly one fresh review turn.");
+  if (started.length !== 1 || turnStarts.length !== 1 || completed.length !== 1) throw new Error("Codex did not complete exactly one fresh review turn.");
+  const threadIndex = events.indexOf(started[0]);
+  const turnIndex = events.indexOf(turnStarts[0]);
+  const completedIndex = events.indexOf(completed[0]);
+  if (!(threadIndex < turnIndex && turnIndex < completedIndex)) throw new Error("Codex review events are out of order.");
   const threadId = z.string().uuid().parse(started[0].thread_id);
   const messages: string[] = [];
   const startupWarnings: string[] = [];
   let turnStarted = false;
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (event.type === "turn.started") turnStarted = true;
     if (!event.type.startsWith("item.")) continue;
     const item = z.object({ type: z.string(), text: z.string().optional(), message: z.string().optional() }).passthrough().parse(event.item);
@@ -110,6 +115,7 @@ export function parseCodexResult(stdout: string, captures: VisualRun["captures"]
       startupWarnings.push("code-mode-host-disabled");
       continue;
     }
+    if (index < turnIndex || index > completedIndex) throw new Error("Screenshot reviewer returned an item outside the review turn.");
     if (!["agent_message", "reasoning"].includes(item.type)) throw new Error(`Screenshot reviewer returned an unsupported item (${/^[a-z_]{1,64}$/.test(item.type) ? item.type : "unknown"}); refusing its verdict.`);
     if (event.type === "item.completed" && item.type === "agent_message" && item.text) messages.push(item.text);
   }

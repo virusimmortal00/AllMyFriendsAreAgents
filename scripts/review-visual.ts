@@ -4,7 +4,7 @@ import { resolve, join } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { codexEnvironment, codexReviewArgs, codexBatchVerdictSchema, executeCodex, groupReviewCaptures, parseCodexResult, requireChatGptLogin, reviewPrompt } from "./codex-visual-review.js";
-import { hashBytes, reviewSchema, runSchema, validateVisualCapture, validateVisualReview, visualInputDigest } from "./visual-review.js";
+import { hashBytes, reviewSchema, runSchema, validateVisualCapture, validateVisualReceipts, validateVisualReview, visualInputDigest } from "./visual-review.js";
 
 function readRegular(path: string, maxBytes: number) {
   const stat = lstatSync(path);
@@ -50,11 +50,12 @@ async function main() {
     const batches = groupReviewCaptures(selected);
     const review: z.infer<typeof reviewSchema> = { schemaVersion: 1, inputDigest: run.inputDigest, reviews: [] };
     const receipts: unknown[] = [];
+    const receiptDocument = () => ({ schemaVersion: 1, inputDigest: run.inputDigest, cliVersion: version, auth: "chatgpt" as const, requestedModel: values.model || "CLI default", receipts });
     let next = 0;
     let failed = false;
     const persist = () => {
       writeFileSync(resolve(output, "review.json"), `${JSON.stringify(review, null, 2)}\n`);
-      writeFileSync(resolve(output, "receipts.json"), `${JSON.stringify({ schemaVersion: 1, inputDigest: run.inputDigest, cliVersion: version, auth: "chatgpt", requestedModel: values.model || "CLI default", receipts }, null, 2)}\n`);
+      writeFileSync(resolve(output, "receipts.json"), `${JSON.stringify(receiptDocument(), null, 2)}\n`);
     };
     console.log(`Codex image review: ${selected.length} screenshots; ChatGPT account usage applies.\nReview evidence: ${output}`);
     persist();
@@ -100,7 +101,10 @@ async function main() {
     await Promise.all([worker(), worker()]);
     review.reviews.sort((a, b) => a.key.localeCompare(b.key));
     persist();
-    const errors = validateVisualReview(run, review, visualInputDigest(root), readImage);
+    const errors = [
+      ...validateVisualReview(run, review, visualInputDigest(root), readImage),
+      ...validateVisualReceipts(run, review, receiptDocument(), (captures) => hashBytes(reviewPrompt(captures, standards))),
+    ];
     if (abort.signal.aborted) errors.unshift("Review interrupted.");
     if (failed) errors.unshift("Codex review did not complete successfully.");
     writeFileSync(resolve(output, "result.json"), `${JSON.stringify({ passed: errors.length === 0, reviewed: review.reviews.length, expected: run.captures.length, errors }, null, 2)}\n`);

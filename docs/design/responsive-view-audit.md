@@ -12,8 +12,8 @@ authentication dialog remains content-sized.
 The corrected full matrix passed 570 browser tests with six intentional compact-
 chat skips, captured all 714 screenshots, and reported zero layout failures.
 Source-input digest:
-`b49525b8670b26665966c16b810fd275bdcd3fab317759241336acfe600e03e2`.
-The broad quality gate passed 1,188 tests with one intentional skip, UI and
+`ad91c606d3bf211897e147b7b3e2e1452306528f66a16c6080884de76e1a9912`.
+The broad quality gate passed 1,196 tests with one intentional skip, UI and
 integration checks, visual typechecking, and the production build.
 
 Focused rendered checks for the roster and detail views passed 24 tests and
@@ -23,24 +23,25 @@ additional focused tests after raising the large-display cap from 720px to
 800px. These filtered captures are debugging evidence, not independent visual
 approval.
 
-Fresh independent review covered the final 48 roster and detail images plus 24
-`WORK-02` Improvement Detail images at all six viewport sizes in Chromium and
-WebKit, with 36 completed account-backed review receipts. Of the roster images,
-32 pass and 16 remain flagged; `WORK-02` adds 21 passes and three findings. The
-exact validator confirms current inputs but fails overall approval because
-those findings remain and the other 642 matrix images lack independent review
-for this digest.
+Fresh independent review covered the final 24 `ROOM-05` roster images at all six
+viewport sizes in Chromium and WebKit, with 12 completed account-backed review
+receipts. Eighteen images pass and six remain flagged. The strengthened exact
+validator correlates every receipt with its prompt, attached image hashes,
+fresh reviewer session, completion time, and verdict hash without an integrity
+error. Overall approval still fails because the six findings remain and the
+other 690 matrix images lack independent review for this digest. `ROOM-06` and
+`WORK-02` retain geometry-checked current captures; their immediately preceding
+independent verdicts are historical evidence, not approval of this digest.
 
 Each question cell counts flagged images; zero means all assigned images passed
 that question, not that every possible runtime state was tested.
 
 | View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome | Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ROOM-05 Roster | 24 | 6 | 0 | 0 | 2 | 6 | 4 | 8 | The taller workspace and stable navigation pass; WebKit compact scroll cues remain weak, while Tablet/Desktop reviewers disagree with the deliberate extra roster capacity. |
-| ROOM-06 Agent Detail | 24 | 8 | 0 | 0 | 4 | 8 | 2 | 8 | The form, actions, and retro styling pass; the tall pane preserves room for the roster at the cost of quiet detail-column space, and Tablet reviewers disagree with the visible scroll/action cue. |
-| WORK-02 Improvement Detail | 24 | 3 | 0 | 0 | 2 | 3 | 2 | 3 | Full status-array objects now render. Chromium Tablet and WebKit Short laptop retain shared workspace-allocation or lower-scroll-cue findings. |
+| ROOM-05 Roster | 24 | 2 | 0 | 0 | 0 | 2 | 6 | 6 | Expandable aliases and stable navigation pass; WebKit compact scroll cues remain weak, while Tablet reviewers disagree with the deliberate extra roster capacity. |
+| ROOM-06 Agent Detail | 0 | — | — | — | — | — | — | — | Current screenshots pass geometry checks; no independent image verdict is claimed for this digest. |
 
-Original-image inspection retains both categories as open findings. The taller
+Original-image inspection retains the roster findings. The taller
 window is an explicit workspace-allocation decision: its primary value is showing
 more agents, so it is not reduced to fit the currently selected agent's shorter
 form. The destructive action remains separated at the bottom of that pane to
@@ -1058,7 +1059,7 @@ Normal partial rows at a clearly indicated scroll boundary are distinguished
 from content that cannot fit inside its own row.
 
 Reproduce with `pnpm capture:visual`, then `pnpm review:visual --run <directory>`
-and `pnpm check:visual-review --run <directory> --review <review.json>`.
+and `pnpm check:visual-review --run <directory> --review <review.json> --receipts <receipts.json>`.
 The reviewed input digest identifies the exact UI, fixture, and review criteria;
 the inventory status alone never establishes approval.
 

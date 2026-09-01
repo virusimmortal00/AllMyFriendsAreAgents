@@ -84,6 +84,9 @@ describe("local Codex screenshot reviewer", () => {
     expect(parsed.verdict.reviews).toHaveLength(1);
     expect(parsed.usage.output_tokens).toBe(200);
   });
+  it("rejects a stream that omits turn.started while retaining its verdict and completion", () => {
+    expect(() => parseCodexResult(jsonl(events().filter((event) => event.type !== "turn.started")), captures)).toThrow("exactly one fresh review turn");
+  });
   it("preserves visual failures instead of rewriting them to pass", () => {
     const value = result();
     value.reviews[0].answers.proportion.verdict = "fail";

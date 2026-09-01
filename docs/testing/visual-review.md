@@ -169,7 +169,7 @@ verdict or rewriting a failed review.
 After a run, use the printed `codex-review-*` directory:
 
 ```bash
-pnpm check:visual-review --run test-results/visual/run-EXAMPLE --review test-results/visual/run-EXAMPLE/codex-review-EXAMPLE/review.json
+pnpm check:visual-review --run test-results/visual/run-EXAMPLE --review test-results/visual/run-EXAMPLE/codex-review-EXAMPLE/review.json --receipts test-results/visual/run-EXAMPLE/codex-review-EXAMPLE/receipts.json
 ```
 
 `review.json` contains exact image-specific judgments; `receipts.json` records
@@ -210,7 +210,7 @@ review prompt, criteria, fixture, or UI source changes; recapture before reviewi
    identify the exact reviewed head; never link private machine paths alone.
 
 ```bash
-pnpm check:visual-review --run test-results/visual/run-EXAMPLE --review test-results/visual/run-EXAMPLE/review.json
+pnpm check:visual-review --run test-results/visual/run-EXAMPLE --review test-results/visual/run-EXAMPLE/review.json --receipts test-results/visual/run-EXAMPLE/receipts.json
 ```
 
 Record shape (one entry per screenshot; the abbreviated example is not a valid

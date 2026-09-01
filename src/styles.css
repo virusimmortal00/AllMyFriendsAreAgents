@@ -1100,7 +1100,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .right-rail {
     display: none;
   }
-  .presence-row { height: 48px; grid-template-columns: 12px 32px minmax(0, 1fr) 18px; padding: 4px 9px 4px 10px; }
+  .presence-row { min-height: 48px; height: auto; grid-template-columns: 12px 32px minmax(0, 1fr) 18px; padding: 4px 9px 4px 10px; }
   .presence-row--human { grid-template-columns: 12px 32px minmax(0, 1fr) 38px; }
   .presence-row .speaker { font-size: 15px; }
   .presence-health { font-size: 12px; line-height: 15px; }
