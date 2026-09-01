@@ -63,7 +63,7 @@ export function summarizeTraceEvidence(records: readonly OwnerDiagnosticRecord[]
   const missingSequences = new Set<number>();
   let completeRuns = 0;
   for (const run of groups.values()) {
-    const sequences = new Set(run.map((record) => record.content.runEventSequence).filter((value): value is number => Number.isSafeInteger(value) && value > 0));
+    const sequences = new Set(run.map((record) => record.content.runEventSequence).filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0));
     const terminal = run.find((record) => record.event === "conversation.run.completed");
     const attempted = terminal?.content.attemptedEventCount;
     const expected = Number.isSafeInteger(attempted) && (attempted as number) > 0 ? attempted as number : 0;
