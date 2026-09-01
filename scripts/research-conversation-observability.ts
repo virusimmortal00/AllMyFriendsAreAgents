@@ -4,7 +4,6 @@
  * Run: pnpm exec tsx scripts/research-conversation-observability.ts
  */
 import assert from "node:assert/strict";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -39,8 +38,28 @@ function candidates(count: number): ConversationTurn[] {
   return AGENT_IDS.slice(0, count).map((agent) => ({ agent, instruction: "Fixture only." }));
 }
 
-async function queueProbe(bind: boolean) {
-  const queue = new CoalescingJobQueue();
+interface ProbeQueue { enqueue(key: string, run: () => Promise<void>): boolean }
+
+/** Minimal copy of the queue behavior at the documented pre-fix baseline commit. */
+class PreFixCoalescingJobQueue implements ProbeQueue {
+  private running = false;
+  private readonly pending: Array<{ key: string; run: () => Promise<void> }> = [];
+
+  enqueue(key: string, run: () => Promise<void>) {
+    if (this.running && this.pending.some((job) => job.key === key)) return false;
+    this.pending.push({ key, run });
+    if (!this.running) void this.drain();
+    return true;
+  }
+
+  private async drain() {
+    this.running = true;
+    try { while (this.pending.length > 0) await this.pending.shift()!.run(); }
+    finally { this.running = false; }
+  }
+}
+
+async function queueProbe(queue: ProbeQueue) {
   const activity = new RoomActivity();
   const gate = deferred();
   const done = deferred();
@@ -50,7 +69,7 @@ async function queueProbe(bind: boolean) {
   function enqueue(key: string, run: () => Promise<void>) {
     const context = currentLogContext();
     const queuedRevision = activity.current();
-    const accepted = queue.enqueue(key, bind ? AsyncLocalStorage.bind(run) : run);
+    const accepted = queue.enqueue(key, run);
     admission.push({ key, requestId: context?.requestId ?? null, queuedRevision, accepted });
   }
   function observe(job: string) {
@@ -217,8 +236,13 @@ async function visibilityProbe(root: string) {
 
 const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-observability-research-"));
 try {
-  const baselineQueue = await queueProbe(false);
-  const boundQueue = await queueProbe(true);
+  const baselineQueue = await queueProbe(new PreFixCoalescingJobQueue());
+  const boundQueue = await queueProbe(new CoalescingJobQueue());
+  assert.deepEqual(baselineQueue.observed, [
+    { job: "a", requestId: "fixture-a", traceId: "a".repeat(32), consumedRevision: 1 },
+    { job: "b", requestId: "fixture-a", traceId: "a".repeat(32), consumedRevision: 1 },
+    { job: "background", requestId: "fixture-a", traceId: "a".repeat(32), consumedRevision: 1 },
+  ]);
   assert.deepEqual(boundQueue.observed, [
     { job: "a", requestId: "fixture-a", traceId: "a".repeat(32), consumedRevision: 1 },
     { job: "b", requestId: "fixture-b", traceId: "b".repeat(32), consumedRevision: 1 },
