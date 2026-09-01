@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
 import { ApiRequestError, loadRoomConfiguration, loadRoomConfigurationModels, updateRoomConfiguration, type RoomConfiguration } from "./api";
@@ -6,7 +6,7 @@ import { RichModelPicker } from "./model-picker";
 import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
 import { DialogFrame } from "./dialog-frame";
 import { RoomControls, type RoomSettingsInput } from "./components";
-import { VIEWS } from "./view-registry";
+import { VIEWS, viewAttributes } from "./view-registry";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 
 type PropertiesPage = "general" | "agent-behavior";
@@ -19,6 +19,8 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
 }
 
 function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void; onSignIn: (trigger: HTMLButtonElement) => void }) {
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [saved, setSaved] = useState<RoomConfiguration>();
   const [basePromptText, setBasePromptText] = useState("");
   const [basePromptEnabled, setBasePromptEnabled] = useState(true);
@@ -33,6 +35,9 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   const [modelError, setModelError] = useState("");
   const [defaultBasePrompt, setDefaultBasePrompt] = useState("");
   const [choosingModel, setChoosingModel] = useState(false);
+  useEffect(() => {
+    if (active && choosingModel && modelsLoaded) pickerRef.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
+  }, [active, choosingModel, modelsLoaded]);
   const [retryCount, setRetryCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -113,32 +118,36 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   }
 
   const modelLabel = summarizerModel ? friendlyModelName(summarizerModel.modelId) : "No summarizer configured";
+  const closeModels = () => {
+    setChoosingModel(false);
+    modelTriggerRef.current?.focus();
+  };
   return <section className="room-configuration-panel" role="tabpanel" id="room-properties-agent-panel" aria-labelledby="room-properties-agent-tab" hidden={!active}>
     <div className="room-properties-page-content">
       {loading ? <p role="status">Loading agent behavior…</p> : null}
       {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{signInRequired ? <button type="button" className="classic-button" onClick={(event) => onSignIn(event.currentTarget)}>Administrator sign-in…</button> : null}{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
       {!loading && saved ? <>
-        <section className="room-configuration-card classic-group" aria-labelledby="base-prompt-heading">
+        <section className="room-configuration-card classic-property-section" aria-labelledby="base-prompt-heading">
           <h3 id="base-prompt-heading">Base Prompt</h3>
           <p>Applied after each agent’s identity rules on every turn.</p>
-          <label className="room-configuration-check"><input type="checkbox" checked={basePromptEnabled} onChange={(event) => setBasePromptEnabled(event.target.checked)} /> Include a room base prompt</label>
-          <label>Prompt<textarea rows={7} maxLength={4000} disabled={!basePromptEnabled} value={basePromptText} onChange={(event) => setBasePromptText(event.target.value)} /></label>
-          <button type="button" className="classic-button" disabled={!basePromptEnabled || basePromptText === defaultBasePrompt} onClick={() => setBasePromptText(defaultBasePrompt)}>Use built-in default</button>
-          <small>Revision {saved.basePromptRevision}. An empty value resolves to the built-in default; disabling removes this section explicitly.</small>
+          <label className="classic-check"><input type="checkbox" checked={basePromptEnabled} onChange={(event) => setBasePromptEnabled(event.target.checked)} /><span>Include a room base prompt</span></label>
+          <div className="classic-field-heading"><label htmlFor="room-base-prompt">Prompt</label><button type="button" className="classic-button" disabled={!basePromptEnabled || basePromptText === defaultBasePrompt} onClick={() => setBasePromptText(defaultBasePrompt)}>Use built-in default</button></div>
+          <textarea id="room-base-prompt" aria-describedby="room-base-prompt-help" rows={4} maxLength={4000} disabled={!basePromptEnabled} value={basePromptText} onChange={(event) => setBasePromptText(event.target.value)} />
+          <small id="room-base-prompt-help">Revision {saved.basePromptRevision}. An empty value resolves to the built-in default; disabling removes this section explicitly.</small>
         </section>
-        <section className="room-configuration-card classic-group" aria-labelledby="summarizer-heading">
+        <section className="room-configuration-card classic-property-section" aria-labelledby="summarizer-heading">
           <h3 id="summarizer-heading">Summarizer</h3>
           <p>Used only for cold starts and large deltas. Verbatim history remains the source of truth.</p>
-          <div className="room-configuration-model"><strong>{modelLabel}</strong><button type="button" className="classic-button" onClick={toggleModels}>{choosingModel ? "Hide models" : "Choose model…"}</button></div>
+          <div className="room-configuration-model"><strong>{modelLabel}</strong><button ref={modelTriggerRef} type="button" className="classic-button" onClick={toggleModels}>{choosingModel ? "Hide models" : "Choose model…"}</button></div>
           {choosingModel && modelsLoading ? <p role="status">Loading available models…</p> : null}
           {choosingModel && modelError ? <p role="alert" className="room-settings-error">{modelError} <button type="button" className="classic-button" onClick={() => void fetchModels()}>Retry</button></p> : null}
-          {choosingModel && modelsLoaded ? <RichModelPicker models={models} providerId={summarizerModel?.providerId || ""} modelId={summarizerModel?.modelId || ""} title="Choose the room summarizer" description="This internal model creates bounded cold-start navigation summaries." view={VIEWS.roomSummarizerModelPicker} onChange={(model) => { setSummarizerModel({ ...(model.providerId ? { providerId: model.providerId } : {}), modelId: model.modelId }); setChoosingModel(false); }} /> : null}
-          <label>Prompt template<textarea rows={9} maxLength={8000} value={summarizerPromptText} onChange={(event) => setSummarizerPromptText(event.target.value)} /></label>
-          <small>Revision {saved.summarizerPromptRevision}. Keep {"{{transcript}}"} where verbatim input should be inserted. DeepSeek V4 Flash remains the built-in failover route.</small>
+          {choosingModel && modelsLoaded ? <div ref={pickerRef} className="room-model-selection" {...viewAttributes(VIEWS.roomSummarizerModelPicker)}><div className="room-model-selection__navigation"><button type="button" className="classic-button" onClick={closeModels}>Back to agent behavior</button></div><RichModelPicker models={models} providerId={summarizerModel?.providerId || ""} modelId={summarizerModel?.modelId || ""} title="Choose the room summarizer" description="Creates concise summaries when agents need earlier room context." onChange={(model) => { setSummarizerModel({ ...(model.providerId ? { providerId: model.providerId } : {}), modelId: model.modelId }); closeModels(); }} /></div> : null}
+          <label>Prompt template<textarea aria-describedby="room-summarizer-prompt-help" rows={4} maxLength={8000} value={summarizerPromptText} onChange={(event) => setSummarizerPromptText(event.target.value)} /></label>
+          <small id="room-summarizer-prompt-help">Revision {saved.summarizerPromptRevision}. Keep {"{{transcript}}"} where verbatim input should be inserted. DeepSeek V4 Flash remains the built-in failover route.</small>
         </section>
-        <section className="room-configuration-card classic-group" aria-labelledby="routing-heading">
+        <section className="room-configuration-card classic-property-section" aria-labelledby="routing-heading">
           <h3 id="routing-heading">Agent Routing</h3>
-          <label>Pre-flight mode<select value={preflightMode} onChange={(event) => setPreflightMode(event.target.value as PreflightMode)}>
+          <label className="classic-property-row"><span>Pre-flight mode</span><select className="classic-select" value={preflightMode} onChange={(event) => setPreflightMode(event.target.value as PreflightMode)}>
             {PREFLIGHT_MODES.map((mode) => <option value={mode} key={mode}>{PREFLIGHT_MODE_LABELS[mode].label}</option>)}
           </select></label>
           <p>{PREFLIGHT_MODE_LABELS[preflightMode].description}</p>
@@ -163,7 +172,7 @@ export function RoomPropertiesDialog({ returnFocusTo, onClose, ...general }: Roo
   const [agentBehaviorDirty, setAgentBehaviorDirty] = useState(false);
   const finishGeneral = useCallback(() => agentBehaviorDirty ? setPage("agent-behavior") : onClose(), [agentBehaviorDirty, onClose]);
   const finishAgentBehavior = useCallback(() => generalDirty ? setPage("general") : onClose(), [generalDirty, onClose]);
-  return <><DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
+  return <><DialogFrame title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
     <div className="classic-tabs" role="tablist" aria-label="Room property pages">
       <button type="button" role="tab" id="room-properties-general-tab" aria-selected={page === "general"} aria-controls="room-properties-general-panel" onClick={() => setPage("general")}>General</button>
       <button type="button" role="tab" id="room-properties-agent-tab" aria-selected={page === "agent-behavior"} aria-controls="room-properties-agent-panel" onClick={() => setPage("agent-behavior")}>Agent behavior</button>
@@ -177,7 +186,7 @@ export function RoomPropertiesDialog({ returnFocusTo, onClose, ...general }: Roo
 
 export function RoomConfigurationDialog({ returnFocusTo, onClose }: { returnFocusTo: HTMLElement | null; onClose: () => void }) {
   const [signInTrigger, setSignInTrigger] = useState<HTMLButtonElement | null>(null);
-  return <><DialogFrame title="Room Properties" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesAgentBehavior}>
+  return <><DialogFrame title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesAgentBehavior}>
     <RoomConfigurationPanel active onClose={onClose} onSignIn={setSignInTrigger} />
   </DialogFrame>{signInTrigger ? <GitHubIntegrationDialog returnFocusTo={signInTrigger} onClose={() => setSignInTrigger(null)} /> : null}</>;
 }

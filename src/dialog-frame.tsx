@@ -1,4 +1,5 @@
-import { useId, type ReactNode } from "react";
+import { useId, useRef, type ReactNode } from "react";
+import { useScrollEdges } from "./scroll-edges";
 import { useModalOverlay } from "./overlay";
 import { viewAttributes, type ViewDefinition } from "./view-registry";
 
@@ -15,6 +16,7 @@ export function DialogFrame({
   actionsClassName = "",
   dataResponsiveLayout,
   dataPresentation,
+  layout = "content",
   view,
   children,
   actions,
@@ -32,18 +34,21 @@ export function DialogFrame({
   actionsClassName?: string;
   dataResponsiveLayout?: string;
   dataPresentation?: string;
+  layout?: "content" | "property-sheet";
   view?: ViewDefinition;
   children: ReactNode;
   actions?: ReactNode;
   onClose: () => void;
 }) {
   const titleId = useId();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useScrollEdges(bodyRef);
   const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
 
   return <div className={`modal-backdrop dialog-backdrop ${backdropClassName}`.trim()} onMouseDown={onBackdropMouseDown}>
     <section
       ref={dialogRef}
-      className={`dialog-window agent-settings-window ${className}`.trim()}
+      className={`dialog-window agent-settings-window ${layout === "property-sheet" ? "dialog-window--property-sheet " : ""}${className}`.trim()}
       role={role}
       aria-modal="true"
       aria-labelledby={titleId}
@@ -58,7 +63,7 @@ export function DialogFrame({
         <h2 id={titleId}>{title}</h2>
         {closeLabel === null ? null : <button type="button" aria-label={closeLabel || `Close ${title}`} disabled={closeDisabled} onClick={onClose}>×</button>}
       </header>
-      <div className={`dialog-body ${bodyClassName}`.trim()}>{children}</div>
+      <div ref={bodyRef} className={`dialog-body ${bodyClassName}`.trim()}>{children}</div>
       {actions === undefined ? null : <footer className={`dialog-actions agent-settings-actions ${actionsClassName}`.trim()}>{actions}</footer>}
     </section>
   </div>;

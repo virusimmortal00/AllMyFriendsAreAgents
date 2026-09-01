@@ -45,6 +45,9 @@ describe("roster manager", () => {
     const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective off/ }) as HTMLInputElement;
     expect(grant.checked).toBe(true);
     expect(grant.disabled).toBe(false);
+    expect(within(grant.closest("label")!).getByText("/gh")).toBeTruthy();
+    const status = document.getElementById(grant.getAttribute("aria-describedby")!);
+    expect(status?.textContent).toBe("GitHub /gh: requested on; effective off");
   });
 
   it("shows a preserved requested /gh grant becoming effective after server configuration", async () => {
@@ -104,6 +107,7 @@ describe("roster manager", () => {
     const onSaved = vi.fn();
     render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByText(/Build the room’s agent team/)).toBeNull();
     expect(screen.getAllByText("GPT 5.6 Sol · via OpenAI").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("OpenAI model").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("switch"));

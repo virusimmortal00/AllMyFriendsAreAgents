@@ -26,6 +26,8 @@ Describe the user-visible outcome and the failure mode this change addresses.
 - [ ] `View` contains presentation controls only; full-workspace destinations use `Window`.
 - [ ] Every workspace replacement, overlay, and nested detail has an obvious visible exit and keyboard-safe behavior.
 - [ ] Controls have accessible names, correct roles, focus behavior, and responsive coverage.
+- [ ] Sanitized screenshot artifacts identify the source digest, browser, actual viewport, and stable view ID; capture/layout success is distinguished from visual approval.
+- [ ] Local `pnpm review:visual` supplied each original screenshot to fresh Codex review sessions; seven-question verdicts and invocation receipts were retained, and `pnpm check:visual-review` passed for the exact capture. Uncovered states and real-device gaps are explicitly listed.
 
 If a contract must change, update the standard, its executable guard, and its regression test in this pull request. Do not bypass the guard with a type assertion or by weakening/removing a test.
 

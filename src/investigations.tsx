@@ -10,10 +10,12 @@ export function Investigations({ refreshKey }: { refreshKey: number }) {
   useEffect(() => { let stopped = false; let timer: number | undefined; const poll = async () => { await refresh(); if (!stopped) timer = window.setTimeout(() => void poll(), 2_000); }; void poll(); return () => { stopped = true; generation.current += 1; activeRequest.current?.abort(); if (timer !== undefined) window.clearTimeout(timer); }; }, [refresh, refreshKey]);
   const mutate = async (operation: () => Promise<unknown>) => { try { await operation(); await refresh(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Investigation changed."); } };
   return <section className="workspace-view tasks-workspace continuation-workspace" aria-label="Background investigations" {...viewAttributes(VIEWS.backgroundInvestigations)}>
-    <header className="workspace-view__header tasks-header"><div><h2>Background Investigations</h2><p>One bounded read-only lane per agent. Findings wait here and never post into the room automatically.</p></div>{data?.policy ? <label><input type="checkbox" checked={data.policy.enabled} onChange={(event) => void mutate(() => setInvestigationPolicy(data.policy.revision, event.target.checked))} /> Investigations enabled</label> : null}</header>
+    <header className="workspace-view__header tasks-header"><div><h2>Background Investigations</h2><p>One bounded read-only lane per agent. Findings wait here and never post into the room automatically.</p></div>{data?.policy ? <label className="classic-check"><input type="checkbox" checked={data.policy.enabled} onChange={(event) => void mutate(() => setInvestigationPolicy(data.policy.revision, event.target.checked))} /><span>Investigations enabled</span></label> : null}</header>
     <div className="workspace-view__body continuation-body">
+    <div className="workspace-content">
     {data?.policy ? <p><small>Global concurrency {data.policy.maxConcurrentGlobal} · default budget {data.policy.defaultBudget.tokenLimit} tokens / {data.policy.defaultBudget.toolCallLimit} tools / {Math.round(data.policy.defaultBudget.timeMs / 1000)} seconds</small></p> : null}
     {error ? <div className="error-strip" role="alert">{error}</div> : null}
+    {data?.jobs.length ? <p className="classic-list-summary">{data.jobs.length} investigation{data.jobs.length === 1 ? "" : "s"} shown</p> : null}
     {!data && !error ? <p className="task-empty" role="status">Loading investigation status…</p> : data && !data.jobs.length ? <p className="task-empty">No investigations.</p> : data?.jobs.map((job) => <article className="task-card" key={job.investigationId}>
       <div className="task-card__top"><strong>{job.owner}: {job.objective}</strong><span className="task-state">{job.status.replace("_", " ")}</span></div>
       <p>{job.trigger}</p><small>{job.signal.replace("_", " ")} · investigation r{job.revision} · updated {new Date(job.updatedAt).toLocaleString()} · provider session {job.providerSessionEstablished ? "isolated" : "pending"}</small>
@@ -24,6 +26,7 @@ export function Investigations({ refreshKey }: { refreshKey: number }) {
       {(job.status === "BLOCKED" || job.status === "CHECKPOINTED") ? <button className="classic-button" onClick={() => void mutate(() => investigationAction(job.investigationId, "resume"))}>Resume</button> : null}
       {(inbox[job.owner] || []).filter((entry) => entry.investigationId === job.investigationId).map((entry) => <div className="continuation-inbox-entry" key={entry.inboxEntryId}><strong>Agent inbox · {entry.status}</strong><p>{entry.summary}</p>{entry.unresolvedQuestions.length ? <p><strong>Unresolved:</strong> {entry.unresolvedQuestions.join("; ")}</p> : null}<small>{entry.evidenceRefs.length} evidence reference(s) · expires {new Date(entry.expiresAt).toLocaleString()}</small>{entry.status === "UNREAD" ? <button className="classic-button" onClick={() => void mutate(() => acknowledgeInvestigationInbox(entry.inboxEntryId, false))}>Acknowledge</button> : null}{entry.status !== "CLOSED" && entry.status !== "ARCHIVED" ? <button className="classic-button" onClick={() => void mutate(() => acknowledgeInvestigationInbox(entry.inboxEntryId, true))}>Close</button> : null}</div>)}
     </article>)}
+    </div>
     </div>
   </section>;
 }

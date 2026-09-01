@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const components = readFileSync(new URL("./components.tsx", import.meta.url), "utf8");
 const mobileStyles = styles.slice(styles.indexOf("@media (max-width: 720px) {"));
-const tabletStyles = styles.slice(styles.indexOf("@media (min-width: 721px) and (max-width: 820px) {"), styles.indexOf("@media (max-width: 720px) {"));
 
 describe("mobile layout contract", () => {
   it("keeps the application and chat inside the dynamic viewport", () => {
@@ -27,15 +26,17 @@ describe("mobile layout contract", () => {
 
   it("keeps the compact classic menu bar visible instead of turning it into a mobile scroller", () => {
     expect(mobileStyles).toMatch(/\.menu-bar \{[^}]*overflow: visible;/s);
-    expect(mobileStyles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*min-height: 40px;[^}]*white-space: nowrap;/s);
+    expect(styles).toMatch(/\.menu-bar > \.menu-wrap > button \{[^}]*min-height: var\(--classic-menu-item-height\);[^}]*white-space: nowrap;/s);
     expect(mobileStyles).toMatch(/\.dropdown-menu \{[^}]*top: 100%;/s);
-    expect(mobileStyles).toMatch(/\.dropdown-menu button \{[^}]*min-height: 40px;/s);
+    expect(styles).toMatch(/\.dropdown-menu button \{[^}]*min-height: var\(--classic-menu-item-height\);/s);
   });
 
-  it("keeps navigation and dialog actions touchable at tablet widths", () => {
-    expect(tabletStyles).toMatch(/\.menu-bar > \.menu-wrap > button, \.dropdown-menu button \{[^}]*min-height: 40px;/s);
-    expect(tabletStyles).toMatch(/\.classic-tabs \[role="tab"\], \.dialog-actions \.classic-button, \.workspace-view__header \.classic-button \{[^}]*min-height: 40px;/s);
-    expect(tabletStyles).toMatch(/\.classic-input, \.classic-select, \.github-control-login input, \.github-integration-card select \{[^}]*min-height: 40px;/s);
+  it("selects touch density by pointer capability without width or short-height chrome jumps", () => {
+    expect(styles).toMatch(/@media \(pointer: coarse\) \{\s*:root \{[^}]*--classic-command-height: 44px;[^}]*--classic-menu-item-height: 44px;[^}]*--classic-toolbar-height: 44px;/s);
+    expect(styles).not.toContain("@media (min-width: 721px) and (max-width: 820px)");
+    expect(styles).toMatch(/grid-template-rows: 24px calc\(var\(--classic-menu-item-height\) \+ 4px\) minmax\(0, 1fr\) auto 24px;/);
+    expect(mobileStyles).not.toMatch(/\.menu-bar > \.menu-wrap > button[^}]*min-height:/s);
+    expect(mobileStyles).not.toMatch(/\.format-toolbar[^}]*height: (?:31|35)px;/s);
   });
 
   it("contains long room names and message content", () => {
@@ -54,19 +55,21 @@ describe("mobile layout contract", () => {
     expect(styles).toMatch(/\.dialog-window \{[^}]*grid-template-rows: auto minmax\(0, 1fr\) auto;[^}]*overflow: hidden;/s);
     expect(styles).toMatch(/\.dialog-body \{[^}]*min-height: 0;[^}]*overflow: auto;/s);
     expect(mobileStyles).toMatch(/\.modal-backdrop \.dialog-window \{[^}]*width: 100%;[^}]*max-height: 100%;[^}]*align-self: center;[^}]*justify-self: center;/s);
-    expect(mobileStyles).toMatch(/\.dialog-actions \.classic-button \{[^}]*min-height: 44px;/s);
+    expect(styles).toContain("min-height: var(--classic-command-height)");
+    expect(mobileStyles).not.toMatch(/\.dialog-actions \.classic-button \{[^}]*min-height:/s);
   });
 
   it("turns the roster manager into a single-pane master-detail flow", () => {
     expect(mobileStyles).toMatch(/\.roster-workspace \{[^}]*display: block;[^}]*overflow: hidden;/s);
-    expect(mobileStyles).toContain('.roster-workspace[data-mobile-pane="list"] > .roster-detail-pane');
+    expect(mobileStyles).toContain('.roster-workspace[data-mobile-pane="list"] > .roster-detail-shell');
     expect(mobileStyles).toContain('.roster-workspace[data-mobile-pane="detail"] > .roster-rail');
-    expect(mobileStyles).toMatch(/\.roster-mobile-back \{[^}]*display: block;[^}]*min-height: 40px;/s);
+    expect(mobileStyles).toMatch(/\.roster-mobile-back \{[^}]*display: block;/s);
+    expect(styles).toMatch(/\.roster-mobile-back, [^{]+\{[^}]*min-height: var\(--classic-command-height\);/s);
   });
 
-  it("uses horizontally scrollable formatting controls instead of wrapping", () => {
-    expect(mobileStyles).toMatch(/\.format-toolbar \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;/s);
-    expect(mobileStyles).toMatch(/\.format-toolbar button, \.format-toolbar \.color-well \{[^}]*width: 38px;/s);
+  it("reflows formatting controls without hiding actions in a horizontal scroller", () => {
+    expect(mobileStyles).toMatch(/\.format-toolbar \{[^}]*flex-wrap: wrap;/s);
+    expect(mobileStyles).toMatch(/\.format-toolbar button, \.format-toolbar \.color-well \{[^}]*width: var\(--classic-toolbar-width\);/s);
   });
 
   it("places formatting popovers above the toolbar clipping boundary", () => {
@@ -75,7 +78,8 @@ describe("mobile layout contract", () => {
     expect(components).toContain('formatPopover === "emoji"');
     expect(styles).toMatch(/\.aim-color-picker \{[^}]*position: fixed;/s);
     expect(styles).toMatch(/\.emoji-picker \{[^}]*position: fixed;/s);
-    expect(components).toContain("triggerBounds.top - popoverBounds.height - gap");
+    expect(components).toContain('trigger.closest(".format-toolbar")');
+    expect(components).toContain("toolbarBounds.top - popoverBounds.height - gap");
     expect(components).toContain("Math.min(centeredLeft, maxLeft)");
   });
 

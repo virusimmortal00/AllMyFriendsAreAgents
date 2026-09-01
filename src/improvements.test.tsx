@@ -20,6 +20,7 @@ describe("Improvements interface", () => {
     const user = userEvent.setup(); const navigate = vi.fn();
     render(<Improvements route={{ view: "list", scope: "active" }} onNavigate={navigate} />);
     await waitFor(() => expect(screen.getByText("known-id")).toBeTruthy());
+    expect(screen.getByText("1 active improvement shown")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Active" }).getAttribute("aria-selected")).toBe("true");
     await user.click(screen.getByRole("tab", { name: "All" }));
     expect(navigate).toHaveBeenCalledWith({ view: "list", scope: "all" });
@@ -78,12 +79,17 @@ describe("Improvements interface", () => {
     expect(screen.getByText("Developer team evidence")).toBeTruthy(); expect(screen.getByText("Independent acceptance")).toBeTruthy();
     expect(screen.getByText("Upstream publication")).toBeTruthy(); expect(screen.getByText("Next action")).toBeTruthy();
     expect(screen.getByText("Passing test")).toBeTruthy(); expect(screen.getByText(/UI complete/)).toBeTruthy();
+    expect(screen.getByText("Immutable Revision")).toBeTruthy();
+    expect(screen.getByText("Repository")).toBeTruthy();
+    expect(screen.getByText("repo")).toBeTruthy();
+    expect(screen.queryByText(/\{"immutableRevision"/)).toBeNull();
     expect(screen.getByRole("link", { name: "Permanent link to this improvement" }).getAttribute("href")).toBe("/improvements/known-id");
   });
 
   it("gives stale links a way back to both lists", async () => {
     const user = userEvent.setup(); const navigate = vi.fn();
     render(<Improvements route={{ view: "missing", id: "gone" }} onNavigate={navigate} />);
+    expect(screen.queryByRole("region", { name: "Bounded heartbeat controls" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "View Active improvements" }));
     await user.click(screen.getByRole("button", { name: "View All improvements" }));
     expect(navigate).toHaveBeenNthCalledWith(1, { view: "list", scope: "active" });

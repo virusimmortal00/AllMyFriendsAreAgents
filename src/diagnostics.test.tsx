@@ -90,6 +90,23 @@ describe("owner diagnostic dashboard", () => {
     expect(container.textContent).not.toContain("secret-value");
   });
 
+  it("keeps the selected result state associated with its adjacent detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [record, { ...record, recordId: "diag-2", event: "generation.failed", content: { outcome: "failed" } }] })));
+    render(<Diagnostics />);
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    const completed = await screen.findByRole("button", { name: /generation.completed/ });
+    const failed = screen.getByRole("button", { name: /generation.failed/ });
+    expect(completed.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(completed);
+    expect(completed.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("heading", { name: "generation.completed" })).toBeTruthy();
+    fireEvent.click(failed);
+    expect(completed.getAttribute("aria-pressed")).toBe("false");
+    expect(failed.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("heading", { name: "generation.completed" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "generation.failed" })).toBeTruthy();
+  });
+
   it("reassembles a large diagnostic record from bounded chunks", () => {
     const bytes = Buffer.from(JSON.stringify(record)); const split = Math.floor(bytes.length / 2);
     expect(assembleDiagnosticChunks([

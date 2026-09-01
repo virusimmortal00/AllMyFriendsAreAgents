@@ -31,10 +31,15 @@ export async function resolveImprovementsAlias(
   }
 }
 
-function describe(value: Record<string, unknown>) {
+function StatusValue({ value }: { value: unknown }) {
+  if (Array.isArray(value)) return <ul>{value.map((entry, index) => <li key={index}><StatusValue value={entry && typeof entry === "object" && "id" in entry ? entry.id : entry} /></li>)}</ul>;
+  if (value && typeof value === "object") return <dl className="improvements-status-details">{Object.entries(value).filter(([, entry]) => entry != null).map(([key, entry]) => <Fragment key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase())}</dt><dd><StatusValue value={entry} /></dd></Fragment>)}</dl>;
+  return <>{value == null ? "Not set" : String(value)}</>;
+}
+
+function StatusSummary({ value }: { value: Record<string, unknown> }) {
   const { state, ...details } = value;
-  const tail = Object.entries(details).map(([key, entry]) => `${key.replace(/([A-Z])/g, " $1")}: ${Array.isArray(entry) ? entry.map((item) => typeof item === "object" && item ? (item as { id?: string }).id || JSON.stringify(item) : String(item)).join(", ") : typeof entry === "object" && entry ? JSON.stringify(entry) : String(entry)}`).join(" · ");
-  return tail ? `${String(state)} — ${tail}` : String(state);
+  return <><span>{String(state).replaceAll("_", " ")}</span><StatusValue value={details} /></>;
 }
 
 const STATUS_LABELS: { [K in Exclude<keyof ImprovementStatusContract, "schemaVersion">]: string } = {
@@ -48,7 +53,7 @@ function Detail({ item }: { item: GovernedImprovementDetail }) {
     <p><strong>Canonical ID:</strong> {item.canonicalId} · <strong>Revision:</strong> {item.revisionLabel} · <strong>State:</strong> {item.state} · <strong>Risk:</strong> {item.risk}</p>
     <p><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>Permanent link to this improvement</a></p>
     <h3>Delivery status</h3>
-    <dl className="improvements-status">{(Object.keys(STATUS_LABELS) as (keyof typeof STATUS_LABELS)[]).map((key) => <Fragment key={key}><dt>{STATUS_LABELS[key]}</dt><dd>{describe(item.status[key] as Record<string, unknown>)}</dd></Fragment>)}</dl>
+    <dl className="improvements-status">{(Object.keys(STATUS_LABELS) as (keyof typeof STATUS_LABELS)[]).map((key) => <div key={key} className="classic-group"><dt>{STATUS_LABELS[key]}</dt><dd><StatusSummary value={item.status[key] as Record<string, unknown>} /></dd></div>)}</dl>
     <h3>Qualified evidence</h3>
     {item.evidence.length ? <ul>{item.evidence.map((evidence) => <li key={evidence.id}><a href={evidence.uri} target="_blank" rel="noreferrer">{evidence.summary}</a> <small>{evidence.sourceClass} · {evidence.revisionLabel}</small></li>)}</ul> : <p>No qualified evidence is recorded for this item.</p>}
     <h3>Milestones</h3>
@@ -124,12 +129,13 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
   return <section className="workspace-view improvements-panel beveled-inset" data-responsive-layout="improvements" {...viewAttributes(registeredView)}>
     <header className="workspace-view__header improvements-header"><h2 data-route-heading tabIndex={-1}>Improvements</h2><div role="tablist" aria-label="Improvement lists"><button ref={(element) => { tabRefs.current[0] = element; }} type="button" role="tab" id="improvements-tab-active" aria-controls="improvements-content" aria-selected={selectedTab === 0} tabIndex={selectedTab === 0 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 0)} onClick={() => selectTab(0)}>Active</button><button ref={(element) => { tabRefs.current[1] = element; }} type="button" role="tab" id="improvements-tab-all" aria-controls="improvements-content" aria-selected={selectedTab === 1} tabIndex={selectedTab === 1 ? 0 : -1} onKeyDown={(event) => onTabKeyDown(event, 1)} onClick={() => selectTab(1)}>All</button></div></header>
     <div id="improvements-content" className="workspace-view__body improvements-body" role="tabpanel" aria-labelledby={selectedTab === 0 ? "improvements-tab-active" : "improvements-tab-all"}>
-      <section className="heartbeat-control" aria-label="Bounded heartbeat controls">
+      <div className={route.view === "missing" ? "improvements-recovery-content" : "workspace-content"}>
+      {route.view !== "missing" ? <section className="heartbeat-control" aria-label="Bounded heartbeat controls">
         <div><strong>Bounded heartbeat:</strong> {!heartbeat ? "Unavailable" : heartbeat.runtime.emergencyStopped ? "EMERGENCY STOPPED" : heartbeat.runtime.enabled ? heartbeat.active ? "Running bounded work" : "Authorized, awaiting cadence" : "Disabled"}</div>
         {heartbeat && <><small>Policy {heartbeat.policy.version} · every {Math.round(heartbeat.policy.cadenceMs / 1000)}s · concurrency {heartbeat.policy.maxConcurrency} · at most {heartbeat.policy.maxDispatchedPerRun} actions/run · {heartbeat.policy.maxAttemptsPerRevision} attempts · {Math.round(heartbeat.policy.timeBudgetMs / 1000)}s budget · capabilities {heartbeat.policy.permittedCapabilities.join(", ")}</small><div className="heartbeat-actions"><button ref={heartbeatStopTrigger} type="button" className="classic-button heartbeat-stop" aria-haspopup="dialog" aria-expanded={confirmHeartbeatStop} disabled={heartbeatBusy || heartbeat.runtime.emergencyStopped} onClick={() => { setHeartbeatError(""); setConfirmHeartbeatStop(true); }}>Emergency stop heartbeat</button>{heartbeat.configured && !heartbeat.runtime.enabled && <button type="button" className="classic-button" disabled={heartbeatBusy} onClick={() => void changeHeartbeat("authorize")}>Authorize heartbeat</button>}</div></>}
         {heartbeatBusy ? <p role="status">Updating heartbeat control…</p> : null}
         {heartbeatError ? <div className="improvements-error" role="alert"><p>Heartbeat controls are unavailable. {heartbeatError}</p>{!heartbeat ? <button type="button" className="classic-button" onClick={() => setHeartbeatReloadRevision((value) => value + 1)}>Try heartbeat again</button> : null}</div> : null}
-      </section>
+      </section> : null}
       {confirmHeartbeatStop ? <ConfirmationDialog
         title="Emergency stop heartbeat?"
         description={<p>This immediately stops future automated scheduling and aborts active heartbeat work. A new explicit authorization is required to resume.</p>}
@@ -141,7 +147,8 @@ export function Improvements({ route, onNavigate }: { route: ImprovementsRoute; 
         onConfirm={() => void changeHeartbeat("stop").then((stopped) => { if (stopped) setConfirmHeartbeatStop(false); })}
         onCancel={() => setConfirmHeartbeatStop(false)}
       /> : null}
-      {loading ? <p role="status" aria-live="polite" aria-atomic="true">Loading improvements…</p> : loadError ? <section className="improvements-load-error" role="alert"><h2>Could not load improvements</h2><p>{loadError}</p><button type="button" className="classic-button" onClick={() => setReloadRevision((value) => value + 1)}>Try again</button></section> : route.view === "missing" ? <section className="improvements-missing" role="status" aria-live="polite" aria-atomic="true"><h2>Improvement not found</h2><p><code>{route.id}</code> is not an existing canonical improvement ID. It may have been removed, or the link may be stale.</p><p><button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "active" })}>View Active improvements</button> <button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "all" })}>View All improvements</button></p></section> : route.view === "detail" && detail ? <Detail item={detail} /> : <><p>{scope === "active" ? "Current non-terminal improvements." : "All recorded improvements."}</p>{items.length ? <ul className="improvements-list">{items.map((item) => <li key={item.canonicalId}><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>{item.canonicalId}</a><span>{item.revisionLabel} · {item.state} · {item.risk}</span><small>Updated {new Date(item.updatedAt).toLocaleString()}</small></li>)}</ul> : <p>No improvements are available in this view.</p>}</>}
+      {loading ? <p role="status" aria-live="polite" aria-atomic="true">Loading improvements…</p> : loadError ? <section className="improvements-load-error" role="alert"><h2>Could not load improvements</h2><p>{loadError}</p><button type="button" className="classic-button" onClick={() => setReloadRevision((value) => value + 1)}>Try again</button></section> : route.view === "missing" ? <section className="improvements-missing" role="status" aria-live="polite" aria-atomic="true"><h2>Improvement not found</h2><p><code>{route.id}</code> is not an existing canonical improvement ID. It may have been removed, or the link may be stale.</p><p><button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "active" })}>View Active improvements</button> <button type="button" className="classic-button" onClick={() => onNavigate({ view: "list", scope: "all" })}>View All improvements</button></p></section> : route.view === "detail" && detail ? <Detail item={detail} /> : <><p className="classic-list-summary">{items.length} {scope === "active" ? "active" : "recorded"} improvement{items.length === 1 ? "" : "s"} shown</p>{items.length ? <ul className="improvements-list">{items.map((item) => <li key={item.canonicalId}><a href={`/improvements/${encodeURIComponent(item.canonicalId)}`}>{item.canonicalId}</a><span>{item.revisionLabel} · {item.state} · {item.risk}</span><small>Updated {new Date(item.updatedAt).toLocaleString()}</small></li>)}</ul> : <p>No improvements are available in this view.</p>}</>}
+      </div>
     </div>
   </section>;
 }

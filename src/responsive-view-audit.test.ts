@@ -32,14 +32,14 @@ function coveredViewports(answer: string) {
 }
 
 describe("responsive view registry contract", () => {
-  it("keeps stable IDs and names unique and every inventory row complete", () => {
+  it("keeps stable IDs and names unique without treating narrative completion as visual proof", () => {
     expect(inventory.length).toBeGreaterThan(0);
     expect(new Set(inventory.map(({ id }) => id)).size).toBe(inventory.length);
     expect(new Set(inventory.map(({ name }) => name)).size).toBe(inventory.length);
     for (const view of inventory) {
       expect(view.name, view.id).not.toBe("");
       expect(view.state, view.id).not.toBe("");
-      expect(view.status, view.id).toBe("Complete");
+      expect(["Pending", "Unverified"], view.id).toContain(view.status);
     }
   });
 
