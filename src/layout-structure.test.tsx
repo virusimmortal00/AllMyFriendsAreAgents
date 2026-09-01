@@ -9,6 +9,13 @@ import { DialogFrame } from "./dialog-frame";
 afterEach(() => cleanup());
 
 describe("shared responsive layout structure", () => {
+  it("owns stable property-sheet sizing without changing ordinary content dialogs", () => {
+    const { rerender } = render(<DialogFrame title="Properties" layout="property-sheet" onClose={vi.fn()}><p>One page</p></DialogFrame>);
+    expect(screen.getByRole("dialog").classList.contains("dialog-window--property-sheet")).toBe(true);
+    rerender(<DialogFrame title="Properties" onClose={vi.fn()}><p>A utility form</p></DialogFrame>);
+    expect(screen.getByRole("dialog").classList.contains("dialog-window--property-sheet")).toBe(false);
+  });
+
   it("gives every modal one titlebar, one scrolling body, and one action region", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

@@ -4,6 +4,12 @@ import { normalizeCommandPermissions, validCommandPermissions, type CommandPermi
 
 export const MAX_ROOM_AGENTS = 32;
 
+/** Request-scoped authorization; never persist or broadcast the CSRF token. */
+export interface RoomRosterAccess {
+  readonly kind: "room-member" | "control";
+  readonly csrfToken: string;
+}
+
 export interface RoomAgentRosterEntry {
   readonly agentId: ActiveAgentId;
   readonly conversationalName?: string;

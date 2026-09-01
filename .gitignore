@@ -10,3 +10,5 @@ dist/
 .agentwire/
 *.log
 *.tsbuildinfo
+test-results/
+playwright-report/

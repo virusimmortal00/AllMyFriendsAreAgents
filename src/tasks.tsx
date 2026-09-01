@@ -8,9 +8,9 @@ export function TasksMenuControl({ active, onOpen }: { active: boolean; onOpen: 
 }
 
 function TaskList({ items, onOpen }: { items: readonly Task[]; onOpen: (id: string) => void }) {
-  return items.length ? <ul className="task-list">{items.map((task) => <li key={task.taskId}>
+  return items.length ? <><p className="classic-list-summary">{items.length} task{items.length === 1 ? "" : "s"} shown</p><ul className="task-list">{items.map((task) => <li key={task.taskId}>
     <button type="button" onClick={() => onOpen(task.taskId)}><strong>{task.title}</strong><span>{task.state} · revision {task.revision}</span><small>{task.participants.length} participants · {task.dependencies.length} dependencies · updated {new Date(task.updatedAt).toLocaleString()}</small></button>
-  </li>)}</ul> : <div className="task-empty"><strong>No tasks yet.</strong><span>Create the room's first durable task above.</span></div>;
+  </li>)}</ul></> : <div className="task-empty"><strong>No tasks yet.</strong><span>Create the room's first durable task above.</span></div>;
 }
 
 function Lines({ values, empty }: { values: readonly string[]; empty: string }) {
@@ -104,6 +104,7 @@ function TaskDetail({ detail, busy, editTitle, editDescription, setEditTitle, se
   const unfinished = task.references.filter((item) => (item.kind === "assignment" || item.completionState === "unfinished") && !task.references.some((candidate) => candidate.kind === "disposition" && candidate.dispositionFor === item.id));
   const can = useMemo(() => ({ propose: task.state === "draft", approve: task.state === "proposed", start: task.state === "approved", block: task.state === "active", unblock: task.state === "blocked", complete: task.state === "active" || task.state === "blocked", abandon: ["draft", "proposed", "approved", "active", "blocked"].includes(task.state), archive: task.state === "completed" || task.state === "abandoned", reopen: ["completed", "abandoned", "archived"].includes(task.state), fork: ["completed", "abandoned", "archived"].includes(task.state) }), [task.state]);
   return <article className="task-detail" aria-labelledby="task-title">
+    <h3 id="task-title">{task.title}</h3>
     <div className="task-state-line"><span className={`task-state task-state--${task.state}`}>{task.state}</span><span>Revision {task.revision}</span><span>Updated {new Date(task.updatedAt).toLocaleString()}</span></div>
     <section className="task-edit"><label htmlFor="task-edit-title">Title</label><div><input id="task-edit-title" maxLength={160} value={editTitle} onChange={(event) => setEditTitle(event.target.value)} /><button className="classic-button" disabled={busy || !editTitle.trim()} onClick={() => saveField("title")}>Save title</button></div><label htmlFor="task-edit-description">Description</label><textarea id="task-edit-description" maxLength={8000} value={editDescription} onChange={(event) => setEditDescription(event.target.value)} /><button className="classic-button" disabled={busy} onClick={() => saveField("description")}>Save description</button></section>
     <section className="task-actions" aria-label="Task lifecycle actions">{Object.entries(can).map(([action, enabled]) => <button key={action} type="button" className="classic-button" disabled={busy || !enabled || (action === "complete" && (!evidence.trim() || unfinished.some((item) => !dispositions[item.id]?.trim())))} onClick={() => action === "complete" ? mutate("complete", { evidence: { targetId: evidence.trim(), contentHash: evidence.trim() }, dispositions: unfinished.map((item) => ({ dispositionFor: item.id, targetId: dispositions[item.id] })) }) : mutate(action, action === "fork" ? { title: `${task.title} (follow-up)` } : {})}>{action}</button>)}</section>

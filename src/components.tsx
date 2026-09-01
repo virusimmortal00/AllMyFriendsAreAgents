@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
+import { useScrollEdges } from "./scroll-edges";
 import {
   AIM_5_BASIC_COLORS,
   AIM_5_CUSTOM_COLORS,
@@ -110,6 +111,8 @@ export function RoomRoster({
   onConfigureAgent?: (agent: ActiveAgentId) => void;
   onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
 }) {
+  const presenceList = useRef<HTMLDivElement>(null);
+  useScrollEdges(presenceList);
   const healthText = (health: AgentHealth | ProviderHealth) => health.status === "action_required"
     ? "Action required"
     : health.status === "cooldown"
@@ -127,7 +130,7 @@ export function RoomRoster({
   }), agentListSort);
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
-      <div className="presence-list" role="list">
+      <div ref={presenceList} className="presence-list" role="list">
         {presentAgents.map((item, index) => {
           const agent = item.agentId;
           const active = activeAgents?.has(agent) ?? false;
@@ -447,6 +450,7 @@ export const Transcript = memo(function Transcript({
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  useScrollEdges(transcriptRef);
   const following = useRef(true);
   const resizeFrame = useRef<number | undefined>(undefined);
   const previousContent = useRef("");
@@ -587,19 +591,25 @@ interface ChatComposerProps {
   onBlur?: () => void;
 }
 
+function PopoverHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return <header className="classic-popover-header"><strong>{title}</strong><button type="button" aria-label={`Close ${title}`} onMouseDown={(event) => event.preventDefault()} onClick={onClose}>×</button></header>;
+}
+
 export function ChatComposer({ draft, mentions = [], mentionCandidates = [], style, sendDisabled = false, onDraftChange, onMentionsChange = () => undefined, onStyleChange, onSubmit, onBlur }: ChatComposerProps) {
   const [formatPopover, setFormatPopover] = useState<"emoji" | "text" | "background" | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const mentionSuggestions = useRef<HTMLDivElement>(null);
   const formatPopoverElement = useRef<HTMLDivElement>(null);
-  const [formatPopoverPosition, setFormatPopoverPosition] = useState<{ left: number; top: number } | null>(null);
+  const [formatPopoverPosition, setFormatPopoverPosition] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const { layerRef: formatLayer, triggerRef: formatTrigger } = useDismissibleLayer(Boolean(formatPopover), () => setFormatPopover(null));
   const pendingEditRange = useRef<{ start: number; end: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<{ start: number; end: number; text: string } | null>(null);
   const [activeMention, setActiveMention] = useState(0);
+  useScrollEdges(formatPopoverElement, formatPopover);
   const matchingMentions = mentionQuery
     ? mentionCandidates.filter((candidate) => `${candidate.label} ${candidate.description}`.toLowerCase().includes(mentionQuery.text.toLowerCase())).slice(0, 8)
     : [];
+  useScrollEdges(mentionSuggestions, Boolean(mentionQuery && matchingMentions.length));
 
   useEffect(() => setActiveMention(0), [mentionQuery?.text]);
 
@@ -615,6 +625,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       if (!trigger || !popover) return;
 
       const triggerBounds = trigger.getBoundingClientRect();
+      const toolbarBounds = trigger.closest(".format-toolbar")?.getBoundingClientRect() ?? triggerBounds;
       const popoverBounds = popover.getBoundingClientRect();
       const viewport = window.visualViewport;
       const viewportLeft = viewport?.offsetLeft ?? 0;
@@ -626,21 +637,28 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       const minLeft = viewportLeft + margin;
       const maxLeft = viewportLeft + viewportWidth - popoverBounds.width - margin;
       const centeredLeft = triggerBounds.left + triggerBounds.width / 2 - popoverBounds.width / 2;
-      const above = triggerBounds.top - popoverBounds.height - gap;
-      const below = triggerBounds.bottom + gap;
+      // A wrapped toolbar has controls above the trigger's own row. Keep those
+      // controls exposed too, while retaining horizontal alignment to the trigger.
+      const above = toolbarBounds.top - popoverBounds.height - gap;
+      const below = toolbarBounds.bottom + gap;
       const maxTop = viewportTop + viewportHeight - popoverBounds.height - margin;
 
-      setFormatPopoverPosition({
+      const next = {
         left: Math.max(minLeft, Math.min(centeredLeft, maxLeft)),
         top: above >= viewportTop + margin ? above : Math.max(viewportTop + margin, Math.min(below, maxTop)),
-      });
+        maxHeight: Math.max(0, viewportHeight - margin * 2),
+      };
+      setFormatPopoverPosition((current) => current?.left === next.left && current.top === next.top && current.maxHeight === next.maxHeight ? current : next);
     }
 
     positionPopover();
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(positionPopover);
+    if (formatPopoverElement.current) resize?.observe(formatPopoverElement.current);
     window.addEventListener("resize", positionPopover);
     window.visualViewport?.addEventListener("resize", positionPopover);
     window.visualViewport?.addEventListener("scroll", positionPopover);
     return () => {
+      resize?.disconnect();
       window.removeEventListener("resize", positionPopover);
       window.visualViewport?.removeEventListener("resize", positionPopover);
       window.visualViewport?.removeEventListener("scroll", positionPopover);
@@ -759,8 +777,9 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         </div>
       </div>
       {formatPopover === "text" || formatPopover === "background" ? (
-        <div ref={formatPopoverElement} className="aim-color-picker" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`} style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(formatPopover === "text" ? VIEWS.textColorPalette : VIEWS.highlightColorPalette)}>
-          <strong>{formatPopover === "text" ? "Text color" : "Message highlight"}</strong>
+        <div ref={formatPopoverElement} className="aim-color-picker classic-popover" role="dialog" aria-label={`${formatPopover === "text" ? "Text" : "Message highlight"} color palette`} style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(formatPopover === "text" ? VIEWS.textColorPalette : VIEWS.highlightColorPalette)}>
+          <PopoverHeader title={formatPopover === "text" ? "Text color" : "Message highlight"} onClose={() => setFormatPopover(null)} />
+          <div className="classic-popover__body">
           <span>Basic colors:</span>
           <div className="aim-color-grid">
             {AIM_5_BASIC_COLORS.map((color, index) => (
@@ -789,15 +808,19 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
               />
             ))}
           </div>
+          </div>
         </div>
       ) : null}
       {formatPopover === "emoji" ? (
-        <div ref={formatPopoverElement} className="emoji-picker" role="dialog" aria-label="Classic AIM smiley picker" style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(VIEWS.classicSmileyPicker)}>
+        <div ref={formatPopoverElement} className="emoji-picker classic-popover" role="dialog" aria-label="Classic AIM smiley picker" style={formatPopoverPosition ?? { visibility: "hidden" }} {...viewAttributes(VIEWS.classicSmileyPicker)}>
+          <PopoverHeader title="Smileys" onClose={() => setFormatPopover(null)} />
+          <div className="classic-popover__body emoji-grid">
           {AIM_SMILEYS.map((smiley) => (
             <button type="button" key={smiley.name} aria-label={`Insert ${smiley.name} ${smiley.shortcut}`} title={`${smiley.name} (${smiley.shortcut})`} onClick={() => insertSmiley(smiley.shortcut)}>
               <img src={smiley.src} alt="" aria-hidden="true" />
             </button>
           ))}
+          </div>
         </div>
       ) : null}
       </div>
@@ -869,7 +892,9 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
         }}
       />
       {matchingMentions.length ? (
-        <div ref={mentionSuggestions} id="mention-suggestions" className="mention-suggestions" role="listbox" aria-label="Mention a participant" {...viewAttributes(VIEWS.mentionSuggestions)}>
+        <div className="mention-suggestions" {...viewAttributes(VIEWS.mentionSuggestions)}>
+          <PopoverHeader title="Mentions" onClose={() => setMentionQuery(null)} />
+          <div ref={mentionSuggestions} id="mention-suggestions" className="mention-suggestions__list" role="listbox" aria-label="Mention a participant">
           {matchingMentions.map((candidate, index) => (
             <button
               type="button"
@@ -883,6 +908,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
               <i className={`mention-provider-mark mention-provider-mark--${candidate.targetKind}`} aria-hidden="true">{candidate.targetKind === "agent" ? "◆" : "●"}</i><strong title={`@${candidate.label}${candidate.description ? ` — ${candidate.description}` : ""}`}>@{candidate.label}</strong><span title={candidate.description}>{candidate.description}</span>
             </button>
           ))}
+          </div>
         </div>
       ) : null}
       <button className="classic-button send-button" type="submit" disabled={sendDisabled || !draft.trim()}>Send</button>
@@ -974,7 +1000,7 @@ export function RoomControls({
     <aside className="controls-panel beveled-inset" aria-label="General room properties">
       {showTitle ? <PanelTitle>Room Properties</PanelTitle> : null}
       <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
-      <div className="room-properties-page-content">
+      <div className={`room-properties-page-content${propertySheet ? " classic-property-section room-properties-general-content" : ""}`}>
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
@@ -990,10 +1016,10 @@ export function RoomControls({
       />
       <p className="field-help">Shown in the room window title bar.</p>
       <label className="field-label" htmlFor="room-topic">Topic</label>
-      <input
+      <textarea
         id="room-topic"
-        className="classic-input"
-        type="text"
+        className="classic-input room-topic-input"
+        rows={2}
         required
         maxLength={160}
         disabled={locked}

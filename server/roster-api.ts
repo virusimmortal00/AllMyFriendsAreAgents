@@ -2,7 +2,7 @@ import type express from "express";
 import { AGENT_PROFILES, SUPPORTED_AGENT_IDS, type ActiveAgentId } from "../shared/participants.js";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityStatus } from "../shared/capabilities.js";
-import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentModelReference, validateRosterEntries } from "../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, roomAgentModelReference, validateRosterEntries, type RoomRosterAccess } from "../shared/roster.js";
 import type { ActiveGenerationTracker } from "./active-generations.js";
 import type { AgentProcessSupervisor } from "./agent-runner.js";
 import type { HumanPresenceRegistry } from "./human-presence.js";
@@ -24,6 +24,8 @@ export function registerRosterRoutes(input: {
   discovery?: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
   control?: ControlPlaneStore;
+  humanIsMember?: (humanId: string) => boolean;
+  auditChange?: (change: { roomId: string; actorKind: "room-member" | "control"; actorId: string; previousRevision: number; nextRevision: number }) => Promise<unknown>;
   capabilityStatuses?: () => Readonly<Record<string, AgentCapabilityStatus>> | Promise<Readonly<Record<string, AgentCapabilityStatus>>>;
 }) {
   const { app, store, humans, sessions, processes, generations, broadcast } = input;
@@ -31,18 +33,32 @@ export function registerRosterRoutes(input: {
   const intelligence = input.intelligence;
   const control = input.control;
   const authorize = (request: express.Request, response: express.Response, capability: "PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE" | readonly ("PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE")[], csrf = false) => {
+    // Room members manage this roster by default. Keep this policy local to the
+    // roster/catalog routes; it grants no provider-configuration or admin powers.
+    const human = sessionHuman(request, humans, sessions);
+    if (human) {
+      if (input.humanIsMember && !input.humanIsMember(human.id)) {
+        response.status(403).json({ error: "Room membership is required to manage agents." });
+        return undefined;
+      }
+      const csrfToken = sessions.csrfToken(request.header("cookie"));
+      if (!csrfToken || (csrf && request.header("x-amfaa-csrf") !== csrfToken)) {
+        response.status(403).json({ error: "Reload the roster to obtain a valid room-session CSRF token." });
+        return undefined;
+      }
+      return { kind: "room-member" as const, human, csrfToken };
+    }
     if (control) {
       const alternatives = Array.isArray(capability) ? capability : [capability];
       let failure: unknown;
       for (const candidate of alternatives) {
-        try { return control.require(request, candidate, csrf); }
+        try { return { kind: "control" as const, ...control.require(request, candidate, csrf) }; }
         catch (error) { failure = error; if (error instanceof ControlError && error.status === 401) break; }
       }
       const status = failure instanceof ControlError ? failure.status : 500; response.status(status).json({ error: failure instanceof Error ? failure.message : "Authorization failed." }); return undefined;
     }
-    const human = sessionHuman(request, humans, sessions);
-    if (!human) response.status(401).json({ error: "Join the room before managing agents." });
-    return human;
+    response.status(401).json({ error: "Join the room before managing agents." });
+    return undefined;
   };
   const projection = async (refresh = false) => {
     const roster = normalizeRoomAgentRoster(store.snapshot().roster);
@@ -60,8 +76,9 @@ export function registerRosterRoutes(input: {
   };
 
   app.get("/api/roster", async (request, response) => {
-    if (!authorize(request, response, ["ROSTER_MANAGE", "MODEL_SELECT"])) return;
-    response.set("Cache-Control", "no-store").json(await projection());
+    const authenticated = authorize(request, response, ["ROSTER_MANAGE", "MODEL_SELECT"]);
+    if (!authenticated) return;
+    response.set("Cache-Control", "no-store").json({ ...await projection(), access: { kind: authenticated.kind, csrfToken: authenticated.csrfToken } satisfies RoomRosterAccess });
   });
 
   app.post("/api/model-discovery/refresh", async (request, response) => {
@@ -86,6 +103,8 @@ export function registerRosterRoutes(input: {
   });
 
   app.put("/api/roster", async (request, response) => {
+    const authenticated = authorize(request, response, ["ROSTER_MANAGE", "MODEL_SELECT"], true);
+    if (!authenticated) return;
     const expectedRevision = request.body?.expectedRevision;
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       return response.status(400).json({ error: "A positive expectedRevision is required." });
@@ -104,8 +123,7 @@ export function registerRosterRoutes(input: {
       const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
       return !previous || participantConfigurationFingerprint(previous) !== participantConfigurationFingerprint(entry);
     });
-    const authenticated = control ? authorize(request, response, structuralChanged ? "ROSTER_MANAGE" : "MODEL_SELECT", true) : authorize(request, response, "ROSTER_MANAGE", true);
-    if (!authenticated) return;
+    if (!authorize(request, response, structuralChanged ? "ROSTER_MANAGE" : "MODEL_SELECT", true)) return;
     if (control && structuralChanged && selectionChanged && !authorize(request, response, "MODEL_SELECT", true)) return;
     const modelDiscovery = await discovery.discover();
     const invalidSelection = entries.find((entry) => {
@@ -114,6 +132,9 @@ export function registerRosterRoutes(input: {
       return !selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery).available;
     });
     if (invalidSelection) return response.status(400).json({ error: "The selected OpenCode provider/model/variant is not currently available." });
+    // Discovery can yield to other requests; recheck membership/grants before committing.
+    if (!authorize(request, response, structuralChanged ? "ROSTER_MANAGE" : "MODEL_SELECT", true)) return;
+    if (structuralChanged && selectionChanged && !authorize(request, response, "MODEL_SELECT", true)) return;
     const result = await store.updateRoster(expectedRevision, entries);
     if (result.kind === "conflict") return response.status(409).json({ ...result, ...await projection() });
     const enabled = new Set(enabledRoomAgentIds(result.roster));
@@ -125,6 +146,7 @@ export function registerRosterRoutes(input: {
     const invalidated = [...new Set([...deactivated, ...reconfigured])];
     await Promise.all(invalidated.map((agent) => processes.terminateScope(`agent:${agent}`)));
     for (const agent of invalidated) generations.clearAgent(agent as ActiveAgentId);
+    await input.auditChange?.({ roomId: store.roomId, actorKind: authenticated.kind, actorId: authenticated.kind === "room-member" ? authenticated.human.id : authenticated.principal.id, previousRevision: before.revision, nextRevision: result.roster.revision });
     if (control && "principal" in authenticated) {
       for (const entry of result.roster.entries) {
         const previous = before.entries.find((candidate) => candidate.agentId === entry.agentId);
@@ -133,6 +155,6 @@ export function registerRosterRoutes(input: {
       }
     }
     await broadcast();
-    return response.json(await projection());
+    return response.set("Cache-Control", "no-store").json(await projection());
   });
 }

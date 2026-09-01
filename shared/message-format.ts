@@ -42,14 +42,21 @@ export function parseTurnDisposition(text: string): ParsedTurnDisposition {
 }
 
 export function visibleAgentText(text: string): string {
-  return text
-    .replace(DISPOSITION_LINE, "")
-    .replace(CONVERSATION_STATE_LINE, "")
-    .replace(STYLE_LINE, "")
-    .replace(INVESTIGATION_LINE, "")
-    .replace(TURN_DISPOSITION_LINE, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return visibleAgentTextWithDiagnostics(text).text;
+}
+
+function visibleAgentTextWithDiagnostics(text: string) {
+  let protocolDirectives = 0;
+  let protocolCharacters = 0;
+  for (const pattern of [DISPOSITION_LINE, CONVERSATION_STATE_LINE, STYLE_LINE, INVESTIGATION_LINE, TURN_DISPOSITION_LINE]) {
+    text = text.replace(pattern, (match) => {
+      protocolDirectives++;
+      protocolCharacters += match.length;
+      return "";
+    });
+  }
+  const visible = text.replace(/\n{3,}/g, "\n\n").trim();
+  return { text: visible, protocolDirectives, protocolCharacters, whitespaceCharacters: text.length - visible.length };
 }
 
 export function stripAgentSelfLabel(text: string, speakerName?: string): string {
@@ -59,10 +66,27 @@ export function stripAgentSelfLabel(text: string, speakerName?: string): string 
 }
 
 export function visibleAgentChatText(text: string, speakerName?: string): string {
-  const visible = visibleAgentText(text);
-  const paragraphs = visible.split(/\n\s*\n/);
-  while (paragraphs.length > 1 && INTERNAL_PREFACE.test(paragraphs[0])) paragraphs.shift();
-  return stripAgentSelfLabel(paragraphs.join("\n\n").trim(), speakerName);
+  return visibleAgentChatTextWithDiagnostics(text, speakerName).text;
+}
+
+export function visibleAgentChatTextWithDiagnostics(text: string, speakerName?: string) {
+  const visible = visibleAgentTextWithDiagnostics(text);
+  const paragraphs = visible.text.split(/\n\s*\n/);
+  const normalizedLength = paragraphs.join("\n\n").length;
+  let workflowPrefaceParagraphs = 0;
+  while (paragraphs.length > 1 && INTERNAL_PREFACE.test(paragraphs[0])) {
+    paragraphs.shift();
+    workflowPrefaceParagraphs++;
+  }
+  const remaining = paragraphs.join("\n\n");
+  const trimmed = remaining.trim();
+  const withoutLabel = stripAgentSelfLabel(trimmed, speakerName);
+  return {
+    ...visible, text: withoutLabel, workflowPrefaceParagraphs,
+    workflowPrefaceCharacters: normalizedLength - remaining.length,
+    speakerLabelCharacters: trimmed.length - withoutLabel.length,
+    whitespaceCharacters: visible.whitespaceCharacters + visible.text.length - normalizedLength + remaining.length - trimmed.length,
+  };
 }
 
 export function isNoResponseNeeded(text: string): boolean {

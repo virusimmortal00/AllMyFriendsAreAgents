@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from "node:f
 import path from "node:path";
 import pino, { type Logger as PinoLogger } from "pino";
 import buildRoll from "pino-roll";
-import { currentLogContext, sanitizeLogValue, type LogContext, type LogVisibility, type StructuredLogIdentity } from "./structured-logger.js";
+import { conversationLogFields, currentLogContext, sanitizeLogValue, type LogContext, type LogVisibility, type StructuredLogIdentity } from "./structured-logger.js";
 
 export const AUTHORITATIVE_STREAMS = [
   "server-service-lifecycle",
@@ -151,7 +151,10 @@ export class AuthoritativeLogging {
     const state = this.states.get(stream);
     if (!state) return;
     const context = { ...freshCorrelation(), ...currentLogContext(), ...contextOverrides };
-    const safeFields = sanitizeLogValue(fields, 0, this.includeStacks) as Record<string, unknown>;
+    const safeFields = {
+      ...sanitizeLogValue(conversationLogFields(context), 0, this.includeStacks) as Record<string, unknown>,
+      ...sanitizeLogValue(fields, 0, this.includeStacks) as Record<string, unknown>,
+    };
     const timestamp = new Date(this.now()).toISOString();
     const boundedEvent = String(event).slice(0, 160);
     const requestedVisibility = context.visibility || safeFields.visibility;

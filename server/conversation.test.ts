@@ -41,6 +41,7 @@ describe("agent turn parsing", () => {
 
   it("removes disposition metadata and recognizes a mention of the other agent", () => {
     expect(parseAgentTurn("codex-sol", "Claude, what do you think?\n\nDISPOSITION: PROPOSAL")).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: ["Claude, what do you think?"],
       replyCandidates: AGENT_IDS.filter((agent) => agent !== "codex-sol"),
       mentionedAgents: ["claude-sonnet"],
@@ -65,6 +66,7 @@ describe("agent turn parsing", () => {
 
   it("suppresses a no-response decision", () => {
     expect(parseAgentTurn("claude-sonnet", "NO_RESPONSE_NEEDED")).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: [],
       replyCandidates: [],
       mentionedAgents: [],
@@ -102,6 +104,7 @@ describe("agent turn parsing", () => {
       "A useful answer.\nSTYLE: {\"fontFamily\":\"Comic Sans MS\",\"fontSize\":22,\"textColor\":\"#ED36FF\",\"backgroundColor\":\"#ECECEC\",\"bold\":true,\"italic\":false,\"underline\":false}",
       DEFAULT_PARTICIPANT_STYLES["claude-sonnet"],
     )).toEqual({
+      diagnostics: expect.any(Object),
       visibleMessages: ["A useful answer."],
       replyCandidates: AGENT_IDS.filter((agent) => agent !== "claude-sonnet"),
       mentionedAgents: [],
@@ -437,7 +440,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "low", performTurn, () => 0);
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
 
@@ -589,7 +592,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn).toHaveBeenCalledTimes(5);
     expect(performTurn.mock.calls[2][0].instruction).toContain("discussion synthesizer");
     expect(performTurn.mock.calls[3][0].instruction).toContain("material omission");
@@ -604,7 +607,7 @@ describe("conversation energy", () => {
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
-    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
+    expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision.", summary: expect.any(Object) });
   });
 
   it("offers every agent one concise turn when the human invites the whole room", async () => {
@@ -663,7 +666,7 @@ describe("conversation energy", () => {
       concurrencyLimit: 3,
     });
 
-    expect(result).toEqual({ settled: true });
+    expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
   });
 
@@ -787,7 +790,7 @@ describe("conversation energy", () => {
     expect(performTurn).toHaveBeenCalledTimes(2);
     second.resolve({ cancelled: true });
 
-    await expect(conversation).resolves.toEqual({ settled: false });
+    await expect(conversation).resolves.toEqual({ settled: false, summary: expect.any(Object) });
     expect(performTurn).toHaveBeenCalledTimes(2);
   });
 

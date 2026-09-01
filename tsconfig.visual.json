@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["tests/visual", "scripts/visual-review.ts", "scripts/capture-visual.ts", "scripts/check-visual-review.ts", "scripts/codex-visual-review.ts", "scripts/review-visual.ts"]
+}

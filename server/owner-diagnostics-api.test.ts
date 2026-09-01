@@ -72,6 +72,23 @@ describe("owner diagnostics HTTP route", () => {
     expect(result.serializedBytes).toBeLessThanOrEqual(query.maxSerializedBytes);
   });
 
+  it("lets a real local OWNER retrieve operator decisions and lower-scope raw evidence by one exact trace", async () => {
+    const api = await fixture();
+    const directory = path.join(api.root, "logs", "authoritative-v1");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const traceId = "b".repeat(32);
+    const timestamp = "2026-08-28T12:00:00.000Z";
+    const decision = { envelopeVersion: 1, recordId: "decision", stream: "generations", timestamp, severity: "info", event: "conversation.turn.finished", projectId: "project-one", visibility: "operator", correlationId: "run-one", traceId, generationId: "generation-one", content: { runId: "run-one", runEventSequence: 2 } };
+    const raw = { envelopeVersion: 1, recordId: "raw", stream: "openrouter-provider", timestamp, severity: "info", event: "provider.exchange.observed", projectId: "project-one", visibility: "project", correlationId: "generation-one", traceId, generationId: "generation-one", content: { rawOutput: "useful provider evidence" } };
+    const unpaired = { ...raw, recordId: "unpaired", generationId: "generation-orphan", correlationId: "generation-orphan" };
+    await writeFile(path.join(directory, `${DIAGNOSTIC_STREAM_FILES.generations}.jsonl`), `${JSON.stringify(decision)}\n`, { mode: 0o600 });
+    await writeFile(path.join(directory, `${DIAGNOSTIC_STREAM_FILES["openrouter-provider"]}.jsonl`), `${JSON.stringify(raw)}\n${JSON.stringify(unpaired)}\n`, { mode: 0o600 });
+    const response = await fetch(`http://127.0.0.1:${api.port}/api/control/diagnostics/query`, { method: "POST", headers: api.headers, body: JSON.stringify({ ...query, scope: "operator", streams: Object.keys(DIAGNOSTIC_STREAM_FILES), correlation: { traceId } }) });
+    expect(response.status).toBe(200);
+    const result = await response.json() as DiagnosticQueryResult;
+    expect(result.records.map(({ recordId }) => recordId).sort()).toEqual(["decision", "raw", "unpaired"]);
+  });
+
   it("denies a non-OWNER control-plane principal without querying evidence", async () => {
     const service = { query: vi.fn(async () => emptyResult) };
     const api = await fixture(service);

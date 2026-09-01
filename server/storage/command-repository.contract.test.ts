@@ -19,6 +19,31 @@ function submission(): CommandSubmission { return { submissionId: "submission-1"
 const openPollLifecycle={creatorKind:"human" as const,creatorId:"human-1",state:"OPEN" as const,revision:1,closedAt:null,closerKind:null,closerId:null,closeMutationId:null,finalTallies:null,finalTotalVotes:null};
 
 describe.each(factories)("%s command repository", (_backend, makeFixture) => {
+  it("round-trips additive GitHub HTTP diagnostics alongside legacy records without rewriting history", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-command-http-")); temporaryDirectories.push(root);
+    const fixture = await makeFixture(root);
+    try {
+      const createdAt = "2026-08-27T12:00:00.000Z";
+      for (const http of [{}, { httpStatus: 401, githubRequestId: "AB12:CD34:EF56" }]) {
+        const suffix = "httpStatus" in http ? "new" : "legacy";
+        const command = { ...submission(), submissionId: `http-${suffix}`, clientSubmissionId: `http-client-${suffix}`,
+          command: "gh" as const, invocation: { command: "gh" as const, selector: { kind: "issue" as const, number: 1 } } };
+        const execution = { executionId: `execution-${suffix}`, roomId: DEFAULT_ROOM_ID, submissionId: command.submissionId,
+          status: "queued" as const, deliveryStatus: "pending" as const, authorizationLease: "legacy-static", projection: null,
+          renderedText: null, failureKind: null, diagnostics: [], createdAt, updatedAt: createdAt };
+        await fixture.repository.acceptCommand({ submission: command, audit: { auditId: `audit-${suffix}`, roomId: DEFAULT_ROOM_ID,
+          submissionId: command.submissionId, command: "gh", invokerKind: "human", invokerId: "human-1", targetAgentIds: [], createdAt }, ghExecution: execution });
+        const queued = (await fixture.repository.getGhExecution(DEFAULT_ROOM_ID, command.submissionId))!;
+        const diagnostic = { endpointFamily: "issue" as const, cacheOutcome: "miss" as const, queueDelayMs: 0, rateLimited: false,
+          truncated: false, failureKind: "upstream" as const, statusClass: "4xx" as const, correlationId: "failure:upstream", ...http };
+        const terminal = { ...queued, status: "failed" as const, failureKind: "upstream" as const, renderedText: "GitHub read failed.",
+          diagnostics: [diagnostic], updatedAt: "2026-08-27T12:01:00.000Z" };
+        expect(await fixture.repository.compareAndSetGhExecution(queued.updatedAt, terminal)).toMatchObject({ kind: "accepted" });
+        const reopened = await fixture.reopen();
+        expect((await reopened.getGhExecution(DEFAULT_ROOM_ID, command.submissionId))?.diagnostics).toEqual([diagnostic]);
+      }
+    } finally { fixture.close(); }
+  });
   it("projects each accepted audit status node exactly once across replay and restart",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-command-contract-"));temporaryDirectories.push(root);const fixture=await makeFixture(root);try{const first=await fixture.repository.addCommandAuditMessageOnce("audit-stable","— Ada ran /task — Target: Sol");const replay=await fixture.repository.addCommandAuditMessageOnce("audit-stable","different text must not replace it");expect(replay).toEqual(first);const reopened=await fixture.reopen();expect(reopened.snapshot().messages.filter(({id})=>id==="command-audit:audit-stable")).toEqual([first]);}finally{fixture.close();}});
   it("projects command delivery messages idempotently",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-command-contract-"));temporaryDirectories.push(root);const fixture=await makeFixture(root);try{const first=await fixture.repository.addCommandDeliveryMessageOnce("attempt-stable",0,"codex-sol","result");expect(await fixture.repository.addCommandDeliveryMessageOnce("attempt-stable",0,"codex-sol","different")).toEqual(first);const reopened=await fixture.reopen();expect(reopened.snapshot().messages.filter(({id})=>id==="command-delivery:attempt-stable:0")).toEqual([first]);}finally{fixture.close();}});
   it("round-trips compact command disclosures without changing their durable ID",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-command-contract-"));temporaryDirectories.push(root);const fixture=await makeFixture(root);try{const first=await fixture.repository.addCommandDeliveryMessageOnce("gh-stable",0,"system","summary\n\ndetail",undefined,{burstId:"gh-stable",sequence:0,kind:"command"});expect(first).toMatchObject({id:"command-delivery:gh-stable:0",kind:"command",text:"summary\n\ndetail"});const reopened=await fixture.reopen();expect(reopened.snapshot().messages.find(({id})=>id===first.id)).toEqual(first);}finally{fixture.close();}});

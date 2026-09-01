@@ -21,14 +21,17 @@ describe("GitHub integration control-plane API", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-github-integration-api-"));
     const control = await ControlPlaneStore.open(path.join(directory, "control"), "local-bootstrap-secret-with-32-characters");
     const integrations = await GitHubIntegrationStore.open(path.join(directory, "data"));
-    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: path.join(directory, "data", "credentials.enc"), keyPath: path.join(directory, "keys", "credentials.key") });
     let now = Date.parse("2026-08-28T14:00:00.000Z");
+    let credentialRefreshes = 0;
     const flow: GitHubDeviceFlowTransport = {
       start: async () => ({ deviceCode: "device_code_1234567890", userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", expiresInSeconds: 900, intervalSeconds: 5 }),
       poll: async () => ({ kind: "authorized", credential: { accessToken: "ghu_access_token_1234567890", tokenType: "bearer", expiresInSeconds: 28_800,
         refreshToken: "ghr_refresh_token_1234567890", refreshTokenExpiresInSeconds: 15_897_600 } }),
-      refresh: async () => { throw new Error("unused"); },
+      refresh: async () => { credentialRefreshes++; return { accessToken: "ghu_rotated_token_1234567890", tokenType: "bearer", expiresInSeconds: 28_800,
+        refreshToken: "ghr_rotated_token_1234567890", refreshTokenExpiresInSeconds: 15_897_600 }; },
     };
+    const vault = await EncryptedGitHubCredentialVault.open({ vaultPath: path.join(directory, "data", "credentials.enc"), keyPath: path.join(directory, "keys", "credentials.key"),
+      now: () => new Date(now).toISOString(), refresh: (token) => flow.refresh(token) });
     const authorizations = new GitHubDeviceAuthorizationCoordinator(flow, integrations, vault,
       async () => new Response(JSON.stringify({ id: 7, login: "octocat" }), { status: 200 }), () => now);
     const catalogClient = new GitHubRepositoryCatalogClient(async (input) => {
@@ -81,6 +84,11 @@ describe("GitHub integration control-plane API", () => {
     expect(refreshed.status).toBe(200); expect(await refreshed.json()).toMatchObject({ catalog: { revision: 1, repositories: [{ canonical: "github.com/example/one" }] } });
     const repositories = await (await call(`/api/control/integrations/github/repositories?connectionId=${encodeURIComponent(connectionId)}`, {}, viewerCookie)).text();
     expect(repositories).toContain("github.com/example/one"); expect(repositories).not.toMatch(/ghu_|ghr_|github-secret/);
+    now += 28_800_000;
+    const afterExpiry = await call("/api/control/integrations/github/catalog-refreshes", { method: "POST", body: JSON.stringify({ connectionId, expectedRevision: 1 }) }, ownerCookie, owner.csrfToken);
+    expect(afterExpiry.status).toBe(200);
+    expect(await afterExpiry.json()).toMatchObject({ catalog: { revision: 2 } });
+    expect(credentialRefreshes).toBe(1);
     for (let activeFlow = 0; activeFlow < 3; activeFlow += 1) {
       expect((await call("/api/control/integrations/github/device-authorizations", { method: "POST", body: "{}" }, ownerCookie, owner.csrfToken)).status).toBe(201);
     }

@@ -264,6 +264,26 @@ describe("OpenCode runtime contract", () => {
     expect(invocation.prompt).not.toContain("<<<NEXT>>>");
     expect(invocation.prompt).not.toContain("TURN_DISPOSITION:");
   });
+
+  it("journals a refused generation-start reservation as cancellation without spawning a subprocess", async () => {
+    const participant = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Alpha", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Topic", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    };
+    const journal = { append: vi.fn(async () => {}) };
+    const lifecycle = { start: vi.fn(), finish: vi.fn() };
+    const evidence: { generationId?: string; attemptOrdinal?: number } = {};
+    await expect(runAgent(participant.agentId, state, "Fixture start cancellation", false,
+      journal as unknown as import("./generation-journal.js").GenerationJournal,
+      undefined, undefined, lifecycle, undefined, undefined, undefined, undefined, undefined, undefined,
+      { onGenerationStart: async () => false, evidence },
+    )).rejects.toMatchObject({ name: "AgentGenerationCancelledError" });
+    expect(lifecycle.start).not.toHaveBeenCalled();
+    expect(lifecycle.finish).toHaveBeenCalledOnce();
+    expect(evidence.generationId).toBeDefined(); expect(evidence.attemptOrdinal).toBeUndefined();
+    expect(journal.append.mock.calls.map((args) => (args as unknown as [{ type: string }])[0].type)).toEqual(["session.fresh", "generation.started", "generation.cancelled"]);
+  });
 });
 
 describe("agent permissions", () => {
@@ -610,6 +630,8 @@ process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_sm
 `, { mode: 0o755 });
       const childScript = `
 const { runAgent } = await import("./server/agent-runner.ts");
+const { withConversationRun, withConversationTurn } = await import("./server/conversation-context.ts");
+const { currentLogContext, withLogContext } = await import("./server/structured-logger.ts");
 const { DEFAULT_PARTICIPANT_STYLES } = await import("./shared/chat-style.ts");
 const participant = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
 const epoch = "deployment-v1:" + "a".repeat(64);
@@ -635,10 +657,21 @@ const context = {
   },
 };
 const sessionLifecycle = { invalidate: async (agent) => { invalidations += 1; delete state.sessions[agent]; } };
-const result = await runAgent("codex-sol", state, "Verify scoped tools.", false, journal, undefined, undefined, undefined, sessionLifecycle, undefined, undefined, undefined, undefined, context);
+const evidence = {};
+const result = await withLogContext({ jobId: "fixture-job", traceId: "a".repeat(32), requestId: "fixture-request" }, () => withConversationRun(() => withConversationTurn("codex-sol", () => runAgent("codex-sol", state, "Verify scoped tools.", false, journal, undefined, undefined, undefined, sessionLifecycle, undefined, undefined, undefined, undefined, context, { evidence }))));
 const retained = JSON.stringify(journalEntries);
 const leaks = ["command-ses_stale-placeholder", "command-fresh-placeholder", "history-placeholder", "diagnostics-fresh-placeholder", "http://127.0.0.1/command", "http://127.0.0.1/history", "http://127.0.0.1/diagnostics"].some((value) => retained.includes(value));
-process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, journalLeaksScopedValues: leaks }));
+process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, journalLeaksScopedValues: leaks,
+  correlation: {
+    entries: journalEntries.map(({ type, attemptOrdinal }) => ({ type, attemptOrdinal })),
+    oneGeneration: new Set(journalEntries.map(({ generationId }) => generationId)).size === 1,
+    oneTurn: new Set(journalEntries.map(({ turnId }) => turnId)).size === 1 && Boolean(journalEntries[0].turnId),
+    oneRun: new Set(journalEntries.map(({ runId }) => runId)).size === 1 && Boolean(journalEntries[0].runId),
+    jobPreserved: journalEntries.every(({ jobId }) => jobId === "fixture-job"),
+    evidenceMatches: evidence.generationId === result.generationId && evidence.attemptOrdinal === result.attemptOrdinal,
+    resultAttempt: result.attemptOrdinal, contextRestored: currentLogContext() === undefined,
+  },
+}));
 `;
 
       const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
@@ -661,6 +694,16 @@ process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessi
         refreshCount: 2,
         invalidations: 1,
         journalLeaksScopedValues: false,
+        correlation: {
+          entries: [
+            { type: "session.reused", attemptOrdinal: 1 },
+            { type: "generation.started", attemptOrdinal: 1 },
+            { type: "generation.retry", attemptOrdinal: 1 },
+            { type: "generation.completed", attemptOrdinal: 2 },
+          ],
+          oneGeneration: true, oneTurn: true, oneRun: true, jobPreserved: true,
+          evidenceMatches: true, resultAttempt: 2, contextRestored: true,
+        },
       });
       expect(capture).toEqual({
         scoped: Object.fromEntries(scopedKeys.map((key) => [key, true])),

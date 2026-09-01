@@ -169,6 +169,41 @@ describe("authoritative logging foundation", () => {
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 
+  it("retains semantic run, turn and attempt identity across every journal stream without coalescing distinct work", async () => {
+    const { destinations, logging } = await memoryFoundation({ maxIdentical: 1 });
+    const journal = await GenerationJournal.open("/projects/one", undefined, undefined, logging);
+    const work = [
+      { runId: "run-one", turnId: "turn-one", generationId: "generation-one", attemptOrdinal: 1 },
+      { runId: "run-one", turnId: "turn-one", generationId: "generation-one", attemptOrdinal: 2 },
+      { runId: "run-one", turnId: "turn-two", generationId: "generation-two", attemptOrdinal: 1 },
+      { runId: "run-two", turnId: "turn-three", generationId: "generation-three", attemptOrdinal: 1 },
+    ];
+    for (const identity of work) await withLogContext({
+      traceId: "c".repeat(32), jobId: "job-one", requestId: "request-one",
+      runId: identity.runId, turnId: identity.turnId, attemptOrdinal: 1,
+    }, () => journal.append({
+      type: "generation.completed", agent: "codex-sol", ...identity,
+      sessionId: "same-provider-session", rawResponse: "same complete output", prompt: "same useful prompt",
+      cliStdout: JSON.stringify({ type: "tool_use", sessionID: "same-provider-session", part: { type: "tool", tool: "read", state: { output: "same useful evidence" } } }),
+      cliStderr: "same diagnostic", providerUsage: { totalTokens: 12 }, toolOutcomes: [{ status: "completed" }],
+    }));
+    await logging.flush();
+    for (const [stream, event] of [
+      ["generations", "generation.completed"], ["openrouter-provider", "provider.exchange.observed"],
+      ["opencode-harness", "opencode.stdout"], ["opencode-harness", "opencode.stderr"],
+      ["opencode-harness", "opencode.tool.outcome"], ["opencode-harness", "opencode.tool.outcomes"],
+    ] as const) {
+      const found = records(destinations.get(stream)!).filter((record) => record.event === event);
+      expect(found, event).toHaveLength(4);
+      found.forEach((record, index) => expect(record).toMatchObject({
+        ...work[index], jobId: "job-one", traceId: "c".repeat(32), requestId: "request-one", correlationId: work[index].generationId,
+      }));
+      expect(logging.metrics()[stream].coalesced).toBe(0);
+    }
+    expect(records(destinations.get("generations")!).every((entry) => entry.rawResponse === "same complete output" && entry.prompt === "same useful prompt")).toBe(true);
+    await logging.close();
+  });
+
   it("exposes bounded-buffer drops, coalescing, and sink failures without recursive payload logs", async () => {
     let now = 1_000;
     const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 1024, maxIdentical: 1, identicalWindowMs: 100, now: () => now }, ["openrouter-provider"]);
@@ -243,17 +278,19 @@ describe("authoritative logging foundation", () => {
   });
 
   it("assigns application events to one subsystem owner and rotates on an independent time bound", async () => {
-    const { destinations, logging } = await memoryFoundation();
+    const { destinations, logging } = await memoryFoundation({ roomId: "room" });
     const facade = new ApplicationLoggerFacade(logging);
     await facade.log("info", "server.startup.completed", { outcome: "ready" });
     await facade.log("info", "agent.tool-policy.snapshot", { outcome: "configured" });
     await facade.log("warn", "room-command-tool.lease", { outcome: "rejected", reason: "expired" });
+    await facade.log("info", "room.roster.audit.changed", { roomId: "room", actorKind: "room-member", actorId: "member", previousRevision: 1, nextRevision: 2, visibility: "operator" });
     await facade.log("warn", "openrouter.provider.rate-limited", { outcome: "deferred" });
     await facade.log("info", "opencode.harness.started", { outcome: "started" });
     await logging.flush();
     expect(records(destinations.get("server-service-lifecycle")!).map(({ event }) => event)).toEqual(["server.startup.completed"]);
     expect(records(destinations.get("capability-decisions")!).map(({ event }) => event)).toEqual(["agent.tool-policy.snapshot"]);
-    expect(records(destinations.get("security-audit")!).map(({ event }) => event)).toEqual(["room-command-tool.lease"]);
+    expect(records(destinations.get("security-audit")!).map(({ event }) => event)).toEqual(["room-command-tool.lease", "room.roster.audit.changed"]);
+    expect(records(destinations.get("security-audit")!)[1]).toMatchObject({ roomId: "room", actorKind: "room-member", actorId: "member", previousRevision: 1, nextRevision: 2, visibility: "operator" });
     expect(records(destinations.get("openrouter-provider")!).map(({ event }) => event)).toEqual(["openrouter.provider.rate-limited"]);
     expect(records(destinations.get("opencode-harness")!).map(({ event }) => event)).toEqual(["opencode.harness.started"]);
 

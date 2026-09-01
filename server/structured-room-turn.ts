@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { stripUnsupportedEmoji } from "../shared/aim-smileys.js";
+import { stripUnsupportedEmojiWithDiagnostics } from "../shared/aim-smileys.js";
 import { AIM_5_COLOR_PALETTE, CHAT_FONT_FAMILIES, sanitizeChatStyle, type ChatStyle } from "../shared/chat-style.js";
 import { stripAgentSelfLabel, YIELD_REASONS } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, type AgentId } from "../shared/participants.js";
+import type { TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
 import type { InvestigationRequest, ParsedAgentTurn } from "./conversation.js";
 
 const MAX_STRUCTURED_MESSAGE_CHARACTERS = 12_000;
@@ -136,34 +137,96 @@ export function interpretStructuredRoomTurn(
   currentStyle?: ChatStyle,
   visibleMessageLimit = 3,
   roomAgents: readonly AgentId[] = AGENT_IDS,
+  limitSource: VisibleMessageLimitSource = visibleMessageLimit === 3 ? "default-burst-cap" : "caller-limit",
 ): ParsedAgentTurn {
+  const effectiveLimit = Math.trunc(Math.max(0, Math.min(3, visibleMessageLimit))) || 0;
+  const diagnostics = (overrides: Partial<TurnInterpretationDiagnostics> = {}): TurnInterpretationDiagnostics => ({
+    parserRevision: 1,
+    dispositionStatus: "malformed",
+    dispositionAction: null,
+    yieldReason: null,
+    suppressionReason: "malformed-disposition",
+    declaredConversationState: null,
+    effectiveConversationState: null,
+    continuationWorthy: false,
+    requestedVisibleMessageLimit: Number.isFinite(visibleMessageLimit) ? visibleMessageLimit : null,
+    effectiveVisibleMessageLimit: effectiveLimit,
+    limitSource,
+    burstAccounting: "not-evaluated",
+    parsedBurstCount: null,
+    removedBurstCount: null,
+    eligibleBurstCount: null,
+    retainedBurstCount: null,
+    truncatedBurstCount: null,
+    removals: {
+      protocolDirectives: 0,
+      protocolCharacters: 0,
+      workflowPrefaceParagraphs: 0,
+      workflowPrefaceCharacters: 0,
+      speakerLabelCharacters: 0,
+      unsupportedEmojiGraphemes: 0,
+      unsupportedEmojiCharacters: 0,
+      whitespaceCharacters: 0,
+      emptyBursts: 0,
+      legacyNoResponseBursts: 0,
+    },
+    ...overrides,
+  });
   let output: StructuredRoomTurnOutput;
   try {
     output = validateStructuredRoomTurn(value);
   } catch {
-    return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, dispositionMalformed: true };
+    return { diagnostics: diagnostics(), visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, dispositionMalformed: true };
   }
   if (output.action === "yield") {
-    return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, yieldReason: output.reason };
+    return {
+      diagnostics: diagnostics({ dispositionStatus: "valid", dispositionAction: "yield", yieldReason: output.reason, suppressionReason: "structured-yield" }),
+      visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, yieldReason: output.reason,
+    };
   }
   const speakerName = AGENT_PROFILES[agent]?.conversationalName;
-  const visibleMessages = output.messages
-    .map((message) => stripAgentSelfLabel(message, speakerName))
-    .map(stripUnsupportedEmoji)
-    .filter(Boolean)
-    .slice(0, Math.max(0, Math.min(3, visibleMessageLimit)));
+  const interpretation = diagnostics({
+    dispositionStatus: "valid",
+    dispositionAction: "speak",
+    suppressionReason: null,
+    declaredConversationState: output.conversationState,
+    effectiveConversationState: output.conversationState,
+    burstAccounting: "evaluated",
+    parsedBurstCount: output.messages.length,
+  });
+  const eligibleMessages = output.messages.map((message) => {
+    const withoutLabel = stripAgentSelfLabel(message, speakerName);
+    interpretation.removals.speakerLabelCharacters += message.length - withoutLabel.length;
+    const withoutEmoji = stripUnsupportedEmojiWithDiagnostics(withoutLabel);
+    interpretation.removals.unsupportedEmojiGraphemes += withoutEmoji.removedGraphemes;
+    interpretation.removals.unsupportedEmojiCharacters += withoutEmoji.removedCharacters;
+    interpretation.removals.whitespaceCharacters += withoutEmoji.whitespaceCharacters;
+    return withoutEmoji.text;
+  }).filter((message) => {
+    if (message) return true;
+    interpretation.removals.emptyBursts += 1;
+    return false;
+  });
+  const visibleMessages = eligibleMessages.slice(0, effectiveLimit);
+  interpretation.removedBurstCount = output.messages.length - eligibleMessages.length;
+  interpretation.eligibleBurstCount = eligibleMessages.length;
+  interpretation.retainedBurstCount = visibleMessages.length;
+  interpretation.truncatedBurstCount = eligibleMessages.length - visibleMessages.length;
   if (!visibleMessages.length) {
-    return { visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, dispositionMalformed: true };
+    Object.assign(interpretation, { dispositionStatus: "malformed", dispositionAction: null, suppressionReason: "malformed-disposition", effectiveConversationState: null });
+    return { diagnostics: interpretation, visibleMessages: [], replyCandidates: [], mentionedAgents: [], visibleMessageCount: 0, continuationWorthy: false, dispositionMalformed: true };
   }
   const combinedText = visibleMessages.join("\n");
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
   const mentionedAgents = otherAgents.filter((candidate) => new RegExp(`\\b${AGENT_PROFILES[candidate].conversationalName}\\b`, "i").test(combinedText));
+  interpretation.continuationWorthy = mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText);
   return {
+    diagnostics: interpretation,
     visibleMessages,
     replyCandidates: otherAgents,
     mentionedAgents,
     visibleMessageCount: visibleMessages.length,
-    continuationWorthy: mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText),
+    continuationWorthy: interpretation.continuationWorthy,
     conversationState: output.conversationState,
     ...(currentStyle && output.style ? { styleUpdate: sanitizeChatStyle(output.style, currentStyle) } : {}),
     ...(output.investigationRequest ? { investigationRequest: output.investigationRequest as InvestigationRequest } : {}),

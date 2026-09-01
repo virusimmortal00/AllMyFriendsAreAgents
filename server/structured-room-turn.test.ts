@@ -13,6 +13,14 @@ describe("structured room turns", () => {
       style: { ...DEFAULT_PARTICIPANT_STYLES["codex-sol"], fontSize: 19 },
       investigationRequest: { objective: "Check identity mapping", trigger: "Two labels conflict", evidenceRefs: [{ kind: "project_artifact", ref: "server/types.ts" }] },
     }, DEFAULT_PARTICIPANT_STYLES["codex-sol"], 3, AGENT_IDS)).toMatchObject({
+      diagnostics: {
+        dispositionStatus: "valid",
+        dispositionAction: "speak",
+        declaredConversationState: "open",
+        effectiveConversationState: "open",
+        parsedBurstCount: 2,
+        retainedBurstCount: 2,
+      },
       visibleMessages: ["First answer.", "Claude, what do you think?"],
       mentionedAgents: ["claude-sonnet"],
       conversationState: "open",
@@ -24,6 +32,7 @@ describe("structured room turns", () => {
 
   it("keeps a yield silent and preserves its typed reason", () => {
     expect(interpretStructuredRoomTurn("claude-sonnet", { schemaVersion: 1, action: "yield", reason: "already_covered" })).toMatchObject({
+      diagnostics: { dispositionStatus: "valid", dispositionAction: "yield", suppressionReason: "structured-yield" },
       visibleMessages: [], yieldReason: "already_covered",
     });
   });

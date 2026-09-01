@@ -159,6 +159,8 @@ export default function App() {
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
   const [workspaceView, setWorkspaceView] = useState<LocalWorkspaceName | null>(null);
   const [clientError, setClientError] = useState("");
+  const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
+  useEffect(() => setDismissedRoomError(null), [room.error]);
   const [connectionNotice, setConnectionNotice] = useState("");
   const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [polls, setPolls] = useState<PublicPollProjection[]>([]);
@@ -922,7 +924,7 @@ export default function App() {
           <span><strong>{roomActionLabel(actionFailure.action, actionFailure.target)} failed.</strong> {actionFailure.message} {!connected ? "Retry is unavailable while reconnecting." : !actionFailure.retrySafe ? "The result may be unknown, so retrying could duplicate the action." : actionFailure.attempt > 0 ? "The retry failed; close this error or choose a new action." : ""}</span>
           {actionFailure.retrySafe && actionFailure.attempt === 0 ? <button type="button" className="error-strip__retry" disabled={!connected || Boolean(actionPending)} onClick={() => invoke(actionFailure.action, actionFailure.target, 1)}>Retry once</button> : null}
           <button type="button" aria-label="Dismiss action error" disabled={Boolean(actionPending)} onClick={() => setActionFailure(null)}>×</button>
-        </div> : clientError || room.error ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span>{clientError ? <button type="button" aria-label="Dismiss error" onClick={() => setClientError("")}>×</button> : null}</div> : null}
+        </div> : clientError || room.error && room.error !== dismissedRoomError ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span><button type="button" aria-label="Dismiss error" onClick={() => clientError ? setClientError("") : setDismissedRoomError(room.error || null)}>×</button></div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
