@@ -64,6 +64,24 @@ describe("roster manager", () => {
     expect(grant.disabled).toBe(false);
   });
 
+  it("clears individual command grants when all commands is turned off", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: true, allowed: ["task", "poll", "pov", "help", "gh"], catalogRevision: 2 } }] }, catalog }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: [], catalogRevision: 2 } }] }, catalog }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+
+    const allowAll = await screen.findByRole("checkbox", { name: "Allow all commands" });
+    expect((allowAll as HTMLInputElement).checked).toBe(true);
+    await user.click(allowAll);
+    expect((screen.getByRole("checkbox", { name: "/task" }) as HTMLInputElement).checked).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
+  });
+
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
 

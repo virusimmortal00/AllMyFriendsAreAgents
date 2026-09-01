@@ -20,6 +20,8 @@ describe("independent screenshot review gate", () => {
     const capture = fixture().run.captures[0];
     expect(captureSchema.safeParse({ ...capture, scrollRegions: undefined }).success).toBe(false);
     for (const maximum of [-1, NaN, Infinity, 1.5]) expect(captureSchema.safeParse({ ...capture, scrollRegions: [{ name: "Page", offset: 0, maximum }] }).success).toBe(false);
+    for (const region of [{ name: "Page", offset: -1, maximum: 1 }, { name: "Page", offset: 2, maximum: 1 }]) expect(captureSchema.safeParse({ ...capture, scrollRegions: [region] }).success).toBe(false);
+    for (const region of [{ name: "Page", offset: 0, maximum: 0 }, { name: "Page", offset: 2, maximum: 2 }]) expect(captureSchema.safeParse({ ...capture, scrollRegions: [region] }).success).toBe(true);
     expect(captureSchema.safeParse({ ...capture, scrollRegions: Array.from({ length: 21 }, () => ({ name: "Page", offset: 0, maximum: 1 })) }).success).toBe(false);
   });
   it("accepts a complete current independently reviewed capture set", () => {

@@ -8,11 +8,16 @@ import { expectedVisualKeys, VISUAL_SCENARIOS, VISUAL_VIEWPORTS } from "../tests
 export const VISUAL_QUESTIONS = ["screenUse", "navigation", "retroStyle", "proportion", "emptyArea", "scrollAndActions", "outcome"] as const;
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const key = z.string().regex(/^[a-z0-9-]+$/);
+const scrollRegionSchema = z.object({
+  name: z.string().min(1).max(160),
+  offset: z.number().int().nonnegative(),
+  maximum: z.number().int().nonnegative(),
+}).strict().refine(({ offset, maximum }) => offset <= maximum, { message: "Scroll offset cannot exceed its maximum." });
 export const captureSchema = z.object({
   key, viewId: z.string(), engine: z.enum(["chromium", "webkit"]),
   viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).strict(),
   screenshotSha256: sha, layoutIssues: z.array(z.string()),
-  scrollRegions: z.array(z.object({ name: z.string().min(1).max(160), offset: z.number().int(), maximum: z.number().int().nonnegative() }).strict()).max(20),
+  scrollRegions: z.array(scrollRegionSchema).max(20),
 }).strict();
 export const runSchema = z.object({
   schemaVersion: z.literal(1), inputDigest: sha, headCommit: z.string().regex(/^[a-f0-9]{40}$/),

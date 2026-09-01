@@ -691,9 +691,9 @@ describe("rendered reconnect recovery", () => {
     const { messages: _messages, ...clearState } = room("notice");
     const state = { ...clearState, error: "Room action failed" };
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 0, version: 1, state }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));
     await user.click(await screen.findByRole("button", { name: "Dismiss error" }));
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(state.error).toBe("Room action failed");
     expect(api.runAction).not.toHaveBeenCalled();
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 1, version: 2, state: clearState }));
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 2, version: 3, state }));

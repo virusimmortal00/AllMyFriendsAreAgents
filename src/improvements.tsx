@@ -32,7 +32,7 @@ export async function resolveImprovementsAlias(
 }
 
 function StatusValue({ value }: { value: unknown }) {
-  if (Array.isArray(value)) return <ul>{value.map((entry, index) => <li key={index}><StatusValue value={entry && typeof entry === "object" && "id" in entry ? entry.id : entry} /></li>)}</ul>;
+  if (Array.isArray(value)) return <ul>{value.map((entry, index) => <li key={index}><StatusValue value={entry} /></li>)}</ul>;
   if (value && typeof value === "object") return <dl className="improvements-status-details">{Object.entries(value).filter(([, entry]) => entry != null).map(([key, entry]) => <Fragment key={key}><dt>{key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase())}</dt><dd><StatusValue value={entry} /></dd></Fragment>)}</dl>;
   return <>{value == null ? "Not set" : String(value)}</>;
 }

@@ -82,6 +82,7 @@ describe("Improvements interface", () => {
     expect(screen.getByText("Immutable Revision")).toBeTruthy();
     expect(screen.getByText("Repository")).toBeTruthy();
     expect(screen.getByText("repo")).toBeTruthy();
+    expect(screen.getByText("https://example.test/e2")).toBeTruthy();
     expect(screen.queryByText(/\{"immutableRevision"/)).toBeNull();
     expect(screen.getByRole("link", { name: "Permanent link to this improvement" }).getAttribute("href")).toBe("/improvements/known-id");
   });

@@ -12,8 +12,8 @@ authentication dialog remains content-sized.
 The corrected full matrix passed 570 browser tests with six intentional compact-
 chat skips, captured all 714 screenshots, and reported zero layout failures.
 Source-input digest:
-`a8b4a93c99251e06efaaaf8a6a761385edd9964bd84bf359b11526a9ba689000`.
-The broad quality gate passed 1,187 tests with one intentional skip, UI and
+`b49525b8670b26665966c16b810fd275bdcd3fab317759241336acfe600e03e2`.
+The broad quality gate passed 1,188 tests with one intentional skip, UI and
 integration checks, visual typechecking, and the production build.
 
 Focused rendered checks for the roster and detail views passed 24 tests and
@@ -23,20 +23,22 @@ additional focused tests after raising the large-display cap from 720px to
 800px. These filtered captures are debugging evidence, not independent visual
 approval.
 
-Fresh independent review covered the final 48 roster and detail images at all
-six viewport sizes in Chromium and WebKit, with 24 completed account-backed
-review receipts. Thirty-two image verdicts pass and 16 remain flagged. The exact
-validator confirms current inputs but fails overall approval because those
-findings remain and the other 666 matrix images lack independent review for this
-digest.
+Fresh independent review covered the final 48 roster and detail images plus 24
+`WORK-02` Improvement Detail images at all six viewport sizes in Chromium and
+WebKit, with 36 completed account-backed review receipts. Of the roster images,
+32 pass and 16 remain flagged; `WORK-02` adds 21 passes and three findings. The
+exact validator confirms current inputs but fails overall approval because
+those findings remain and the other 642 matrix images lack independent review
+for this digest.
 
 Each question cell counts flagged images; zero means all assigned images passed
 that question, not that every possible runtime state was tested.
 
 | View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome | Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ROOM-05 Roster | 24 | 4 | 0 | 0 | 0 | 4 | 4 | 8 | The taller workspace and stable navigation pass; WebKit compact scroll cues remain weak, while Tablet/Desktop reviewers disagree with the deliberate extra roster capacity. |
-| ROOM-06 Agent Detail | 24 | 8 | 0 | 0 | 4 | 8 | 4 | 8 | The form, actions, and retro styling pass; the tall pane preserves room for the roster at the cost of quiet detail-column space, and Tablet reviewers disagree with the visible scroll/action cue. |
+| ROOM-05 Roster | 24 | 6 | 0 | 0 | 2 | 6 | 4 | 8 | The taller workspace and stable navigation pass; WebKit compact scroll cues remain weak, while Tablet/Desktop reviewers disagree with the deliberate extra roster capacity. |
+| ROOM-06 Agent Detail | 24 | 8 | 0 | 0 | 4 | 8 | 2 | 8 | The form, actions, and retro styling pass; the tall pane preserves room for the roster at the cost of quiet detail-column space, and Tablet reviewers disagree with the visible scroll/action cue. |
+| WORK-02 Improvement Detail | 24 | 3 | 0 | 0 | 2 | 3 | 2 | 3 | Full status-array objects now render. Chromium Tablet and WebKit Short laptop retain shared workspace-allocation or lower-scroll-cue findings. |
 
 Original-image inspection retains both categories as open findings. The taller
 window is an explicit workspace-allocation decision: its primary value is showing
