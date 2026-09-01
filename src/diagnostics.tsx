@@ -57,8 +57,9 @@ export function summarizeTraceEvidence(records: readonly OwnerDiagnosticRecord[]
   const missingRawGenerationIds = [...finishedGenerationIds].filter((generationId) => !rawGenerationIds.has(generationId)).sort();
   const groups = new Map<string, OwnerDiagnosticRecord[]>();
   for (const record of structured) {
-    const runId = typeof record.content.runId === "string" ? record.content.runId : record.correlationId;
-    if (runId) groups.set(runId, [...(groups.get(runId) ?? []), record]);
+    const runId = typeof record.content.runId === "string" ? record.content.runId : undefined;
+    const sequence = record.content.runEventSequence;
+    if (runId && typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence > 0) groups.set(runId, [...(groups.get(runId) ?? []), record]);
   }
   const missingSequences = new Set<number>();
   let completeRuns = 0;
@@ -92,10 +93,11 @@ export function Diagnostics() {
 
   async function load(cursor?: string, override?: Partial<Pick<QueryContext, "scope" | "stream" | "selectorKind" | "selectorValue">>) {
     const context = cursor && queryContext ? queryContext : { from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), scope: override?.scope ?? scope, stream: override?.stream ?? stream, selectorKind: override?.selectorKind ?? selectorKind, selectorValue: override?.selectorValue ?? selectorValue };
+    const value = context.selectorValue.trim().slice(0, 200);
+    if (context.selectorKind === "traceId" && !value) { setError("Enter a trace ID to query one whole trace."); return; }
     if (!cursor) { setQueryContext(context); setSelected(null); }
     setLoading(true); setError("");
     try {
-      const value = context.selectorValue.trim().slice(0, 200);
       const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.selectorKind === "traceId" || context.stream === "all" ? streams : [context.stream], correlation: value ? { [context.selectorKind]: value } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
       setResult((previous) => combinePages(previous, page, Boolean(cursor)));
     } catch (failure) { if (!cursor) setResult(null); setError(safeFailure(failure)); }
@@ -117,7 +119,7 @@ export function Diagnostics() {
       <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} disabled={selectorKind === "traceId"} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
       <label>Selector <select className="classic-select" aria-label="Diagnostic selector" value={selectorKind} onChange={(event) => { const next = event.target.value as SelectorKind; setSelectorKind(next); if (next === "traceId") setStream("all"); }}><option value="correlationId">Correlation ID</option><option value="traceId">Trace ID (whole trace)</option></select></label>
       <label>{selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} <input className="classic-input" aria-label={selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} value={selectorValue} maxLength={200} onChange={(event) => setSelectorValue(event.target.value)} /></label>
-      <button type="button" className="classic-button" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
+      <button type="button" className="classic-button" disabled={loading || (selectorKind === "traceId" && !selectorValue.trim())} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
     </div>
     {error ? <p className="diagnostics-error" role="alert">{error}</p> : null}
     {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <section className="diagnostics-results-view" {...viewAttributes(VIEWS.ownerDiagnosticsResults)}>

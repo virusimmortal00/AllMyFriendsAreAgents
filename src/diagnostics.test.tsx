@@ -74,6 +74,18 @@ describe("owner diagnostic dashboard", () => {
     expect(traceQuery.correlation).not.toHaveProperty("correlationId");
   });
 
+  it("requires a non-empty trace ID before querying a whole trace", () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
+    render(<Diagnostics />);
+    fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
+    const query = screen.getByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement;
+    expect(query.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: "   " } });
+    expect(query.disabled).toBe(true);
+    fireEvent.click(query);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("preserves the whole-trace selector and bounded window across pages", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page({ nextCursor: "trace-cursor" })))
@@ -187,8 +199,12 @@ describe("owner diagnostic dashboard", () => {
       { ...record, recordId: "turn-finished", event: "conversation.turn.finished", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 2, generationId: "generation-one" } },
       { ...record, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 3, attemptedEventCount: 3 } },
     ];
-    expect(summarizeTraceEvidence([...structured, record], true)).toMatchObject({ status: "partial" });
-    expect(summarizeTraceEvidence([...structured, record], false)).toMatchObject({ status: "complete", unpairedRecordIds: [], missingRawGenerationIds: [] });
+    const jobRecords = [
+      { ...record, recordId: "job-decision", event: "conversation.job.decision", correlationId: "request-one", generationId: undefined, content: { jobId: "job-one", action: "queued" } },
+      { ...record, recordId: "job-consumed", event: "conversation.job.consumed", correlationId: "request-one", generationId: undefined, content: { jobId: "job-one" } },
+    ];
+    expect(summarizeTraceEvidence([...jobRecords, ...structured, record], true)).toMatchObject({ status: "partial" });
+    expect(summarizeTraceEvidence([...jobRecords, ...structured, record], false)).toMatchObject({ status: "complete", runCount: 1, unpairedRecordIds: [], missingRawGenerationIds: [] });
   });
 
   it("keeps unpaired raw evidence visible and describes absent evidence without guessing a cause", async () => {
