@@ -41,6 +41,8 @@ jobs:
           INTEGRATION_CONTRACT_PR_BODY: ${{ github.event.pull_request.body }}
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
+      - name: Type-check screenshot and review tooling
+        run: pnpm run check:visual-types
       - name: Type-check and build production assets
         run: pnpm run build
       - name: Run the full regression suite

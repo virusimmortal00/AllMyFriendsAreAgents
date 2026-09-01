@@ -1,0 +1,44 @@
+name: Visual evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Browser layout and screenshot capture (not visual approval)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium webkit
+      - run: pnpm run check:visual-types
+      - run: pnpm run capture:visual
+      - name: Upload evidence even when layout checks fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-evidence-${{ github.sha }}
+          path: |
+            test-results/visual/
+            test-results/visual-runtime/
+          if-no-files-found: error
+          retention-days: 14

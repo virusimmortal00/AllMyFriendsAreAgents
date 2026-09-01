@@ -132,7 +132,8 @@ export function RichModelPicker({
       </div>
       <div className="model-picker__toolbar">
         <label className="model-picker__search"><span>Search models</span><input type="search" value={query} placeholder="Try Gemini, Claude, coding…" onChange={(event) => setQuery(event.target.value)} /></label>
-        <label className="model-picker__sort"><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as ModelSort)}><option value="recommended">Recommended</option><option value="popular">Most popular</option><option value="price">Lowest price</option><option value="newest">Newest</option><option value="name">Name</option></select></label>
+        <label className="model-picker__sort"><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as ModelSort)}><option value="recommended">Suggested</option><option value="popular">Popular</option><option value="price">Price</option><option value="newest">Newest</option><option value="name">Name</option></select></label>
+        <label className="model-picker__filter-select"><span>Filter models</span><select value={filter} onChange={(event) => setFilter(event.target.value as ModelFilter)}>{FILTERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       </div>
       <div className="model-picker__filters" aria-label="Filter models">{FILTERS.map((item) => <button type="button" className={filter === item.id ? "is-selected" : ""} aria-pressed={filter === item.id} key={item.id} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
       <div className="model-picker__results" aria-label="Available models">

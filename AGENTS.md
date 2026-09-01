@@ -119,6 +119,15 @@ protocol, or retry behavior, test denial and recovery paths as well as success.
 If a required check cannot run, report the exact reason and what remains
 unverified; do not describe an unrun check as passing.
 
+For UI work, follow `docs/testing/visual-review.md`: capture rendered screenshots,
+run `pnpm review:visual --run <capture-directory>` locally through a fresh Codex
+review session, retain its per-image seven-question verdicts and receipts, and
+run `pnpm check:visual-review` against the exact
+capture. Neither CSS-string tests nor a successful screenshot job constitute
+visual approval. Explicitly list views and real-device behavior still unverified.
+The account-backed reviewer consumes Codex usage and requires explicit permission
+to run; never put ChatGPT credentials in public CI or fall back to an API key.
+
 ## Public repository boundary
 
 Treat every committed file, GitHub issue, pull request, review, comment, commit

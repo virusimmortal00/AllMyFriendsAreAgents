@@ -12,6 +12,19 @@ const models = [
 ] as const;
 
 describe("rich model picker", () => {
+  it("keeps the compact dropdown and wide-screen filter buttons synchronized", async () => {
+    const user = userEvent.setup();
+    render(<RichModelPicker models={models} providerId="" modelId="" onChange={vi.fn()} />);
+    const compactFilter = screen.getByRole("combobox", { name: "Filter models" });
+    await user.selectOptions(compactFilter, "vision");
+    expect(screen.getByRole("button", { name: "Images" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /Gemini 3.7 Flash/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Claude Sonnet 5/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect((compactFilter as HTMLSelectElement).value).toBe("all");
+    expect(screen.getByRole("button", { name: /Claude Sonnet 5/ })).toBeTruthy();
+  });
+
   it("searches friendly metadata, selects a model, explains routing, and shows a live sale", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ providerId: "openrouter", modelId: "google/gemini-3.7-flash", fetchedAt: "2026-08-26T00:00:00.000Z", offers: [{ providerName: "Google Vertex", providerId: "google-vertex", inputPerMillion: 0.3, outputPerMillion: 1.5, discount: 0.2 }] }), { status: 200 })));
     const user = userEvent.setup();

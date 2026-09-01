@@ -276,7 +276,7 @@ describe("RoomControls", () => {
       />,
     );
 
-    expect(html).toContain('value="Weekend cooking"');
+    expect(html).toMatch(/<textarea[^>]+id="room-topic"[^>]*>Weekend cooking<\/textarea>/);
     expect(html).toContain('value="Weekend Room"');
     expect(html).toContain("Shown in the room window title bar.");
     expect(html).toContain("A starting point, not a boundary. Changing it starts fresh agent context.");
@@ -298,7 +298,7 @@ describe("RoomControls", () => {
       />,
     );
 
-    expect(html).toMatch(/id="room-topic"[^>]+value="Current topic"/);
+    expect(html).toMatch(/<textarea[^>]+id="room-topic"[^>]*>Current topic<\/textarea>/);
     expect(html).toMatch(/id="room-name"[^>]+disabled/);
     expect(html).toMatch(/id="room-topic"[^>]+disabled/);
     expect(html).toMatch(/id="conversation-energy"[^>]+disabled/);

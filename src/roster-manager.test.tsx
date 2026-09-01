@@ -45,6 +45,9 @@ describe("roster manager", () => {
     const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective off/ }) as HTMLInputElement;
     expect(grant.checked).toBe(true);
     expect(grant.disabled).toBe(false);
+    expect(within(grant.closest("label")!).getByText("/gh")).toBeTruthy();
+    const status = document.getElementById(grant.getAttribute("aria-describedby")!);
+    expect(status?.textContent).toBe("GitHub /gh: requested on; effective off");
   });
 
   it("shows a preserved requested /gh grant becoming effective after server configuration", async () => {
@@ -59,6 +62,24 @@ describe("roster manager", () => {
     const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective on/ }) as HTMLInputElement;
     expect(grant.checked).toBe(true);
     expect(grant.disabled).toBe(false);
+  });
+
+  it("clears individual command grants when all commands is turned off", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: true, allowed: ["task", "poll", "pov", "help", "gh"], catalogRevision: 2 } }] }, catalog }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: [], catalogRevision: 2 } }] }, catalog }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+
+    const allowAll = await screen.findByRole("checkbox", { name: "Allow all commands" });
+    expect((allowAll as HTMLInputElement).checked).toBe(true);
+    await user.click(allowAll);
+    expect((screen.getByRole("checkbox", { name: "/task" }) as HTMLInputElement).checked).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Save roster" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
@@ -104,6 +125,7 @@ describe("roster manager", () => {
     const onSaved = vi.fn();
     render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByText(/Build the room’s agent team/)).toBeNull();
     expect(screen.getAllByText("GPT 5.6 Sol · via OpenAI").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("OpenAI model").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("switch"));

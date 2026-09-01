@@ -34,7 +34,18 @@ describe("RoomConfigurationDialog", () => {
     expect(screen.getByRole("heading", { name: "Agent Routing" })).toBeTruthy();
     expect(screen.getByLabelText("Pre-flight mode")).toBeTruthy();
     expect(screen.getByTestId("preflight-evidence").textContent).toContain("3 evaluated shadow suppressions");
+    expect(screen.getByRole("region", { name: "Base Prompt" }).classList.contains("classic-property-section")).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "Include a room base prompt" }).closest("label")?.classList.contains("classic-check")).toBe(true);
+    expect(screen.getByRole("button", { name: "Use built-in default" }).closest("label")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Pre-flight mode" }).classList.contains("classic-select")).toBe(true);
     const user = userEvent.setup();
+    await user.clear(screen.getByLabelText("Prompt", { selector: "textarea" }));
+    await user.type(screen.getByLabelText("Prompt", { selector: "textarea" }), "Temporary prompt");
+    await user.click(screen.getByRole("button", { name: "Use built-in default" }));
+    expect((screen.getByRole("textbox", { name: "Prompt" }) as HTMLTextAreaElement).value).toBe("Default merit rule");
+    await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
+    expect((screen.getByRole("textbox", { name: "Prompt" }) as HTMLTextAreaElement).disabled).toBe(true);
+    await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
     await user.clear(screen.getByLabelText("Prompt", { selector: "textarea" }));
     await user.type(screen.getByLabelText("Prompt", { selector: "textarea" }), "Custom merit rule");
     await user.click(screen.getByRole("button", { name: "OK" }));
@@ -124,7 +135,10 @@ describe("RoomConfigurationDialog", () => {
 
     render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
 
-    expect(screen.getByRole("textbox", { name: "Room name" })).toBeTruthy();
+    const roomName = screen.getByRole("textbox", { name: "Room name" });
+    expect(roomName).toBeTruthy();
+    expect(roomName.closest(".room-properties-page-content")?.classList.contains("classic-property-section")).toBe(true);
+    expect(roomName.closest(".room-properties-page-content")?.classList.contains("room-properties-general-content")).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
     const dialog = screen.getByRole("dialog", { name: "Room Properties" });
@@ -133,6 +147,11 @@ describe("RoomConfigurationDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Choose model…" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/room/settings/models");
+    await user.click(await screen.findByRole("button", { name: "Back to agent behavior" }));
+    const chooseModels = screen.getByRole("button", { name: "Choose model…" });
+    expect(document.activeElement).toBe(chooseModels);
+    expect(screen.queryByRole("button", { name: "Back to agent behavior" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a General draft open when OK is used from Agent behavior", async () => {

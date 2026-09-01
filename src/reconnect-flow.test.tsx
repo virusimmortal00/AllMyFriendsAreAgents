@@ -684,6 +684,22 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("dismisses only the local server-error notice and shows a later occurrence again", async () => {
+    const user = userEvent.setup();
+    await renderConnected();
+    const source = ControlledEventSource.instances[0];
+    const { messages: _messages, ...clearState } = room("notice");
+    const state = { ...clearState, error: "Room action failed" };
+    act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 0, version: 1, state }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));
+    await user.click(await screen.findByRole("button", { name: "Dismiss error" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(api.runAction).not.toHaveBeenCalled();
+    act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 1, version: 2, state: clearState }));
+    act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 2, version: 3, state }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));
+  });
+
   it("distinguishes transient workshop failure from verified missing and preserves return focus", async () => {
     api.loadWorkshop
       .mockRejectedValueOnce(new ApiRequestError("Temporary workshop failure", false, 503))
