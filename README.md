@@ -64,7 +64,7 @@ Each opportunity invokes an agent CLI and consumes that provider's plan or quota
 [![Node 24+](https://img.shields.io/badge/node-24%2B-008b8b.svg)](package.json)
 [![Local first](https://img.shields.io/badge/local--first-transcripts-6c1974.svg)](#local-first-by-default)
 
-You need [Node.js 24+](https://nodejs.org/), pnpm, and an authenticated [OpenCode](https://opencode.ai/docs/) installation in the source-audited range 1.18.18 through 1.18.25. Discovery fails closed for older, newer-unreviewed, prerelease, or malformed versions. The audited range and upstream source evidence live in [`integration-contracts/opencode.json`](integration-contracts/opencode.json); the maintenance workflow is documented in [`docs/integrations/opencode.md`](docs/integrations/opencode.md). Unavailable models remain visible but cannot run until an administrator selects a discovered replacement.
+You need [Node.js 24+](https://nodejs.org/), pnpm, and an authenticated [OpenCode](https://opencode.ai/docs/) installation in the source-audited range 1.18.18 through 1.18.25. Discovery fails closed for older, newer-unreviewed, unapproved prerelease or build variants, and malformed versions. The audited range and source evidence live in [`integration-contracts/opencode.json`](integration-contracts/opencode.json); the maintenance workflow is documented in [`docs/integrations/opencode.md`](docs/integrations/opencode.md). Unavailable models remain visible but cannot run until an administrator selects a discovered replacement.
 
 ```bash
 opencode --version && opencode auth login
@@ -80,6 +80,10 @@ pnpm run dev
 ```
 
 Open [http://127.0.0.1:4173](http://127.0.0.1:4173), choose a screen name, and say hello.
+
+### Temporary downstream OpenCode build
+
+While structured-output fixes are pending upstream, we maintain a narrow [OpenCode patch branch](https://github.com/virusimmortal00/opencode/tree/codex/structured-output-1.18.25) based on the audited 1.18.25 release. It adds schema validation, bounded recovery, and reliable output-format persistence. The contract admits only its exact `1.18.25-amfaa.1` identity; stock OpenCode remains the default unless an operator explicitly selects the patched binary with `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND`.
 
 Project context is optional. By default, room participants can inspect this repository; point the room at another folder when you want them to discuss or review its files:
 
