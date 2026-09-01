@@ -56,9 +56,9 @@ The weekly upstream-watch workflow compares the latest OpenCode release with the
 audited tag and verifies the recorded upstream paths. It reports drift without
 automatically changing public issues, pull requests, or the supported range.
 
-The currently approved downstream identity is `1.18.25-amfaa.1`, based on
+The currently approved downstream identity is `1.18.25-amfaa.2`, based on
 upstream v1.18.25 at `cb7d8b2f5e44876ef98b661dc10590c915af3a9f` and ending at
-`d85688b4b804c79087883774bc8b08b67556af59`. Stock OpenCode remains the default;
+`6883ca5bd35a5494fb2759018373308911c79e01`. Stock OpenCode remains the default;
 an operator must explicitly select a downstream binary. The source-verification
 check confirms that the public branch still resolves to the recorded head and
 that every recorded path exists at the exact upstream and downstream commits.
@@ -142,6 +142,13 @@ action-specific union and allows at most one same-session semantic correction.
 Invalid, missing, or extra-field results then fail closed; they are never
 recovered by scraping assistant prose. Cancellation and timeouts abort the
 session and terminate the owned server process.
+
+The downstream prompt loop leaves ordinary read-only tools available on the
+initial structured step. If the model finishes with plain text instead of the
+structured call, or submits an invalid structured value, the single bounded
+recovery step exposes only `StructuredOutput` and requires that tool. This
+preserves normal agent flow before finalization while making the correction
+step deterministic; application validation remains the final authority.
 
 This is deliberately a narrow capability boundary. Stock OpenCode versions and
 all writable turns continue through the existing CLI transport. Per-turn server

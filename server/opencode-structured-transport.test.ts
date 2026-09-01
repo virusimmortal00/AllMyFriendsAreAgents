@@ -12,7 +12,7 @@ function assistant(structured: unknown): AssistantMessage {
 
 function client(structured: unknown): OpenCodeStructuredSdk {
   return {
-    health: vi.fn(async () => ({ healthy: true as const, version: "1.18.25-amfaa.1" })),
+    health: vi.fn(async () => ({ healthy: true as const, version: "1.18.25-amfaa.2" })),
     createSession: vi.fn(async () => "session-1"),
     prompt: vi.fn(async () => ({ info: assistant(structured) })),
     abort: vi.fn(async () => undefined),

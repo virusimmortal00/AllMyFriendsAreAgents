@@ -26,7 +26,7 @@ const contract = parseContract(JSON.stringify({
   downstream: {
     repository: "https://github.com/example/opencode.git",
     branch: "codex/structured-output-1.18.25",
-    version: "1.18.25-amfaa.1",
+    version: "1.18.25-amfaa.2",
     baseCommit: "a".repeat(40),
     headCommit: "c".repeat(40),
     pluginVersion: "1.18.25",
@@ -121,7 +121,7 @@ describe("OpenCode integration contract guard", () => {
       packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.25" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }),
       tsconfigText: JSON.stringify({ include: ["server/**/*.ts"] }),
       workspaceText: "msgpackr-extract: false\n  - '@opencode-ai/plugin@1.18.25'\n  - '@opencode-ai/sdk@1.18.25'",
-      discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.1"',
+      discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2"',
     };
     expect(validateLocalPins(contract, valid)).toEqual([]);
     expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ devDependencies: { "@opencode-ai/plugin": "1.18.24" } }) })).toContain("pin @opencode-ai/plugin to 1.18.25");

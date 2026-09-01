@@ -242,7 +242,7 @@ describe("OpenCode runtime contract", () => {
     const discovery = { discover: async () => ({
       status: "available" as const,
       discoveredAt: "2026-09-01T00:00:00.000Z",
-      runtime: { version: "1.18.25-amfaa.1", compatible: true, distribution: "downstream" as const, protocol: "opencode-cli-jsonl-v1" as const, capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const },
+      runtime: { version: "1.18.25-amfaa.2", compatible: true, distribution: "downstream" as const, protocol: "opencode-cli-jsonl-v1" as const, capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const },
       models: [{ providerId: "openai", modelId: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", provenance: "opencode-catalog" as const }],
     }) } as unknown as ModelDiscoveryService;
     const structuredTransport = { run: vi.fn(async (input) => ({

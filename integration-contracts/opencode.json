@@ -11,14 +11,15 @@
   "downstream": {
     "repository": "https://github.com/virusimmortal00/opencode.git",
     "branch": "codex/structured-output-1.18.25",
-    "version": "1.18.25-amfaa.1",
+    "version": "1.18.25-amfaa.2",
     "baseCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
-    "headCommit": "d85688b4b804c79087883774bc8b08b67556af59",
+    "headCommit": "6883ca5bd35a5494fb2759018373308911c79e01",
     "pluginVersion": "1.18.25",
     "patches": [
       "b9c5828253028d181327a2a87ca0e5edbb89990a",
       "c474eed515b2343b830effcb1700eaa9b6efebc6",
-      "d85688b4b804c79087883774bc8b08b67556af59"
+      "d85688b4b804c79087883774bc8b08b67556af59",
+      "6883ca5bd35a5494fb2759018373308911c79e01"
     ],
     "paths": [
       "bun.lock",
@@ -35,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 5,
+    "revision": 6,
     "reviewedOn": "2026-09-01",
-    "result": "Re-inspected every mapped v1.18.25 source surface at cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through d85688b4b804c79087883774bc8b08b67556af59. The v2 SDK exposes authenticated health, legacy session create/prompt/abort calls, json_schema output requests, and AssistantMessage.structured. The approved downstream session implementation validates structured results and bounds schema correction attempts. Read-only room turns may therefore use a per-turn authenticated loopback server only after its health version exactly matches 1.18.25-amfaa.1; writable and stock-runtime turns retain the audited CLI path. Application validation remains fail closed after generation.",
+    "result": "Re-inspected every mapped v1.18.25 source surface at cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01. The v2 SDK exposes authenticated health, legacy session create/prompt/abort calls, json_schema output requests, and AssistantMessage.structured. The approved downstream session implementation validates structured results and bounds schema correction attempts. Initial structured steps retain read-only tool access; after omitted or invalid structured output, the next bounded step exposes only StructuredOutput and requires it. Read-only room turns may therefore use a per-turn authenticated loopback server only after its health version exactly matches 1.18.25-amfaa.2; writable and stock-runtime turns retain the audited CLI path. Application validation remains fail closed after generation.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",

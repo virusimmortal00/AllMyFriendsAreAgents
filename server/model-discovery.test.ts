@@ -66,9 +66,9 @@ describe("OpenCode model discovery", () => {
     expect(parseOpenCodeRuntimeVersion("1.18.18+build.1\n")).toMatchObject({ version: "1.18.18+build.1", compatible: false, distribution: "unrecognized" });
     expect(parseOpenCodeRuntimeVersion(`${MAXIMUM_AUDITED_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true, distribution: "upstream" });
     expect(parseOpenCodeRuntimeVersion(`${APPROVED_DOWNSTREAM_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true, distribution: "downstream" });
-    expect(parseOpenCodeRuntimeVersion("1.18.25-amfaa.2\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("1.18.25-amfaa.1\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.18.25-local.1\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
-    expect(parseOpenCodeRuntimeVersion("01.18.25-amfaa.1\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("01.18.25-amfaa.2\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.18.26-rc.1\n")).toMatchObject({ compatible: false, capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.18.26\n")).toMatchObject({ compatible: false, capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: false, capabilities: [] });

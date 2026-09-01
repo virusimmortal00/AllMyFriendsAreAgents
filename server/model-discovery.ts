@@ -16,7 +16,7 @@ export const DISCOVERY_OUTPUT_LIMIT = 1_048_576;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
 export const MINIMUM_OPENCODE_VERSION = "1.18.18";
 export const MAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25";
-export const APPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.1";
+export const APPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2";
 const OPENCODE_PROTOCOL = "opencode-cli-jsonl-v1" as const;
 const OPENCODE_CAPABILITIES = ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const;
 

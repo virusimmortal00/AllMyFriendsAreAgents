@@ -83,7 +83,7 @@ Open [http://127.0.0.1:4173](http://127.0.0.1:4173), choose a screen name, and s
 
 ### Temporary downstream OpenCode build
 
-While structured-output fixes are pending upstream, we maintain a narrow [OpenCode patch branch](https://github.com/virusimmortal00/opencode/tree/codex/structured-output-1.18.25) based on the audited 1.18.25 release. It adds schema validation, bounded recovery, and reliable output-format persistence. The contract admits only its exact `1.18.25-amfaa.1` identity; stock OpenCode remains the default unless an operator explicitly selects the patched binary with `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND`.
+While structured-output fixes are pending upstream, we maintain a narrow [OpenCode patch branch](https://github.com/virusimmortal00/opencode/tree/codex/structured-output-1.18.25) based on the audited 1.18.25 release. It adds schema validation, bounded recovery, reliable output-format persistence, and a final correction step restricted to the structured-output tool. The contract admits only its exact `1.18.25-amfaa.2` identity; stock OpenCode remains the default unless an operator explicitly selects the patched binary with `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND`.
 
 Project context is optional. By default, room participants can inspect this repository; point the room at another folder when you want them to discuss or review its files:
 
