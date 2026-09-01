@@ -92,6 +92,7 @@ export interface ModelDiscoveryResult {
   readonly runtime?: {
     readonly version: string;
     readonly compatible: boolean;
+    readonly distribution: "upstream" | "downstream" | "unrecognized";
     readonly protocol: "opencode-cli-jsonl-v1";
     readonly capabilities: readonly ("verbose-model-catalog" | "jsonl-events" | "variant-selection")[];
   };

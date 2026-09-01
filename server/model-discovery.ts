@@ -16,6 +16,7 @@ export const DISCOVERY_OUTPUT_LIMIT = 1_048_576;
 export const DISCOVERY_CACHE_TTL_MS = 30_000;
 export const MINIMUM_OPENCODE_VERSION = "1.18.18";
 export const MAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25";
+export const APPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.1";
 const OPENCODE_PROTOCOL = "opencode-cli-jsonl-v1" as const;
 const OPENCODE_CAPABILITIES = ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const;
 
@@ -77,7 +78,8 @@ function uniqueModels(models: readonly DiscoveredModel[]) {
 }
 
 export function parseOpenCodeRuntimeVersion(stdout: string) {
-  const match = stripAnsi(stdout).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/);
+  const rawVersion = stripAnsi(stdout).trim();
+  const match = rawVersion.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/);
   if (!match) return undefined;
   const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${match[4] ? `-${match[4]}` : ""}${match[5] ? `+${match[5]}` : ""}`;
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
@@ -87,10 +89,14 @@ export function parseOpenCodeRuntimeVersion(stdout: string) {
     const firstDifference = parts.findIndex((part, index) => part !== boundary[index]);
     return firstDifference === -1 ? 0 : parts[firstDifference] > boundary[firstDifference] ? 1 : -1;
   };
-  const compatible = !match[4] && compare(minimum) >= 0 && compare(maximum) <= 0;
+  const canonical = rawVersion === version;
+  const downstream = canonical && version === APPROVED_DOWNSTREAM_OPENCODE_VERSION;
+  const upstream = canonical && !match[4] && !match[5] && compare(minimum) >= 0 && compare(maximum) <= 0;
+  const compatible = upstream || downstream;
   return {
     version,
     compatible,
+    distribution: downstream ? "downstream" as const : upstream ? "upstream" as const : "unrecognized" as const,
     protocol: OPENCODE_PROTOCOL,
     capabilities: compatible ? OPENCODE_CAPABILITIES : [],
   };
@@ -241,8 +247,8 @@ export class ModelDiscoveryService {
         models: [],
         ...(runtime ? { runtime } : {}),
         diagnostic: runtime
-          ? `OpenCode ${runtime.version} is outside the source-audited range ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}; install ${MAXIMUM_AUDITED_OPENCODE_VERSION} or update the upstream integration contract.`
-          : `OpenCode returned an unrecognized version; install a release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}.`,
+          ? `OpenCode ${runtime.version} is not an approved runtime identity; install an exact release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}, or the approved downstream build ${APPROVED_DOWNSTREAM_OPENCODE_VERSION}.`
+          : `OpenCode returned an unrecognized version; install an exact release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}, or the approved downstream build ${APPROVED_DOWNSTREAM_OPENCODE_VERSION}.`,
         discoveredAt,
       };
     }

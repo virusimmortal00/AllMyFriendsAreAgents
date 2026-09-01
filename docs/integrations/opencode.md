@@ -20,7 +20,9 @@ Before changing a mapped local file:
    before editing to identify the affected surfaces. Multiple paths may be
    comma-separated. After editing, the plain command derives them from the diff.
 2. Inspect every reported upstream path at an exact OpenCode tag and commit.
-   Compare it with the commit already recorded in the contract.
+   Compare it with the commit already recorded in the contract. When a
+   downstream build is admitted, also inspect its complete diff from the
+   recorded base through the recorded head.
 3. Update the contract review revision, tag, commit, paths, and standalone
    result. The result must distinguish confirmed behavior from inference.
 4. Update provenance-tagged fixtures and contract tests when an upstream shape
@@ -37,10 +39,15 @@ requires reproducible evidence tied to an immutable commit and executable tests.
 
 ## Version policy
 
-`minimumVersion` is the oldest supported runtime. `auditedVersion` is the newest
-version whose relevant source and provider-free binary interface have been
-checked. Versions outside that closed range fail discovery rather than inheriting
-capabilities from a major-version guess. This strict range is temporary: issue
+`minimumVersion` is the oldest supported upstream runtime. `auditedVersion` is
+the newest upstream version whose relevant source and provider-free binary
+interface have been checked. Exact stable versions in that closed range are
+admitted. The contract may additionally record one exact downstream runtime
+identity, immutable base and head commits, ordered patch commits, and reviewed
+paths. Other prerelease and build variants fail discovery rather than inheriting
+capabilities from a major-version guess. The version identity selects reviewed
+source provenance; it is not a cryptographic binary attestation. This strict
+policy is temporary: issue
 [#70](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/70)
 tracks replacement of console parsing and inferred capabilities with the
 structured server/SDK transport and negotiated behavior.
@@ -48,6 +55,13 @@ structured server/SDK transport and negotiated behavior.
 The weekly upstream-watch workflow compares the latest OpenCode release with the
 audited tag and verifies the recorded upstream paths. It reports drift without
 automatically changing public issues, pull requests, or the supported range.
+
+The currently approved downstream identity is `1.18.25-amfaa.1`, based on
+upstream v1.18.25 at `cb7d8b2f5e44876ef98b661dc10590c915af3a9f` and ending at
+`d85688b4b804c79087883774bc8b08b67556af59`. Stock OpenCode remains the default;
+an operator must explicitly select a downstream binary. The source-verification
+check confirms that the public branch still resolves to the recorded head and
+that every recorded path exists at the exact upstream and downstream commits.
 
 ## Current audit
 

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "integration": "opencode",
   "upstream": {
     "repository": "https://github.com/anomalyco/opencode.git",
@@ -8,10 +8,36 @@
     "auditedTag": "v1.18.25",
     "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
   },
+  "downstream": {
+    "repository": "https://github.com/virusimmortal00/opencode.git",
+    "branch": "codex/structured-output-1.18.25",
+    "version": "1.18.25-amfaa.1",
+    "baseCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f",
+    "headCommit": "d85688b4b804c79087883774bc8b08b67556af59",
+    "pluginVersion": "1.18.25",
+    "patches": [
+      "b9c5828253028d181327a2a87ca0e5edbb89990a",
+      "c474eed515b2343b830effcb1700eaa9b6efebc6",
+      "d85688b4b804c79087883774bc8b08b67556af59"
+    ],
+    "paths": [
+      "bun.lock",
+      "packages/core/src/installation/version.ts",
+      "packages/opencode/package.json",
+      "packages/opencode/script/build.ts",
+      "packages/opencode/src/config/config.ts",
+      "packages/opencode/src/config/tui.ts",
+      "packages/opencode/src/session/prompt.ts",
+      "packages/opencode/test/server/session-messages.test.ts",
+      "packages/opencode/test/session/prompt.test.ts",
+      "packages/opencode/test/session/structured-output.test.ts",
+      "packages/schema/src/v1/session.ts"
+    ]
+  },
   "review": {
-    "revision": 2,
-    "reviewedOn": "2026-08-30",
-    "result": "Re-inspected v1.18.25 at the unchanged audited commit. The CLI emits complete text-part snapshots only after an end time, not provider deltas; the processor accumulates deltas before completion, and the typed schema carries session, message, and part identity. Distinct completed parts require boundaries even within one assistant message; repeated identities are snapshots, not append-only fragments. The session API supports JSON-schema output through StructuredOutput, but run --format json does not request it. Model-catalog, inline-permission, and custom-tool contracts remain unchanged. Fixtures are synthetic source-contract evidence, not a live-provider capture.",
+    "revision": 3,
+    "reviewedOn": "2026-09-01",
+    "result": "Re-inspected the v1.18.25 source surfaces at the unchanged upstream commit and audited the complete downstream diff from that base through d85688b4b804c79087883774bc8b08b67556af59. The downstream build preserves the 1.18.25 plugin compatibility version while assigning the runtime identity 1.18.25-amfaa.1; its session changes encode persisted output formats, validate structured results, and bound correction attempts. Existing CLI JSONL, model-catalog, permission, tool, and MCP behavior remains compatible. Runtime discovery now admits only exact stable versions in the audited range or that one recorded downstream identity; other prerelease and build variants fail closed.",
     "paths": [
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",
