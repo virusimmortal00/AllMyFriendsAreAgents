@@ -20,7 +20,9 @@ Before changing a mapped local file:
    before editing to identify the affected surfaces. Multiple paths may be
    comma-separated. After editing, the plain command derives them from the diff.
 2. Inspect every reported upstream path at an exact OpenCode tag and commit.
-   Compare it with the commit already recorded in the contract.
+   Compare it with the commit already recorded in the contract. When a
+   downstream build is admitted, also inspect its complete diff from the
+   recorded base through the recorded head.
 3. Update the contract review revision, tag, commit, paths, and standalone
    result. The result must distinguish confirmed behavior from inference.
 4. Update provenance-tagged fixtures and contract tests when an upstream shape
@@ -37,10 +39,15 @@ requires reproducible evidence tied to an immutable commit and executable tests.
 
 ## Version policy
 
-`minimumVersion` is the oldest supported runtime. `auditedVersion` is the newest
-version whose relevant source and provider-free binary interface have been
-checked. Versions outside that closed range fail discovery rather than inheriting
-capabilities from a major-version guess. This strict range is temporary: issue
+`minimumVersion` is the oldest supported upstream runtime. `auditedVersion` is
+the newest upstream version whose relevant source and provider-free binary
+interface have been checked. Exact stable versions in that closed range are
+admitted. The contract may additionally record one exact downstream runtime
+identity, immutable base and head commits, ordered patch commits, and reviewed
+paths. Other prerelease and build variants fail discovery rather than inheriting
+capabilities from a major-version guess. The version identity selects reviewed
+source provenance; it is not a cryptographic binary attestation. This strict
+policy is temporary: issue
 [#70](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/70)
 tracks replacement of console parsing and inferred capabilities with the
 structured server/SDK transport and negotiated behavior.
@@ -48,6 +55,13 @@ structured server/SDK transport and negotiated behavior.
 The weekly upstream-watch workflow compares the latest OpenCode release with the
 audited tag and verifies the recorded upstream paths. It reports drift without
 automatically changing public issues, pull requests, or the supported range.
+
+The currently approved downstream identity is `1.18.25-amfaa.2`, based on
+upstream v1.18.25 at `cb7d8b2f5e44876ef98b661dc10590c915af3a9f` and ending at
+`6883ca5bd35a5494fb2759018373308911c79e01`. Stock OpenCode remains the default;
+an operator must explicitly select a downstream binary. The source-verification
+check confirms that the public branch still resolves to the recorded head and
+that every recorded path exists at the exact upstream and downstream commits.
 
 ## Current audit
 
@@ -105,8 +119,8 @@ is checked against the contract by `server/agent-runner.test.ts`.
 The upstream session API supports a `json_schema` output format through a
 required `StructuredOutput` tool, but the audited `run --format json` path does
 not request that format: its `json` flag controls event serialization only.
-Moving to typed SDK/server messages or schema-constrained room output remains
-part of #70 rather than expanding this parser correction into a transport change.
+The room therefore retains this parser for stock-runtime and writable turns;
+schema-constrained output uses the separate SDK/server lane described below.
 
 Source anchors at the audited commit:
 
@@ -114,3 +128,39 @@ Source anchors at the audited commit:
 - [Provider delta accumulation and text completion](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/processor.ts#L486-L531)
 - [Text-part identity and output formats](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/schema/src/v1/session.ts#L65-L116)
 - [Assistant-message creation and structured output](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/prompt.ts#L1186-L1318)
+
+## Structured read-only room turns
+
+Read-only turns use OpenCode's v2 SDK only when discovery reports the exact
+approved downstream runtime identity. The application starts an authenticated
+loopback server for the turn, verifies the server-reported version, creates or
+resumes a session, and requests the versioned room-turn JSON Schema. The result
+is read from `AssistantMessage.structured` and validated again by the
+application before delivery. The provider-facing schema uses a flat object
+envelope for broad tool-schema compatibility; the application enforces its
+action-specific union and allows at most one same-session semantic correction.
+Invalid, missing, or extra-field results then fail closed; they are never
+recovered by scraping assistant prose. Cancellation and timeouts abort the
+session and terminate the owned server process.
+
+The downstream prompt loop leaves ordinary read-only tools available on the
+initial structured step. If the model finishes with plain text instead of the
+structured call, or submits an invalid structured value, the single bounded
+recovery step exposes only `StructuredOutput` and requires that tool. This
+preserves normal agent flow before finalization while making the correction
+step deterministic; application validation remains the final authority.
+
+This is deliberately a narrow capability boundary. Stock OpenCode versions and
+all writable turns continue through the existing CLI transport. Per-turn server
+startup preserves the current lease and environment isolation; server reuse is
+a later performance optimization that must preserve those boundaries. The SDK
+package is pinned to the audited upstream version and the structured lane still
+requires the separately versioned downstream runtime because upstream v1.18.25
+does not provide the same validated, bounded schema-retry behavior.
+
+Source anchors at the audited commit:
+
+- [Authenticated server configuration](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/server/auth.ts)
+- [Server health and lifecycle](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/server/server.ts)
+- [Generated v2 session and health methods](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/sdk/js/src/v2/gen/sdk.gen.ts)
+- [Generated structured message and output-format types](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/sdk/js/src/v2/gen/types.gen.ts)

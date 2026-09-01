@@ -187,7 +187,7 @@ describe("OpenCode runtime contract", () => {
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
+        webfetch: "allow", websearch: "allow", lsp: "allow", StructuredOutput: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
       }),
     });
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
@@ -231,6 +231,38 @@ describe("OpenCode runtime contract", () => {
   it("recognizes stale OpenCode sessions without treating provider failures as recoverable", () => {
     expect(__testing.isMissingOpenCodeSessionError(new Error("session ses_old not found"))).toBe(true);
     expect(__testing.isMissingOpenCodeSessionError(new Error("provider request timed out"))).toBe(false);
+  });
+
+  it("uses the structured SDK lane only for an approved downstream read-only runtime", async () => {
+    const participant = { agentId: "codex-sol" as const, conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Structured turns", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    } satisfies RoomState;
+    const discovery = { discover: async () => ({
+      status: "available" as const,
+      discoveredAt: "2026-09-01T00:00:00.000Z",
+      runtime: { version: "1.18.25-amfaa.2", compatible: true, distribution: "downstream" as const, protocol: "opencode-cli-jsonl-v1" as const, capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const },
+      models: [{ providerId: "openai", modelId: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", provenance: "opencode-catalog" as const }],
+    }) } as unknown as ModelDiscoveryService;
+    const structuredTransport = { run: vi.fn(async (input) => ({
+      sessionId: "ses_structured",
+      messageId: "msg_structured",
+      structured: { schemaVersion: 1 as const, action: "speak" as const, messages: ["A typed answer."], conversationState: "settled" as const },
+      finish: "stop",
+      cost: 0,
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      input,
+    })) };
+
+    const result = await runAgent("codex-sol", state, "Answer once.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { structuredTransport });
+
+    expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" } });
+    const invocation = structuredTransport.run.mock.calls[0][0];
+    expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: "plan" });
+    expect(invocation.prompt).toContain("Return only the requested structured room-turn object");
+    expect(invocation.prompt).not.toContain("<<<NEXT>>>");
+    expect(invocation.prompt).not.toContain("TURN_DISPOSITION:");
   });
 
   it("journals a refused generation-start reservation as cancellation without spawning a subprocess", async () => {

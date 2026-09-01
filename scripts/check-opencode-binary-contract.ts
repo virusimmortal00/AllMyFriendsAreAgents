@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { MAXIMUM_AUDITED_OPENCODE_VERSION, parseOpenCodeRuntimeVersion } from "../server/model-discovery.js";
+import { APPROVED_DOWNSTREAM_OPENCODE_VERSION, MAXIMUM_AUDITED_OPENCODE_VERSION, parseOpenCodeRuntimeVersion } from "../server/model-discovery.js";
 
 function option(name: string) {
   const index = process.argv.indexOf(name);
@@ -21,8 +21,9 @@ const requireText = (value: string, expected: readonly string[], surface: string
 
 const versionOutput = output(["--version"]);
 const runtime = parseOpenCodeRuntimeVersion(versionOutput);
-if (!runtime?.compatible || runtime.version !== MAXIMUM_AUDITED_OPENCODE_VERSION) {
-  throw new Error(`Expected audited OpenCode ${MAXIMUM_AUDITED_OPENCODE_VERSION}, received ${runtime?.version || versionOutput.trim() || "unrecognized output"}.`);
+const binaryContractVersions = [MAXIMUM_AUDITED_OPENCODE_VERSION, APPROVED_DOWNSTREAM_OPENCODE_VERSION];
+if (!runtime?.compatible || !binaryContractVersions.includes(runtime.version)) {
+  throw new Error(`Expected an audited OpenCode binary (${binaryContractVersions.join(" or ")}), received ${runtime?.version || versionOutput.trim() || "unrecognized output"}.`);
 }
 
 requireText(output(["run", "--help"]), [
@@ -30,4 +31,4 @@ requireText(output(["run", "--help"]), [
 ], "run --help");
 requireText(output(["models", "--help"]), ["models [provider]", "--verbose", "--refresh"], "models --help");
 
-console.log(`OpenCode binary contract verified at ${runtime.version}.`);
+console.log(`OpenCode ${runtime.distribution} binary contract verified at ${runtime.version}.`);

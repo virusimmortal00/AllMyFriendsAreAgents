@@ -13,7 +13,7 @@ export interface IntegrationSurface {
 }
 
 export interface OpenCodeIntegrationContract {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly integration: "opencode";
   readonly upstream: {
     readonly repository: string;
@@ -21,6 +21,16 @@ export interface OpenCodeIntegrationContract {
     readonly auditedVersion: string;
     readonly auditedTag: string;
     readonly auditedCommit: string;
+  };
+  readonly downstream: {
+    readonly repository: string;
+    readonly branch: string;
+    readonly version: string;
+    readonly baseCommit: string;
+    readonly headCommit: string;
+    readonly pluginVersion: string;
+    readonly patches: readonly string[];
+    readonly paths: readonly string[];
   };
   readonly review: {
     readonly revision: number;
@@ -37,7 +47,7 @@ function isStringArray(value: unknown): value is string[] {
 
 export function parseContract(text: string): OpenCodeIntegrationContract {
   const value = JSON.parse(text) as Partial<OpenCodeIntegrationContract>;
-  if (value.schemaVersion !== 1 || value.integration !== "opencode") throw new Error("The OpenCode integration contract has an unsupported identity or schema version.");
+  if (value.schemaVersion !== 2 || value.integration !== "opencode") throw new Error("The OpenCode integration contract has an unsupported identity or schema version.");
   if (!value.upstream || !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value.upstream.repository)) throw new Error("The OpenCode contract requires a public GitHub upstream repository.");
   if (!/^\d+\.\d+\.\d+$/.test(value.upstream.minimumVersion)
     || !/^\d+\.\d+\.\d+$/.test(value.upstream.auditedVersion)
@@ -47,6 +57,20 @@ export function parseContract(text: string): OpenCodeIntegrationContract {
   const auditedVersion = value.upstream.auditedVersion.split(".").map(Number);
   const firstDifference = minimumVersion.findIndex((part, index) => part !== auditedVersion[index]);
   if (firstDifference >= 0 && minimumVersion[firstDifference] > auditedVersion[firstDifference]) throw new Error("The OpenCode contract minimum version cannot exceed its audited version.");
+  if (!value.downstream
+    || !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/.test(value.downstream.repository)
+    || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value.downstream.branch)
+    || value.downstream.branch.includes("..")
+    || !/^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$/.test(value.downstream.version)
+    || !value.downstream.version.startsWith(`${value.upstream.auditedVersion}-`)
+    || value.downstream.baseCommit !== value.upstream.auditedCommit
+    || !/^[0-9a-f]{40}$/.test(value.downstream.headCommit)
+    || value.downstream.pluginVersion !== value.upstream.auditedVersion
+    || !isStringArray(value.downstream.patches)
+    || value.downstream.patches.some((commit) => !/^[0-9a-f]{40}$/.test(commit))
+    || new Set(value.downstream.patches).size !== value.downstream.patches.length
+    || value.downstream.patches.at(-1) !== value.downstream.headCommit
+    || !isStringArray(value.downstream.paths)) throw new Error("The OpenCode contract requires exact downstream version, branch, base, patch, path, and head provenance.");
   if (!value.review || !Number.isSafeInteger(value.review.revision) || value.review.revision < 1
     || !/^\d{4}-\d{2}-\d{2}$/.test(value.review.reviewedOn)
     || typeof value.review.result !== "string" || value.review.result.length < 40
@@ -125,8 +149,9 @@ export function validatePullRequestEvidence(contract: OpenCodeIntegrationContrac
 
 export function validateLocalPins(contract: OpenCodeIntegrationContract, input: { packageText: string; tsconfigText: string; workspaceText: string; discoveryText: string }) {
   const errors: string[] = [];
-  const packageJson = JSON.parse(input.packageText) as { devDependencies?: Record<string, string> };
+  const packageJson = JSON.parse(input.packageText) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
   if (packageJson.devDependencies?.["@opencode-ai/plugin"] !== contract.upstream.auditedVersion) errors.push(`pin @opencode-ai/plugin to ${contract.upstream.auditedVersion}`);
+  if (packageJson.dependencies?.["@opencode-ai/sdk"] !== contract.upstream.auditedVersion) errors.push(`pin @opencode-ai/sdk to ${contract.upstream.auditedVersion}`);
   const tsconfig = JSON.parse(input.tsconfigText) as { include?: string[]; exclude?: string[] };
   if (!tsconfig.include?.includes("server/**/*.ts") || tsconfig.exclude?.some((path) => path.includes("server/agent-tools"))) errors.push("keep server/agent-tools inside the server TypeScript build");
   if (!input.workspaceText.includes("msgpackr-extract: false")) errors.push("keep the optional msgpackr-extract install script disabled");
@@ -135,6 +160,7 @@ export function validateLocalPins(contract: OpenCodeIntegrationContract, input: 
   }
   if (!input.discoveryText.includes(`MINIMUM_OPENCODE_VERSION = "${contract.upstream.minimumVersion}"`)) errors.push("synchronize the minimum runtime version with the integration contract");
   if (!input.discoveryText.includes(`MAXIMUM_AUDITED_OPENCODE_VERSION = "${contract.upstream.auditedVersion}"`)) errors.push("synchronize the maximum audited runtime version with the integration contract");
+  if (!input.discoveryText.includes(`APPROVED_DOWNSTREAM_OPENCODE_VERSION = "${contract.downstream.version}"`)) errors.push("synchronize the approved downstream runtime version with the integration contract");
   return errors;
 }
 
@@ -184,20 +210,28 @@ function baseReview(base: string) {
   if (!base) return undefined;
   const text = git(["show", `${base}:${OPENCODE_CONTRACT_PATH}`]);
   if (!text) return undefined;
-  return parseContract(text).review;
+  const value = JSON.parse(text) as { review?: OpenCodeIntegrationContract["review"] };
+  return value.review;
 }
 
-async function verifyUpstream(contract: OpenCodeIntegrationContract, paths: readonly string[]) {
-  const refs = lines(execFileSync("git", ["ls-remote", "--tags", contract.upstream.repository, contract.upstream.auditedTag, `${contract.upstream.auditedTag}^{}`], { encoding: "utf8" }));
-  if (!refs.some((line) => line.startsWith(`${contract.upstream.auditedCommit}\t`))) throw new Error(`OpenCode tag ${contract.upstream.auditedTag} does not resolve to ${contract.upstream.auditedCommit}.`);
-  const repository = new URL(contract.upstream.repository);
+async function verifySourcePaths(repositoryUrl: string, commit: string, paths: readonly string[]) {
+  const repository = new URL(repositoryUrl);
   const [owner, nameWithGit] = repository.pathname.slice(1).split("/");
   const name = nameWithGit.replace(/\.git$/, "");
   for (const path of paths) {
-    const url = `https://raw.githubusercontent.com/${owner}/${name}/${contract.upstream.auditedCommit}/${path}`;
+    const url = `https://raw.githubusercontent.com/${owner}/${name}/${commit}/${path}`;
     const response = await fetch(url, { method: "HEAD" });
-    if (!response.ok) throw new Error(`Recorded OpenCode source path is unavailable at the audited commit: ${path}`);
+    if (!response.ok) throw new Error(`Recorded OpenCode source path is unavailable at ${commit}: ${path}`);
   }
+}
+
+async function verifySources(contract: OpenCodeIntegrationContract, paths: readonly string[]) {
+  const refs = lines(execFileSync("git", ["ls-remote", "--tags", contract.upstream.repository, contract.upstream.auditedTag, `${contract.upstream.auditedTag}^{}`], { encoding: "utf8" }));
+  if (!refs.some((line) => line.startsWith(`${contract.upstream.auditedCommit}\t`))) throw new Error(`OpenCode tag ${contract.upstream.auditedTag} does not resolve to ${contract.upstream.auditedCommit}.`);
+  const downstreamRefs = lines(execFileSync("git", ["ls-remote", "--heads", contract.downstream.repository, `refs/heads/${contract.downstream.branch}`], { encoding: "utf8" }));
+  if (!downstreamRefs.some((line) => line === `${contract.downstream.headCommit}\trefs/heads/${contract.downstream.branch}`)) throw new Error(`OpenCode downstream branch ${contract.downstream.branch} does not resolve to ${contract.downstream.headCommit}.`);
+  await verifySourcePaths(contract.upstream.repository, contract.upstream.auditedCommit, paths);
+  await verifySourcePaths(contract.downstream.repository, contract.downstream.headCommit, contract.downstream.paths);
 }
 
 function runFocusedTests(surfaces: readonly IntegrationSurface[]) {
@@ -242,7 +276,7 @@ async function main() {
   }
 
   const paths = requiredUpstreamPaths(surfaces);
-  if (all || process.argv.includes("--verify-upstream")) await verifyUpstream(contract, paths);
+  if (all || process.argv.includes("--verify-upstream")) await verifySources(contract, paths);
   if (process.argv.includes("--run-tests") && !inspectOnly) runFocusedTests(surfaces);
 }
 

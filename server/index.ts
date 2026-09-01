@@ -13,6 +13,7 @@ import { AgentHealthRegistry } from "./agent-health.js";
 import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
 import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { interpretStructuredRoomTurn } from "./structured-room-turn.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
@@ -755,8 +756,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
-  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
+  const parsed = result.structuredTurn
+    ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource)
+    : parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
   if (evidence) evidence.interpretation = parsed.diagnostics;
+  const diagnosticText = result.structuredTurn ? JSON.stringify(result.structuredTurn) : result.text;
+  const visibleCharacters = parsed.visibleMessages.reduce((total, message) => total + message.length, 0);
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
@@ -765,8 +770,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     interpretation: parsed.diagnostics,
     visibleMessages: parsed.visibleMessages,
     visibleMessageCount: parsed.visibleMessages.length,
-    visibleCharacters: parsed.visibleMessages.reduce((total, message) => total + message.length, 0),
-    removedOrProtocolCharacters: Math.max(0, result.text.length - parsed.visibleMessages.reduce((total, message) => total + message.length, 0)),
+    visibleCharacters,
+    removedOrProtocolCharacters: result.structuredTurn ? 0 : Math.max(0, result.text.length - visibleCharacters),
     noResponse: parsed.visibleMessages.length === 0,
     mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
@@ -783,10 +788,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       firstDelayMs, generationDurationMs: result.durationMs,
     });
   }, async (delivery) => {
-    if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
+    if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:diagnosticText,metadata:{source:"conversation"} });
 
     if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-      if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
+      if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:diagnosticText,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
       await store.clearSession(agent);
       delivery.finish("cancelled", "activity-changed-before-delivery");
       return { cancelled: true, interpretation: parsed.diagnostics };
@@ -965,8 +970,11 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
     const participantRecovered = await agentHealth.recordSuccess(agent);
     if (providerRecovered || participantRecovered) scheduleHealthRefresh();
     if (providerRecovered || participantRecovered) broadcast();
-    const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
-    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
+    const parsed = result.structuredTurn
+      ? interpretStructuredRoomTurn(agent, result.structuredTurn, before.settings.participantStyles[agent], 3, currentEnabledAgents())
+      : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
+    const visibleCharacters = parsed.visibleMessages.reduce((total,message)=>total+message.length,0);
+    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters,removedOrProtocolCharacters:result.structuredTurn?0:Math.max(0,result.text.length-visibleCharacters),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
     return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) {
