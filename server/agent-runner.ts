@@ -5,7 +5,8 @@ import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, historicalAgentProvider, type ActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprintMatches, roomAgentEntry, type RoomAgentRosterEntry } from "../shared/roster.js";
-import type { GenerationJournal } from "./generation-journal.js";
+import type { GenerationJournal, GenerationJournalEvent } from "./generation-journal.js";
+import { conversationLogFields, withLogContext } from "./structured-logger.js";
 import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
 import { roomBasePrompt } from "./room-configuration.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -30,6 +31,7 @@ interface RunResult {
   text: string;
   sessionId: string;
   generationId: string;
+  attemptOrdinal: number;
   durationMs: number;
   permission: "read-only" | "writable";
   codeEpoch?: string;
@@ -722,176 +724,187 @@ export async function runAgent(
   writerGrant?: ConfinedWriterGrant,
   discoveryService?: ModelDiscoveryService,
   context?: AgentContextRuntime,
-  commandControl?: { readonly onGenerationStart?: (generationId: string) => Promise<boolean>; readonly onPartial?: (text: string) => void },
+  commandControl?: { readonly onGenerationStart?: (generationId: string) => Promise<boolean>; readonly onPartial?: (text: string) => void; readonly evidence?: { generationId?: string; attemptOrdinal?: number } },
 ): Promise<RunResult> {
   const generationId = randomUUID();
-  const startedAt = Date.now();
-  const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
-  // Review turns deliberately stay rooted at the configured project and retain
-  // the existing read-only source-control behavior. Only a writable generation
-  // can receive the assignment worktree as its cwd.
-  const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
-  const participant = roomAgentEntry(state.roster, agent);
-  const profile = participant ? { provider: "opencode", modelId: participant.modelId!, conversationalName: participant.conversationalName! } : undefined;
-  if (!participant || !profile) throw new Error("The participant is not configured in this room.");
-  if (participant.selectionConfirmationRequired) throw new Error(participant.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run.");
-  if (discoveryService) {
-    const availability = selectedModelAvailability({ ...(participant.providerId ? { providerId: participant.providerId } : {}), modelId: participant.modelId!, ...(participant.variant ? { variant: participant.variant } : {}) }, await discoveryService.discover());
-    if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected OpenCode model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "OpenCode or the selected model is unavailable.");
-  }
-  const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
-  const storedSession = state.sessions[agent];
-  const sessionDecision = openCodeSessionDecision(agent, participant, storedSession, permission, state.deployment);
-  const existing = sessionDecision.kind === "reuse" ? sessionDecision.session : undefined;
-  if (sessionDecision.kind === "invalidate" && storedSession) {
-    await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
-  }
-  let activeContext = refreshAgentScopedTools(context);
-  const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, activeContext);
-  const secureWriterRequested = permission === "writable"
-    && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
-  if (secureWriterRequested && !writerGrant) throw new Error("Writable startup failed: verified Git broker grant is unavailable");
-  const execution = async (command: string, args: readonly string[]) => secureWriterRequested
-    ? confinedWriterInvocation(command, args, writerGrant!)
-    : { command, args: [...args], cwd: projectPath, env: process.env };
-  await journal?.append({
-    type: sessionDecision.kind === "reuse" ? "session.reused" : sessionDecision.kind === "invalidate" ? "session.invalidated" : "session.fresh",
-    generationId,
-    agent,
-    reason: sessionDecision.reason,
-    permission,
-    deploymentEpoch: state.deployment?.epoch,
-    storedSessionEpoch: storedSession?.codeEpoch,
-    sessionId: storedSession?.id,
-  });
-  await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
-  await journal?.append({
-    type: "generation.started",
-    generationId,
-    agent,
-    topic: state.settings.topic,
-    instruction,
-    includeDiff,
-    permission,
-    provider: profile.provider,
-    providerId: participant.providerId,
-    modelId: profile.modelId,
-    variant: participant.variant,
-    resumedSession: Boolean(existing),
-    sessionId: existing?.id,
-    deploymentEpoch: state.deployment?.epoch,
-    prompt,
-    promptCharacters: prompt.length,
-  });
-
-  try {
-    if (commandControl?.onGenerationStart && !await commandControl.onGenerationStart(generationId)) throw new AgentGenerationCancelledError();
-    lifecycle?.start(generationId, agent);
-    let resumedSessionId = existing?.id;
-    const invoke = async (sessionId?: string) => {
-      const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
-      const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
-      const environment = {
-        ...invocation.env,
-        ...(activeContext?.historyTool ? {
-          OPENCODE_CONFIG_DIR: activeContext.historyTool.configDirectory,
-        } : {}),
-      };
-      const scopedToolEnvironment = {
-        ...(activeContext?.historyTool ? {
-          AMFAA_ROOM_HISTORY_URL: activeContext.historyTool.url,
-          AMFAA_ROOM_HISTORY_TOKEN: activeContext.historyTool.token,
-        } : {}),
-        ...(activeContext?.commandTool ? {
-          AMFAA_ROOM_COMMAND_URL: activeContext.commandTool.url,
-          AMFAA_ROOM_COMMAND_TOKEN: activeContext.commandTool.token,
-          AMFAA_ROOM_COMMANDS: JSON.stringify(activeContext.commandTool.allowedCommands),
-        } : {}),
-        ...(activeContext?.diagnosticsTool ? {
-          AMFAA_ROOM_DIAGNOSTICS_URL: activeContext.diagnosticsTool.url,
-          AMFAA_ROOM_DIAGNOSTICS_TOKEN: activeContext.diagnosticsTool.token,
-        } : {}),
-      };
-      const processOptions = {
-        environment: opencodeEnvironment(environment, permission, Boolean(activeContext?.commandTool?.allowedCommands.length), Boolean(activeContext?.diagnosticsTool)),
-        scopedToolEnvironment,
-        redactOutputValues: scopedAgentToolOutputRedactionValues(scopedToolEnvironment),
-        trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
-        timeoutMs: runTimeout(permission, includeDiff),
-      } satisfies RunProcessOptions;
-      await logScopedAgentToolReadiness(
-        activeContext?.operationLog,
-        generationId,
-        agent,
-        agentChildProcessEnvironment(processOptions),
-        { roomCommand: Boolean(activeContext?.commandTool), roomHistory: Boolean(activeContext?.historyTool), roomDiagnostics: Boolean(activeContext?.diagnosticsTool) },
-      );
-      return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, processOptions);
-    };
-    let result: ProcessResult;
-    try {
-      result = await invoke(resumedSessionId);
-    } catch (error) {
-      if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
-      await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
-      activeContext = refreshAgentScopedTools(context);
-      await journal?.append({
-        type: "generation.retry", generationId, agent,
-        reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
-        ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
-      });
-      resumedSessionId = undefined;
-      result = await invoke();
+  if (commandControl?.evidence) commandControl.evidence.generationId = generationId;
+  return withLogContext({ generationId, attemptOrdinal: 1 }, async () => {
+    let attemptOrdinal = 1;
+    const append = (event: GenerationJournalEvent) => journal?.append({ ...conversationLogFields(), ...event, attemptOrdinal });
+    const startedAt = Date.now();
+    const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
+    // Review turns deliberately stay rooted at the configured project and retain
+    // the existing read-only source-control behavior. Only a writable generation
+    // can receive the assignment worktree as its cwd.
+    const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
+    const participant = roomAgentEntry(state.roster, agent);
+    const profile = participant ? { provider: "opencode", modelId: participant.modelId!, conversationalName: participant.conversationalName! } : undefined;
+    if (!participant || !profile) throw new Error("The participant is not configured in this room.");
+    if (participant.selectionConfirmationRequired) throw new Error(participant.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run.");
+    if (discoveryService) {
+      const availability = selectedModelAvailability({ ...(participant.providerId ? { providerId: participant.providerId } : {}), modelId: participant.modelId!, ...(participant.variant ? { variant: participant.variant } : {}) }, await discoveryService.discover());
+      if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected OpenCode model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "OpenCode or the selected model is unavailable.");
     }
-    const parsed = parseOpenCodeOutput(result.stdout);
-    const sessionId = parsed.sessionId || resumedSessionId;
-    if (!sessionId || !parsed.text) throw new Error("OpenCode returned no resumable session or room message.");
-    const durationMs = Date.now() - startedAt;
-    await journal?.append({
-      type: "generation.completed", generationId, agent, durationMs, sessionId,
-      rawResponse: parsed.text, responseCharacters: parsed.text.length,
-      ...openCodeJournalMetadata(parsed),
-      cliStdout: result.stdout, cliStderr: result.stderr,
+    const processScopes = [`agent:${agent}`, ...(assignmentId ? [assignmentId] : [])];
+    const storedSession = state.sessions[agent];
+    const sessionDecision = openCodeSessionDecision(agent, participant, storedSession, permission, state.deployment);
+    const existing = sessionDecision.kind === "reuse" ? sessionDecision.session : undefined;
+    if (sessionDecision.kind === "invalidate" && storedSession) {
+      await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
+    }
+    let activeContext = refreshAgentScopedTools(context);
+    const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, activeContext);
+    const secureWriterRequested = permission === "writable"
+      && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
+    if (secureWriterRequested && !writerGrant) throw new Error("Writable startup failed: verified Git broker grant is unavailable");
+    const execution = async (command: string, args: readonly string[]) => secureWriterRequested
+      ? confinedWriterInvocation(command, args, writerGrant!)
+      : { command, args: [...args], cwd: projectPath, env: process.env };
+    await append({
+      type: sessionDecision.kind === "reuse" ? "session.reused" : sessionDecision.kind === "invalidate" ? "session.invalidated" : "session.fresh",
+      generationId,
+      agent,
+      reason: sessionDecision.reason,
+      permission,
+      deploymentEpoch: state.deployment?.epoch,
+      storedSessionEpoch: storedSession?.codeEpoch,
+      sessionId: storedSession?.id,
     });
-    await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
-    return { sessionId, text: parsed.text, generationId, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
-  } catch (error) {
-    if (error instanceof ProcessCancelledError) {
-      const parsed = parseOpenCodeOutput(error.process.stdout);
-      if (parsed.text) commandControl?.onPartial?.(parsed.text);
-      await journal?.append({
-        type: "generation.cancelled",
+    await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.started", { generationId, agentId: agent, permission, modelId: profile.modelId, resumedSession: Boolean(existing) });
+    await append({
+      type: "generation.started",
+      generationId,
+      agent,
+      topic: state.settings.topic,
+      instruction,
+      includeDiff,
+      permission,
+      provider: profile.provider,
+      providerId: participant.providerId,
+      modelId: profile.modelId,
+      variant: participant.variant,
+      resumedSession: Boolean(existing),
+      sessionId: existing?.id,
+      deploymentEpoch: state.deployment?.epoch,
+      prompt,
+      promptCharacters: prompt.length,
+    });
+
+    try {
+      if (commandControl?.onGenerationStart && !await commandControl.onGenerationStart(generationId)) throw new AgentGenerationCancelledError();
+      lifecycle?.start(generationId, agent);
+      let resumedSessionId = existing?.id;
+      const invoke = async (sessionId?: string) => withLogContext({ attemptOrdinal }, async () => {
+        if (commandControl?.evidence) commandControl.evidence.attemptOrdinal = attemptOrdinal;
+        const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
+        const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
+        const environment = {
+          ...invocation.env,
+          ...(activeContext?.historyTool ? {
+            OPENCODE_CONFIG_DIR: activeContext.historyTool.configDirectory,
+          } : {}),
+        };
+        const scopedToolEnvironment = {
+          ...(activeContext?.historyTool ? {
+            AMFAA_ROOM_HISTORY_URL: activeContext.historyTool.url,
+            AMFAA_ROOM_HISTORY_TOKEN: activeContext.historyTool.token,
+          } : {}),
+          ...(activeContext?.commandTool ? {
+            AMFAA_ROOM_COMMAND_URL: activeContext.commandTool.url,
+            AMFAA_ROOM_COMMAND_TOKEN: activeContext.commandTool.token,
+            AMFAA_ROOM_COMMANDS: JSON.stringify(activeContext.commandTool.allowedCommands),
+          } : {}),
+          ...(activeContext?.diagnosticsTool ? {
+            AMFAA_ROOM_DIAGNOSTICS_URL: activeContext.diagnosticsTool.url,
+            AMFAA_ROOM_DIAGNOSTICS_TOKEN: activeContext.diagnosticsTool.token,
+          } : {}),
+        };
+        const processOptions = {
+          environment: opencodeEnvironment(environment, permission, Boolean(activeContext?.commandTool?.allowedCommands.length), Boolean(activeContext?.diagnosticsTool)),
+          scopedToolEnvironment,
+          redactOutputValues: scopedAgentToolOutputRedactionValues(scopedToolEnvironment),
+          trustedEnvironment: secureWriterRequested, signal, supervisor, scope: processScopes,
+          timeoutMs: runTimeout(permission, includeDiff),
+        } satisfies RunProcessOptions;
+        await logScopedAgentToolReadiness(
+          activeContext?.operationLog,
+          generationId,
+          agent,
+          agentChildProcessEnvironment(processOptions),
+          { roomCommand: Boolean(activeContext?.commandTool), roomHistory: Boolean(activeContext?.historyTool), roomDiagnostics: Boolean(activeContext?.diagnosticsTool) },
+        );
+        return runProcess(invocation.command, [...invocation.args, prompt], invocation.cwd, processOptions);
+      });
+      let result: ProcessResult;
+      try {
+        result = await invoke(resumedSessionId);
+      } catch (error) {
+        if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
+        await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
+        activeContext = refreshAgentScopedTools(context);
+        await append({
+          type: "generation.retry", generationId, agent,
+          reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
+          ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
+        });
+        resumedSessionId = undefined;
+        attemptOrdinal += 1;
+        result = await invoke();
+      }
+      const parsed = parseOpenCodeOutput(result.stdout);
+      const sessionId = parsed.sessionId || resumedSessionId;
+      if (!sessionId || !parsed.text) throw new Error("OpenCode returned no resumable session or room message.");
+      const durationMs = Date.now() - startedAt;
+      await append({
+        type: "generation.completed", generationId, agent, durationMs, sessionId,
+        rawResponse: parsed.text, responseCharacters: parsed.text.length,
+        ...openCodeJournalMetadata(parsed),
+        cliStdout: result.stdout, cliStderr: result.stderr,
+      });
+      await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
+      return { sessionId, text: parsed.text, generationId, attemptOrdinal, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
+    } catch (error) {
+      if (error instanceof AgentGenerationCancelledError) {
+        await append({ type: "generation.cancelled", generationId, agent, durationMs: Date.now() - startedAt, reason: "generation-start-cancelled", invocationStarted: false });
+        throw error;
+      }
+      if (error instanceof ProcessCancelledError) {
+        const parsed = parseOpenCodeOutput(error.process.stdout);
+        if (parsed.text) commandControl?.onPartial?.(parsed.text);
+        await append({
+          type: "generation.cancelled",
+          generationId,
+          agent,
+          durationMs: Date.now() - startedAt,
+          reason: error.message,
+          ...openCodeJournalMetadata(parsed),
+          exitCode: error.process.exitCode,
+          cliStdout: error.process.stdout,
+          cliStderr: error.process.stderr,
+        });
+        throw new AgentGenerationCancelledError();
+      }
+      const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
+      await append({
+        type: "generation.failed",
         generationId,
         agent,
         durationMs: Date.now() - startedAt,
-        reason: error.message,
-        ...openCodeJournalMetadata(parsed),
-        exitCode: error.process.exitCode,
-        cliStdout: error.process.stdout,
-        cliStderr: error.process.stderr,
+        error: error instanceof Error ? error.message : String(error),
+        ...(failedProtocol ? openCodeJournalMetadata(failedProtocol) : {}),
+        ...(error instanceof ProcessExecutionError ? {
+          exitCode: error.process.exitCode,
+          cliStdout: error.process.stdout,
+          cliStderr: error.process.stderr,
+        } : {}),
       });
-      throw new AgentGenerationCancelledError();
+      await logOperationSafely(activeContext?.operationLog, "error", "agent.generation.failed", { generationId, attemptOrdinal, agentId: agent, durationMs: Date.now() - startedAt, error });
+      if (failedProtocol?.errors[0]) throw new ProviderInvocationError(failedProtocol.errors[0]);
+      throw error;
+    } finally {
+      lifecycle?.finish(generationId);
     }
-    const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
-    await journal?.append({
-      type: "generation.failed",
-      generationId,
-      agent,
-      durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      ...(failedProtocol ? openCodeJournalMetadata(failedProtocol) : {}),
-      ...(error instanceof ProcessExecutionError ? {
-        exitCode: error.process.exitCode,
-        cliStdout: error.process.stdout,
-        cliStderr: error.process.stderr,
-      } : {}),
-    });
-    await logOperationSafely(activeContext?.operationLog, "error", "agent.generation.failed", { generationId, agentId: agent, durationMs: Date.now() - startedAt, error });
-    if (failedProtocol?.errors[0]) throw new ProviderInvocationError(failedProtocol.errors[0]);
-    throw error;
-  } finally {
-    lifecycle?.finish(generationId);
-  }
+  });
 }
 
 export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_IDS): Promise<Partial<Record<ActiveAgentId, boolean>>> {

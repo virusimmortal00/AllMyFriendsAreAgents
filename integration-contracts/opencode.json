@@ -9,9 +9,9 @@
     "auditedCommit": "cb7d8b2f5e44876ef98b661dc10590c915af3a9f"
   },
   "review": {
-    "revision": 2,
-    "reviewedOn": "2026-08-30",
-    "result": "Re-inspected v1.18.25 at the unchanged audited commit. The CLI emits complete text-part snapshots only after an end time, not provider deltas; the processor accumulates deltas before completion, and the typed schema carries session, message, and part identity. Distinct completed parts require boundaries even within one assistant message; repeated identities are snapshots, not append-only fragments. The session API supports JSON-schema output through StructuredOutput, but run --format json does not request it. Model-catalog, inline-permission, and custom-tool contracts remain unchanged. Fixtures are synthetic source-contract evidence, not a live-provider capture.",
+    "revision": 4,
+    "reviewedOn": "2026-08-31",
+    "result": "Re-inspected every reported upstream path at the unchanged v1.18.25 audited commit before correcting local generation-start cancellation journaling. OpenCode represents aborts separately from API failures, finalizes interrupted assistant messages, emits completed text snapshots, and reports CLI request errors with a failing exit code. The server's refused reservation happens before subprocess invocation and is now journaled as cancellation using its typed local error, not stderr keyword matching. CLI arguments, model listing, inline permissions, custom tools, session reuse, and missing-session retry remain unchanged. Tests are synthetic source-contract and local subprocess evidence, not live-provider captures.",
     "paths": [
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",

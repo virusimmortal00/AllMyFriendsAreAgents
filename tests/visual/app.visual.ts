@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { hashBytes } from "../../scripts/visual-review";
 import { APP_SCENARIOS, scenarioApplies } from "./matrix";
-import { appFixtureResponse } from "./app-fixtures";
+import { appFixtureResponse, fixtureTraceId } from "./app-fixtures";
 import { measureControlDensity, measureScrollAffordances, measureScrollRegions } from "./geometry";
 
 async function menu(page: Page, name: string, item?: string) {
@@ -47,8 +47,10 @@ async function openScenario(page: Page, id: string) {
   } else if (id.startsWith("owner-diagnostics")) {
     await menu(page, "Window", "Diagnostics");
     if (id === "owner-diagnostics-results") {
+      await page.getByLabel("Diagnostic selector").selectOption("traceId");
+      await page.getByLabel("Trace ID").fill(fixtureTraceId);
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
-      await page.getByRole("button", { name: /Navigation check completed/ }).click();
+      await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
   }
 }

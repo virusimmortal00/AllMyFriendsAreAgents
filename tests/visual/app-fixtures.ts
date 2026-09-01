@@ -6,6 +6,7 @@ import { visualRoster } from "./fixtures";
 import { normalizeRoomAgentRoster } from "../../shared/roster";
 
 export const fixtureTime = "2026-08-30T12:00:00.000Z";
+export const fixtureTraceId = "a".repeat(32);
 export const fixtureHuman: HumanPresence = { id: "visual-human", name: "Alex", style: DEFAULT_PARTICIPANT_STYLES.you };
 export const fixtureRoom: RoomState = {
   messages: [
@@ -77,6 +78,14 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
   if (method === "POST" && route === "/api/humans") return ok(fixtureHuman);
   if (method === "PUT" && route === "/api/roster" && scenario === "manage-agents-conflict") return { status: 409, body: { error: "The roster changed. Load the latest roster and review your draft.", roster: { ...visualRoster, revision: 2 }, catalog: [] } };
   if (method === "POST" && route === "/api/control/integrations/github/device-authorizations") return ok({ authorization: { flowId: "visual-flow", state: "authorizing", challenge: { userCode: "DEMO-CODE", verificationUri: "https://github.com/login/device", expiresInSeconds: 900, intervalSeconds: 60 }, expiresAt: "2099-01-01T00:00:00Z" } });
-  if (method === "POST" && route === "/api/control/diagnostics/query") return ok({ records: [{ recordId: "record-navigation", event: "Navigation check completed", stream: "server-service-lifecycle", timestamp: fixtureTime, severity: "info", correlationId: "navigation-check", content: { outcome: "verified", views: ["chat", "room-properties"], note: "Fictional diagnostic evidence for interface testing." } }], chunks: [], scannedBytes: 512, serializedBytes: 256, malformedRecords: 0, scanLimitReached: false, nextCursor: null });
+  if (method === "POST" && route === "/api/control/diagnostics/query") return ok({
+    records: [
+      { recordId: "run-start", event: "conversation.run.started", stream: "generations", timestamp: fixtureTime, severity: "info", correlationId: "navigation-check", traceId: fixtureTraceId, content: { runId: "navigation-check", runEventSequence: 1, source: "room-message" } },
+      { recordId: "turn-finished", event: "conversation.turn.finished", stream: "generations", timestamp: fixtureTime, severity: "info", correlationId: "navigation-check", traceId: fixtureTraceId, generationId: "navigation-generation", content: { runId: "navigation-check", runEventSequence: 2, generationId: "navigation-generation", outcome: "delivered" } },
+      { recordId: "raw-generation", event: "generation.completed", stream: "generations", timestamp: fixtureTime, severity: "info", correlationId: "navigation-check", traceId: fixtureTraceId, generationId: "navigation-generation", content: { prompt: "Fictional diagnostic prompt", rawOutput: "Fictional provider output", outcome: "completed" } },
+      { recordId: "run-complete", event: "conversation.run.completed", stream: "generations", timestamp: fixtureTime, severity: "info", correlationId: "navigation-check", traceId: fixtureTraceId, content: { runId: "navigation-check", runEventSequence: 3, attemptedEventCount: 3, outcome: "completed" } },
+    ],
+    chunks: [], scannedBytes: 2048, serializedBytes: 1024, malformedRecords: 0, scanLimitReached: false, nextCursor: null,
+  });
   return { status: 501, body: { error: `Unmocked fixture API: ${method} ${route}` } };
 }
