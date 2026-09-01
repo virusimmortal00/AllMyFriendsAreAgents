@@ -13,11 +13,12 @@ import { registerRosterRoutes } from "./roster-api.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 import { ControlError, ControlPlaneStore, CONTROL_SESSION_COOKIE } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
+import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean}={}) {
+async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService}={}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-roster-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
   const humans = new HumanPresenceRegistry();
@@ -35,7 +36,7 @@ async function fixture(options:{control?:boolean;capabilities?:boolean;realContr
   if (options.realControl) registerControlPlaneRoutes({ app, control: control!, discovery });
   const auditChange = vi.fn(async () => undefined);
   const capabilityStatuses=options.capabilities?()=>({"codex-sol":{agentId:"codex-sol",policyRevision:1 as const,capabilities:{conversation:{configured:true,runtimeAvailable:true,effective:true,reason:"available" as const,guidance:"safe"},room_diagnostics:{configured:true,runtimeAvailable:true,effective:true,reason:"available" as const,guidance:"safe",contract:"read-only" as const},github_read:{configured:false,runtimeAvailable:false,effective:false,reason:"not_configured" as const,guidance:"Configure server-only read access.",contract:"read-only" as const},project_write:{configured:false,runtimeAvailable:false,effective:false,reason:"governed_worker_only" as const,guidance:"Use a worker."}},effectiveCommands:[],commands:{}}}):undefined;
-  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, control, capabilityStatuses, humanIsMember: options.humanIsMember, auditChange, broadcast() {} });
+  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, intelligence: options.intelligence, control, capabilityStatuses, humanIsMember: options.humanIsMember, auditChange, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (url: string, init: RequestInit = {}, authenticated = true) => fetch(`${base}${url}`, { ...init, headers: { "Content-Type": "application/json", ...(authenticated ? { Cookie: cookie, "X-AMFAA-CSRF": sessions.csrfToken(cookie)! } : {}), ...(init.headers as Record<string, string> | undefined) } });
@@ -66,9 +67,25 @@ describe("live roster API", () => {
       expect((await api.call("/api/model-discovery/refresh", { method: "POST", headers, body: "{}" })).status).toBe(200);
       // Authorized catalog access reaches validation, not a control-plane sign-in gate.
       expect((await api.call("/api/model-details")).status).toBe(400);
+      expect((await api.call("/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fz-ai%2Fglm-5.3-flash")).status).toBe(404);
       for (const [route, method] of [["/api/provider-setup/initiate", "POST"], ["/api/provider-setup/refresh", "POST"], ["/api/control/principals", "GET"], ["/api/control/audit", "GET"]]) {
         expect((await api.call(route, { method, ...(method === "POST" ? { body: "{}" } : {}) })).status).toBe(401);
       }
+    } finally { await api.close(); }
+  });
+
+  it("resolves an authorized OpenRouter model-page lookup without granting provider setup", async () => {
+    const intelligence = { resolveModelPage: vi.fn(async () => ({ status: "available" as const, requestedModelId: "stealth/ox-alpha", resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true })) } as unknown as OpenRouterCatalogService;
+    const api = await fixture({ intelligence });
+    try {
+      expect((await api.call("/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai.evil.example%2Fstealth%2Fox-alpha")).status).toBe(400);
+      expect(api.discovery.discover).not.toHaveBeenCalled();
+      expect(intelligence.resolveModelPage).not.toHaveBeenCalled();
+      const response = await api.call("/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fstealth%2Fox-alpha");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toMatchObject({ resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true });
+      expect(intelligence.resolveModelPage).toHaveBeenCalledWith("https://openrouter.ai/stealth/ox-alpha", expect.any(Array));
     } finally { await api.close(); }
   });
 
@@ -93,7 +110,7 @@ describe("live roster API", () => {
     const api = await fixture({ realControl: true, humanIsMember: () => false });
     try {
       for (const authenticated of [false, true]) {
-        for (const [route, method] of [["/api/roster", "GET"], ["/api/roster", "PUT"], ["/api/model-discovery/refresh", "POST"], ["/api/model-details", "GET"]]) {
+        for (const [route, method] of [["/api/roster", "GET"], ["/api/roster", "PUT"], ["/api/model-discovery/refresh", "POST"], ["/api/model-details", "GET"], ["/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fz-ai%2Fglm-5.3-flash", "GET"]]) {
           expect((await api.call(route, { method, ...(method !== "GET" ? { body: "{}" } : {}) }, authenticated)).status).toBe(authenticated ? 403 : 401);
         }
       }

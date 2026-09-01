@@ -1128,6 +1128,16 @@ app-wide visual certification is implied by this matrix.
 | PERSON-01 | Your Profile | Name and avatar editor | Unverified |
 | PERSON-02 | Agent Status | Individual agent availability, provider health, and recovery | Unverified |
 
+2026-09-01 source-change note: `ROOM-03` and `ROOM-07` now let a member paste a
+public OpenRouter model-page URL into the shared search control. A local browser
+smoke check exercised the retired `stealth/ox-alpha` page and its available
+`z-ai/glm-5.3-flash` replacement at Phone, Tablet, Short laptop, and Desktop
+checkpoints. The lookup control, success notice, single result, return action,
+and dialog actions remained reachable with no horizontal page overflow or
+browser error overlay. Focused component, route, URL-validation, and bounded
+provider-lookup tests cover the behavior. Account-backed independent image
+review was not run, so both inventory rows remain `Unverified`.
+
 ### GitHub integration
 
 | ID | Named view | Distinct state | Status |

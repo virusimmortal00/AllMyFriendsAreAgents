@@ -656,6 +656,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .model-picker__count { flex: 0 0 auto; padding: 4px 8px; border: 2px inset white; background: var(--chrome); }
 .model-picker__toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 10px; padding: 12px 14px 7px; }
 .model-picker__toolbar label { display: grid; gap: 3px; margin: 0; font-size: 11px; }
+.model-picker__search-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; min-width: 0; }
+.model-picker__find-link { white-space: nowrap; }
+.model-picker__link-status { grid-column: 1 / -1; padding: 4px 6px; border: 1px solid #8793a5; background: #fff; color: #354052; font-size: 11px; line-height: 1.35; }
+.model-picker__link-status--success { border-color: #5c9669; background: #edf8ef; color: #175525; }
+.model-picker__link-status--error { border-color: #b15c64; background: #fff0f1; color: #7a1720; }
 .model-picker__toolbar .model-picker__filter-select { display: none; }
 .model-picker__toolbar input, .model-picker__toolbar select { min-height: 32px; min-width: 0; padding: 4px 6px; border: 2px inset white; border-radius: 0; background: #fff; font: 12px "MS Sans Serif", Arial, sans-serif; }
 .model-picker__filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 14px 11px; }
@@ -1118,7 +1123,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .agent-settings-window.roster-window[data-presentation="authentication"] { width: calc(100% - 14px); height: auto; max-height: calc(100dvh - 14px); }
   .model-picker__toolbar, .model-picker__results, .roster-model-options { grid-template-columns: 1fr; }
   .model-picker__toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .model-picker__search { grid-column: 1 / -1; }
+  .model-picker__search-group { grid-column: 1 / -1; }
   .model-picker__toolbar .model-picker__filter-select { display: grid; }
   .model-picker__filters { display: none; }
   .model-detail__costs { grid-template-columns: 1fr; }

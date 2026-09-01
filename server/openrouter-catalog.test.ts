@@ -48,4 +48,35 @@ describe("OpenRouter catalog enrichment", () => {
     const discovery: ModelDiscoveryResult = { status: "available", discoveredAt: "2026-08-26T00:00:00.000Z", models: [{ providerId: "openrouter", modelId: "google/model", displayName: "Local name", provenance: "opencode-catalog" }] };
     await expect(service.enrich(discovery)).resolves.toEqual(discovery);
   });
+
+  it("resolves current and revealed OpenRouter model pages against available OpenCode models", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      'This stealth model was revealed to be <a href="https://openrouter.ai/z-ai/glm-5.3-flash">GLM-5.3-Flash</a>.',
+      { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    ));
+    const service = new OpenRouterCatalogService(fetchMock);
+    const available = [{ providerId: "openrouter", modelId: "z-ai/glm-5.3-flash", displayName: "GLM-5.3-Flash", provenance: "opencode-catalog" as const }];
+
+    await expect(service.resolveModelPage("https://openrouter.ai/z-ai/glm-5.3-flash?tab=providers", available)).resolves.toEqual({
+      status: "available", requestedModelId: "z-ai/glm-5.3-flash", resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(service.resolveModelPage("https://openrouter.ai/stealth/ox-alpha", available)).resolves.toEqual({
+      status: "available", requestedModelId: "stealth/ox-alpha", resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("https://openrouter.ai/stealth/ox-alpha", expect.objectContaining({ redirect: "error" }));
+  });
+
+  it("does not fetch a non-OpenRouter URL or select an unavailable revealed replacement", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      'Revealed to be <a href="https://openrouter.ai/z-ai/glm-5.3-flash">replacement</a>',
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ));
+    const service = new OpenRouterCatalogService(fetchMock);
+    await expect(service.resolveModelPage("https://openrouter.ai.evil.example/z-ai/glm-5.3-flash", [])).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(service.resolveModelPage("https://openrouter.ai/stealth/ox-alpha", [])).resolves.toEqual({
+      status: "unavailable", requestedModelId: "stealth/ox-alpha", resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true,
+    });
+  });
 });
