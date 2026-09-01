@@ -118,12 +118,13 @@ describe("OpenCode integration contract guard", () => {
 
   it("keeps the package, compiler, install policy, and runtime range pinned together", () => {
     const valid = {
-      packageText: JSON.stringify({ devDependencies: { "@opencode-ai/plugin": "1.18.25" } }),
+      packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.25" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }),
       tsconfigText: JSON.stringify({ include: ["server/**/*.ts"] }),
       workspaceText: "msgpackr-extract: false\n  - '@opencode-ai/plugin@1.18.25'\n  - '@opencode-ai/sdk@1.18.25'",
       discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.1"',
     };
     expect(validateLocalPins(contract, valid)).toEqual([]);
     expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ devDependencies: { "@opencode-ai/plugin": "1.18.24" } }) })).toContain("pin @opencode-ai/plugin to 1.18.25");
+    expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.24" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }) })).toContain("pin @opencode-ai/sdk to 1.18.25");
   });
 });

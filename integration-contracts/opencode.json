@@ -35,23 +35,58 @@
     ]
   },
   "review": {
-    "revision": 3,
+    "revision": 5,
     "reviewedOn": "2026-09-01",
-    "result": "Re-inspected the v1.18.25 source surfaces at the unchanged upstream commit and audited the complete downstream diff from that base through d85688b4b804c79087883774bc8b08b67556af59. The downstream build preserves the 1.18.25 plugin compatibility version while assigning the runtime identity 1.18.25-amfaa.1; its session changes encode persisted output formats, validate structured results, and bound correction attempts. Existing CLI JSONL, model-catalog, permission, tool, and MCP behavior remains compatible. Runtime discovery now admits only exact stable versions in the audited range or that one recorded downstream identity; other prerelease and build variants fail closed.",
+    "result": "Re-inspected every mapped v1.18.25 source surface at cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through d85688b4b804c79087883774bc8b08b67556af59. The v2 SDK exposes authenticated health, legacy session create/prompt/abort calls, json_schema output requests, and AssistantMessage.structured. The approved downstream session implementation validates structured results and bounds schema correction attempts. Read-only room turns may therefore use a per-turn authenticated loopback server only after its health version exactly matches 1.18.25-amfaa.1; writable and stock-runtime turns retain the audited CLI path. Application validation remains fail closed after generation.",
     "paths": [
+      "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
       "packages/opencode/src/cli/cmd/run.ts",
       "packages/opencode/src/config/config.ts",
       "packages/opencode/src/provider/provider.ts",
+      "packages/opencode/src/server/auth.ts",
+      "packages/opencode/src/server/server.ts",
       "packages/opencode/src/session/message-v2.ts",
       "packages/opencode/src/session/processor.ts",
       "packages/opencode/src/session/prompt.ts",
       "packages/plugin/package.json",
       "packages/plugin/src/tool.ts",
+      "packages/sdk/js/src/v2/client.ts",
+      "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+      "packages/sdk/js/src/v2/gen/types.gen.ts",
       "packages/schema/src/v1/session.ts"
     ]
   },
   "surfaces": [
+    {
+      "id": "structured-sdk-server",
+      "description": "Authenticated loopback server startup, exact runtime health negotiation, typed session prompts, cancellation, and locally validated structured room turns.",
+      "local": [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "server/agent-runner.ts",
+        "server/index.ts",
+        "server/opencode-structured-transport.ts",
+        "server/structured-room-turn.ts"
+      ],
+      "upstream": [
+        "packages/opencode/src/cli/cmd/serve.ts",
+        "packages/opencode/src/server/auth.ts",
+        "packages/opencode/src/server/server.ts",
+        "packages/opencode/src/session/message-v2.ts",
+        "packages/opencode/src/session/prompt.ts",
+        "packages/sdk/js/src/v2/client.ts",
+        "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+        "packages/sdk/js/src/v2/gen/types.gen.ts",
+        "packages/schema/src/v1/session.ts"
+      ],
+      "tests": [
+        "server/agent-runner.test.ts",
+        "server/opencode-structured-transport.test.ts",
+        "server/structured-room-turn.test.ts"
+      ]
+    },
     {
       "id": "cli-jsonl",
       "description": "OpenCode run arguments, JSONL events, sessions, variants, errors, and provider telemetry.",

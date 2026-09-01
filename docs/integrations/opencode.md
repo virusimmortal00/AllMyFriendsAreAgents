@@ -119,8 +119,8 @@ is checked against the contract by `server/agent-runner.test.ts`.
 The upstream session API supports a `json_schema` output format through a
 required `StructuredOutput` tool, but the audited `run --format json` path does
 not request that format: its `json` flag controls event serialization only.
-Moving to typed SDK/server messages or schema-constrained room output remains
-part of #70 rather than expanding this parser correction into a transport change.
+The room therefore retains this parser for stock-runtime and writable turns;
+schema-constrained output uses the separate SDK/server lane described below.
 
 Source anchors at the audited commit:
 
@@ -128,3 +128,32 @@ Source anchors at the audited commit:
 - [Provider delta accumulation and text completion](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/processor.ts#L486-L531)
 - [Text-part identity and output formats](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/schema/src/v1/session.ts#L65-L116)
 - [Assistant-message creation and structured output](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/session/prompt.ts#L1186-L1318)
+
+## Structured read-only room turns
+
+Read-only turns use OpenCode's v2 SDK only when discovery reports the exact
+approved downstream runtime identity. The application starts an authenticated
+loopback server for the turn, verifies the server-reported version, creates or
+resumes a session, and requests the versioned room-turn JSON Schema. The result
+is read from `AssistantMessage.structured` and validated again by the
+application before delivery. The provider-facing schema uses a flat object
+envelope for broad tool-schema compatibility; the application enforces its
+action-specific union and allows at most one same-session semantic correction.
+Invalid, missing, or extra-field results then fail closed; they are never
+recovered by scraping assistant prose. Cancellation and timeouts abort the
+session and terminate the owned server process.
+
+This is deliberately a narrow capability boundary. Stock OpenCode versions and
+all writable turns continue through the existing CLI transport. Per-turn server
+startup preserves the current lease and environment isolation; server reuse is
+a later performance optimization that must preserve those boundaries. The SDK
+package is pinned to the audited upstream version and the structured lane still
+requires the separately versioned downstream runtime because upstream v1.18.25
+does not provide the same validated, bounded schema-retry behavior.
+
+Source anchors at the audited commit:
+
+- [Authenticated server configuration](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/server/auth.ts)
+- [Server health and lifecycle](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/opencode/src/server/server.ts)
+- [Generated v2 session and health methods](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/sdk/js/src/v2/gen/sdk.gen.ts)
+- [Generated structured message and output-format types](https://github.com/anomalyco/opencode/blob/cb7d8b2f5e44876ef98b661dc10590c915af3a9f/packages/sdk/js/src/v2/gen/types.gen.ts)
