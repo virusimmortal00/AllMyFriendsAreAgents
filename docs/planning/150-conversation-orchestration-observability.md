@@ -1,15 +1,15 @@
 ---
 id: conversation-orchestration-observability
-status: active
+status: done
 issue: 150
-updated: 2026-08-31
+updated: 2026-09-01
 ---
 
 # Conversation orchestration observability
 
 Canonical issue: [#150](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/150).
 This is the adopted, experimentally checked implementation design, not a
-replacement tracker. Slices 1–3 are implemented; the OWNER workflow slice remains pending.
+replacement tracker. All four implementation slices are complete.
 Research baseline inspected: commit
 `e1c5b9cf5b3371c27f2784b59b3fdd7c1153d7fc`.
 
@@ -85,9 +85,11 @@ settlement flags, prose pause reasons, follow-up policy, and raw evidence remain
 Slice 3 records branch-owned decisions, turn outcomes, run start/completion, and
 pending-entry disposition; stderr severity follows known outcomes. A provider-free
 fixture reconstructs a complete structured round through the existing OWNER query.
-Whole-trace interface navigation and its browser/recovery acceptance remain
-unimplemented. The findings below describe the **research baseline before slice 1**,
-verified by source inspection unless otherwise noted:
+Slice 4 adds exact whole-trace navigation, incomplete/unpaired evidence summaries,
+and responsive result/detail presentation while preserving the existing OWNER
+boundary and exact correlation queries. The findings below describe the
+**research baseline before slice 1**, verified by source inspection unless
+otherwise noted:
 
 | Surface | Implemented behavior and gap |
 | --- | --- |
@@ -446,8 +448,7 @@ all required responsive checkpoints.
 
 ## Next action
 
-Continue in dependency-ordered slices. Slices 1–3 are implemented; the next
-bounded step is slice 4's OWNER whole-trace workflow and reconstruction checks:
+The dependency-ordered implementation is complete:
 
 1. **Queue-context fix and admission evidence (implemented).** Fix the reproduced
    defect where a queued job inherits the preceding request's logging context:
@@ -473,7 +474,7 @@ bounded step is slice 4's OWNER whole-trace workflow and reconstruction checks:
    through the existing logger with bounded, non-awaiting observers; fix empty
    stderr emission and outcome-based levels. Verify no useful evidence is lost.
    Keep #147 classification and #149 termination-policy changes separate.
-4. **Owner workflow and reconstruction.** Add the bounded whole-trace selector
+4. **Owner workflow and reconstruction (implemented).** Add the bounded whole-trace selector
    to the existing inspector, preserving exact correlation queries. Verify
    structured-only reconstruction, forward/reverse raw-evidence links, unpaired
    records, real OWNER authorization, pagination, retention gaps, and recovery.
@@ -659,8 +660,9 @@ to reconstruct a yield, four parsed bursts capped to three, the existing pair-ca
 drop, and the terminal reason using only structured events. It separately proves
 that useful prompts/output remain available, a credential sentinel is removed,
 generation/provider/harness identities join, and a project-only caller cannot
-read operator events. This establishes server-side reconstruction, not the
-unimplemented whole-trace interface or its responsive/browser acceptance.
+read operator events. At that stage this established server-side reconstruction,
+before slice 4 added the whole-trace interface and its responsive/browser
+acceptance.
 
 On 2026-08-31, the final local quality gate passed the pinned integration tests,
 UI guardrails, production build, and 170 test files: 1,191 passing tests and one
