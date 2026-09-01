@@ -348,7 +348,7 @@ export async function loadPolls() {
 }
 
 /** Owner diagnostics are intentionally never fetched as part of room state or SSE. */
-export interface OwnerDiagnosticRecord { recordId: string; stream: string; timestamp: string; severity: string; event: string; correlationId?: string; requestId?: string; traceId?: string; content: Record<string, unknown>; }
+export interface OwnerDiagnosticRecord { recordId: string; stream: string; timestamp: string; severity: string; event: string; generationId?: string; correlationId?: string; requestId?: string; traceId?: string; content: Record<string, unknown>; }
 export interface OwnerDiagnosticChunk { kind: "record-chunk"; recordId: string; stream: string; offset: number; totalBytes: number; encoding: "base64-json-utf8"; data: string; final: boolean; }
 export interface OwnerDiagnosticsResult { records: OwnerDiagnosticRecord[]; chunks: OwnerDiagnosticChunk[]; nextCursor: string | null; scannedBytes: number; serializedBytes: number; malformedRecords: number; scanLimitReached: boolean; }
 export async function queryOwnerDiagnostics(query: Record<string, unknown>): Promise<OwnerDiagnosticsResult> {

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { assembleDiagnosticChunks, Diagnostics } from "./diagnostics";
+import { assembleDiagnosticChunks, Diagnostics, summarizeTraceEvidence } from "./diagnostics";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function response(body: unknown, status = 200) { return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })); }
-const record = { recordId: "diag-1", stream: "generations", timestamp: "2026-08-28T12:00:00.000Z", severity: "info", event: "generation.completed", correlationId: "correlation-one", content: { prompt: "peer prompt", rawOutput: "provider output" } };
+const traceId = "a".repeat(32);
+const record = { recordId: "diag-1", stream: "generations", timestamp: "2026-08-28T12:00:00.000Z", severity: "info", event: "generation.completed", generationId: "generation-one", correlationId: "correlation-one", traceId, content: { prompt: "peer prompt", rawOutput: "provider output" } };
 const page = (overrides: Record<string, unknown> = {}) => ({ records: [record], chunks: [], nextCursor: null, scannedBytes: 1024, serializedBytes: 512, malformedRecords: 0, scanLimitReached: false, ...overrides });
 
 describe("owner diagnostic dashboard", () => {
@@ -53,6 +54,65 @@ describe("owner diagnostic dashboard", () => {
     expect(second).toMatchObject({ scope: "project", streams: ["generations"], correlation: { correlationId: "correlation-one" }, cursor: "cursor-one" });
     expect(second.from).toBe(first.from); expect(second.to).toBe(first.to);
     expect(screen.getByRole("button", { name: /generation.completed/ })).toBeTruthy();
+  });
+
+  it("keeps correlation and trace selectors explicit and exact", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
+    render(<Diagnostics />);
+    fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "correlation-one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await screen.findByRole("button", { name: /generation.completed/ });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)).correlation).toEqual({ correlationId: "correlation-one" });
+
+    fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
+    fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: traceId } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const traceQuery = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(traceQuery.correlation).toEqual({ traceId });
+    expect(traceQuery.streams).toHaveLength(6);
+    expect(traceQuery.correlation).not.toHaveProperty("correlationId");
+  });
+
+  it("preserves the whole-trace selector and bounded window across pages", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => response(page({ nextCursor: "trace-cursor" })))
+      .mockImplementationOnce(() => response(page({ records: [{ ...record, recordId: "diag-2" }] })));
+    render(<Diagnostics />);
+    fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
+    fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: traceId } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await screen.findByRole("button", { name: "Load next bounded page" });
+    fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "correlationId" } });
+    fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "do-not-substitute" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load next bounded page" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const first = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const second = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(second).toMatchObject({ correlation: { traceId }, cursor: "trace-cursor" });
+    expect(second.from).toBe(first.from);
+    expect(second.to).toBe(first.to);
+  });
+
+  it.each([
+    ["structured decision", { ...record, recordId: "decision", event: "conversation.turn.finished", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 2, generationId: "generation-one" } }],
+    ["raw evidence", record],
+  ])("opens the whole trace from %s without broadening the prior query", async (_description, selectedRecord) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => response(page({ records: [selectedRecord] })))
+      .mockImplementationOnce(() => response(page({ records: [selectedRecord] })));
+    render(<Diagnostics />);
+    fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "correlation-one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(selectedRecord.event) }));
+    fireEvent.click(screen.getByRole("button", { name: "Open whole trace" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const query = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(query).toMatchObject({ scope: "operator", correlation: { traceId } });
+    expect(query.streams).toHaveLength(6);
+    expect(query.correlation).not.toHaveProperty("correlationId");
+    expect((screen.getByLabelText("Diagnostic selector") as HTMLSelectElement).value).toBe("traceId");
+    expect((screen.getByLabelText("Trace ID") as HTMLInputElement).value).toBe(traceId);
   });
 
   it("preserves loaded records when a later bounded page fails", async () => {
@@ -119,6 +179,37 @@ describe("owner diagnostic dashboard", () => {
     expect(assembleDiagnosticChunks([
       { kind: "record-chunk", recordId: record.recordId, stream: record.stream, offset: 0, totalBytes: 3, encoding: "base64-json-utf8", data: "%%%", final: true },
     ])).toEqual([]);
+  });
+
+  it("reports complete reconstruction only after all pages and linked evidence are present", () => {
+    const structured = [
+      { ...record, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 1 } },
+      { ...record, recordId: "turn-finished", event: "conversation.turn.finished", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 2, generationId: "generation-one" } },
+      { ...record, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 3, attemptedEventCount: 3 } },
+    ];
+    expect(summarizeTraceEvidence([...structured, record], true)).toMatchObject({ status: "partial" });
+    expect(summarizeTraceEvidence([...structured, record], false)).toMatchObject({ status: "complete", unpairedRecordIds: [], missingRawGenerationIds: [] });
+  });
+
+  it("keeps unpaired raw evidence visible and describes absent evidence without guessing a cause", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [{ ...record, generationId: "orphan-generation" }] })));
+    render(<Diagnostics />);
+    fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
+    fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: traceId } });
+    fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    expect(await screen.findByRole("button", { name: /generation.completed.*Unpaired/ })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Trace evidence is incomplete");
+    expect(document.body.textContent).toContain("The cause is unknown");
+    expect(document.body.textContent).toContain("retention, transport loss, legacy schema, or unfinished work");
+  });
+
+  it("detects sequence gaps and decision records whose raw evidence is absent", () => {
+    const records = [
+      { ...record, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 1 } },
+      { ...record, recordId: "turn-finished", event: "conversation.turn.finished", correlationId: "run-one", generationId: "generation-missing", content: { runId: "run-one", runEventSequence: 3, generationId: "generation-missing" } },
+      { ...record, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 4, attemptedEventCount: 4 } },
+    ];
+    expect(summarizeTraceEvidence(records, false)).toMatchObject({ status: "incomplete", missingSequences: [2], missingRawGenerationIds: ["generation-missing"] });
   });
 
   it("preserves the explicit owner capability inspector", async () => {

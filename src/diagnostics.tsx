@@ -7,7 +7,9 @@ const streams = ["server-service-lifecycle", "opencode-harness", "openrouter-pro
 const scopes = ["self", "room", "project", "operator"] as const;
 type StreamChoice = "all" | (typeof streams)[number];
 type ScopeChoice = (typeof scopes)[number];
-interface QueryContext { readonly from: string; readonly to: string; readonly scope: ScopeChoice; readonly stream: StreamChoice; readonly correlation: string; }
+type SelectorKind = "correlationId" | "traceId";
+interface QueryContext { readonly from: string; readonly to: string; readonly scope: ScopeChoice; readonly stream: StreamChoice; readonly selectorKind: SelectorKind; readonly selectorValue: string; }
+export interface TraceEvidenceSummary { readonly status: "partial" | "complete" | "incomplete"; readonly runCount: number; readonly missingSequences: readonly number[]; readonly unpairedRecordIds: readonly string[]; readonly missingRawGenerationIds: readonly string[]; }
 
 const safeFailure = (error: unknown) => error instanceof ApiRequestError && [401, 403, 404].includes(error.status || 0) ? "Diagnostics are unavailable. Sign in as the owner on the server host." : "The diagnostics query could not be completed.";
 const safe = (value: unknown) => redactDiagnosticSecrets(typeof value === "string" ? value : JSON.stringify(value, null, 2));
@@ -41,10 +43,43 @@ export function assembleDiagnosticChunks(chunks: readonly OwnerDiagnosticChunk[]
   return records;
 }
 
+const structuredEvent = (record: OwnerDiagnosticRecord) => record.event.startsWith("conversation.");
+const generationIdOf = (record: OwnerDiagnosticRecord) => record.generationId || (typeof record.content.generationId === "string" ? record.content.generationId : undefined);
+const rawEvidenceStreams = new Set(["generations", "opencode-harness", "openrouter-provider"]);
+
+/** Evaluates only fully loaded evidence and never assigns a cause to a gap. */
+export function summarizeTraceEvidence(records: readonly OwnerDiagnosticRecord[], hasNextPage: boolean): TraceEvidenceSummary {
+  const structured = records.filter(structuredEvent);
+  const raw = records.filter((record) => !structuredEvent(record) && rawEvidenceStreams.has(record.stream) && generationIdOf(record));
+  const finishedGenerationIds = new Set(structured.filter((record) => record.event === "conversation.turn.finished").map(generationIdOf).filter((value): value is string => Boolean(value)));
+  const rawGenerationIds = new Set(raw.map(generationIdOf).filter((value): value is string => Boolean(value)));
+  const unpairedRecordIds = raw.filter((record) => !finishedGenerationIds.has(generationIdOf(record)!)).map((record) => record.recordId);
+  const missingRawGenerationIds = [...finishedGenerationIds].filter((generationId) => !rawGenerationIds.has(generationId)).sort();
+  const groups = new Map<string, OwnerDiagnosticRecord[]>();
+  for (const record of structured) {
+    const runId = typeof record.content.runId === "string" ? record.content.runId : record.correlationId;
+    if (runId) groups.set(runId, [...(groups.get(runId) ?? []), record]);
+  }
+  const missingSequences = new Set<number>();
+  let completeRuns = 0;
+  for (const run of groups.values()) {
+    const sequences = new Set(run.map((record) => record.content.runEventSequence).filter((value): value is number => Number.isSafeInteger(value) && value > 0));
+    const terminal = run.find((record) => record.event === "conversation.run.completed");
+    const attempted = terminal?.content.attemptedEventCount;
+    const expected = Number.isSafeInteger(attempted) && (attempted as number) > 0 ? attempted as number : 0;
+    let runHasGap = false;
+    for (let sequence = 1; sequence <= expected; sequence++) if (!sequences.has(sequence)) { missingSequences.add(sequence); runHasGap = true; }
+    if (run.some((record) => record.event === "conversation.run.started") && terminal && expected && !runHasGap) completeRuns++;
+  }
+  const status = hasNextPage ? "partial" : groups.size > 0 && completeRuns === groups.size && !unpairedRecordIds.length && !missingRawGenerationIds.length ? "complete" : "incomplete";
+  return { status, runCount: groups.size, missingSequences: [...missingSequences].sort((left, right) => left - right), unpairedRecordIds, missingRawGenerationIds };
+}
+
 export function Diagnostics() {
   const [scope, setScope] = useState<ScopeChoice>("operator");
   const [stream, setStream] = useState<StreamChoice>("all");
-  const [correlation, setCorrelation] = useState("");
+  const [selectorKind, setSelectorKind] = useState<SelectorKind>("correlationId");
+  const [selectorValue, setSelectorValue] = useState("");
   const [result, setResult] = useState<OwnerDiagnosticsResult | null>(null);
   const [selected, setSelected] = useState<OwnerDiagnosticRecord | null>(null);
   const [error, setError] = useState("");
@@ -53,13 +88,15 @@ export function Diagnostics() {
   const [capabilities, setCapabilities] = useState<CapabilityDiagnosticsResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
   const visibleRecords = useMemo(() => result ? [...result.records, ...assembleDiagnosticChunks(result.chunks)] : [], [result]);
+  const traceSummary = useMemo(() => result && queryContext?.selectorKind === "traceId" ? summarizeTraceEvidence(visibleRecords, Boolean(result.nextCursor)) : null, [queryContext, result, visibleRecords]);
 
-  async function load(cursor?: string, correlationOverride?: string, streamOverride: StreamChoice = stream) {
-    const context = cursor && queryContext ? queryContext : { from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), scope, stream: streamOverride, correlation: correlationOverride ?? correlation };
+  async function load(cursor?: string, override?: Partial<Pick<QueryContext, "scope" | "stream" | "selectorKind" | "selectorValue">>) {
+    const context = cursor && queryContext ? queryContext : { from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), scope: override?.scope ?? scope, stream: override?.stream ?? stream, selectorKind: override?.selectorKind ?? selectorKind, selectorValue: override?.selectorValue ?? selectorValue };
     if (!cursor) { setQueryContext(context); setSelected(null); }
     setLoading(true); setError("");
     try {
-      const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.stream === "all" ? streams : [context.stream], correlation: context.correlation.trim() ? { correlationId: context.correlation.trim().slice(0, 200) } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
+      const value = context.selectorValue.trim().slice(0, 200);
+      const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.selectorKind === "traceId" || context.stream === "all" ? streams : [context.stream], correlation: value ? { [context.selectorKind]: value } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
       setResult((previous) => combinePages(previous, page, Boolean(cursor)));
     } catch (failure) { if (!cursor) setResult(null); setError(safeFailure(failure)); }
     finally { setLoading(false); }
@@ -77,18 +114,21 @@ export function Diagnostics() {
     <div className="workspace-view__body diagnostics-body">
     <div className="diagnostics-controls">
       <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-      <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-      <label>Correlation ID <input className="classic-input" aria-label="Correlation ID" value={correlation} maxLength={200} onChange={(event) => setCorrelation(event.target.value)} /></label>
+      <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} disabled={selectorKind === "traceId"} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label>Selector <select className="classic-select" aria-label="Diagnostic selector" value={selectorKind} onChange={(event) => { const next = event.target.value as SelectorKind; setSelectorKind(next); if (next === "traceId") setStream("all"); }}><option value="correlationId">Correlation ID</option><option value="traceId">Trace ID (whole trace)</option></select></label>
+      <label>{selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} <input className="classic-input" aria-label={selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} value={selectorValue} maxLength={200} onChange={(event) => setSelectorValue(event.target.value)} /></label>
       <button type="button" className="classic-button" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
     </div>
     {error ? <p className="diagnostics-error" role="alert">{error}</p> : null}
     {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <section className="diagnostics-results-view" {...viewAttributes(VIEWS.ownerDiagnosticsResults)}>
       <div className="diagnostics-result-list">
-      <p role="status">{visibleRecords.length} bounded records · {result.scannedBytes} bytes scanned{result.malformedRecords ? ` · ${result.malformedRecords} malformed records skipped` : ""}{result.scanLimitReached ? " · scan bound reached" : ""}</p>
-      <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} aria-pressed={selected?.recordId === item.recordId} onClick={() => setSelected(item)}><strong>{item.event}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
+      <p role="status">{visibleRecords.length} bounded records · {result.scannedBytes} bytes scanned{result.malformedRecords ? ` · ${result.malformedRecords} malformed records skipped` : ""}{result.scanLimitReached ? " · scan bound reached" : ""}{traceSummary ? traceSummary.status === "complete" ? " · Trace evidence is complete." : traceSummary.status === "partial" ? " · Trace evidence is incomplete while bounded pages remain." : " · Trace evidence is incomplete." : ""}</p>
+      {traceSummary ? <dl className="diagnostic-trace-summary"><div><dt>Structured runs</dt><dd>{traceSummary.runCount}</dd></div><div><dt>Sequence gaps</dt><dd>{traceSummary.missingSequences.join(", ") || "none detected"}</dd></div><div><dt>Unpaired raw records</dt><dd>{traceSummary.unpairedRecordIds.length}</dd></div><div><dt>Decision links without loaded raw evidence</dt><dd>{traceSummary.missingRawGenerationIds.length}</dd></div></dl> : null}
+      {traceSummary && traceSummary.status !== "complete" ? <p className="diagnostics-note">Missing or unpaired evidence remains visible. The cause is unknown; possibilities include independent retention, transport loss, legacy schema, or unfinished work.</p> : null}
+      <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} aria-pressed={selected?.recordId === item.recordId} onClick={() => setSelected(item)}><strong>{item.event}{traceSummary?.unpairedRecordIds.includes(item.recordId) ? " · Unpaired" : ""}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
       {result.nextCursor ? <button type="button" className="classic-button" disabled={loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
       </div>
-      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><pre>{safe(selected.content)}</pre>{selected.correlationId ? <button type="button" className="classic-button" disabled={loading} onClick={() => { setCorrelation(selected.correlationId || ""); setStream("all"); void load(undefined, selected.correlationId, "all"); }}>Trace correlation across all streams</button> : null}</article> : null}
+      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><dl><div><dt>Trace ID</dt><dd>{selected.traceId || "unavailable"}</dd></div><div><dt>Generation ID</dt><dd>{generationIdOf(selected) || "unavailable"}</dd></div></dl><pre>{safe(selected.content)}</pre>{selected.traceId ? <button type="button" className="classic-button" disabled={loading} onClick={() => { setScope("operator"); setStream("all"); setSelectorKind("traceId"); setSelectorValue(selected.traceId || ""); void load(undefined, { scope: "operator", stream: "all", selectorKind: "traceId", selectorValue: selected.traceId }); }}>Open whole trace</button> : <p>Whole-trace navigation is unavailable because this record has no trace ID.</p>}</article> : null}
     </section>}
     <section className="diagnostic-detail capability-inspector" aria-label="Owner capability inspector">
       <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested.</p>

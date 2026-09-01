@@ -982,6 +982,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .diagnostic-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; }
 .diagnostic-detail dl div { display: contents; }
 .diagnostic-detail dd { margin: 0; overflow-wrap: anywhere; }
+.diagnostic-trace-summary { display: grid; max-width: 720px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.diagnostic-trace-summary div { min-width: 0; padding: 5px; border: 1px solid #aaa; background: #f4f4f4; }
+.diagnostic-trace-summary dt { font-size: 11px; }
+.diagnostic-trace-summary dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: bold; }
 
 .controls-panel { padding-bottom: 8px; background: var(--chrome); }
 .room-settings-form { display: contents; }
@@ -1154,6 +1158,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .improvements-status { grid-template-columns: 1fr; gap: 8px; }
   .improvements-status dd { margin-bottom: 8px; }
   .tasks-panel { width: 100%; height: 100%; padding: 5px; }
+  .diagnostic-trace-summary { grid-template-columns: 1fr 1fr; }
   .contribution-steps { grid-template-columns: 1fr; }
   .task-create, .task-columns, .task-edit { grid-template-columns: 1fr; }
   .task-create > *, .task-create button, .task-edit > *, .task-edit > div { grid-column: 1 !important; grid-row: auto !important; }
