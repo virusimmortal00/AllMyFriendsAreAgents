@@ -95,4 +95,11 @@ describe("mobile layout contract", () => {
     expect(styles).toMatch(/@media \(max-width: 1050px\) \{[\s\S]*?\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(mobileStyles).toMatch(/\.task-columns form \{[^}]*grid-template-columns: 1fr;/s);
   });
+
+  it("sizes the diagnostics summary from its result pane instead of the viewport", () => {
+    expect(styles).toMatch(/\.diagnostics-result-list \{[^}]*container: diagnostic-list \/ inline-size;/s);
+    expect(styles).toMatch(/\.diagnostic-trace-summary \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s);
+    expect(styles).toMatch(/@container diagnostic-list \(min-width: 500px\) \{\s*\.diagnostic-trace-summary \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/s);
+    expect(mobileStyles).not.toMatch(/\.diagnostic-trace-summary \{[^}]*grid-template-columns:/s);
+  });
 });
