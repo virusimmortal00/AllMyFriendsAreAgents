@@ -160,9 +160,10 @@ export class OpenRouterCatalogService {
     const marker = html.toLocaleLowerCase().indexOf("revealed to be");
     if (marker < 0) return undefined;
     const nearby = html.slice(marker, marker + 4_000);
-    const match = nearby.match(/https:\/\/(?:www\.)?openrouter\.ai\/([A-Za-z0-9][A-Za-z0-9._+@~-]{0,99})\/([A-Za-z0-9][A-Za-z0-9._+@~-]{0,99})/i);
+    // Validate the complete URL so variant suffixes cannot become a different model ID.
+    const match = nearby.match(/https:\/\/(?:www\.)?openrouter\.ai\/[^\s"'<>\\]+/i);
     if (!match) return undefined;
-    return parseOpenRouterModelPageUrl(`https://openrouter.ai/${match[1]}/${match[2]}`)?.modelId;
+    return parseOpenRouterModelPageUrl(match[0])?.modelId;
   }
 
   private async fetchModels() {

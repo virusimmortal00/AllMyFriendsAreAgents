@@ -79,4 +79,49 @@ describe("OpenRouter catalog enrichment", () => {
       status: "unavailable", requestedModelId: "stealth/ox-alpha", resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true,
     });
   });
+
+  it("resolves the exact free variant without fetching its page", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const service = new OpenRouterCatalogService(fetchMock);
+    const available = ["example/model", "example/model:free"].map((modelId) => ({
+      providerId: "openrouter", modelId, displayName: modelId, provenance: "opencode-catalog" as const,
+    }));
+
+    await expect(service.resolveModelPage("https://openrouter.ai/example/model:free", available)).resolves.toEqual({
+      status: "available", requestedModelId: "example/model:free", resolvedModelId: "example/model:free", revealedReplacement: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["model:free", "model%3Afree", "model:free?tab=providers#pricing"])("preserves the revealed free variant instead of selecting its paid base: %s", async (slug) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      `Revealed to be <a href="https://openrouter.ai/example/${slug}">replacement</a>`,
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ));
+    const service = new OpenRouterCatalogService(fetchMock);
+    const paidModel = { providerId: "openrouter", modelId: "example/model", displayName: "Model", provenance: "opencode-catalog" as const };
+    const freeModel = { ...paidModel, modelId: "example/model:free" };
+
+    await expect(service.resolveModelPage("https://openrouter.ai/stealth/example", [paidModel, freeModel])).resolves.toEqual({
+      status: "available", requestedModelId: "stealth/example", resolvedModelId: "example/model:free", revealedReplacement: true,
+    });
+    await expect(service.resolveModelPage("https://openrouter.ai/stealth/example", [paidModel])).resolves.toEqual({
+      status: "unavailable", requestedModelId: "stealth/example", resolvedModelId: "example/model:free", revealedReplacement: true,
+    });
+  });
+
+  it.each(["model!invalid", "model:free/endpoints", "model%2Fother", "a".repeat(101)])("does not truncate an invalid replacement URL into an available model: %s", async (slug) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      `Revealed to be <a href="https://openrouter.ai/example/${slug}">replacement</a>`,
+      { status: 200, headers: { "Content-Type": "text/html" } },
+    ));
+    const service = new OpenRouterCatalogService(fetchMock);
+    const available = ["example/model", "example/model:free", `example/${"a".repeat(100)}`].map((modelId) => ({
+      providerId: "openrouter", modelId, displayName: modelId, provenance: "opencode-catalog" as const,
+    }));
+
+    await expect(service.resolveModelPage("https://openrouter.ai/stealth/example", available)).resolves.toEqual({
+      status: "unavailable", requestedModelId: "stealth/example", revealedReplacement: false,
+    });
+  });
 });
