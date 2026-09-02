@@ -48,6 +48,22 @@ GitHub account authorization are not control-plane authorization.
 method, and required capability. The `current` alias addresses the deployment's
 current project; use an explicit durable project ID for another project.
 
+For the single-room JSON backend, startup persists the legacy project key in
+`project-identity.json` before normalizing checkout paths. On upgrade, an
+unambiguous existing repository/binding key takes precedence, including when
+an older startup already replaced the saved room path. Otherwise, the original
+room path supplies the initial key. Subsequent path changes never replace it.
+Keep this file with the data backup. Conflicting legacy keys or a malformed
+identity stop startup for reconciliation; do not delete records to force a guess.
+This preserves identity only: replacement checkout authority still requires the
+explicit repair below. It does not enable SQLite-only room commands on JSON.
+
+For SQLite, operator lookup covers projects attached to any room, not just the
+startup room. Repair checks assignments and continuation jobs across all rooms
+attached to that project, including archived rooms. Legacy contribution/broker
+records without a project key conservatively block repair when unfinished or
+unreconciled. Room-facing reads retain their original room-scoped boundaries.
+
 `GET /api/control/projects/:projectId/repository/repair` returns the current
 binding and repository revisions plus a fresh, non-mutating repair assessment:
 
@@ -170,6 +186,7 @@ Provider-free regression checks:
 
 ```sh
 pnpm exec vitest run server/project-repository-repair.test.ts server/project-github-binding.test.ts server/project-github-binding-api.test.ts
+pnpm exec vitest run server/storage/json-project-identity.test.ts server/repository-repair-application.test.ts
 ```
 
 These tests use disposable repositories, storage, and a mocked GitHub upstream.

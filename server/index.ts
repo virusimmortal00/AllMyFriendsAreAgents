@@ -154,6 +154,10 @@ app.use(traceMiddleware(structuredLogger));
 await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
+const legacyProjectId = storageConfiguration.backend === "json"
+  ? await (await import("./storage/json-project-identity.js")).openJsonProjectIdentity(storageConfiguration.stateDirectory,
+    process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot)
+  : undefined;
 const store = await openRoomRepository(projectRoot, storageConfiguration);
 const durableServer = storageConfiguration.backend === "sqlite"
   ? await (store as RoomRepository & IdentityRepository).getDurableServer()
@@ -168,7 +172,7 @@ const assignmentWorktreesDirectory = await prepareAssignmentWorktreesDirectory(p
 const storageScope = typeof (store as Partial<IdentityRepository>).getStorageScope === "function"
   ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
   : undefined;
-const currentProjectId = storageScope?.projectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
+const currentProjectId = storageScope?.projectId || legacyProjectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -235,15 +239,25 @@ let contributionRecords: ContributionStore | undefined;
 let githubContributionStore: GitHubContributionStore | undefined;
 const projectRepositoryConnectionStore = await ProjectRepositoryConnectionStore.open(storageConfiguration.dataDirectory);
 const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRepositoryConnectionStore, () => ({}), async (projectId) => {
-  if (projectId !== currentProjectId) return [];
-  const [assignments, continuations] = await Promise.all([store.listAssignments(), store.listContinuations()]);
+  const roomIds = roomLifecycle ? roomLifecycle.projectRoomIds(projectId) : projectId === currentProjectId ? [store.roomId] : [];
+  if (!roomIds.length) throw new Error("Repository project scope is unavailable.");
+  const records = await Promise.all(roomIds.map(async (roomId) => {
+    const repository = roomId === store.roomId ? store : (await roomRuntimes!.acquire(roomId)).repository;
+    if (roomLifecycle && (await (repository as RoomRepository & IdentityRepository).getStorageScope(roomId))?.projectId !== projectId) {
+      throw new Error("Repository project scope changed.");
+    }
+    const [assignments, continuations] = await Promise.all([repository.listAssignments(), repository.listContinuations()]);
+    return { assignments, continuations };
+  }));
+  const assignments = records.flatMap((record) => record.assignments), continuations = records.flatMap((record) => record.continuations);
   const assignmentReferences = assignments.map((assignment) => ({ kind: "assignment" as const, id: assignment.assignmentId,
     terminal: ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycleStatus), reconciled: assignment.recovery.classification !== "missing" }));
   const jobReferences = continuations.map((job) => ({ kind: "job" as const, id: job.jobId,
     terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
   const contributionReferences = (contributionRecords?.list() || []).map((record) => ({ kind: (record.stage === "MERGED" || record.stage === "DEPLOYED" ? "deployment" : "contribution") as "deployment" | "contribution",
     id: record.contributionId, terminal: record.stage === "DEPLOYED" || record.stage === "BLOCKED", reconciled: record.blockedReason === null }));
-  const brokerReferences = (githubContributionStore?.records() || []).filter((record) => record.outcome === "PENDING")
+  const brokerReferences = [...new Map((githubContributionStore?.records() || []).map((record) => [record.idempotencyKey, record])).values()]
+    .filter((record) => record.outcome === "PENDING")
     .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
   return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
 }, (projectId, reference) => githubCredentials.available(projectId, reference));
@@ -291,9 +305,8 @@ async function refreshAgentCapabilities() {
   }
 }
 for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
-githubContributionStore = githubToken && githubRepository
-  ? await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"))
-  : undefined;
+// Durable repair blockers remain relevant even when publishing credentials are absent.
+githubContributionStore = await GitHubContributionStore.open(path.join(storageConfiguration.dataDirectory, "github-contribution-broker.json"));
 const githubClient = githubToken ? new GitHubRestClient(githubToken) : undefined;
 const githubContributionBroker = githubContributionStore && githubToken && githubRepository
   ? new GitHubContributionBroker(
@@ -301,7 +314,7 @@ const githubContributionBroker = githubContributionStore && githubToken && githu
     githubRepository, process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", undefined, verifyProjectRepositoryAuthority,
   )
   : undefined;
-contributionRecords = githubRepository ? await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json")) : undefined;
+contributionRecords = await ContributionStore.open(path.join(storageConfiguration.dataDirectory, "contributions.json"));
 const contributionExecutor = githubContributionBroker && githubClient && githubRepository
   ? new GovernedContributionExecutor(githubContributionBroker, githubClient, developerTeam, githubRepository,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_BASE_BRANCH?.trim() || "main", process.env.ALL_MY_FRIENDS_ARE_AGENTS_DEPLOYMENT_EXECUTOR_URL?.trim(),
@@ -1282,7 +1295,7 @@ if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: co
   defaultsForProject: (projectId) => projectId === currentProjectId
     ? { checkoutPath: projectRepositoryPath, worktreeRoot: assignmentWorktreesDirectory, policyRevision: 1 }
     : undefined,
-  projectExists: async (projectId) => Boolean(identityRepository ? await identityRepository.getDurableProject(projectId) : projectId === currentProjectId) });
+  projectExists: (projectId) => roomLifecycle ? roomLifecycle.projectRoomIds(projectId).length > 0 : projectId === currentProjectId });
 registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
   try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }
