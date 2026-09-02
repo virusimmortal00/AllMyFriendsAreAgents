@@ -51,6 +51,7 @@ import { registerInvestigationRoutes } from "./investigation-api.js";
 import { WRITER_BOUNDARY_ACTIVATION } from "./writer-confinement.js";
 import { GitHubRestClient } from "./github-client.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
+import { githubBrokerRepositoryReferences } from "./github-broker-repository-references.js";
 import { GitHubContributionBroker } from "./github-contribution-broker.js";
 import { registerGitHubContributionRoutes } from "./github-contribution-api.js";
 import { ContributionStore } from "./contribution-store.js";
@@ -257,9 +258,7 @@ const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRe
     terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
   const contributionReferences = (contributionRecords?.list() || []).map((record) =>
     contributionRepositoryReference(record, contributionRecords!.events(record.contributionId)));
-  const brokerReferences = [...new Map((githubContributionStore?.records() || []).map((record) => [record.idempotencyKey, record])).values()]
-    .filter((record) => record.outcome === "PENDING")
-    .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));
+  const brokerReferences = githubBrokerRepositoryReferences(githubContributionStore?.records() || []);
   return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
 }, (projectId, reference) => githubCredentials.available(projectId, reference));
 const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);

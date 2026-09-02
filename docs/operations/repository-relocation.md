@@ -64,6 +64,20 @@ attached to that project, including archived rooms. Legacy contribution/broker
 records without a project key conservatively block repair when unfinished or
 unreconciled. Room-facing reads retain their original room-scoped boundaries.
 
+Broker repair checks inspect the complete audit for each idempotency key.
+Interrupted `READ_ISSUE`, `READ_PULL_REQUEST`, and `READ_CHECKS` calls do not
+block relocation: they cannot leave an external mutation to reconcile. Their
+original audit records remain unchanged, and retries retain normal authorization.
+For mutation-capable operations, `PENDING` and `FAILED` records remain blocking
+until the same request has a recorded `SUCCEEDED` outcome with its original
+target, matching authorization claims, and result. A later authorization
+rejection cannot settle an earlier lost response.
+This applies to retryable and nonretryable failures, since either can follow a
+partial external mutation. Unknown operations, conflicting request identities,
+and incomplete success evidence fail closed. Reconcile mutations while their
+governed authority is still available, before closing assignments or moving the
+checkout; repair does not authorize external reconciliation or erase blockers.
+
 A `BLOCKED` contribution does not always require external reconciliation. Repair
 recognizes it as terminal local history when its verified audit proves it was
 rejected during review or local publication preflight, with no publication,
@@ -207,6 +221,7 @@ Provider-free regression checks:
 ```sh
 pnpm exec vitest run server/project-repository-repair.test.ts server/project-github-binding.test.ts server/project-github-binding-api.test.ts
 pnpm exec vitest run server/storage/json-project-identity.test.ts server/repository-repair-application.test.ts
+pnpm exec vitest run server/github-broker-repository-references.test.ts server/github-contribution-broker.test.ts
 ```
 
 These tests use disposable repositories, storage, and a mocked GitHub upstream.

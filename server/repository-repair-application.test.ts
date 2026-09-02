@@ -17,6 +17,7 @@ import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import type { AssignmentRecord } from "./assignment-record.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
+import type { GitHubBrokerAuditRecord, GitHubOperation } from "./github-contribution-record.js";
 import type { ContributionRecord } from "./contribution-record.js";
 import { ContributionStore } from "./contribution-store.js";
 
@@ -24,6 +25,14 @@ const exec = promisify(execFile);
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+
+function brokerAuditInput(operation: GitHubOperation): Omit<GitHubBrokerAuditRecord, "schemaVersion" | "sequence" | "brokerRevision" | "previousHash" | "recordHash"> {
+  return { timestamp: new Date().toISOString(), idempotencyKey: `fixture-${operation}`, requestHash: "a".repeat(64), actorId: "fixture",
+    operation, target: "example/repository", outcome: "PENDING", result: null, detail: "Fixture pending",
+    claims: { repository: "example/repository", roomId: "main", taskId: "fixture-task", taskRevision: 1, assignmentId: "fixture-assignment",
+      assignmentRevision: 1, memberId: "fixture", memberRevision: 1, fencingToken: 1, manifestRevision: 1, branch: "fixture-branch",
+      baseSha: "a".repeat(40), headSha: "b".repeat(40), policyRevision: 1 } };
+}
 
 async function stop(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -113,6 +122,63 @@ async function fixture(backend: "json" | "sqlite") {
 }
 
 describe("repository repair through application startup and HTTP routes", () => {
+  it.each(["json", "sqlite"] as const)("keeps uncertain broker mutations blocking %s repair until recorded success", async (backend) => {
+    const f = await fixture(backend); let app = await f.start();
+    const route = "/api/control/projects/current/repository";
+    expect((await app.call(route, "PUT", f.configure)).status).toBe(200);
+    await app.stop();
+    const brokerPath = path.join(f.data, "github-contribution-broker.json");
+    const broker = await GitHubContributionStore.open(brokerPath);
+    const record = brokerAuditInput("COMMENT");
+    await broker.append(record);
+    await broker.append({ ...record, outcome: "FAILED", detail: "retryable:Fixture response lost" });
+    await rename(f.checkout, f.relocated);
+    const body = { expectedBindingRevision: 1, expectedRepositoryRevision: 1, idempotencyKey: "uncertain-broker-repair", checkoutPath: f.relocated, worktreeRoot: f.assignments };
+    for (const deniedRetry of [false, true]) {
+      if (deniedRetry) await broker.append({ ...record, outcome: "REJECTED", claims: null, detail: "Assignment is no longer active" });
+      app = await f.start(f.relocated);
+      const rejected = await app.call(route + "/repair", "POST", body);
+      expect(rejected.status).toBe(422);
+      expect(await rejected.json()).toMatchObject({ reason: "Repository repair has 1 active or unreconciled durable reference(s)." });
+      expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repository: { revision: 1 }, repair: { state: "blocked" } });
+      await app.stop();
+    }
+    await broker.append({ ...record, outcome: "SUCCEEDED", result: { id: "fixture-comment", url: "https://github.com/example/repository/issues/1#issuecomment-1" } });
+    const auditBefore = await readFile(brokerPath, "utf8");
+    for (let restart = 0; restart < 2; restart++) {
+      app = await f.start(f.relocated);
+      const repaired = await app.call(route + "/repair", "POST", body);
+      expect(repaired.status).toBe(200);
+      expect(await repaired.json()).toMatchObject({ repository: { revision: 2 }, binding: { revision: 1 } });
+      await app.stop();
+      expect(await readFile(brokerPath, "utf8")).toBe(auditBefore);
+    }
+  }, 30_000);
+
+  it.each(["json", "sqlite"] as const)("permits %s relocation after interrupted read-only broker calls without dropping audit history", async (backend) => {
+    const f = await fixture(backend); let app = await f.start();
+    const route = "/api/control/projects/current/repository";
+    expect((await app.call(route, "PUT", f.configure)).status).toBe(200);
+    await app.stop();
+    const brokerPath = path.join(f.data, "github-contribution-broker.json");
+    const broker = await GitHubContributionStore.open(brokerPath);
+    for (const operation of ["READ_ISSUE", "READ_PULL_REQUEST", "READ_CHECKS"] as const) await broker.append(brokerAuditInput(operation));
+    const auditBefore = await readFile(brokerPath, "utf8");
+    await rename(f.checkout, f.relocated);
+    const body = { expectedBindingRevision: 1, expectedRepositoryRevision: 1, idempotencyKey: "interrupted-reads-repair", checkoutPath: f.relocated, worktreeRoot: f.assignments };
+    for (let restart = 0; restart < 2; restart++) {
+      app = await f.start(f.relocated);
+      expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repair: { state: "available" } });
+      const repaired = await app.call(route + "/repair", "POST", body);
+      expect(repaired.status).toBe(200);
+      const state = await repaired.json();
+      expect(state).toMatchObject({ repository: { revision: 2 }, binding: { revision: 1 } });
+      if (backend === "sqlite") expect((await app.readProject(state.binding.projectId)).status).toBe(202);
+      await app.stop();
+      expect(await readFile(brokerPath, "utf8")).toBe(auditBefore);
+    }
+  }, 30_000);
+
   it.each(["json", "sqlite"] as const)("repairs after a local contribution rejection across %s restarts without rewriting its audit", async (backend) => {
     const f = await fixture(backend);
     let app = await f.start();
@@ -181,15 +247,14 @@ describe("repository repair through application startup and HTTP routes", () => 
     expect((await app.call(route, "PUT", f.configure)).status).toBe(200);
     await app.stop();
     const broker = await GitHubContributionStore.open(path.join(f.data, "github-contribution-broker.json"));
-    const record = { timestamp: new Date().toISOString(), idempotencyKey: "fixture-publish", requestHash: "a".repeat(64), actorId: "fixture",
-      operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, target: "example/repository", claims: null, result: null, detail: "Fixture" };
+    const record = brokerAuditInput("PUBLISH_DRAFT_PULL_REQUEST");
     await broker.append({ ...record, outcome: "PENDING" });
     app = await f.start();
     const body = { expectedBindingRevision: 1, expectedRepositoryRevision: 1, idempotencyKey: "pending-broker-repair", checkoutPath: f.checkout, worktreeRoot: f.assignments };
     expect((await app.call(route + "/repair", "POST", body)).status).toBe(422);
     expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repository: { revision: 1 }, repair: { state: "blocked" } });
     await app.stop();
-    await broker.append({ ...record, outcome: "SUCCEEDED" });
+    await broker.append({ ...record, outcome: "SUCCEEDED", result: { id: "fixture-pull", url: "https://github.com/example/repository/pull/1", number: 1 } });
     app = await f.start();
     expect((await app.call(route + "/repair", "POST", body)).status).toBe(200);
   }, 30_000);

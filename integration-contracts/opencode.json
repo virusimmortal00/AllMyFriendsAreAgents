@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 8,
+    "revision": 9,
     "reviewedOn": "2026-09-02",
-    "result": "Re-inspected every mapped path at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01 for repository-repair contribution classification. Confirmed password-backed server authentication, listener lifecycle, health response, session create/prompt/abort calls, json_schema and AssistantMessage.structured shapes, CLI completed-text projection, model metadata output, inline permissions, and custom-tool contracts. The downstream diff retains validated structured output with bounded required-tool correction and a separate plugin version. The application change classifies locally terminated contributions using their durable audit history; OpenCode transport, permissions, output validation, and admitted versions are unchanged.",
+    "result": "Re-inspected the mapped source at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f for the broker repair-reference follow-up. The previously inspected complete downstream diff remains pinned through 6883ca5bd35a5494fb2759018373308911c79e01. Confirmed password-backed server authentication and lifecycle, SDK health/session/structured-response shapes, CLI completed-text projection, model metadata, inline permissions, and custom-tool contracts. The application now distinguishes read-only broker operations from unresolved mutations using the full durable audit; OpenCode transport, permissions, output validation, plugin version, and admitted runtime versions are unchanged.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
