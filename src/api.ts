@@ -8,6 +8,7 @@ import type { ContinuationDashboard, ContinuationInboxEntry, InvestigationDashbo
 import type { RoomAgentRoster, RoomAgentRosterEntry, RoomRosterAccess } from "../shared/roster";
 import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
+import type { OpenRouterModelPageResolution } from "../shared/openrouter-model-page";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -28,7 +29,7 @@ function roomPath(endpoint:"state"|"messages"|"events"){
 }
 export function roomEventsPath(){return roomPath("events");}
 
-const GLOBAL_API_ROOTS=new Set(["ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","rooms"]);
+const GLOBAL_API_ROOTS=new Set(["ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","rooms"]);
 export function scopedRequestPath(path:string){
   const roomId=routedRoomId();
   if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
@@ -152,6 +153,12 @@ export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
 export async function loadModelOfferDetails(providerId: string, modelId: string, signal?: AbortSignal): Promise<ModelOfferDetails> {
   const query = new URLSearchParams({ providerId, modelId });
   return request(`/api/model-details?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
+}
+
+export async function resolveOpenRouterModelPage(url: string, signal?: AbortSignal): Promise<OpenRouterModelPageResolution> {
+  const query = new URLSearchParams({ url });
+  return request(`/api/openrouter-model-page?${query}`, { method: "GET", cache: "no-store", signal })
     .then((response) => response.json());
 }
 

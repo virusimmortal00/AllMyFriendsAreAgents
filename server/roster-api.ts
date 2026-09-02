@@ -12,6 +12,7 @@ import { ModelDiscoveryService } from "./model-discovery.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, type ControlPlaneStore } from "./control-plane.js";
 import { normalizeCommandPermissions } from "../shared/command-domain.js";
+import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page.js";
 
 export function registerRosterRoutes(input: {
   app: express.Express;
@@ -99,6 +100,22 @@ export function registerRosterRoutes(input: {
       return response.set("Cache-Control", "private, max-age=120").json(details);
     } catch {
       return response.status(503).json({ error: "Live provider offers are temporarily unavailable." });
+    }
+  });
+
+  app.get("/api/openrouter-model-page", async (request, response) => {
+    if (!authorize(request, response, ["PROVIDER_VIEW", "MODEL_SELECT"])) return;
+    const pageUrl = typeof request.query.url === "string" ? request.query.url : "";
+    if (!pageUrl) return response.status(400).json({ error: "An OpenRouter model page URL is required." });
+    if (!parseOpenRouterModelPageUrl(pageUrl)) return response.status(400).json({ error: "Paste a full https://openrouter.ai/<maker>/<model> URL." });
+    if (!intelligence) return response.status(404).json({ error: "OpenRouter model-page lookup is not configured." });
+    const discovered = await discovery.discover();
+    try {
+      const resolution = await intelligence.resolveModelPage(pageUrl, discovered.models);
+      if (!resolution) return response.status(400).json({ error: "Paste a full https://openrouter.ai/<maker>/<model> URL." });
+      return response.set("Cache-Control", "no-store").json(resolution);
+    } catch {
+      return response.status(503).json({ error: "OpenRouter could not resolve that model page right now." });
     }
   });
 

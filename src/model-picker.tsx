@@ -1,8 +1,9 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { DiscoveredModel, ModelOfferDetails } from "../shared/model-discovery";
 import { modelKey } from "../shared/model-discovery";
+import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page";
 import { modelAuthorId, providerDisplayName } from "../shared/model-presentation";
-import { loadModelOfferDetails } from "./api";
+import { loadModelOfferDetails, resolveOpenRouterModelPage } from "./api";
 import { ProviderMark } from "./provider-mark";
 import { viewAttributes, type ViewDefinition } from "./view-registry";
 
@@ -90,6 +91,10 @@ export function RichModelPicker({
 }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
+  const modelPage = useMemo(() => parseOpenRouterModelPageUrl(query), [query]);
+  const [linkLookup, setLinkLookup] = useState<{ tone: "success" | "error"; text: string }>();
+  const [linkLookupLoading, setLinkLookupLoading] = useState(false);
+  const linkLookupVersion = useRef(0);
   const [filter, setFilter] = useState<ModelFilter>("all");
   const [sort, setSort] = useState<ModelSort>("recommended");
   const [visibleCount, setVisibleCount] = useState(30);
@@ -123,6 +128,33 @@ export function RichModelPicker({
 
   const selectedAuthorId = selected ? selected.authorId || modelAuthorId(selected.providerId, selected.modelId) : undefined;
   const sale = offerDetails?.offers.reduce((best, offer) => Math.max(best, offer.discount || 0), 0) || 0;
+  const findPastedModel = async () => {
+    if (!modelPage || linkLookupLoading) return;
+    const version = ++linkLookupVersion.current;
+    setLinkLookupLoading(true);
+    setLinkLookup(undefined);
+    try {
+      const resolution = await resolveOpenRouterModelPage(modelPage.pageUrl);
+      if (version !== linkLookupVersion.current) return;
+      const resolved = resolution.resolvedModelId ? models.find((model) => model.providerId === "openrouter" && model.modelId.replace(/^~/, "") === resolution.resolvedModelId) : undefined;
+      if (resolution.status === "available" && resolved) {
+        setFilter("all");
+        setQuery(resolved.modelId);
+        setLinkLookup({ tone: "success", text: resolution.revealedReplacement
+          ? `${resolution.requestedModelId} was revealed as ${resolved.displayName}. Showing the available model.`
+          : `Found ${resolved.displayName}.` });
+      } else {
+        setLinkLookup({ tone: "error", text: resolution.resolvedModelId
+          ? `${resolution.requestedModelId} now points to ${resolution.resolvedModelId}, but that model is not available in this OpenCode runtime.`
+          : `${resolution.requestedModelId} is not available in this OpenCode runtime.` });
+      }
+    } catch (error) {
+      if (version !== linkLookupVersion.current) return;
+      setLinkLookup({ tone: "error", text: error instanceof Error ? error.message : "That OpenRouter model page could not be resolved." });
+    } finally {
+      if (version === linkLookupVersion.current) setLinkLookupLoading(false);
+    }
+  };
 
   return (
     <section className="model-picker" aria-labelledby="model-picker-title" {...(view ? viewAttributes(view) : {})}>
@@ -131,7 +163,11 @@ export function RichModelPicker({
         <span className="model-picker__count">{models.length} available</span>
       </div>
       <div className="model-picker__toolbar">
-        <label className="model-picker__search"><span>Search models</span><input type="search" value={query} placeholder="Try Gemini, Claude, coding…" onChange={(event) => setQuery(event.target.value)} /></label>
+        <div className="model-picker__search-group">
+          <label className="model-picker__search"><span>Search models or paste OpenRouter link</span><input type="search" value={query} placeholder="Try Gemini, Claude, or openrouter.ai/…" onChange={(event) => { linkLookupVersion.current += 1; setLinkLookupLoading(false); setQuery(event.target.value); setLinkLookup(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && modelPage) { event.preventDefault(); void findPastedModel(); } }} /></label>
+          {modelPage ? <button type="button" className="classic-button model-picker__find-link" disabled={linkLookupLoading} onClick={() => void findPastedModel()}>{linkLookupLoading ? "Finding…" : "Find link"}</button> : null}
+          {linkLookup ? <span className={`model-picker__link-status model-picker__link-status--${linkLookup.tone}`} role="status">{linkLookup.text}</span> : null}
+        </div>
         <label className="model-picker__sort"><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as ModelSort)}><option value="recommended">Suggested</option><option value="popular">Popular</option><option value="price">Price</option><option value="newest">Newest</option><option value="name">Name</option></select></label>
         <label className="model-picker__filter-select"><span>Filter models</span><select value={filter} onChange={(event) => setFilter(event.target.value as ModelFilter)}>{FILTERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       </div>

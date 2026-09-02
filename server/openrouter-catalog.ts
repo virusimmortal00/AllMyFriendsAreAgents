@@ -1,8 +1,10 @@
 import type { DiscoveredModel, ModelDiscoveryResult, ModelOffer, ModelOfferDetails, ModelPricing } from "../shared/model-discovery.js";
+import { parseOpenRouterModelPageUrl, type OpenRouterModelPageResolution } from "../shared/openrouter-model-page.js";
 
 const CATALOG_TTL_MS = 15 * 60_000;
 const OFFER_TTL_MS = 5 * 60_000;
 const FETCH_TIMEOUT_MS = 2_500;
+const MODEL_PAGE_LIMIT_BYTES = 512 * 1024;
 
 type OpenRouterModel = {
   id?: unknown;
@@ -88,6 +90,20 @@ export class OpenRouterCatalogService {
     return promise;
   }
 
+  async resolveModelPage(value: string, availableModels: readonly DiscoveredModel[]): Promise<OpenRouterModelPageResolution | undefined> {
+    const reference = parseOpenRouterModelPageUrl(value);
+    if (!reference) return undefined;
+    const available = new Set(availableModels.flatMap((model) => model.providerId === "openrouter" ? [model.modelId.replace(/^~/, "")] : []));
+    if (available.has(reference.modelId)) {
+      return { status: "available", requestedModelId: reference.modelId, resolvedModelId: reference.modelId, revealedReplacement: false };
+    }
+    const replacement = this.revealedReplacement(await this.fetchModelPage(reference.pageUrl));
+    if (replacement && available.has(replacement)) {
+      return { status: "available", requestedModelId: reference.modelId, resolvedModelId: replacement, revealedReplacement: true };
+    }
+    return { status: "unavailable", requestedModelId: reference.modelId, ...(replacement ? { resolvedModelId: replacement } : {}), revealedReplacement: Boolean(replacement) };
+  }
+
   private models() {
     if (this.catalog && this.catalog.expiresAt > this.now()) return this.catalog.promise;
     const promise = this.fetchModels().catch((error) => {
@@ -108,6 +124,46 @@ export class OpenRouterCatalogService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async fetchModelPage(url: string) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await this.fetchImpl(url, { headers: { Accept: "text/html" }, redirect: "error", signal: controller.signal });
+      if (!response.ok) throw new Error(`OpenRouter model page returned ${response.status}.`);
+      if (!(response.headers.get("content-type") || "").toLocaleLowerCase().startsWith("text/html")) throw new Error("OpenRouter model page was not HTML.");
+      if (!response.body) return "";
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > MODEL_PAGE_LIMIT_BYTES) {
+          await reader.cancel();
+          throw new Error("OpenRouter model page exceeded the response limit.");
+        }
+        chunks.push(value);
+      }
+      const body = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+      return new TextDecoder().decode(body);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private revealedReplacement(html: string) {
+    const marker = html.toLocaleLowerCase().indexOf("revealed to be");
+    if (marker < 0) return undefined;
+    const nearby = html.slice(marker, marker + 4_000);
+    // Validate the complete URL so variant suffixes cannot become a different model ID.
+    const match = nearby.match(/https:\/\/(?:www\.)?openrouter\.ai\/[^\s"'<>\\]+/i);
+    if (!match) return undefined;
+    return parseOpenRouterModelPageUrl(match[0])?.modelId;
   }
 
   private async fetchModels() {
