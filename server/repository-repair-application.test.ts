@@ -17,6 +17,8 @@ import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import type { AssignmentRecord } from "./assignment-record.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
+import type { ContributionRecord } from "./contribution-record.js";
+import { ContributionStore } from "./contribution-store.js";
 
 const exec = promisify(execFile);
 const sourceRoot = path.resolve(import.meta.dirname, "..");
@@ -111,6 +113,67 @@ async function fixture(backend: "json" | "sqlite") {
 }
 
 describe("repository repair through application startup and HTTP routes", () => {
+  it.each(["json", "sqlite"] as const)("repairs after a local contribution rejection across %s restarts without rewriting its audit", async (backend) => {
+    const f = await fixture(backend);
+    let app = await f.start();
+    const route = "/api/control/projects/current/repository";
+    expect((await app.call(route, "PUT", f.configure)).status).toBe(200);
+    const body = { expectedBindingRevision: 1, expectedRepositoryRevision: 1, idempotencyKey: "contribution-baseline-repair", checkoutPath: f.checkout, worktreeRoot: f.assignments };
+    expect((await app.call(route + "/repair", "POST", body)).status).toBe(200);
+    expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repository: { revision: 2 }, repair: { state: "available" } });
+    await app.stop();
+
+    const records = await ContributionStore.open(path.join(f.data, "contributions.json"));
+    const now = new Date().toISOString();
+    const pending: ContributionRecord = {
+      schemaVersion: 1, contributionId: "fixture-contribution", handoffKey: "fixture-handoff", handoffRequestDigest: "a".repeat(64), revision: 1, stage: "REVIEW_PENDING",
+      source: { repository: "example/repository", taskId: "fixture-task", taskRevision: 1, improvementId: "fixture-improvement", improvementRevision: 1,
+        assignmentId: "fixture-assignment", assignmentRevision: 1, authorId: "fixture-author", authorRevision: 1, fencingToken: 1, manifestRevision: 1,
+        branch: "fixture-contribution", baseSha: "a".repeat(40), headSha: "b".repeat(40), manifestDigest: "c".repeat(64), brokerRevision: "fixture" },
+      title: "Fixture contribution", description: "Rejected before publication",
+      testEvidence: [{ command: "fixture-test", result: "PASSED", digest: "e".repeat(64), at: now }], unresolvedFindings: [], review: null,
+      pullRequest: null, merged: null, deployed: null, approvals: [], blockedReason: null, createdAt: now, updatedAt: now,
+    };
+    await records.transact({ record: pending, action: "HANDOFF_CREATED", actorId: "fixture-author", detail: "Fixture handoff" });
+    const blocked: ContributionRecord = { ...pending, revision: 2, stage: "BLOCKED", blockedReason: "Changes require revision",
+      review: { reviewerId: "fixture-reviewer", reviewerRevision: 1, decision: "REJECTED", summary: "Changes require revision", sourceEvidenceDigest: "d".repeat(64), at: now } };
+    await records.transact({ record: blocked, action: "REVIEW_REJECTED", actorId: "fixture-reviewer", detail: "Changes require revision" });
+    const auditBefore = await readFile(path.join(f.data, "contributions.json"), "utf8");
+    await rename(f.checkout, f.relocated);
+    const repair = { ...body, expectedRepositoryRevision: 2, idempotencyKey: "blocked-contribution-repair", checkoutPath: f.relocated };
+    for (let restart = 0; restart < 2; restart++) {
+      app = await f.start(f.relocated);
+      const inspection = await app.call(route + "/repair");
+      expect(inspection.status).toBe(200);
+      expect(await inspection.json()).toMatchObject({ repository: { revision: restart === 0 ? 2 : 3 }, repair: { state: "available" } });
+      const response = await app.call(route + "/repair", "POST", repair);
+      expect(response.status).toBe(200);
+      const repaired = await response.json();
+      expect(repaired).toMatchObject({ repository: { revision: 3 }, binding: { revision: 1 } });
+      if (backend === "sqlite") expect((await app.readProject(repaired.binding.projectId)).status).toBe(202);
+      await app.stop();
+      expect((await ContributionStore.open(path.join(f.data, "contributions.json"))).get(blocked.contributionId)).toEqual(blocked);
+      expect(await readFile(path.join(f.data, "contributions.json"), "utf8")).toBe(auditBefore);
+    }
+    // A separate failed publication must still block a new repair, despite the
+    // safely terminated contribution above and absent publishing credentials.
+    const failedHandoff = { ...pending, contributionId: "fixture-failed-contribution", handoffKey: "fixture-failed-handoff" };
+    await records.transact({ record: failedHandoff, action: "HANDOFF_CREATED", actorId: "fixture-author", detail: "Fixture handoff" });
+    const accepted: ContributionRecord = { ...failedHandoff, revision: 2, stage: "REVIEW_ACCEPTED", review: { ...blocked.review!, decision: "ACCEPTED" } };
+    await records.transact({ record: accepted, action: "REVIEW_ACCEPTED", actorId: "fixture-reviewer", detail: "Fixture accepted" });
+    const approved: ContributionRecord = { ...accepted, revision: 3, approvals: [{ approvalId: "fixture-approval", kind: "PUBLICATION", revision: 2,
+      grantedBy: "fixture-human", grantedAt: now, repository: pending.source.repository, branch: pending.source.branch, baseSha: pending.source.baseSha, headSha: pending.source.headSha,
+      pullNumber: null, mergedSha: null, environment: null, artifactDigest: null, consumedAt: null, externalResultId: null }] };
+    await records.transact({ record: approved, action: "PUBLICATION_APPROVED", actorId: "fixture-human", detail: "Fixture approval" });
+    await records.transact({ record: { ...approved, revision: 4, stage: "BLOCKED", blockedReason: "Fixture uncertain outcome" },
+      action: "PUBLICATION_FAILED", actorId: "fixture-human", outcome: "FAILED", detail: "Fixture uncertain outcome" });
+    app = await f.start(f.relocated);
+    expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repair: { state: "blocked" } });
+    const denied = await app.call(route + "/repair", "POST", { ...repair, expectedRepositoryRevision: 3, idempotencyKey: "uncertain-contribution-repair" });
+    expect(denied.status).toBe(422);
+    expect(await denied.json()).toMatchObject({ reason: "Repository repair has 1 active or unreconciled durable reference(s)." });
+  }, 30_000);
+
   it("retains pending broker blockers without publishing credentials and permits repair after reconciliation", async () => {
     const f = await fixture("json");
     let app = await f.start();

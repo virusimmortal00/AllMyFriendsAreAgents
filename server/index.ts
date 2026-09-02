@@ -54,6 +54,7 @@ import { GitHubContributionStore } from "./github-contribution-store.js";
 import { GitHubContributionBroker } from "./github-contribution-broker.js";
 import { registerGitHubContributionRoutes } from "./github-contribution-api.js";
 import { ContributionStore } from "./contribution-store.js";
+import { contributionRepositoryReference } from "./contribution-repository-reference.js";
 import { ContributionService } from "./contribution-service.js";
 import { GovernedContributionExecutor, UnavailableContributionExecutor } from "./contribution-executor.js";
 import { registerContributionRoutes } from "./contribution-api.js";
@@ -254,8 +255,8 @@ const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRe
     terminal: ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycleStatus), reconciled: assignment.recovery.classification !== "missing" }));
   const jobReferences = continuations.map((job) => ({ kind: "job" as const, id: job.jobId,
     terminal: ["COMPLETED", "FAILED", "CANCELLED", "ACKNOWLEDGED"].includes(job.status), reconciled: job.status !== "BLOCKED" }));
-  const contributionReferences = (contributionRecords?.list() || []).map((record) => ({ kind: (record.stage === "MERGED" || record.stage === "DEPLOYED" ? "deployment" : "contribution") as "deployment" | "contribution",
-    id: record.contributionId, terminal: record.stage === "DEPLOYED" || record.stage === "BLOCKED", reconciled: record.blockedReason === null }));
+  const contributionReferences = (contributionRecords?.list() || []).map((record) =>
+    contributionRepositoryReference(record, contributionRecords!.events(record.contributionId)));
   const brokerReferences = [...new Map((githubContributionStore?.records() || []).map((record) => [record.idempotencyKey, record])).values()]
     .filter((record) => record.outcome === "PENDING")
     .map((record) => ({ kind: "operation" as const, id: record.idempotencyKey, terminal: false, reconciled: false }));

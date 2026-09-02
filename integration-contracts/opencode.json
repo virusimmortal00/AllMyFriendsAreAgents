@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 7,
+    "revision": 8,
     "reviewedOn": "2026-09-02",
-    "result": "Re-inspected the structured-sdk-server paths at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01 for the repository-repair startup wiring change. Confirmed password-backed server authentication, listener lifecycle, health version response, session create/prompt/abort calls, json_schema request shape, and AssistantMessage.structured. The downstream diff retains schema validation and bounded correction: ordinary tools on the first step and required StructuredOutput-only recovery. The application change only resolves persisted JSON project identity and server-control project/room lookup; it does not change OpenCode startup, transport, permissions, output validation, or admitted versions. The previously audited CLI, discovery, custom-tool, and MCP surfaces remain unchanged.",
+    "result": "Re-inspected every mapped path at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01 for repository-repair contribution classification. Confirmed password-backed server authentication, listener lifecycle, health response, session create/prompt/abort calls, json_schema and AssistantMessage.structured shapes, CLI completed-text projection, model metadata output, inline permissions, and custom-tool contracts. The downstream diff retains validated structured output with bounded required-tool correction and a separate plugin version. The application change classifies locally terminated contributions using their durable audit history; OpenCode transport, permissions, output validation, and admitted versions are unchanged.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",

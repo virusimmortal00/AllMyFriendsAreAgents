@@ -64,6 +64,26 @@ attached to that project, including archived rooms. Legacy contribution/broker
 records without a project key conservatively block repair when unfinished or
 unreconciled. Room-facing reads retain their original room-scoped boundaries.
 
+A `BLOCKED` contribution does not always require external reconciliation. Repair
+recognizes it as terminal local history when its verified audit proves it was
+rejected during review or local publication preflight, with no publication,
+merge, deployment, publication approval, or failed external attempt. This includes
+an emergency-stop rejection before publication approval. The contribution remains
+`BLOCKED`: repair neither reopens it nor clears its reason, approvals, or audit.
+No record deletion, migration, or publishing credentials are needed for this
+classification, including after restart.
+
+Any publication approval or failed external attempt, even retryable, remains a
+blocker: an unused approval may have acted before a crash prevented saving its
+result, and a failed response does not prove the remote action did not happen.
+Published work and unknown or
+incomplete audit evidence also remain blocking. Resolve such external work
+through its governed lifecycle before moving; this repair operation does not
+provide a manual acknowledgement override for uncertain outcomes. In particular,
+a nonretryable external failure that leaves a contribution `BLOCKED` still needs
+a separately governed external-outcome reconciliation capability; do not erase
+its evidence or clear its reason to force repair.
+
 `GET /api/control/projects/:projectId/repository/repair` returns the current
 binding and repository revisions plus a fresh, non-mutating repair assessment:
 

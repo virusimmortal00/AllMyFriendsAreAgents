@@ -9,6 +9,7 @@ import type { AssignmentRecord } from "./assignment-record.js";
 import { CONTRIBUTION_POLICY_REVISION, type ContributionRecord } from "./contribution-record.js";
 import { ContributionService, type ContributionExternalExecutor, type CreateHandoffInput } from "./contribution-service.js";
 import { ContributionStore } from "./contribution-store.js";
+import { contributionRepositoryReference } from "./contribution-repository-reference.js";
 import { DeveloperTeamRegistry, hashToken, type AuthenticatedDeveloper } from "./developer-team.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 
@@ -46,7 +47,10 @@ async function fixture() {
   const input: CreateHandoffInput = { idempotencyKey: "handoff:test:0001", taskId: task.taskId, assignmentId: assignment.assignmentId, expectedTaskRevision: 4, expectedAssignmentRevision: 2, expectedFencingToken: 7,
     expectedManifestRevision: 3, expectedBaseSha: base, expectedHeadSha: head, expectedPolicyRevision: CONTRIBUTION_POLICY_REVISION, title: "Exact contribution", description: "Bounded reviewed work",
     testEvidence: [{ command: "pnpm test", result: "PASSED", digest: "d".repeat(64), at: now }], unresolvedFindings: [] };
-  return { root, service, records, external, author, reviewer, input, setTask: (next: Task) => { task = next; }, setAssignment: (next: AssignmentRecord) => { assignment = next; }, setImprovement: (next: typeof improvement) => { improvement = next; }, setEmergency: (value: boolean) => { emergency = value; } };
+  const restart = async () => new ContributionService(rooms, rooms, developers,
+    await ContributionStore.open(path.join(root, ".records", "contributions.json")), external, root,
+    "virusimmortal00/AllMyFriendsAreAgents", undefined, timestamp);
+  return { root, service, records, external, author, reviewer, input, restart, setTask: (next: Task) => { task = next; }, setAssignment: (next: AssignmentRecord) => { assignment = next; }, setImprovement: (next: typeof improvement) => { improvement = next; }, setEmergency: (value: boolean) => { emergency = value; } };
 }
 
 async function accepted(value: Awaited<ReturnType<typeof fixture>>) {
@@ -98,6 +102,110 @@ describe("reviewed exact-commit contribution lifecycle", () => {
   it("survives restart with immutable record and hash-chained audit history", async () => {
     const value = await fixture(); const record = await accepted(value); const reopened = await ContributionStore.open(path.join(value.root, ".records", "contributions.json"));
     expect(reopened.get(record.contributionId)).toEqual(record); const events = reopened.events(record.contributionId); expect(events[1]!.previousHash).toBe(events[0]!.eventHash);
+  });
+
+  it.each(["rejected review", "restored emergency stop", "nonretryable publication failure", "retryable publication failure before emergency stop"] as const)(
+    "classifies terminal repair references without reopening blocked work after %s", async (cause) => {
+      const value = await fixture();
+      let record = valueOf(await value.service.create(value.author, value.input));
+      if (cause === "rejected review") {
+        record = valueOf(await value.service.review(value.reviewer, record.contributionId, record.revision, "REJECTED", "Changes require revision"));
+      } else {
+        record = valueOf(await value.service.review(value.reviewer, record.contributionId, record.revision, "ACCEPTED", "Exact source accepted"));
+        if (cause === "restored emergency stop") {
+          value.setEmergency(true);
+          expect(await value.service.approve("human", record.contributionId, record.revision, "PUBLICATION", {}))
+            .toMatchObject({ kind: "rejected", reason: "Emergency stop is active" });
+          value.setEmergency(false);
+        } else {
+          record = valueOf(await value.service.approve("human", record.contributionId, record.revision, "PUBLICATION", {}));
+          const retryable = cause === "retryable publication failure before emergency stop";
+          value.external.fail = { message: "Publication failed", retryable };
+          expect(await value.service.execute("human", record.contributionId, record.revision, "PUBLICATION"))
+            .toEqual({ kind: "failed", reason: "Publication failed", retryable });
+          if (retryable) {
+            value.setEmergency(true);
+            expect(await value.service.execute("human", record.contributionId, record.revision, "PUBLICATION"))
+              .toEqual({ kind: "rejected", reason: "Emergency stop is active" });
+            value.setEmergency(false);
+          }
+        }
+        record = value.service.get(record.contributionId)!;
+      }
+      expect(record).toMatchObject({ stage: "BLOCKED", blockedReason: expect.any(String) });
+      const externalCalls = [...value.external.calls];
+      async function attemptRecovery(service: ContributionService) {
+        expect(valueOf(await service.create(value.author, value.input))).toEqual(record);
+        for (const decision of ["ACCEPTED", "REJECTED"] as const) {
+          expect(await service.review(value.reviewer, record.contributionId, record.revision, decision, "Reviewed again"))
+            .toEqual({ kind: "rejected", reason: "Contribution is not awaiting review" });
+        }
+        for (const kind of ["PUBLICATION", "MERGE", "DEPLOYMENT"] as const) {
+          expect(await service.approve("human", record.contributionId, record.revision, kind, { environment: "test", artifactDigest: "e".repeat(64) }))
+            .toEqual({ kind: "rejected", reason: `${kind} approval is out of order` });
+          expect(await service.execute("human", record.contributionId, record.revision, kind)).toMatchObject({ kind: "rejected" });
+        }
+        expect(service.get(record.contributionId)).toEqual(record);
+        expect(contributionRepositoryReference(record, service.audit(record.contributionId)))
+          .toMatchObject({ terminal: true, reconciled: cause === "rejected review" || cause === "restored emergency stop" });
+        expect(value.external.calls).toEqual(externalCalls);
+      }
+      await attemptRecovery(value.service);
+      await attemptRecovery(await value.restart());
+      const reopened = await ContributionStore.open(path.join(value.root, ".records", "contributions.json"));
+      expect(reopened.get(record.contributionId)).toEqual(record);
+    },
+  );
+
+  it("fails closed for absent, unknown, or mismatched blocked-contribution evidence", async () => {
+    const f = await fixture();
+    const created = valueOf(await f.service.create(f.author, f.input));
+    expect(contributionRepositoryReference(created, f.service.audit(created.contributionId)).terminal).toBe(false);
+    const blocked = valueOf(await f.service.review(f.reviewer, created.contributionId, created.revision, "REJECTED", "Needs revision"));
+    const audit = f.service.audit(blocked.contributionId);
+    expect(contributionRepositoryReference(blocked, audit).reconciled).toBe(true);
+    for (const history of [[], audit.slice(1), audit.slice(0, 1), audit.map((event) => ({ ...event, action: "UNKNOWN_TRANSITION" })),
+      audit.map((event) => ({ ...event, recordDigest: "0".repeat(64) })), audit.map((event) => ({ ...event, externalResultId: "unknown-result" }))]) {
+      expect(contributionRepositoryReference(blocked, history).reconciled).toBe(false);
+    }
+    expect(contributionRepositoryReference({ ...blocked, blockedReason: null }, audit).reconciled).toBe(false);
+  });
+
+  it.each(["MERGE", "DEPLOYMENT"] as const)("keeps published work blocking repair after a failed %s", async (kind) => {
+    const f = await fixture(); let record = await accepted(f);
+    record = valueOf(await f.service.approve("human", record.contributionId, record.revision, "PUBLICATION", {}));
+    record = valueOf(await f.service.execute("human", record.contributionId, record.revision, "PUBLICATION"));
+    if (kind === "DEPLOYMENT") {
+      record = valueOf(await f.service.approve("human", record.contributionId, record.revision, "MERGE", {}));
+      record = valueOf(await f.service.execute("human", record.contributionId, record.revision, "MERGE"));
+    }
+    record = valueOf(await f.service.approve("human", record.contributionId, record.revision, kind, { environment: "test", artifactDigest: "e".repeat(64) }));
+    f.external.fail = { message: "External failure", retryable: false };
+    expect(await f.service.execute("human", record.contributionId, record.revision, kind)).toMatchObject({ kind: "failed" });
+    const restarted = await f.restart();
+    record = restarted.get(record.contributionId)!;
+    expect(record.stage).toBe("BLOCKED");
+    expect(contributionRepositoryReference(record, restarted.audit(record.contributionId))).toMatchObject({ terminal: true, reconciled: false });
+  });
+
+  it("does not infer absence of external effects from an unused approval after a lost result", async () => {
+    const f = await fixture(); let record = await accepted(f);
+    record = valueOf(await f.service.approve("human", record.contributionId, record.revision, "PUBLICATION", {}));
+    // Reproduce the durable boundary after publication acts but the process
+    // crashes before ContributionService can record its result or a failure.
+    await f.external.publish();
+    const restarted = await f.restart();
+    f.setEmergency(true);
+    expect(await restarted.execute("human", record.contributionId, record.revision, "PUBLICATION"))
+      .toEqual({ kind: "rejected", reason: "Emergency stop is active" });
+    f.setEmergency(false);
+    record = restarted.get(record.contributionId)!;
+    expect(record).toMatchObject({ stage: "BLOCKED", pullRequest: null, approvals: [{ consumedAt: null, externalResultId: null }] });
+    expect(restarted.audit(record.contributionId).some((event) => event.action === "PUBLICATION_FAILED" || event.action === "PUBLICATION_EXECUTED")).toBe(false);
+    expect(contributionRepositoryReference(record, restarted.audit(record.contributionId))).toMatchObject({ terminal: true, reconciled: false });
+    const reopened = await f.restart();
+    expect(contributionRepositoryReference(reopened.get(record.contributionId)!, reopened.audit(record.contributionId)).reconciled).toBe(false);
+    expect(f.external.calls).toEqual(["publish"]);
   });
 });
 
