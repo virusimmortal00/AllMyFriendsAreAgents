@@ -1,4 +1,5 @@
 import type { GitHubIntegrationStore, ProjectGitHubBinding } from "./github-integration-store.js";
+import type { RepairProjectRepositoryInput, RepositoryRepairStatus } from "../shared/project-repository-repair.js";
 import {
   publicRepositoryConnectionStatus,
   verifyRepositoryCheckout,
@@ -45,7 +46,7 @@ export type ConfigureProjectGitHubRepositoryResult =
   | { readonly kind: "conflict"; readonly scope: "binding" | "repository"; readonly actualRevision: number }
   | { readonly kind: "rejected"; readonly reason: string };
 
-type RepositoryAuthority = Pick<ProjectRepositoryConnectionService, "inspect" | "inspectServer" | "connect">;
+type RepositoryAuthority = Pick<ProjectRepositoryConnectionService, "inspect" | "inspectServer" | "connect" | "repair" | "inspectRepair">;
 
 /** Joins catalog selection and local checkout authority without accepting a secret or opaque binding reference from a client. */
 export class ProjectGitHubBindingService {
@@ -60,6 +61,40 @@ export class ProjectGitHubBindingService {
     const binding = this.integrations.bindingForProject(projectId);
     if (!binding && !repository.configured) return { repository };
     return { ...(binding ? { binding: publicBinding(binding) } : {}), repository };
+  }
+
+  async inspectRepair(projectId: string): Promise<RepositoryRepairStatus> {
+    const authority = this.repositoryForProject(projectId);
+    const status = await authority.inspectRepair();
+    const binding = this.integrations.bindingForProject(projectId);
+    const repository = authority.inspectServer();
+    if (!binding || binding.state !== "ready" || binding.bindingId !== repository?.credentialReference
+      || binding.repository !== repository.remote.canonical || repository.projectId !== projectId) {
+      return { ...status, state: "unavailable", reason: "matching-ready-binding-required" };
+    }
+    return status;
+  }
+
+  async repair(input: RepairProjectRepositoryInput & { readonly projectId: string }): Promise<ConfigureProjectGitHubRepositoryResult> {
+    if (!SAFE_ID.test(input.projectId) || !Number.isSafeInteger(input.expectedBindingRevision) || input.expectedBindingRevision < 1) {
+      return { kind: "rejected", reason: "Project repository repair input is not canonical." };
+    }
+    const binding = this.integrations.bindingForProject(input.projectId);
+    if ((binding?.revision ?? 0) !== input.expectedBindingRevision) return { kind: "conflict", scope: "binding", actualRevision: binding?.revision ?? 0 };
+    const authority = this.repositoryForProject(input.projectId);
+    const validateBinding = () => {
+      const latest = this.integrations.bindingForProject(input.projectId);
+      const repository = authority.inspectServer();
+      if (!binding || !latest || latest.revision !== binding.revision || latest.state !== "ready"
+        || latest.bindingId !== binding.bindingId || latest.bindingId !== repository?.credentialReference
+        || latest.repository !== repository.remote.canonical || repository.projectId !== input.projectId) {
+        throw new Error("Repository repair requires an unchanged, matching ready GitHub binding.");
+      }
+    };
+    const result = await authority.repair({ expectedRevision: input.expectedRepositoryRevision,
+      idempotencyKey: input.idempotencyKey, checkoutPath: input.checkoutPath, worktreeRoot: input.worktreeRoot }, validateBinding);
+    if (result.kind !== "ok") return repositoryFailure(result);
+    return { kind: "ok", value: { binding: publicBinding(binding!), repository: publicRepositoryConnectionStatus(result.connection) } };
   }
 
   async configure(input: ConfigureProjectGitHubRepositoryInput): Promise<ConfigureProjectGitHubRepositoryResult> {

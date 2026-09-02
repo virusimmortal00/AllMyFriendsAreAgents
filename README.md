@@ -117,6 +117,12 @@ Room membership is not administrative identity: provider setup, credentials, int
 
 The owner can create durable `ADMIN` or `MEMBER` identities and delegate narrow capabilities. Privileged requests are checked server-side and mutating requests require a per-session CSRF token; grant changes immediately invalidate the affected privileged sessions. Control identities, password hashes, and redacted audit events live in a mode-`0600` control-plane file separate from public room presence and profiles.
 
+After moving persisted state to a deployment with different checkout paths, use
+the [repository relocation repair runbook](docs/operations/repository-relocation.md).
+Its authenticated, revision-checked control API preserves room history and the
+existing GitHub binding. Reconnecting an account alone does not replace saved
+repository paths.
+
 Owner transfer and recovery are intentionally unavailable through ordinary room APIs. A local operator can run `pnpm control:owner transfer-owner <existing-username>` or set `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_RECOVERY_PASSWORD` and run `pnpm control:owner recover-owner`; both require the server-side bootstrap proof, revoke affected sessions, and append a redacted audit event.
 
 Provider credentials remain owned by OpenCode or the operating-system keychain. The provider-setup UI returns the fixed **server-local handoff** command `opencode auth login`; it never proxies or scrapes an interactive terminal and never stores API keys or OAuth tokens. The browser may be on a different host than the server, so run the command on the server host, then use Refresh. Setup initiations and refresh outcomes are durably audited with bounded, redacted metadata.
