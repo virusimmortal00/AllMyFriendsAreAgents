@@ -169,6 +169,41 @@ describe("authoritative logging foundation", () => {
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 
+  it("retains semantic run, turn and attempt identity across every journal stream without coalescing distinct work", async () => {
+    const { destinations, logging } = await memoryFoundation({ maxIdentical: 1 });
+    const journal = await GenerationJournal.open("/projects/one", undefined, undefined, logging);
+    const work = [
+      { runId: "run-one", turnId: "turn-one", generationId: "generation-one", attemptOrdinal: 1 },
+      { runId: "run-one", turnId: "turn-one", generationId: "generation-one", attemptOrdinal: 2 },
+      { runId: "run-one", turnId: "turn-two", generationId: "generation-two", attemptOrdinal: 1 },
+      { runId: "run-two", turnId: "turn-three", generationId: "generation-three", attemptOrdinal: 1 },
+    ];
+    for (const identity of work) await withLogContext({
+      traceId: "c".repeat(32), jobId: "job-one", requestId: "request-one",
+      runId: identity.runId, turnId: identity.turnId, attemptOrdinal: 1,
+    }, () => journal.append({
+      type: "generation.completed", agent: "codex-sol", ...identity,
+      sessionId: "same-provider-session", rawResponse: "same complete output", prompt: "same useful prompt",
+      cliStdout: JSON.stringify({ type: "tool_use", sessionID: "same-provider-session", part: { type: "tool", tool: "read", state: { output: "same useful evidence" } } }),
+      cliStderr: "same diagnostic", providerUsage: { totalTokens: 12 }, toolOutcomes: [{ status: "completed" }],
+    }));
+    await logging.flush();
+    for (const [stream, event] of [
+      ["generations", "generation.completed"], ["openrouter-provider", "provider.exchange.observed"],
+      ["opencode-harness", "opencode.stdout"], ["opencode-harness", "opencode.stderr"],
+      ["opencode-harness", "opencode.tool.outcome"], ["opencode-harness", "opencode.tool.outcomes"],
+    ] as const) {
+      const found = records(destinations.get(stream)!).filter((record) => record.event === event);
+      expect(found, event).toHaveLength(4);
+      found.forEach((record, index) => expect(record).toMatchObject({
+        ...work[index], jobId: "job-one", traceId: "c".repeat(32), requestId: "request-one", correlationId: work[index].generationId,
+      }));
+      expect(logging.metrics()[stream].coalesced).toBe(0);
+    }
+    expect(records(destinations.get("generations")!).every((entry) => entry.rawResponse === "same complete output" && entry.prompt === "same useful prompt")).toBe(true);
+    await logging.close();
+  });
+
   it("exposes bounded-buffer drops, coalescing, and sink failures without recursive payload logs", async () => {
     let now = 1_000;
     const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 1024, maxIdentical: 1, identicalWindowMs: 100, now: () => now }, ["openrouter-provider"]);

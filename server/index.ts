@@ -5,20 +5,26 @@ import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
+import type { ConversationJobSource } from "../shared/conversation-observability.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
 import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
-import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn } from "./conversation.js";
+import { conversationRandom, latestHumanBroadcastPolicy, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type BroadcastPolicy, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { interpretStructuredRoomTurn } from "./structured-room-turn.js";
 import { CoordinatorHeartbeat, HttpDeveloperTeamExecutor, SqliteCoordinatorStateStore, coordinatorEnabled } from "./coordinator-heartbeat.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { openDeveloperTeamRegistry, type AuthenticatedDeveloper } from "./developer-team.js";
 import { GenerationJournal } from "./generation-journal.js";
+import { withGenerationDelivery } from "./generation-delivery.js";
+import { withConversationRun, withConversationTurn } from "./conversation-context.js";
+import { observeConversationRun } from "./conversation-run-observer.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
+import { enqueueObservedConversation } from "./conversation-observability.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
@@ -604,12 +610,15 @@ function developerRoomDescriptor() {
   };
 }
 
-function enqueueDeveloperConversation() {
+function enqueueConversation(key: string, source: ConversationJobSource, triggerMessageId: string | null, run: (state: ReturnType<typeof roomSnapshot>) => Promise<void>) {
+  return enqueueObservedConversation({ queue: jobs, logging: loggingFoundation, snapshot: roomSnapshot, activity: roomActivity, runJob }, { key, source, triggerMessageId }, run);
+}
+
+function enqueueDeveloperConversation(triggerMessageId: string) {
   broadcast();
-  jobs.enqueue("developer-message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
+  enqueueConversation("developer-message-conversation", "developer-message", triggerMessageId, async (conversationState) => {
     await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
+  });
 }
 
 async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper, text: string, idempotency: { key: string; requestDigest: string }) {
@@ -633,7 +642,7 @@ async function deliverMcpDeveloperMessage(authenticated: AuthenticatedDeveloper,
     name: authenticated.member.displayName,
     clientMessageId,
   });
-  enqueueDeveloperConversation();
+  enqueueDeveloperConversation(message.id);
   return { kind: "ok" as const, value: { accepted: true, message } };
 }
 
@@ -643,7 +652,7 @@ async function deliverDeveloperMessage(authenticated: AuthenticatedDeveloper, te
     id: authenticated.member.memberId,
     name: authenticated.member.displayName,
   });
-  enqueueDeveloperConversation();
+  enqueueDeveloperConversation(message.id);
   return { accepted: true, message, room: developerRoomView() };
 }
 
@@ -655,22 +664,22 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
   return response.status(403).json(result);
 }
 
-async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, preflight, deliveryId }: ConversationTurn) {
+async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn): Promise<TurnResult> {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
   const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
   const agentStillEnabled = () => !activeAgent || Boolean(rosterEpoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(store.snapshot().roster), rosterEpoch));
   if (!agentStillEnabled()) {
-    return { cancelled: true };
+    return { cancelled: true, outcomeReason: "agent-disabled" };
   }
-  if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true };
+  if (activeAgent && !agentHealth.canAttempt(activeAgent)) return { failed: true, outcomeReason: "agent-health-unavailable" };
   const sharedReservation = activeAgent ? reserveCanonicalGeneration(activeAgent) : undefined;
-  if (activeAgent && !sharedReservation) return { failed: true };
+  if (activeAgent && !sharedReservation) return { failed: true, outcomeReason: "generation-capacity-unavailable" };
   const providerAttempt = providerId ? providerHealth.claimAttempt(providerId) : "regular";
   if (providerAttempt === "blocked") {
     sharedReservation?.release();
-    return { failed: true };
+    return { failed: true, outcomeReason: "provider-health-unavailable" };
   }
   const before = roomSnapshot();
   const activityRevision = roomActivity.current();
@@ -705,17 +714,17 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
           diagnosticsTool: diagnosticsToolContext(activeAgent),
         }) : undefined,
       },
-      sharedReservation ? { onGenerationStart: async (generationId) => sharedReservation.activate(generationId) } : undefined,
+      { ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}), evidence },
     );
   } catch (error) {
     if (!agentStillEnabled()) {
       if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
       await store.clearSession(agent);
-      return { cancelled: true };
+      return { cancelled: true, outcomeReason: "agent-disabled" };
     }
     if (isAgentGenerationCancelledError(error)) {
       if (providerId && providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
-      return { cancelled: true };
+      return { cancelled: true, outcomeReason: "cancelled" };
     }
     if (!activeAgent) throw error;
     const providerFailure = providerId ? classifyProviderScopedFailure(error, providerId) : undefined;
@@ -731,7 +740,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     }
     void structuredLogger.log("error", "agent.command.failed", { agentId: agent, error });
     broadcast();
-    return { failed: true };
+    return { failed: true, outcomeReason: providerFailure ? "provider-failed" : evidence?.attemptOrdinal ? "generation-failed" : "preparation-failed" };
   } finally {
     sharedReservation?.release();
     generationCancellation.dispose();
@@ -740,200 +749,177 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
     if (providerRecovered) broadcast();
-    return { cancelled: true };
+    return { cancelled: true, outcomeReason: "agent-disabled" };
   }
   const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
   if (providerRecovered || participantRecovered) scheduleHealthRefresh();
   if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = before.settings.participantStyles[agent];
-  const parsed = parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents());
+  const parsed = result.structuredTurn
+    ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource)
+    : parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
+  if (evidence) evidence.interpretation = parsed.diagnostics;
+  const diagnosticText = result.structuredTurn ? JSON.stringify(result.structuredTurn) : result.text;
+  const visibleCharacters = parsed.visibleMessages.reduce((total, message) => total + message.length, 0);
   await generationJournal.append({
     type: "generation.interpreted",
     generationId: result.generationId,
+    attemptOrdinal: result.attemptOrdinal,
     agent,
+    interpretation: parsed.diagnostics,
     visibleMessages: parsed.visibleMessages,
     visibleMessageCount: parsed.visibleMessages.length,
-    visibleCharacters: parsed.visibleMessages.reduce((total, message) => total + message.length, 0),
-    removedOrProtocolCharacters: Math.max(0, result.text.length - parsed.visibleMessages.reduce((total, message) => total + message.length, 0)),
+    visibleCharacters,
+    removedOrProtocolCharacters: result.structuredTurn ? 0 : Math.max(0, result.text.length - visibleCharacters),
     noResponse: parsed.visibleMessages.length === 0,
     mentionedAgents: parsed.mentionedAgents,
     styleUpdate: parsed.styleUpdate,
   });
-  if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:result.text,metadata:{source:"conversation"} });
-
-  if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-    if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:result.text,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
-    await store.clearSession(agent);
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "room activity changed before delivery",
-      deliveredMessageCount: 0,
+  let firstDelayMs: number | undefined;
+  return withGenerationDelivery(parsed.visibleMessages.length, (summary) => {
+    if (evidence) evidence.delivery = summary;
+    return generationJournal.append({
+      type: "generation.delivery", generationId: result.generationId, agent,
+      attemptOrdinal: result.attemptOrdinal,
+      ...summary,
+      deliveredMessageCount: summary.confirmedDeliveredBurstCount,
       totalVisibleMessages: parsed.visibleMessages.length,
+      firstDelayMs, generationDurationMs: result.durationMs,
     });
-    return { cancelled: true };
-  }
+  }, async (delivery) => {
+    if (activeAgent && parsed.visibleMessages.length === 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:no-response`,prompt:instruction,reason:"no-response-needed",text:diagnosticText,metadata:{source:"conversation"} });
 
-  if (parsed.investigationRequest) {
-    const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
-    const evidenceRefs = [
-      ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
-      ...parsed.investigationRequest.evidenceRefs,
-    ];
-    await investigationService.request({
-      owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
-      signal: "AGENT_DECISION", evidenceRefs,
-      contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
+    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+      if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:diagnosticText,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
+      await store.clearSession(agent);
+      delivery.finish("cancelled", "activity-changed-before-delivery");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+
+    if (parsed.investigationRequest) {
+      const recentMessages = before.messages.filter((message) => !message.recipientHumanId).slice(-8);
+      const evidenceRefs = [
+        ...recentMessages.slice(-3).map((message) => ({ kind: "room_message" as const, ref: message.id, label: `${message.speaker} at ${message.timestamp}` })),
+        ...parsed.investigationRequest.evidenceRefs,
+      ];
+      await investigationService.request({
+        owner: agent, objective: parsed.investigationRequest.objective, trigger: parsed.investigationRequest.trigger,
+        signal: "AGENT_DECISION", evidenceRefs,
+        contextSnapshot: JSON.stringify({ topic: before.settings.topic, messages: recentMessages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })), agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }),
+      });
+    }
+
+    const burstId = randomUUID();
+    const firstMessage = parsed.visibleMessages[0];
+    const generatedElapsed = Date.now() - pacingStartedAt;
+    const firstDelay = firstMessage
+      ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
+      : 0;
+    let burstStarted = false;
+    firstDelayMs = firstDelay;
+    const completed = await deliverBurst({
+      messages: parsed.visibleMessages,
+      activity: roomActivity,
+      revision: activityRevision,
+      firstDelayMs: firstDelay,
+      cancel: () => store.clearSession(agent),
+      deliver: async (visibleMessage, sequence) => {
+        if (!agentStillEnabled()) return false;
+        if (!burstStarted) {
+          await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
+          if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+          if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+          if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+          burstStarted = true;
+        }
+        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
+        await delivery.write(sequence, () => deliveryId
+          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence})
+          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence}));
+        broadcast();
+      },
     });
-  }
-
-  const burstId = randomUUID();
-  const firstMessage = parsed.visibleMessages[0];
-  const generatedElapsed = Date.now() - pacingStartedAt;
-  const firstDelay = firstMessage
-    ? Math.min(600, responseDelayMs(before.messages, agent, firstMessage, generatedElapsed))
-    : 0;
-  let burstStarted = false;
-  let deliveredMessageCount = 0;
-  const completed = await deliverBurst({
-    messages: parsed.visibleMessages,
-    activity: roomActivity,
-    revision: activityRevision,
-    firstDelayMs: firstDelay,
-    cancel: () => store.clearSession(agent),
-    deliver: async (visibleMessage, sequence) => {
-      if (!agentStillEnabled()) return false;
-      if (!burstStarted) {
-        await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
-        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-        if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-        if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-        burstStarted = true;
+    if (!completed) {
+      delivery.finish("cancelled", "burst-interrupted");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+    if (!roomActivity.isCurrent(activityRevision)) {
+      delivery.finish("cancelled", "activity-changed-after-delivery");
+      return { cancelled: true, interpretation: parsed.diagnostics };
+    }
+    if (!burstStarted) {
+      if (!agentStillEnabled()) {
+        delivery.finish("cancelled", "agent-disabled");
+        return { cancelled: true, interpretation: parsed.diagnostics };
       }
-      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
-      if(deliveryId)await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence});
-      else await store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence});
-      deliveredMessageCount += 1;
+      await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
+      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+        await store.clearSession(agent);
+        delivery.finish("cancelled", "activity-changed-during-session-save");
+        return { cancelled: true, interpretation: parsed.diagnostics };
+      }
+      if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
+      if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
+        await store.clearSession(agent);
+        delivery.finish("cancelled", "activity-changed-during-style-save");
+        return { cancelled: true, interpretation: parsed.diagnostics };
+      }
       broadcast();
-    },
-  });
-  if (!completed) {
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "new room activity interrupted a pending burst",
-      deliveredMessageCount,
-      totalVisibleMessages: parsed.visibleMessages.length,
-      firstDelayMs: firstDelay,
-      generationDurationMs: result.durationMs,
-    });
-    return { cancelled: true };
-  }
-  if (!roomActivity.isCurrent(activityRevision)) {
-    await generationJournal.append({
-      type: "generation.delivery",
-      generationId: result.generationId,
-      agent,
-      outcome: "cancelled",
-      reason: "room activity changed after burst delivery",
-      deliveredMessageCount,
-      totalVisibleMessages: parsed.visibleMessages.length,
-      firstDelayMs: firstDelay,
-      generationDurationMs: result.durationMs,
-    });
-    return { cancelled: true };
-  }
-  if (!burstStarted) {
-    if (!agentStillEnabled()) return { cancelled: true };
-    await store.setSession(agent, result.sessionId, permission, result.codeEpoch);
-    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-      await store.clearSession(agent);
-      await generationJournal.append({
-        type: "generation.delivery",
-        generationId: result.generationId,
-        agent,
-        outcome: "cancelled",
-        reason: "room activity changed while saving a silent response",
-        deliveredMessageCount,
-        totalVisibleMessages: parsed.visibleMessages.length,
-      });
-      return { cancelled: true };
     }
-    if (parsed.styleUpdate) await store.updateParticipantStyle(agent, parsed.styleUpdate);
-    if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
-      await store.clearSession(agent);
-      await generationJournal.append({
-        type: "generation.delivery",
-        generationId: result.generationId,
-        agent,
-        outcome: "cancelled",
-        reason: "room activity changed while saving agent preferences",
-        deliveredMessageCount,
-        totalVisibleMessages: parsed.visibleMessages.length,
-      });
-      return { cancelled: true };
+    delivery.finish(parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
+      parsed.visibleMessages.length === 0 ? "no-visible-output" : "burst-delivered");
+    if (!parsed.dispositionMalformed && activeAgent && rosterEpoch) {
+      await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
     }
-    broadcast();
-  }
-  await generationJournal.append({
-    type: "generation.delivery",
-    generationId: result.generationId,
-    agent,
-    outcome: parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
-    deliveredMessageCount,
-    totalVisibleMessages: parsed.visibleMessages.length,
-    firstDelayMs: firstDelay,
-    generationDurationMs: result.durationMs,
+    if (!parsed.dispositionMalformed && preflight) {
+      const existing = new Set(before.messages
+        .filter(({ kind }) => kind === undefined || kind === "chat" || kind === "review")
+        .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+      const spoke = parsed.visibleMessages.length > 0;
+      const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
+      await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
+      await refreshPreflightEvidence();
+    }
+    return {
+      interpretation: parsed.diagnostics,
+      replyCandidates: parsed.replyCandidates,
+      mentionedAgents: parsed.mentionedAgents,
+      visibleMessageCount: parsed.visibleMessageCount,
+      continuationWorthy: parsed.continuationWorthy,
+      conversationState: parsed.conversationState,
+    };
   });
-  if (!parsed.dispositionMalformed && activeAgent && rosterEpoch) {
-    await advanceAgentContextCursor(store, activeAgent, rosterEpoch, result);
-  }
-  if (!parsed.dispositionMalformed && preflight) {
-    const existing = new Set(before.messages
-      .filter(({ kind }) => kind === undefined || kind === "chat" || kind === "review")
-      .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
-    const spoke = parsed.visibleMessages.length > 0;
-    const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
-    await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
-    await refreshPreflightEvidence();
-  }
-  return {
-    replyCandidates: parsed.replyCandidates,
-    mentionedAgents: parsed.mentionedAgents,
-    visibleMessageCount: parsed.visibleMessageCount,
-    continuationWorthy: parsed.continuationWorthy,
-    conversationState: parsed.conversationState,
-  };
 }
 
 async function performTurn(turn: ConversationTurn) {
-  try {
-    return await performTurnUnchecked(turn);
-  } catch (error) {
-    roomActivity.interrupt();
-    throw error;
-  }
+  return withConversationTurn(turn.agent, async () => {
+    try {
+      return await performTurnUnchecked(turn);
+    } catch (error) {
+      roomActivity.interrupt();
+      throw error;
+    }
+  }, turn.observation?.turnId);
 }
 
 async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
-  const snapshot = store.snapshot();
-  const energy = snapshot.settings.conversationEnergy;
-  await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
-  broadcast();
-  if (staged) {
-    await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
-      ...broadcastPolicy,
-      concurrencyLimit: Math.max(1, concurrencyLimit),
-    });
-    return;
-  }
-  const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-  await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit));
+  return withConversationRun(() => observeConversationRun(loggingFoundation, staged ? "energy" : "legacy", async (observer) => {
+    const snapshot = store.snapshot();
+    const energy = snapshot.settings.conversationEnergy;
+    await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
+    broadcast();
+    if (staged) {
+      await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
+        ...broadcastPolicy,
+        concurrencyLimit: Math.max(1, concurrencyLimit),
+        observer,
+      });
+      return;
+    }
+    const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
+    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit), undefined, observer);
+  }));
 }
 
 async function runJob(job: () => Promise<void>, propagateFailure = false) {
@@ -984,8 +970,11 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
     const participantRecovered = await agentHealth.recordSuccess(agent);
     if (providerRecovered || participantRecovered) scheduleHealthRefresh();
     if (providerRecovered || participantRecovered) broadcast();
-    const parsed = parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
-    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters:parsed.visibleMessages.reduce((total,message)=>total+message.length,0),removedOrProtocolCharacters:Math.max(0,result.text.length-parsed.visibleMessages.reduce((total,message)=>total+message.length,0)),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
+    const parsed = result.structuredTurn
+      ? interpretStructuredRoomTurn(agent, result.structuredTurn, before.settings.participantStyles[agent], 3, currentEnabledAgents())
+      : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
+    const visibleCharacters = parsed.visibleMessages.reduce((total,message)=>total+message.length,0);
+    await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters,removedOrProtocolCharacters:result.structuredTurn?0:Math.max(0,result.text.length-visibleCharacters),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
     return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) {
@@ -1421,10 +1410,9 @@ app.post("/api/messages", async (request, response) => {
   }
   broadcast();
 
-  jobs.enqueue("message-conversation", () => runJob(async () => {
-    const conversationState = roomSnapshot();
+  enqueueConversation("message-conversation", "room-message", accepted.message.id, async (conversationState) => {
     await performConversation(await preflightTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
-  }));
+  });
   return response.status(202).json(messageMutationAcknowledgement(accepted, continuation));
 });
 
@@ -1544,7 +1532,7 @@ app.post("/api/actions", async (request, response) => {
   }
 
   const agents: AgentId[] = target === "all" || target === "both" ? currentEnabledAgents() : [target];
-  jobs.enqueue(`action:${action}:${target}`, () => runJob(async () => {
+  enqueueConversation(`action:${action}:${target}`, "room-action", null, async () => {
     const turns = agents.map((agent) => ({
       agent,
       instruction: action === "continue"
@@ -1557,7 +1545,7 @@ app.post("/api/actions", async (request, response) => {
       includeDiff: action === "review",
     }));
     await performConversation(turns, action === "continue");
-  }));
+  });
   return response.status(202).json({ accepted: true });
 });
 

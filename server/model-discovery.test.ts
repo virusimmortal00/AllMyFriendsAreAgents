@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { selectedModelAvailability } from "../shared/model-discovery.js";
-import { DISCOVERY_OUTPUT_LIMIT, MAXIMUM_AUDITED_OPENCODE_VERSION, MINIMUM_OPENCODE_VERSION, ModelDiscoveryService, parseOpenCodeModelCatalog, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
+import { APPROVED_DOWNSTREAM_OPENCODE_VERSION, DISCOVERY_OUTPUT_LIMIT, MAXIMUM_AUDITED_OPENCODE_VERSION, MINIMUM_OPENCODE_VERSION, ModelDiscoveryService, parseOpenCodeModelCatalog, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
 
 describe("OpenCode model discovery", () => {
   it("preserves provider/model and variant identities", () => {
@@ -52,7 +52,7 @@ describe("OpenCode model discovery", () => {
     const execute = vi.fn<DiscoveryExecutor>(async (_command, args) => ({ stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "provider/model variants:fast\n", stderr: "" }));
     await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({
       status: "available",
-      runtime: { version: MINIMUM_OPENCODE_VERSION, compatible: true, protocol: "opencode-cli-jsonl-v1", capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] },
+      runtime: { version: MINIMUM_OPENCODE_VERSION, compatible: true, distribution: "upstream", protocol: "opencode-cli-jsonl-v1", capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] },
       models: [expect.objectContaining({ providerId: "provider", modelId: "model" })],
     });
     expect(execute).toHaveBeenNthCalledWith(1, expect.any(String), ["--version"], undefined);
@@ -60,11 +60,15 @@ describe("OpenCode model discovery", () => {
   });
 
   it("fails closed before catalog discovery for unsupported or malformed versions", async () => {
-    expect(parseOpenCodeRuntimeVersion("1.18.17\n")).toMatchObject({ compatible: false });
-    expect(parseOpenCodeRuntimeVersion("1.18.18-rc.1\n")).toMatchObject({ version: "1.18.18-rc.1", compatible: false });
-    expect(parseOpenCodeRuntimeVersion("1.18.18\n")).toMatchObject({ compatible: true });
-    expect(parseOpenCodeRuntimeVersion("1.18.18+build.1\n")).toMatchObject({ version: "1.18.18+build.1", compatible: true });
-    expect(parseOpenCodeRuntimeVersion(`${MAXIMUM_AUDITED_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true });
+    expect(parseOpenCodeRuntimeVersion("1.18.17\n")).toMatchObject({ compatible: false, distribution: "unrecognized" });
+    expect(parseOpenCodeRuntimeVersion("1.18.18-rc.1\n")).toMatchObject({ version: "1.18.18-rc.1", compatible: false, distribution: "unrecognized" });
+    expect(parseOpenCodeRuntimeVersion("1.18.18\n")).toMatchObject({ compatible: true, distribution: "upstream" });
+    expect(parseOpenCodeRuntimeVersion("1.18.18+build.1\n")).toMatchObject({ version: "1.18.18+build.1", compatible: false, distribution: "unrecognized" });
+    expect(parseOpenCodeRuntimeVersion(`${MAXIMUM_AUDITED_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true, distribution: "upstream" });
+    expect(parseOpenCodeRuntimeVersion(`${APPROVED_DOWNSTREAM_OPENCODE_VERSION}\n`)).toMatchObject({ compatible: true, distribution: "downstream" });
+    expect(parseOpenCodeRuntimeVersion("1.18.25-amfaa.1\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("1.18.25-local.1\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
+    expect(parseOpenCodeRuntimeVersion("01.18.25-amfaa.2\n")).toMatchObject({ compatible: false, distribution: "unrecognized", capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.18.26-rc.1\n")).toMatchObject({ compatible: false, capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.18.26\n")).toMatchObject({ compatible: false, capabilities: [] });
     expect(parseOpenCodeRuntimeVersion("1.99.0\n")).toMatchObject({ compatible: false, capabilities: [] });
@@ -74,12 +78,12 @@ describe("OpenCode model discovery", () => {
     await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({ status: "runtime_incompatible", runtime: { version: "1.18.17", compatible: false }, models: [] });
     expect(execute).toHaveBeenCalledTimes(1);
     const future = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.26\n", stderr: "" }));
-    await expect(new ModelDiscoveryService(future).discover()).resolves.toMatchObject({ status: "runtime_incompatible", diagnostic: expect.stringContaining("source-audited range"), models: [] });
+    await expect(new ModelDiscoveryService(future).discover()).resolves.toMatchObject({ status: "runtime_incompatible", diagnostic: expect.stringContaining("not an approved runtime identity"), models: [] });
     expect(future).toHaveBeenCalledTimes(1);
     const malformed = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "unexpected\n", stderr: "" }));
     await expect(new ModelDiscoveryService(malformed).discover()).resolves.toMatchObject({
       status: "runtime_incompatible",
-      diagnostic: `OpenCode returned an unrecognized version; install a release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}.`,
+      diagnostic: `OpenCode returned an unrecognized version; install an exact release from ${MINIMUM_OPENCODE_VERSION} through ${MAXIMUM_AUDITED_OPENCODE_VERSION}, or the approved downstream build ${APPROVED_DOWNSTREAM_OPENCODE_VERSION}.`,
       models: [],
     });
     expect(malformed).toHaveBeenCalledTimes(1);

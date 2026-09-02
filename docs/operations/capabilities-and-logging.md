@@ -86,6 +86,157 @@ Serialization is centralized, recursive, and evidence-preserving. Authorized ass
 
 The structured facade emits startup/shutdown and HTTP boundary events; provider generation and actual room-command lease/tool decisions; assignment reconciliation, lease, manifest, and tool-policy decisions; GitHub store/adapter and read-cache lifecycle; and storage/migration checks. Before each OpenCode subprocess starts, `agent.tool-policy.environment` records only `ready`, `missing`, or `not-configured` for room command, history, and diagnostics. A `scoped-tool-environment-missing` reason identifies failures that occur before a broker request, without recording an endpoint, token, manifest, or other environment value. If OpenCode reports a missing persisted session, the server clears it, remints scoped command and diagnostics leases against the fresh attempt, and retries once without `--session`. Startup manifest, lease, tool-policy, and GitHub read-cache snapshots are emitted even when no agent or command is invoked. Direct console output remains only in standalone import and confined Git-broker CLI helpers where stdout/stderr is their user/protocol surface; the server runtime uses the facade.
 
+### Conversation queue evidence
+
+The `generations` stream includes two operator-visible, version-1 event types for
+room-message, developer-message, and explicit room-action jobs:
+
+| Event | Meaning |
+| --- | --- |
+| `conversation.job.decision` | `queued`/`eligible`, `started`/`queue-ready`, `coalesced`/`key-already-pending`, or `rejected`/`dropped` with `queue-closed`. Admission precedes dispatch or rejection; shutdown records pending-job drops. |
+| `conversation.job.consumed` | An accepted job read the snapshot passed to conversation work. This is not a run-completion or delivery-success event. |
+
+Every admission has an `admissionId`, every decision has a `decisionId`, and only
+accepted jobs get a `jobId`. A coalesced admission has `jobId: null` and a
+`retainedJobId` linking to the pending job it did not replace. `pendingCount`
+excludes the active job. Distinct decisions retain their semantic identity even
+when request envelopes or other payload fields otherwise match.
+
+`triggerMessageId` identifies the actual submitted message when known; explicit
+actions leave it null. `queued` and `consumed` each contain the latest message ID,
+latest human-message ID, and process-local activity revision at that boundary.
+They can differ: a pending job can consume messages newer than its trigger.
+The activity revision is not a durable database version or a message count.
+Absent evidence is null. Optional identity strings exceeding 256 characters are
+omitted with an explicit `omittedDetailCount`; generated admission/job/decision
+identities remain intact. These fixed-shape records fit the 8 KiB structured-event
+budget and contain no message text. Existing raw-evidence bounds are unchanged.
+
+Queued callbacks and shutdown disposition preserve their enqueue-time trace,
+including absence of a request ID for background work. New background conversation
+admissions establish a trace without fabricating an HTTP request. Observers enqueue
+without awaiting destination writes; a failed observer cannot replace a job error.
+Existing log drops, independent retention, or a crash can leave evidence incomplete.
+
+Select operator visibility in OWNER diagnostics to include these records alongside
+authorized raw evidence. Queue admission or consumption does not prove delivery
+or completion.
+
+### Conversation interpretation, delivery, and identity
+
+`generation.interpreted.interpretation` contains versioned parser diagnostics:
+disposition validity/action, suppression reason, declared and effective state,
+continuation, effective message limit/source, actual filtering counts, and burst
+truncation. Early suppressed output has null burst counts with
+`burstAccounting: "not-evaluated"`, not fictional zero parsed units. Character
+counts use UTF-16 code units; emoji graphemes and bursts are counted separately.
+Existing interpreted text and authorized raw evidence are retained.
+
+`generation.delivery` attempts one guarded final record after interpretation,
+including empty output, partial cancellation, and thrown persistence or later
+state-update paths. `retainedBurstCount` equals the sum of
+`confirmedDeliveredBurstCount`, `confirmedUndeliveredBurstCount`, and
+`unconfirmedBurstCount`. An unconfirmed write may have committed before rejecting;
+do not treat it as definite non-delivery. `acknowledgedMessageIds` identify returned
+room messages, including idempotent replay results. They do not establish how many
+new messages were inserted. `deliveredMessageCount` remains a compatibility alias
+for confirmed logical delivery units. A crash or failed sink can still leave a
+missing final record; an attempted finalization is not a durability guarantee.
+
+Conversation jobs now carry a fresh `runId`, each attempted turn has a `turnId`,
+and subprocess evidence carries `attemptOrdinal` alongside `generationId`.
+Pre-generation gates have no generation/attempt identity. A missing-session
+retry keeps its turn and generation IDs, with ordinal 1 on failed-resume evidence
+and 2 on the fresh invocation. These are local subprocess attempts, not
+provider-internal retry counts. Later runs and turns receive new IDs even when
+the provider session is reused. Payload identities survive projection into the
+generation, provider, and harness/tool streams and distinguish otherwise identical
+records for coalescing. Missing identities on older records remain unknown.
+
+Both scheduling engines also return typed terminal summaries for runtime
+instrumentation. `engineSettled` is the existing engine flag, not proof of
+consensus; legacy absence is null. Separate counters report failed/cancelled
+turns, explicit settlement, confirmed delivery, and uncertainty. These summaries
+now feed the runtime records below.
+
+### Conversation decisions and completion
+
+The generations stream now includes operator-visible `conversation.run.started`,
+`conversation.turn.decision`, `conversation.turn.finished`, and
+`conversation.run.completed` records. `runId` is their correlation ID; `traceId`
+also links the queued job and the existing generation/provider/harness evidence.
+Raw records keep generation-level correlation IDs. No exact query is silently
+broadened to a whole-trace search.
+
+Each decision has a `decisionId`; `pendingDecisionId` persists from queue/defer
+through start, replacement, or drop. `relatedDecisionId` links a replaced pending
+entry to its successor's pending identity. A turn ID is allocated on start, not
+for discarded work. Source turn/generation/message IDs are retained when known.
+Current name-based mentions are labeled `legacy-name-match`, not a new address
+classifier. Target flags reflect the runner's scheduling sets, not the presence
+of a live OS process. Random-draw fields report the draw actually consumed; no
+additional draw is made for logging.
+
+`conversation.turn.finished` records parser and delivery facts without copying
+message text. Health/capacity gates have outcome `blocked` while preserving the
+engine's original failure flag separately; they are not provider failures.
+Confirmed delivery and uncertain acknowledgement remain visible even when the
+turn or subsequent state update fails. Expected cancellation and valid yield are
+informational; malformed disposition is a warning; actual failures are errors.
+
+`conversation.run.completed` is the sole authoritative terminal emission attempt.
+It follows active-turn draining and pending-entry disposition. Its summary keeps
+the original settlement flag distinct from evidence. A preparation exception
+before engine initialization records null configuration/summary and a bounded
+error category; it does not invent a provider failure. Full errors remain in
+their existing diagnostic owner stream.
+
+`runEventSequence` is monotonic within a run, and the final
+`attemptedEventCount` includes the completion event. Missing sequences, an absent
+start/end, unfinished pagination, or unavailable retained raw records indicate an
+incomplete view. Counts describe emission attempts, not guaranteed persistence.
+Do not confuse a scheduler `dropped` decision with the logging transport's drop
+counter. New structured metadata is bounded with `omittedDetailCount`; there is
+no new truncation cap on existing prompts or process output.
+
+Empty or whitespace-only stderr emits no event. Non-empty stderr keeps its
+original redacted text: successful/unclassified output is `info`, a retried
+failure is `warn`, final process failure is `error`, and expected cancellation is
+`info`. Explicit structured diagnostic levels can classify otherwise-unclassified
+output; words such as "error" in arbitrary stderr do not set severity. A refused
+generation-start reservation is cancellation with `invocationStarted: false`,
+not a failed subprocess.
+
+### Owner whole-trace workflow
+
+Open **Window → Diagnostics** from a loopback browser signed in to a local OWNER
+session. Queries remain explicit and bounded to the last hour; the page does not
+load log evidence automatically.
+
+- Choose **Correlation ID** to preserve an exact legacy or generation-level
+  lookup. This selector is never silently converted into a trace query.
+- Choose **Trace ID (whole trace)** to query all six authoritative streams with
+  the exact trace selector. The stream control is disabled in this mode because
+  excluding a stream would make the label misleading.
+- From either a structured conversation decision or a raw generation/provider/
+  harness record, choose **Open whole trace**. This explicit action switches to
+  operator visibility and all streams so an OWNER can investigate in either
+  direction without changing the query service's authorization rules.
+- Use **Load next bounded page** until no cursor remains. Selector kind/value,
+  time window, visibility, and streams are retained by the cursor-bound query;
+  editing the visible controls does not substitute a different selector into an
+  outstanding cursor.
+
+The trace summary reports structured runs, detected sequence gaps, unpaired raw
+records, and decision links whose raw evidence is not loaded. A trace remains
+incomplete while pages remain. After the final page, raw evidence without a
+matching decision stays in the result list and is marked **Unpaired**. Missing
+evidence can result from independent retention, transport loss, legacy schema,
+or unfinished work; the inspector reports the cause as unknown unless the loaded
+records establish it. Existing recursive authentication-material redaction still
+applies, while useful prompts, output, parser facts, usage, cost, and routing
+evidence retain their established visibility and bounds.
+
 ## Troubleshooting and agent-visible behavior
 
 - `model_unavailable`: refresh discovery and select a listed provider/model/variant.

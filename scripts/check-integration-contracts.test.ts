@@ -14,7 +14,7 @@ import {
 } from "./check-integration-contracts.js";
 
 const contract = parseContract(JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   integration: "opencode",
   upstream: {
     repository: "https://github.com/anomalyco/opencode.git",
@@ -22,6 +22,16 @@ const contract = parseContract(JSON.stringify({
     auditedVersion: "1.18.25",
     auditedTag: "v1.18.25",
     auditedCommit: "a".repeat(40),
+  },
+  downstream: {
+    repository: "https://github.com/example/opencode.git",
+    branch: "codex/structured-output-1.18.25",
+    version: "1.18.25-amfaa.2",
+    baseCommit: "a".repeat(40),
+    headCommit: "c".repeat(40),
+    pluginVersion: "1.18.25",
+    patches: ["b".repeat(40), "c".repeat(40)],
+    paths: ["upstream/run.ts", "upstream/tool.ts"],
   },
   review: {
     revision: 3,
@@ -77,6 +87,17 @@ describe("OpenCode integration contract guard", () => {
     }))).toThrow("minimum version cannot exceed its audited version");
   });
 
+  it("requires immutable downstream provenance tied to the audited base", () => {
+    expect(() => parseContract(JSON.stringify({
+      ...contract,
+      downstream: { ...contract.downstream, baseCommit: "d".repeat(40) },
+    }))).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
+    expect(() => parseContract(JSON.stringify({
+      ...contract,
+      downstream: { ...contract.downstream, patches: ["b".repeat(40)] },
+    }))).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
+  });
+
   it("validates durable pull-request evidence against the exact contract", () => {
     const body = `## OpenCode upstream review\nTag: v1.18.25\nCommit: ${"a".repeat(40)}\nSurfaces: runtime, tools\nResult: Confirmed the mapped behavior remains compatible with the local implementation.`;
     expect(validatePullRequestEvidence(contract, contract.surfaces, body)).toEqual([]);
@@ -97,12 +118,13 @@ describe("OpenCode integration contract guard", () => {
 
   it("keeps the package, compiler, install policy, and runtime range pinned together", () => {
     const valid = {
-      packageText: JSON.stringify({ devDependencies: { "@opencode-ai/plugin": "1.18.25" } }),
+      packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.25" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }),
       tsconfigText: JSON.stringify({ include: ["server/**/*.ts"] }),
       workspaceText: "msgpackr-extract: false\n  - '@opencode-ai/plugin@1.18.25'\n  - '@opencode-ai/sdk@1.18.25'",
-      discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"',
+      discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2"',
     };
     expect(validateLocalPins(contract, valid)).toEqual([]);
     expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ devDependencies: { "@opencode-ai/plugin": "1.18.24" } }) })).toContain("pin @opencode-ai/plugin to 1.18.25");
+    expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.24" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }) })).toContain("pin @opencode-ai/sdk to 1.18.25");
   });
 });
