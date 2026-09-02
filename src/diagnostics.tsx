@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, loadOwnerCapabilityDiagnostics, queryOwnerDiagnostics, type CapabilityDiagnosticsResponse, type OwnerDiagnosticChunk, type OwnerDiagnosticRecord, type OwnerDiagnosticsResult } from "./api";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction";
+import { AdministrationSignIn } from "./server-administration";
+import { useControlSession } from "./control-session";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 const streams = ["server-service-lifecycle", "opencode-harness", "openrouter-provider", "generations", "capability-decisions", "security-audit"] as const;
@@ -76,7 +78,12 @@ export function summarizeTraceEvidence(records: readonly OwnerDiagnosticRecord[]
   return { status, runCount: groups.size, missingSequences: [...missingSequences].sort((left, right) => left - right), unpairedRecordIds, missingRawGenerationIds };
 }
 
-export function Diagnostics() {
+export function Diagnostics({ onOpenAdministration }: { onOpenAdministration: () => void }) {
+  const { session, checked } = useControlSession(false);
+  const previousSession = useRef(session);
+  const requestGeneration = useRef(0);
+  const [authenticationRequired, setAuthenticationRequired] = useState(false);
+  const accessDenied = authenticationRequired || (checked && session?.principal.role !== "OWNER");
   const [scope, setScope] = useState<ScopeChoice>("operator");
   const [stream, setStream] = useState<StreamChoice>("all");
   const [selectorKind, setSelectorKind] = useState<SelectorKind>("correlationId");
@@ -91,7 +98,23 @@ export function Diagnostics() {
   const visibleRecords = useMemo(() => result ? [...result.records, ...assembleDiagnosticChunks(result.chunks)] : [], [result]);
   const traceSummary = useMemo(() => result && queryContext?.selectorKind === "traceId" ? summarizeTraceEvidence(visibleRecords, Boolean(result.nextCursor)) : null, [queryContext, result, visibleRecords]);
 
+  useEffect(() => {
+    if (session?.principal.role === "OWNER" && session !== previousSession.current) {
+      setAuthenticationRequired(false); setError(""); setCapabilityError("");
+    }
+    const previousPrincipal = previousSession.current?.principal;
+    if (previousPrincipal && (!session || previousPrincipal.id !== session.principal.id || previousPrincipal.role !== session.principal.role || previousPrincipal.revision !== session.principal.revision)) {
+      requestGeneration.current++;
+      setResult(null); setSelected(null); setCapabilities(null); setQueryContext(null);
+      setLoading(false); setAuthenticationRequired(session?.principal.role !== "OWNER");
+    }
+    previousSession.current = session;
+  }, [session]);
+  useEffect(() => () => { requestGeneration.current++; }, []);
+
   async function load(cursor?: string, override?: Partial<Pick<QueryContext, "scope" | "stream" | "selectorKind" | "selectorValue">>) {
+    if (accessDenied || loading) return;
+    const generation = requestGeneration.current;
     const context = cursor && queryContext ? queryContext : { from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), scope: override?.scope ?? scope, stream: override?.stream ?? stream, selectorKind: override?.selectorKind ?? selectorKind, selectorValue: override?.selectorValue ?? selectorValue };
     const value = context.selectorValue.trim().slice(0, 200);
     if (context.selectorKind === "traceId" && !value) { setError("Enter a trace ID to query one whole trace."); return; }
@@ -99,27 +122,47 @@ export function Diagnostics() {
     setLoading(true); setError("");
     try {
       const page = await queryOwnerDiagnostics({ from: context.from, to: context.to, scope: context.scope, streams: context.selectorKind === "traceId" || context.stream === "all" ? streams : [context.stream], correlation: value ? { [context.selectorKind]: value } : undefined, limit: 50, maxScannedBytes: 1_048_576, maxSerializedBytes: 262_144, cursor });
+      if (generation !== requestGeneration.current) return;
+      setAuthenticationRequired(false);
       setResult((previous) => combinePages(previous, page, Boolean(cursor)));
-    } catch (failure) { if (!cursor) setResult(null); setError(safeFailure(failure)); }
-    finally { setLoading(false); }
+    } catch (failure) {
+      if (generation !== requestGeneration.current) return;
+      const denied = failure instanceof ApiRequestError && [401, 403, 404].includes(failure.status || 0);
+      if (!cursor || denied) { setResult(null); setSelected(null); }
+      if (denied) { setCapabilities(null); setQueryContext(null); setAuthenticationRequired(true); }
+      setError(safeFailure(failure));
+    }
+    finally { if (generation === requestGeneration.current) setLoading(false); }
   }
 
   async function refreshCapabilities() {
+    if (accessDenied || loading) return;
+    const generation = requestGeneration.current;
     setLoading(true); setCapabilityError("");
-    try { setCapabilities(await loadOwnerCapabilityDiagnostics()); }
-    catch (failure) { setCapabilities(null); setCapabilityError(failure instanceof ApiRequestError && [401, 403].includes(failure.status || 0) ? "Owner sign-in is required to inspect capability policy and audit events." : "Capability diagnostics could not be loaded."); }
-    finally { setLoading(false); }
+    try { const next = await loadOwnerCapabilityDiagnostics(); if (generation === requestGeneration.current) setCapabilities(next); }
+    catch (failure) {
+      if (generation !== requestGeneration.current) return;
+      const denied = failure instanceof ApiRequestError && [401, 403].includes(failure.status || 0);
+      setCapabilities(null);
+      if (denied) { setResult(null); setSelected(null); setQueryContext(null); setAuthenticationRequired(true); }
+      setCapabilityError(denied ? "Owner sign-in is required to inspect capability policy and audit events." : "Capability diagnostics could not be loaded.");
+    }
+    finally { if (generation === requestGeneration.current) setLoading(false); }
   }
 
-  return <section className="workspace-view tasks-workspace diagnostics-workspace" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
+  return <section className="workspace-view tasks-workspace diagnostics-workspace classic-scrollbars" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
     <header className="workspace-view__header tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
-    <div className="workspace-view__body diagnostics-body">
+    <div className="workspace-view__body diagnostics-body"><div className="diagnostics-content">
+    {accessDenied || !session ? <div className="diagnostics-authentication">
+      <AdministrationSignIn onOpen={onOpenAdministration} />
+      {accessDenied ? <p className="diagnostics-note" role="status">Sign in with an OWNER account to query diagnostics and inspect capabilities.</p> : null}
+    </div> : null}
     <div className="diagnostics-controls">
-      <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-      <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} disabled={selectorKind === "traceId"} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-      <label>Selector <select className="classic-select" aria-label="Diagnostic selector" value={selectorKind} onChange={(event) => { const next = event.target.value as SelectorKind; setSelectorKind(next); if (next === "traceId") setStream("all"); }}><option value="correlationId">Correlation ID</option><option value="traceId">Trace ID (whole trace)</option></select></label>
-      <label>{selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} <input className="classic-input" aria-label={selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} value={selectorValue} maxLength={200} onChange={(event) => setSelectorValue(event.target.value)} /></label>
-      <button type="button" className="classic-button" disabled={loading || (selectorKind === "traceId" && !selectorValue.trim())} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
+      <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" disabled={accessDenied} value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} disabled={accessDenied || selectorKind === "traceId"} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label>Selector <select className="classic-select" aria-label="Diagnostic selector" disabled={accessDenied} value={selectorKind} onChange={(event) => { const next = event.target.value as SelectorKind; setSelectorKind(next); if (next === "traceId") setStream("all"); }}><option value="correlationId">Correlation ID</option><option value="traceId">Trace ID (whole trace)</option></select></label>
+      <label>{selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} <input className="classic-input" aria-label={selectorKind === "traceId" ? "Trace ID" : "Correlation ID"} disabled={accessDenied} value={selectorValue} maxLength={200} onChange={(event) => setSelectorValue(event.target.value)} /></label>
+      <button type="button" className="classic-button" disabled={accessDenied || loading || (selectorKind === "traceId" && !selectorValue.trim())} onClick={() => void load()}>{loading ? "Loading…" : "Query diagnostics"}</button>
     </div>
     {error ? <p className="diagnostics-error" role="alert">{error}</p> : null}
     {!result ? <p className="task-empty">No diagnostics loaded. This view does not fetch automatically.</p> : <section className="diagnostics-results-view" {...viewAttributes(VIEWS.ownerDiagnosticsResults)}>
@@ -128,18 +171,18 @@ export function Diagnostics() {
       {traceSummary ? <dl className="diagnostic-trace-summary"><div><dt>Structured runs</dt><dd>{traceSummary.runCount}</dd></div><div><dt>Sequence gaps</dt><dd>{traceSummary.missingSequences.join(", ") || "none detected"}</dd></div><div><dt>Unpaired raw records</dt><dd>{traceSummary.unpairedRecordIds.length}</dd></div><div><dt>Decision links without loaded raw evidence</dt><dd>{traceSummary.missingRawGenerationIds.length}</dd></div></dl> : null}
       {traceSummary && traceSummary.status !== "complete" ? <p className="diagnostics-note">Missing or unpaired evidence remains visible. The cause is unknown; possibilities include independent retention, transport loss, legacy schema, or unfinished work.</p> : null}
       <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} aria-pressed={selected?.recordId === item.recordId} onClick={() => setSelected(item)}><strong>{item.event}{traceSummary?.unpairedRecordIds.includes(item.recordId) ? " · Unpaired" : ""}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
-      {result.nextCursor ? <button type="button" className="classic-button" disabled={loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
+      {result.nextCursor ? <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
       </div>
-      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><dl><div><dt>Trace ID</dt><dd>{selected.traceId || "unavailable"}</dd></div><div><dt>Generation ID</dt><dd>{generationIdOf(selected) || "unavailable"}</dd></div></dl><pre>{safe(selected.content)}</pre>{selected.traceId ? <button type="button" className="classic-button" disabled={loading} onClick={() => { setScope("operator"); setStream("all"); setSelectorKind("traceId"); setSelectorValue(selected.traceId || ""); void load(undefined, { scope: "operator", stream: "all", selectorKind: "traceId", selectorValue: selected.traceId }); }}>Open whole trace</button> : <p>Whole-trace navigation is unavailable because this record has no trace ID.</p>}</article> : null}
+      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><dl><div><dt>Trace ID</dt><dd>{selected.traceId || "unavailable"}</dd></div><div><dt>Generation ID</dt><dd>{generationIdOf(selected) || "unavailable"}</dd></div></dl><pre>{safe(selected.content)}</pre>{selected.traceId ? <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => { setScope("operator"); setStream("all"); setSelectorKind("traceId"); setSelectorValue(selected.traceId || ""); void load(undefined, { scope: "operator", stream: "all", selectorKind: "traceId", selectorValue: selected.traceId }); }}>Open whole trace</button> : <p>Whole-trace navigation is unavailable because this record has no trace ID.</p>}</article> : null}
     </section>}
     <section className="diagnostic-detail capability-inspector" aria-label="Owner capability inspector">
       <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested.</p>
-      <button type="button" className="classic-button" disabled={loading} onClick={() => void refreshCapabilities()}>Refresh capability diagnostics</button>
+      <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => void refreshCapabilities()}>Refresh capability diagnostics</button>
       {capabilityError ? <p className="diagnostics-error" role="alert">{capabilityError}</p> : null}
       {capabilities ? <><p><strong>Policy revision {capabilities.policyRevision}</strong> · {capabilities.audit.length} recent audit events</p>
         <div className="diagnostics-results">{Object.values(capabilities.agents).map((agent) => <article key={agent.agentId}><strong>{agent.agentId}</strong><p>Effective commands: {agent.effectiveCommands.join(", ") || "none"}</p><ul>{Object.entries(agent.capabilities).map(([name, status]) => <li key={name}>{name}: {status.effective ? "effective" : `unavailable (${status.reason.replaceAll("_", " ")})`}{status.contract ? ` · ${status.contract}` : ""}</li>)}</ul></article>)}</div>
         <div className="diagnostics-results" role="region" aria-label="Capability audit events">{capabilities.audit.map((event) => <article key={event.id}><strong>{event.capability} · {event.outcome}</strong><span>{event.agentId} · {new Date(event.timestamp).toLocaleString()}{event.reason ? ` · ${safe(event.reason)}` : ""}</span></article>)}</div></> : null}
     </section>
-    </div>
+    </div></div>
   </section>;
 }

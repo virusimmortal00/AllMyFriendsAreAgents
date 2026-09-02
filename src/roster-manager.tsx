@@ -1,11 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiRequestError,
-  bootstrapControlPlane,
-  controlLogin,
   initiateProviderSetup,
   loadControlMe,
-  loadControlStatus,
   loadRoster,
   refreshModelDiscovery,
   updateRoster,
@@ -21,10 +18,12 @@ import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
+import { AdministrationSignIn } from "./server-administration";
 import { DialogFrame } from "./dialog-frame";
 import { VIEWS, viewAttributes } from "./view-registry";
 
-export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose }: {
+export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose, onOpenAdministration }: {
+  onOpenAdministration: () => void;
   initialRoster: RoomAgentRoster;
   initialSelectedAgentId?: string;
   agentListSort?: AgentListSort;
@@ -54,10 +53,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const [newVariant, setNewVariant] = useState("");
   const [draftCreatedAgentIds, setDraftCreatedAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
-  const [controlStatus, setControlStatus] = useState<{ claimed: boolean; bootstrapConfigured: boolean } | null>(null);
-  const [controlUsername, setControlUsername] = useState("");
-  const [controlPassword, setControlPassword] = useState("");
-  const [bootstrapSecret, setBootstrapSecret] = useState("");
+  const [authenticationRequired, setAuthenticationRequired] = useState(false);
   const [setupInstruction, setSetupInstruction] = useState("");
   const [capabilityStatuses, setCapabilityStatuses] = useState<Readonly<Record<string, AgentCapabilityStatus>>>({});
   const closed = useRef(false);
@@ -86,7 +82,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     }).catch((reason) => {
       if (closed.current) return;
       if (reason instanceof ApiRequestError && reason.status === 401) {
-        void loadControlStatus().then(setControlStatus).catch(() => setError("The server control plane could not be loaded."));
+        setAuthenticationRequired(true);
       } else setError(reason instanceof Error ? reason.message : "The roster could not be loaded.");
     }).finally(() => { if (!closed.current) setLoading(false); });
     return () => { closed.current = true; };
@@ -138,7 +134,6 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const selectedCapabilityStatus = selectedEntry ? capabilityStatuses[selectedEntry.agentId] : undefined;
   const selectedGhGate = selectedCapabilityStatus?.commands?.gh;
   const selectedGhRequested = Boolean(selectedCommandPermissions && (selectedCommandPermissions.allowAll && selectedCommandPermissions.catalogRevision === COMMAND_CATALOG_REVISION || selectedCommandPermissions.allowed.includes("gh")));
-  const controlAuthenticationReady = Boolean(controlStatus && controlUsername && controlPassword.length >= 12 && (controlStatus.claimed || bootstrapSecret));
 
   function replaceAt(index: number, entry: RoomAgentRosterEntry) {
     setEntries((current) => current.map((value, position) => position === index ? entry : value));
@@ -198,26 +193,6 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     } finally { setSaving(false); }
   }
 
-  async function authenticateControl() {
-    setSaving(true);
-    setError("");
-    try {
-      if (controlStatus?.claimed) await controlLogin(controlUsername, controlPassword);
-      else await bootstrapControlPlane(bootstrapSecret, controlUsername, controlPassword);
-      const response = await loadRoster();
-      setBaseRevision((current) => positiveRosterRevision(response.roster.revision, current));
-      setEntries([...response.roster.entries]);
-      setSavedEntries([...response.roster.entries]);
-      setSelectedAgentId(response.roster.entries[0]?.agentId || null);
-      setCatalog(response.catalog);
-      setModelDiscovery(response.modelDiscovery);
-      setCapabilityStatuses(response.capabilityStatuses || {});
-      setControlStatus(null);
-      setControlPassword("");
-      setBootstrapSecret("");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Control-plane authentication failed."); }
-    finally { setSaving(false); }
-  }
 
   function createParticipant() {
     const normalizedName = newName.trim().toLocaleLowerCase();
@@ -248,21 +223,14 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
 
   return (
     <>
-      <DialogFrame title="Manage room agents" closeLabel="Close roster manager" closeDisabled={saving} className="roster-window" backdropClassName="roster-backdrop" bodyClassName={`roster-body${controlStatus ? " roster-body--authentication" : ""}`} returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={controlStatus ? "authentication" : "roster"} view={controlStatus ? VIEWS.manageAgentsSignIn : VIEWS.manageAgentsRoster} actionsClassName="roster-actions" actions={controlStatus
+      <DialogFrame title="Manage room agents" closeLabel="Close roster manager" closeDisabled={saving} className="roster-window" backdropClassName="roster-backdrop" bodyClassName={`roster-body${authenticationRequired ? " roster-body--authentication" : ""}`} returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={authenticationRequired ? "authentication" : "roster"} view={authenticationRequired ? VIEWS.manageAgentsSignIn : VIEWS.manageAgentsRoster} actionsClassName="roster-actions" actions={authenticationRequired
         ? <button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button>
         : <><span className={`roster-actions__status${hasDraftChanges ? " roster-actions__status--dirty" : ""}`}>{hasDraftChanges ? "Unsaved roster changes" : "No unsaved changes"}</span><button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" disabled={saving || loading || !hasDraftChanges || Boolean(conflict) || duplicateNames.size > 0} onClick={() => void save()}>{saving ? "Saving…" : "Save roster"}</button></>}>
-          {controlStatus ? (
-            <form className="roster-control-form" onSubmit={(event) => { event.preventDefault(); if (controlAuthenticationReady && !saving) void authenticateControl(); }}>
-              <fieldset className="roster-control-login">
-                <legend>{controlStatus.claimed ? "Server administrator sign in" : "Claim server owner"}</legend>
-                <p>This identity is durable and separate from your room screen name. Provider credentials remain in OpenCode or the server keychain.</p>
-                {!controlStatus.claimed ? <label>Local bootstrap secret<input type="password" autoComplete="off" value={bootstrapSecret} onChange={(event) => setBootstrapSecret(event.target.value)} disabled={!controlStatus.bootstrapConfigured} /></label> : null}
-                <label>Username<input autoComplete="username" value={controlUsername} onChange={(event) => setControlUsername(event.target.value)} /></label>
-                <label>Password<input type="password" autoComplete={controlStatus.claimed ? "current-password" : "new-password"} value={controlPassword} onChange={(event) => setControlPassword(event.target.value)} /></label>
-                {!controlStatus.claimed && !controlStatus.bootstrapConfigured ? <p role="alert">A local operator must set ALL_MY_FRIENDS_ARE_AGENTS_OWNER_BOOTSTRAP_SECRET on the server before owner bootstrap.</p> : null}
-                <button type="submit" className="classic-button" disabled={saving || !controlAuthenticationReady}>{controlStatus.claimed ? "Sign in" : "Claim owner"}</button>
-              </fieldset>
-            </form>
+          {authenticationRequired ? (
+            <div className="roster-control-form">
+              <p>Join this room to manage its agents, or use your server administration account.</p>
+              <AdministrationSignIn onOpen={onOpenAdministration} />
+            </div>
           ) : (
             <div className="roster-workspace" data-mobile-pane={mobilePane}>
               <aside className="roster-rail" aria-label="Configured agents">

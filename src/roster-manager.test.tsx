@@ -20,7 +20,7 @@ describe("roster manager", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     const onSaved = vi.fn();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
     expect(screen.queryByRole("textbox", { name: "Username" })).toBeNull();
     await user.click(screen.getByRole("switch"));
@@ -38,7 +38,7 @@ describe("roster manager", () => {
     }, effectiveCommands: ["help"], commands: { gh: { featureCompiled: true, requiredConfigPresent: false, serverCeiling: false, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, lease: { status: "missing", issuedAt: null, expiresAt: null }, lastManifestIssuance: null, lastRejection: null, effective: false, exclusions: ["missing-server-config"] } } } };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: ["gh"] } }] }, catalog, capabilityStatuses }), { status: 200 })));
     window.innerWidth = 390;
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     expect(await screen.findByRole("region", { name: "Effective capabilities for Sol" })).toBeTruthy();
     expect(screen.getByText(/Requested: granted · Effective: unavailable/)).toBeTruthy();
     expect(screen.getByText(/missing-server-config\. Configure the server-only GitHub read token/)).toBeTruthy();
@@ -57,7 +57,7 @@ describe("roster manager", () => {
       project_write: { configured: false, runtimeAvailable: false, effective: false, reason: "governed_worker_only", guidance: "Use a governed implementation worker." },
     }, effectiveCommands: ["help", "gh"], commands: { gh: { featureCompiled: true, requiredConfigPresent: true, serverCeiling: true, rosterEnabled: true, requestedGrant: true, catalogRevisionCurrent: true, providerSessionFresh: true, lease: { status: "active", issuedAt: new Date(0).toISOString(), expiresAt: new Date(1).toISOString() }, lastManifestIssuance: { revision: 1, issuedAt: new Date(0).toISOString() }, lastRejection: null, effective: true, exclusions: [] } } } };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: ["gh"], catalogRevision: 2 } }] }, catalog, capabilityStatuses }), { status: 200 })));
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     expect(await screen.findByText(/Requested: granted · Effective: available/)).toBeTruthy();
     const grant = screen.getByRole("checkbox", { name: /\/gh requested on; effective on/ }) as HTMLInputElement;
     expect(grant.checked).toBe(true);
@@ -70,7 +70,7 @@ describe("roster manager", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 5, entries: [{ agentId: "codex-sol", enabled: true, commandPermissions: { allowAll: false, allowed: [], catalogRevision: 2 } }] }, catalog }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
 
     const allowAll = await screen.findByRole("checkbox", { name: "Allow all commands" });
     expect((allowAll as HTMLInputElement).checked).toBe(true);
@@ -85,7 +85,7 @@ describe("roster manager", () => {
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
 
-    render(<RosterManagerDialog
+    render(<RosterManagerDialog onOpenAdministration={() => undefined}
       initialRoster={{ revision: 3, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }}
       initialSelectedAgentId="claude-opus"
       returnFocusTo={null}
@@ -98,22 +98,15 @@ describe("roster manager", () => {
     expect(screen.getByRole("switch", { name: "Active in room for Opus" })).toBeTruthy();
   });
 
-  it("submits administrator sign-in when Enter is pressed in the password field", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "authentication required" }), { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ claimed: true, bootstrapConfigured: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 }));
+  it("routes callers without member access to canonical administration", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: "authentication required" }, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
-    await user.type(await screen.findByRole("textbox", { name: "Username" }), "owner");
-    await user.type(screen.getByLabelText("Password"), "valid-password{enter}");
-
-    await screen.findByText("Your agents");
-    expect(fetchMock.mock.calls[2][0]).toBe("/api/control/login");
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ username: "owner", password: "valid-password" });
+    const onOpenAdministration = vi.fn();
+    render(<RosterManagerDialog onOpenAdministration={onOpenAdministration} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
+    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("saves a model-centric revisioned roster without a harness selector", async () => {
@@ -123,7 +116,7 @@ describe("roster manager", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     const onSaved = vi.fn();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
     expect(screen.queryByText(/Build the room’s agent team/)).toBeNull();
     expect(screen.getAllByText("GPT 5.6 Sol · via OpenAI").length).toBeGreaterThan(0);
@@ -141,7 +134,7 @@ describe("roster manager", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 6, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "conflict", kind: "conflict", ...latest }), { status: 409 })));
     const user = userEvent.setup();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
     await user.click(screen.getByRole("switch"));
     await user.click(screen.getByRole("button", { name: "Save roster" }));
@@ -164,7 +157,7 @@ describe("roster manager", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ ...entry, selectionConfirmationRequired: undefined, sessionInvalidationReason: "" }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Alpha configuration" });
     expect(screen.queryByRole("option", { name: /currently unavailable/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirm selected OpenCode model" }));
@@ -177,7 +170,7 @@ describe("roster manager", () => {
   it("keeps deactivation reversible and confirms configuration deletion separately", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 })));
     const user = userEvent.setup();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
 
     await screen.findByRole("button", { name: "View Sol configuration" });
     await user.click(screen.getByRole("switch", { name: "Active in room for Sol" }));
@@ -197,7 +190,7 @@ describe("roster manager", () => {
   it("selects the nearest remaining agent after deleting one configuration", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
     const user = userEvent.setup();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
 
     await screen.findByRole("button", { name: "View Sol configuration" });
     await user.click(screen.getByRole("button", { name: "Delete agent…" }));
@@ -213,7 +206,7 @@ describe("roster manager", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 })));
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={onClose} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={onClose} />);
 
     await screen.findByRole("button", { name: "View Sol configuration" });
     await user.click(screen.getByRole("switch", { name: "Active in room for Sol" }));
@@ -253,7 +246,7 @@ describe("roster manager", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 })));
     const user = userEvent.setup();
 
-    render(<RosterManagerDialog initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
 
     expect(await screen.findByRole("heading", { name: "Choose a model" })).toBeTruthy();
     expect(screen.getByText("Create your first agent")).toBeTruthy();
@@ -293,7 +286,7 @@ describe("roster manager", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<RosterManagerDialog initialRoster={{ schemaVersion: 3, revision: 9, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ schemaVersion: 3, revision: 9, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
     expect((screen.getByRole("button", { name: "Save roster" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByRole("switch", { name: "Active in room for Sol" }));

@@ -108,14 +108,14 @@ export class ControlPlaneStore {
     return this.issueSession(principal);
   }
 
-  issueSession(principal: PrincipalRecord) { const token = randomBytes(32).toString("base64url"); const csrfToken = randomBytes(24).toString("base64url"); this.sessions.set(token, { principalId: principal.id, principalRevision: principal.revision, csrfToken, expiresAt: Date.now() + SESSION_TTL_MS }); return { token, csrfToken, principal: publicPrincipal(principal) }; }
+  issueSession(principal: PrincipalRecord) { const token = randomBytes(32).toString("base64url"); const csrfToken = randomBytes(24).toString("base64url"); const expiresAt = Date.now() + SESSION_TTL_MS; this.sessions.set(token, { principalId: principal.id, principalRevision: principal.revision, csrfToken, expiresAt }); return { token, csrfToken, principal: publicPrincipal(principal), expiresAt: new Date(expiresAt).toISOString() }; }
 
   session(request: express.Request) {
     const token = parseCookie(request.header("cookie"), CONTROL_SESSION_COOKIE); const session = token ? this.sessions.get(token) : undefined;
     if (!token || !session || session.expiresAt <= Date.now() || !this.state) { if (token) this.sessions.delete(token); return undefined; }
     const principal = this.state.principals[session.principalId];
     if (!principal || principal.revision !== session.principalRevision) { this.sessions.delete(token); return undefined; }
-    return { token, csrfToken: session.csrfToken, principal, publicPrincipal: publicPrincipal(principal) };
+    return { token, csrfToken: session.csrfToken, principal, publicPrincipal: publicPrincipal(principal), expiresAt: new Date(session.expiresAt).toISOString() };
   }
 
   require(request: express.Request, capability?: ControlCapability, csrf = false) {

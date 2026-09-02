@@ -1,0 +1,109 @@
+import { expect, test } from "@playwright/test";
+import { appFixtureResponse } from "./app-fixtures";
+
+test("administration recovery and room membership", async ({ page }) => {
+  let signedIn = false;
+  const errors: string[] = [];
+  const mutations: string[] = [];
+  const session = { principal: { id: "fixture-owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-csrf", expiresAt: "2099-01-01T20:00:00.000Z" };
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== "http://127.0.0.1:4187") return route.abort();
+    if (!url.pathname.startsWith("/api/")) return route.continue();
+    const method = route.request().method();
+    const path = url.pathname;
+    if (method !== "GET") mutations.push(path);
+    if (path === "/api/control/status") return route.fulfill({ json: { claimed: true, bootstrapConfigured: true } });
+    if (path === "/api/control/me") return route.fulfill(signedIn ? { json: session } : { status: 401, json: { error: "Sign in required" } });
+    if (path === "/api/control/login") { signedIn = true; return route.fulfill({ json: session }); }
+    if (path === "/api/control/logout") { signedIn = false; return route.fulfill({ status: 204 }); }
+    if (path.startsWith("/api/control/") && !signedIn) return route.fulfill({ status: 401, json: { error: "Sign in required" } });
+    if (path === "/api/room/settings" && method === "PUT") {
+      const current = appFixtureResponse(url.href, "GET", "room-chat").body as { settings: Record<string, unknown> };
+      return route.fulfill({ json: { settings: { ...current.settings, ...route.request().postDataJSON() } } });
+    }
+    if (path === "/api/roster") {
+      const response = appFixtureResponse(url.href, "GET", "room-chat");
+      return route.fulfill({ json: { ...response.body as object, access: { kind: "room-member", csrfToken: "fictional-member-csrf" } } });
+    }
+    const response = appFixtureResponse(url.href, method, "room-chat");
+    if (response.status === 501) errors.push(`Unmocked API: ${method} ${path}`);
+    return route.fulfill({ status: response.status, json: response.body });
+  });
+  await page.goto("/tests/visual/index.html?scenario=room-chat");
+  const menu = async (name: string, item: string) => {
+    await page.getByRole("menuitem", { name, exact: true }).click();
+    await page.getByRole("menu", { name }).getByRole(name === "Window" ? "menuitemradio" : "menuitem", { name: item, exact: true }).click();
+  };
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
+  const humanBefore = await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"));
+  await menu("Window", "Diagnostics");
+  await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Diagnostics are unavailable");
+  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Refresh capability diagnostics", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  await page.getByLabel("Username", { exact: true }).fill("server-owner");
+  await page.getByLabel("Password", { exact: true }).fill("fictional-password");
+  await page.getByLabel("Password", { exact: true }).press("Enter");
+  await expect(page.getByRole("heading", { name: "Owner diagnostics", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
+  await expect(page.getByRole("button", { name: /conversation.run.started/ })).toBeVisible();
+  session.principal.role = "MEMBER";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /conversation.run.started/ })).toHaveCount(0);
+  session.principal.role = "OWNER";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: /conversation.run.started/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
+  await expect(page.getByRole("button", { name: /conversation.run.started/ })).toBeVisible();
+  await menu("Window", "Server Administration");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Claim owner", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close Server Administration and return to Chat" }).click();
+  expect(await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"))).toBe(humanBefore);
+  await menu("You", "Profile...");
+  await expect(page.getByText("Server claimed. You are signed out of server administration.")).toBeVisible();
+  await page.getByRole("button", { name: "Open server administration", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close Server Administration and return to Chat" }).click();
+  await menu("Room", "Manage agents...");
+  await expect(page.getByRole("button", { name: "View Alpha configuration" })).toBeVisible();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await menu("Room", "GitHub integration...");
+  await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  await page.getByLabel("Username", { exact: true }).fill("server-owner");
+  await page.getByLabel("Password", { exact: true }).fill("fictional-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "GitHub", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "GitHub connected", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close GitHub integration", exact: true }).click();
+  await menu("Window", "Server Administration");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close Server Administration and return to Chat" }).click();
+  await menu("Room", "Room properties...");
+  await page.getByRole("tab", { name: "Agent behavior", exact: true }).click();
+  await page.getByLabel("Prompt", { exact: true }).fill("Fictional draft retained through sign-in.");
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toHaveCount(0);
+  expect(mutations.filter((path) => path === "/api/room/settings")).toHaveLength(0);
+  await page.getByLabel("Username", { exact: true }).fill("server-owner");
+  await page.getByLabel("Password", { exact: true }).fill("fictional-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue("Fictional draft retained through sign-in.");
+  await expect(page.getByRole("button", { name: "Sign in to server administration", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
+  await expect.poll(() => mutations.filter((path) => path === "/api/room/settings").length).toBe(1);
+  expect(mutations.filter((path) => /humans|leave/.test(path))).toEqual(["/api/humans"]);
+  expect(errors).toEqual([]);
+});

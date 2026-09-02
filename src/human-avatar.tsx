@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import type { HumanPresence } from "./types";
 import { DialogFrame } from "./dialog-frame";
+import { AdministrationEntry } from "./server-administration";
 import { VIEWS } from "./view-registry";
 
 function initials(name: string) {
@@ -53,7 +54,8 @@ export function HumanAvatar({ name, avatarUrl, compact = false }: { name: string
   );
 }
 
-export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange, onClose }: {
+export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange, onClose, onOpenAdministration }: {
+  onOpenAdministration: () => void;
   human: HumanPresence;
   busy: boolean;
   returnFocusTo: HTMLElement | null;
@@ -101,6 +103,7 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
           <input ref={inputRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { void chooseFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
           <div className="human-avatar-actions"><button type="button" className="classic-button" disabled={locked} onClick={() => inputRef.current?.click()}>{processing ? "Processing…" : avatarUrl ? "Choose another image" : "Choose image"}</button>{avatarUrl ? <button type="button" className="classic-button human-avatar-remove" disabled={locked} onClick={() => { setAvatarUrl(undefined); setError(""); }}>Remove photo</button> : null}</div>
           <small>Your name and image appear together in participant lists. Images are cropped to a square and stored as a compact room thumbnail.</small>
+          <AdministrationEntry onOpen={onOpenAdministration} disabled={locked} />
           {error ? <p role="alert">{error}</p> : null}
     </DialogFrame>
   );

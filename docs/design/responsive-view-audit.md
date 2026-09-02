@@ -1,5 +1,261 @@
 # Responsive view audit
 
+## Diagnostics session review — 2026-09-02 (focused review complete; disputed findings retained)
+
+The final code review added recovery coverage for `WORK-10` Diagnostics Query
+and `WORK-11` Diagnostics Results. A session refresh that discovers a different
+account, role, or principal revision now clears loaded records and capability
+data. Late failures and completion handlers from an invalidated request cannot
+replace a new session's state. Capability-access denial also clears previously
+loaded records. Three regression tests reproduced these failures before the fixes.
+The real-browser administration journey checks role-change cleanup and explicit
+querying after OWNER authority returns at every engine/viewport checkpoint.
+
+The review also removed duplicate reporting of a missing native scrollbar and
+corrected the sign-out test to use the production room-profile storage key.
+All three independently reported code-review issues were addressed. No markup,
+CSS, navigation, or image-review criteria changed in this final correction.
+
+The final `pnpm check:quality` run passed 1,359 tests across 181 files, with
+one intentional skip, plus integration/UI contracts, visual typechecking, and
+the production build. `pnpm capture:visual --workers=4` passed 654 browser
+tests with six intentional compact-chat skips, 846/846 screenshots, and zero
+geometry failures. The final session-recovery journey passed all twelve
+engine/viewport combinations. All 48 Diagnostics images are byte-identical to
+the preceding capture; fresh review still binds them to the current source.
+
+Source-input digest:
+`c14ce1ced8555710911361311a107e0a2064596618fed4fdec18881fb5d204ac`.
+
+Fresh independent review covered all 48 images for the two corrected views,
+across Chromium/WebKit and Phone, Short phone, Minimum phone, Tablet, Short
+laptop, and Desktop. All 24 reviewer sessions completed. **46 images pass every
+question; two remain flagged.** Exact capture and receipt validation found no
+integrity errors. Original judgments and receipts remain unchanged.
+
+| View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| WORK-10 Diagnostics Query | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| WORK-11 Diagnostics Results | 24 | 2 | 0 | 0 | 2 | 0 | 0 | 2 |
+
+Both flagged images are the Short phone Results bottom position, one per engine.
+The reviewer reports that the Trace ID exceeds its row. Original-image inspection
+and fresh text-range measurements in both engines show all 32 characters inside
+the field: text ends at 332.28px and the field ends at 340px, with
+`overflow-wrap: anywhere`. These are disputed judgments, not rewritten passes.
+To reproduce the measurement, open Diagnostics in the fictional fixture at
+390×660, select Trace ID, query the fixture trace, select the completed turn,
+and compare the text Range bounds with the detail field's bounding rectangle.
+
+The exact `pnpm check:visual-review` gate remains **failed** because of those two
+judgments and the **798 images outside this final two-view review**. Reproduce
+with `pnpm capture:visual --workers=4`, then `pnpm review:visual --run <capture-directory>`
+with repeated `--key <manifest-key>` arguments selecting `WORK-10` and `WORK-11`.
+Run `pnpm check:visual-review --run <capture-directory> --review <review.json> --receipts <receipts.json>`
+against that exact output. No full-matrix approval is claimed.
+
+The earlier 216-image review and its 17 disputed judgments below are retained
+as historical evidence. They have not been relabeled as passes or applied to
+this source digest. Unselected views remain unverified on the current capture.
+Physical devices, native browser chrome, software keyboards, text enlargement,
+landscape, and live provider/GitHub authentication remain outside verified coverage.
+
+## Administration visual corrections — 2026-09-02 (focused review complete; disputed findings retained)
+
+Affected views: `WORK-10` Diagnostics Query, `WORK-11` Diagnostics Results,
+`WORK-12` Server Administration, `GH-01`/`GH-02` GitHub sign-in and claim entry,
+`ROOM-04` Manage Agents Sign In, and `ROOM-01`/`ROOM-02`/`ROOM-03` Room Properties
+General, Agent Behavior, and its embedded Summarizer Model Picker.
+
+Administration, Diagnostics, and Room Properties now opt into shared native
+scroll tracks on touch as well as pointer layouts. The CSS applies before the
+first layout so WebKit creates a visible gutter, rather than retaining an
+existing overlay-only track after observer decoration. Diagnostics also keeps
+its size-query container separate from the scroll owner. Native input, fixed
+exits, tab navigation, footer actions, and forced-color fallback are preserved.
+The rendered guard now requires an actual native gutter for these opted-in
+surfaces; the original weak shadow alone cannot satisfy it. Follow-up image
+review also exposed filter labels above the model picker’s sticky Back row.
+Its offset now includes the page padding so scrolled controls meet a clean
+boundary; a rendered regression checks that no strip is exposed above it.
+
+Shared sign-in commands retain their content width. GitHub and Manage Agents
+sign-in dialogs use a centered 440px maximum width with compact body spacing.
+Diagnostics disables query, capability refresh, and filter controls when an
+administrator session is known to be signed out or lacks OWNER authority, or
+when the server denies access. A clear sign-in explanation remains visible.
+Owner sign-in restores the commands without automatically loading diagnostics.
+Focused tests cover denial, non-owner sessions, sign-out, and recovery, while
+browser guards reject stretched sign-in actions and oversized entry dialogs.
+
+The final full quality gate passed **1,356 tests**, with one intentional skip,
+along with integration and UI contracts, visual typechecking, and the production
+build. The complete browser matrix passed **654 tests**, with six intentional
+compact-chat skips, and captured **846/846 images** with zero geometry failures.
+A concurrent quality run encountered timing/server-test failures; the isolated
+rerun passed without changing tests or weakening their assertions.
+Source-input digest:
+`e8d9389f77d467f435c5331e25ab4959b56a43d83a7dad36faea33692175b710`.
+
+The interim review stopped after 147 image verdicts and 49 completed receipts
+when it exposed the sticky-boundary defect. Its originals and verdicts remain
+unchanged; that superseded capture is not approval of the corrected source.
+
+Independent review covered only these nine changed views: **216 images** across
+Chromium/WebKit and Phone, Short phone, Minimum phone, Tablet, Short laptop, and
+Desktop. All **72 fresh reviewer sessions** completed. **199 images pass every
+question; 17 remain flagged.** Exact capture and receipt validation found no
+integrity errors. The original verdicts, screenshot hashes, prompts, session
+identities, completion times, and receipt hashes are retained unchanged.
+
+No final verdict reports a recurrence of the weak scroll affordances, stretched
+sign-in commands, oversized authentication dialogs, enabled owner commands after
+denial, or filter labels exposed above the sticky Back row. The GitHub entry
+states, Manage Agents sign-in, Diagnostics Query, and Agent Behavior pass all
+seven questions in every selected image. The remaining flags are disputed for
+the reasons below; they have not been rewritten into passes.
+
+Each question cell counts flagged images, not unique defects.
+
+| View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GH-01 Administrator Sign In | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| GH-02 Claim Owner | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ROOM-01 General | 12 | 5 | 0 | 0 | 1 | 5 | 0 | 5 |
+| ROOM-02 Agent Behavior | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ROOM-03 Summarizer Model Picker | 24 | 0 | 1 | 0 | 0 | 0 | 0 | 1 |
+| ROOM-04 Manage Agents Sign In | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| WORK-10 Diagnostics Query | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| WORK-11 Diagnostics Results | 24 | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
+| WORK-12 Server Administration | 72 | 9 | 0 | 0 | 1 | 8 | 1 | 9 |
+
+Disposition of the 17 flagged images:
+
+- Thirteen object to empty workspace canvas or General's fixed property-sheet
+  height. The documented layout rules require content-sized operational panels
+  on the full workspace and stable window/action bounds across property tabs.
+  Enlarging controls or resizing the sheet per tab would violate those rules.
+- One Chromium Short phone Diagnostics image reports a clipped Trace ID.
+  Original-image inspection and a fresh rendered measurement show all 32
+  characters contained: the text ends at 332.28px inside a field ending at
+  340px, with `overflow-wrap: anywhere` available for narrower rows.
+- One Chromium Desktop model-picker image reports a missing Back action.
+  The original shows “Back to agent behavior” directly beneath the tabs, and
+  browser checks verify its visibility and return-focus behavior at both ends.
+- Two Minimum phone WebKit images object to text crossing the native scroll
+  boundary. The Diagnostics capture is already at offset 387 of 898px after
+  selecting a record, and Administration is at its bottom offset of 82px.
+  Their tracks visibly communicate position; content is clipped at the pane
+  boundary, not inside its own row. Scroll snapping or hiding the content is
+  not an appropriate fix under the native-scrolling standard.
+
+The exact `pnpm check:visual-review` gate remains **failed**, preserving these
+17 verdicts and requiring reviews for the **630 unselected images** outside the
+authorized scope. This is complete review coverage of the nine corrected views,
+not full-matrix visual approval. Reproduce with `pnpm check:quality`,
+`pnpm capture:visual --workers=4`, then `pnpm review:visual --run <capture-directory>`
+with repeated `--key <manifest-key>` arguments selecting these IDs. Validate its
+exact output with `pnpm check:visual-review --run <capture-directory> --review <review.json> --receipts <receipts.json>`.
+Earlier review records below remain historical evidence rather than approval of
+this source digest.
+
+Unverified: physical devices, native browser chrome, software keyboards, text
+enlargement, landscape, and live provider/GitHub authentication. The browser
+fixtures remain fictional and network-isolated.
+
+## Server administration and session recovery — 2026-09-02 (focused review complete; findings open)
+
+This initial capture and review predates the visual corrections above.
+
+[Issue #160](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/160)
+adds `WORK-12` Server Administration, with explicit unclaimed, signed-out, and
+active-session states. `PERSON-01` Your Profile shows the same session summary
+and opens that workspace. `CHAT-04` Window Menu includes the new destination.
+`WORK-10`/`WORK-11` Diagnostics, `GH-01`/`GH-02` GitHub authentication entry
+points, `ROOM-04` Manage Agents authentication, and `ROOM-01`/`ROOM-02` Room
+Properties use the shared session/navigation flow. Room members retain roster
+access without owner sign-in. Room Properties retains its draft while hidden
+during authentication and restores focus to the sign-in action on return.
+
+Rendered verification used Chromium and WebKit at Phone, Short phone, Minimum
+phone, Tablet, Short laptop, and Desktop. The complete matrix passed **654
+browser tests**, with six intentional compact-chat skips, and captured **846/846
+images across all 48 registered views**, with zero geometry failures. The
+matrix includes additional administration/profile session states and the denied
+Diagnostics query. Source-input digest:
+`25873555fb4787a0759b3f215e200e90b6629f7ca42bb7e2dbcd93b7480aab3d`.
+
+The browser journey also checks denied Diagnostics → administrator sign-in →
+successful explicit query; sign-out preserving room membership; the profile
+entry; member roster access after sign-out; GitHub return navigation; and Room
+Properties draft retention, focus restoration, and explicit Apply after sign-in.
+All twelve engine/viewport combinations passed. Automated client/server tests
+cover bootstrap restrictions, durable username versus mutable room name,
+logout CSRF, owner-only denial, absolute expiry, restart recovery, stale reads,
+concurrent authentication checks, bounded clock-skew recovery, and failed logout.
+
+The full quality gate passed 1,353 tests with one intentional skip, integration
+and UI contract checks, visual typechecking, and the production build.
+Reproduce with `pnpm check:quality` and `pnpm capture:visual --workers=4`.
+The final capture manifest and original PNGs are retained together under the
+ignored `test-results/visual/` directory; the digest identifies the exact source.
+
+Authorized independent review covered **only the ten added or changed views
+listed above**: all **276 selected images**, across both engines and all six
+viewport sizes, received seven image-specific answers. **247 images pass and
+29 remain flagged.** All **96 fresh reviewer sessions** completed. Original
+verdicts and invocation receipts are retained without alteration; exact receipt
+validation reported no integrity errors for image bytes, prompts, source digest,
+session identities, completion times, or verdict hashes.
+
+The exact `pnpm check:visual-review` gate remains **failed**: it reports the
+retained visual findings and requires reviews for the **570 unselected images**.
+Those unrelated views were outside the authorized review scope. This is complete
+review coverage of the selected views, not full-matrix visual approval. Reproduce
+the scoped review with `pnpm review:visual --run <capture-directory>` and repeated
+`--key <manifest-key>` arguments selecting these ten IDs, then run
+`pnpm check:visual-review --run <capture-directory> --review <review.json> --receipts <receipts.json>` against its exact evidence.
+
+Each question cell counts flagged images; zero means all assigned images passed
+that question, not that every possible runtime state was tested.
+
+| View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CHAT-04 Window Menu | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| GH-01 Administrator Sign In | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| GH-02 Claim Owner | 12 | 1 | 0 | 0 | 1 | 1 | 0 | 1 |
+| PERSON-01 Your Profile | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ROOM-01 General | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ROOM-02 Agent Behavior | 24 | 0 | 0 | 0 | 0 | 0 | 6 | 6 |
+| ROOM-04 Manage Agents Sign In | 12 | 1 | 0 | 0 | 1 | 1 | 0 | 1 |
+| WORK-10 Diagnostics Query | 24 | 2 | 0 | 0 | 2 | 2 | 3 | 4 |
+| WORK-11 Diagnostics Results | 24 | 1 | 2 | 0 | 1 | 1 | 2 | 3 |
+| WORK-12 Server Administration | 72 | 6 | 0 | 0 | 0 | 6 | 8 | 14 |
+
+Original-image inspection retains weak WebKit scroll-cue findings for compact
+administration forms, Diagnostics, and Agent Behavior, even though browser
+checks reach their native scroll boundaries and actions. Additional findings
+concern broad sign-in buttons in GitHub and Diagnostics, the width of the Tablet
+Manage Agents sign-in dialog, and enabled-looking Diagnostics commands in the
+signed-out state. These remain visual follow-up work; passing interaction tests
+do not resolve them. The next bounded step is to improve the affected scroll
+cues and sign-in action proportions, clarify unavailable Diagnostics actions,
+and capture and independently review the resulting images.
+
+Some judgments conflict with the originals or documented layout rules. Both
+flagged Phone Diagnostics bottom images show the persistent close control at the
+top right. The short-laptop gap below the detail panel aligns with the taller
+adjacent result list. Administration's content-sized panels on a full gray
+workspace follow the existing workspace rule; enlarging controls or inventing
+content to fill that canvas would not be an appropriate response. These
+observations explain the disagreement without replacing any failed verdict or
+claiming visual approval.
+
+Unverified: native browser chrome, software keyboards, physical-device behavior,
+text enlargement, landscape, and live external-provider/GitHub authentication.
+The browser journeys use fictional, network-isolated responses; real control
+sessions are covered separately by ephemeral local server tests.
+
 ## Taller Manage Room Agents workspace — 2026-08-31 (focused review complete; findings open)
 
 Affected views: `ROOM-05` Manage Room Agents — Roster and `ROOM-06` Manage
@@ -1111,6 +1367,7 @@ app-wide visual certification is implied by this matrix.
 | WORK-09 | Reviewed Contribution Detail | Review gates and contribution detail | Unverified |
 | WORK-10 | Owner Diagnostics Query | Bounded diagnostic search controls | Unverified |
 | WORK-11 | Owner Diagnostics Results | Result list and selected diagnostic detail | Unverified |
+| WORK-12 | Server Administration | Claim, sign-in, and active administrator session | Unverified |
 
 ### Room and participant dialogs
 
@@ -1201,6 +1458,7 @@ seven-question review, not these historical labels, as verification evidence.
 | WORK-09 | P/T/L/D: Pass; review detail uses full workspace. | P/T/L/D: Back to list, gated actions, and workspace close are visible. | P/T/L/D: Pass; five-step classic review status. | P: five steps stack; T/L/D: five equal columns. | P/T/L/D: Gate spacing is informational and intentional. | P/T/L/D: Detail body owns scroll and actions stay reachable. | T/L: Applied full-width fix; P/D: retained step layouts. |
 | WORK-10 | P/T/L/D: Pass; bounded query controls receive full workspace. | P/T/L/D: Exact selector, query action, and Window/close return are clear. | P/T/L/D: Pass; compact owner-tool styling inside shared chrome. | P: controls wrap into two rows; T: controls usually fit one row; L/D: compact row. P/T/L/D: commands and fields use the shared pointer-capability density rather than viewport-specific overrides. | P/T/L/D: Pre-query empty area communicates that nothing loads implicitly. | P/T/L/D: Body owns results; page never scrolls. | P/T/L/D: Added the exact selector without introducing feature-local control heights or expanding the shared header. |
 | WORK-11 | P/T/L/D: Pass; results/detail use the full workspace canvas. | P/T/L/D: Result selection, whole-trace action, and workspace close/Chat return are clear. | P/T/L/D: Pass; inset result buttons, trace summary, and diagnostic detail. | P: result and detail stack; T/L/D: result and detail are adjacent when the diagnostics container permits. P/T/L/D: the summary uses two columns in a narrow result pane and four only when that pane itself is at least 500px wide. | P/T/L/D: The centered 1100px content bound protects readability without reserving a missing pane. | P/T/L/D: Results/detail scroll inside the workspace body; preformatted content scrolls locally. | P/T/L/D: Preserved the shared container-query split and density system while layering in a result-pane-aware trace summary and action. |
+| WORK-12 | P/T/L/D: 72 images reviewed; nine flags concern canvas allocation or text crossing the native scroll boundary. | P/T/L/D: All navigation verdicts pass; return flows exercised. | P/T/L/D: All classic-style verdicts pass. | P/T/L/D: One native-boundary observation retained as disputed. | P/T/L/D: Eight sparse-canvas flags retained with documented workspace rationale. | P/T/L/D: Visible native tracks replace weak cues; one normal boundary-clipping verdict remains disputed. | P/T/L/D: 63 images pass all questions; nine disputed flags retained. Exact receipts validated; no overall visual approval. |
 
 ### Room and participant dialog audit
 

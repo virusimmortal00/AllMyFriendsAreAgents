@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type express from "express";
 import { CONTROL_SESSION_COOKIE, ControlError, ControlPlaneStore } from "./control-plane.js";
 
@@ -36,6 +36,27 @@ describe("durable control plane", () => {
     const reopened = await ControlPlaneStore.open(directory, secret);
     await expect(reopened.authenticate("owner", "correct horse battery staple")).resolves.toBeDefined();
     expect((await stat(path.join(directory, "control-plane.json"))).mode & 0o777).toBe(0o600);
+  });
+
+  it("uses an absolute eight-hour expiry and requires a fresh session after restart", async () => {
+    const { directory, store, secret } = await fixture();
+    await store.bootstrap(secret, "owner", "correct horse battery staple");
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const authenticated = (await store.authenticate("owner", "correct horse battery staple"))!;
+      expect(authenticated.expiresAt).toBe(new Date(now + 8 * 60 * 60_000).toISOString());
+      clock.mockReturnValue(now + 7 * 60 * 60_000);
+      expect(store.require(request(authenticated.token)).expiresAt).toBe(authenticated.expiresAt);
+      clock.mockReturnValue(now + 8 * 60 * 60_000);
+      expect(() => store.require(request(authenticated.token))).toThrow(/Authenticate/);
+      const fresh = (await store.authenticate("owner", "correct horse battery staple"))!;
+      const reopened = await ControlPlaneStore.open(directory, secret);
+      expect(reopened.status().claimed).toBe(true);
+      expect(() => reopened.require(request(fresh.token))).toThrow(/Authenticate/);
+      const recovered = (await reopened.authenticate("owner", "correct horse battery staple"))!;
+      expect(reopened.require(request(recovered.token)).publicPrincipal.username).toBe("owner");
+    } finally { clock.mockRestore(); }
   });
 
   it("supports delegated capabilities and invalidates sessions immediately on revocation", async () => {

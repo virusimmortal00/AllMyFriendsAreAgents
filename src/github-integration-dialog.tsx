@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
-  bootstrapControlPlane,
   configureCurrentProjectGitHubRepository,
-  controlLogin,
-  loadControlMe,
-  loadControlStatus,
   loadCurrentProjectGitHubStatus,
   loadGitHubIntegration,
   loadGitHubRepositoryCatalog,
@@ -18,10 +14,11 @@ import {
   type GitHubIntegrationStatus,
   type GitHubRepositoryCatalog,
 } from "./api";
+import { AdministrationSignIn } from "./server-administration";
+import { useControlSession } from "./control-session";
 import { DialogFrame } from "./dialog-frame";
 import { VIEWS } from "./view-registry";
 
-type ControlStatus = { claimed: boolean; bootstrapConfigured: boolean };
 
 // GitHub mark from Primer Octicons: https://primer.style/octicons/icon/mark-github-24/
 function GitHubMark({ size = 24 }: { size?: number }) {
@@ -30,12 +27,10 @@ function GitHubMark({ size = 24 }: { size?: number }) {
   </svg>;
 }
 
-export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocusTo: HTMLElement | null; onClose: () => void }) {
-  const [authentication, setAuthentication] = useState<"checking" | "required" | "ready">("checking");
-  const [controlStatus, setControlStatus] = useState<ControlStatus>();
-  const [bootstrapSecret, setBootstrapSecret] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdministration }: { returnFocusTo: HTMLElement | null; onClose: () => void; onOpenAdministration: () => void }) {
+  const { status: controlStatus, session, checked, error: sessionError } = useControlSession();
+  const authentication = !checked ? "checking" : session ? "ready" : "required";
+  const dashboardRequest = useRef(0);
   const [integration, setIntegration] = useState<GitHubIntegrationStatus>();
   const [catalog, setCatalog] = useState<GitHubRepositoryCatalog>();
   const [project, setProject] = useState<CurrentProjectGitHubStatus>();
@@ -44,9 +39,12 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const readyConnection = integration?.connections.find((connection) => connection.state === "ready");
 
   const loadDashboard = useCallback(async () => {
+    const request = ++dashboardRequest.current;
+    setPermissionDenied(false);
     setLoading(true);
     setError("");
     try {
@@ -56,39 +54,25 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
         loadCurrentProjectGitHubStatus().catch((failure) => failure instanceof ApiRequestError && failure.status === 404 ? undefined : Promise.reject(failure)),
         connection ? loadGitHubRepositoryCatalog(connection.connectionId).catch((failure) => failure instanceof ApiRequestError && failure.status === 404 ? undefined : Promise.reject(failure)) : Promise.resolve(undefined),
       ]);
+      if (request !== dashboardRequest.current) return;
       setIntegration(nextIntegration);
       setProject(nextProject);
       setCatalog(nextCatalog);
       setSelectedRepositoryId((current) => current || String(nextCatalog?.repositories[0]?.githubRepositoryId || ""));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "GitHub integration settings could not be loaded.");
-    } finally { setLoading(false); }
+      if (request === dashboardRequest.current) {
+        setPermissionDenied(failure instanceof ApiRequestError && failure.status === 403);
+        setError(failure instanceof Error ? failure.message : "GitHub integration settings could not be loaded.");
+      }
+    } finally { if (request === dashboardRequest.current) setLoading(false); }
   }, []);
 
   useEffect(() => {
-    let current = true;
-    void loadControlMe().then(async () => {
-      if (!current) return;
-      setAuthentication("ready");
-      await loadDashboard();
-    }).catch(async (failure) => {
-      if (!current) return;
-      if (!(failure instanceof ApiRequestError) || failure.status !== 401) {
-        setError(failure instanceof Error ? failure.message : "Server administration status could not be loaded.");
-        setLoading(false);
-        return;
-      }
-      try {
-        const status = await loadControlStatus();
-        if (!current) return;
-        setControlStatus(status);
-        setAuthentication("required");
-      } catch (statusFailure) {
-        if (current) setError(statusFailure instanceof Error ? statusFailure.message : "Server administration status could not be loaded.");
-      } finally { if (current) setLoading(false); }
-    });
-    return () => { current = false; };
-  }, [loadDashboard]);
+    setIntegration(undefined); setCatalog(undefined); setProject(undefined); setAuthorization(undefined); setSelectedRepositoryId(""); setWorking(false);
+    if (session) void loadDashboard();
+    else setLoading(false);
+    return () => { dashboardRequest.current++; };
+  }, [session?.principal.id, session?.principal.revision, session?.expiresAt, loadDashboard]);
 
   useEffect(() => {
     if (authorization?.state !== "authorizing" || !authorization.nextPollAt) return;
@@ -104,26 +88,13 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
     return () => { current = false; window.clearTimeout(timer); };
   }, [authorization, loadDashboard]);
 
-  async function authenticate() {
-    if (!controlStatus || working) return;
-    setWorking(true);
-    setError("");
-    try {
-      if (controlStatus.claimed) await controlLogin(username, password);
-      else await bootstrapControlPlane(bootstrapSecret, username, password);
-      setAuthentication("ready");
-      await loadDashboard();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Server administrator authentication failed.");
-    } finally { setWorking(false); }
-  }
-
   async function connect() {
     if (working) return;
     setWorking(true);
     setError("");
-    try { setAuthorization(await startGitHubDeviceAuthorization()); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "GitHub authorization could not be started."); }
+    const request = dashboardRequest.current;
+    try { const next = await startGitHubDeviceAuthorization(); if (request === dashboardRequest.current) setAuthorization(next); }
+    catch (failure) { if (request === dashboardRequest.current) { setPermissionDenied(failure instanceof ApiRequestError && failure.status === 403); setError(failure instanceof Error ? failure.message : "GitHub authorization could not be started."); } }
     finally { setWorking(false); }
   }
 
@@ -131,11 +102,13 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
     if (working) return;
     setWorking(true);
     setError("");
+    const request = dashboardRequest.current;
     try {
       const next = await refreshGitHubRepositoryCatalog(connection.connectionId, catalog?.revision || 0);
+      if (request !== dashboardRequest.current) return;
       setCatalog(next);
       setSelectedRepositoryId((current) => current || String(next.repositories[0]?.githubRepositoryId || ""));
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "GitHub repositories could not be refreshed."); }
+    } catch (failure) { if (request === dashboardRequest.current) { setPermissionDenied(failure instanceof ApiRequestError && failure.status === 403); setError(failure instanceof Error ? failure.message : "GitHub repositories could not be refreshed."); } }
     finally { setWorking(false); }
   }
 
@@ -143,6 +116,7 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
     if (!readyConnection || !project?.defaults || !selectedRepositoryId || working) return;
     setWorking(true);
     setError("");
+    const request = dashboardRequest.current;
     try {
       const next = await configureCurrentProjectGitHubRepository({
         githubConnectionId: readyConnection.connectionId,
@@ -153,13 +127,11 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
         worktreeRoot: project.defaults.worktreeRoot,
         policyRevision: project.defaults.policyRevision,
       });
-      setProject({ ...next, defaults: project.defaults });
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "The project repository could not be configured."); }
+      if (request === dashboardRequest.current) setProject({ ...next, defaults: project.defaults });
+    } catch (failure) { if (request === dashboardRequest.current) { setPermissionDenied(failure instanceof ApiRequestError && failure.status === 403); setError(failure instanceof Error ? failure.message : "The project repository could not be configured."); } }
     finally { setWorking(false); }
   }
 
-  const authenticationReady = Boolean(controlStatus && username.trim().length >= 3 && password.length >= 12
-    && (controlStatus.claimed || (controlStatus.bootstrapConfigured && bootstrapSecret.trim())));
   const selectedRepository = catalog?.repositories.find((repository) => String(repository.githubRepositoryId) === selectedRepositoryId);
   const projectRepository = project?.binding?.repository || project?.repository.repository;
   const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
@@ -177,18 +149,16 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose }: { returnFocu
             ? VIEWS.githubEmptyRepo
             : VIEWS.githubChooseRepo;
 
-  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
+  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={authentication === "required" ? "authentication" : undefined} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
         {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
         {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
-        {authentication === "required" && controlStatus ? <form className="github-control-login" onSubmit={(event) => { event.preventDefault(); if (authenticationReady) void authenticate(); }}>
-          <h3>{controlStatus.claimed ? "Server administrator sign in" : "Claim server owner"}</h3>
-          <p>{controlStatus.claimed ? "Sign in to manage this server's GitHub connection." : "Create the administrator account that will manage this server."}</p>
-          {!controlStatus.claimed ? <label>Local bootstrap secret<input type="password" autoComplete="off" value={bootstrapSecret} onChange={(event) => setBootstrapSecret(event.target.value)} disabled={!controlStatus.bootstrapConfigured} /></label> : null}
-          <label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-          <label>Password<input type="password" autoComplete={controlStatus.claimed ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          {!controlStatus.claimed && !controlStatus.bootstrapConfigured ? <p role="alert">A local operator must configure the one-time owner bootstrap secret before this server can be claimed.</p> : null}
-          <button type="submit" className="classic-button" disabled={!authenticationReady || working}>{working ? "Authenticating…" : controlStatus.claimed ? "Sign in" : "Claim owner"}</button>
-        </form> : null}
+        {authentication === "ready" && permissionDenied ? <AdministrationSignIn onOpen={onOpenAdministration} /> : null}
+        {sessionError ? <p role="alert">{sessionError}</p> : null}
+        {authentication === "required" ? <div className="github-control-login">
+          <h3>{controlStatus?.claimed === false ? "Claim server owner" : "Server administrator sign in"}</h3>
+          <p>Open server administration to manage this server's GitHub connection. You will return here after signing in.</p>
+          <AdministrationSignIn onOpen={onOpenAdministration} />
+        </div> : null}
         {authentication === "ready" && integration ? <>
           <fieldset className="github-integration-card classic-group">
             <legend>GitHub account</legend>

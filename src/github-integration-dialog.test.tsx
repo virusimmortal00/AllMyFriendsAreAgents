@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { updateControlSession } from "./control-session-state";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -41,13 +42,27 @@ const catalog = {
   }],
 };
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); updateControlSession({ status: null, session: null, checked: false, error: "" }); vi.unstubAllGlobals(); });
 
 describe("GitHubIntegrationDialog", () => {
+  it("offers administration after capability denial without discarding a valid session", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input) => {
+      if (String(input).endsWith("/status")) return json({ claimed: true, bootstrapConfigured: false });
+      if (String(input).endsWith("/me")) return json({ principal: { id: "member", username: "operator", role: "MEMBER", capabilities: [], revision: 1 }, csrfToken: "fictional-csrf", expiresAt: "2099-01-01T00:00:00Z" });
+      return json({ error: "The INTEGRATION_VIEW capability is required." }, 403);
+    }));
+    const onOpenAdministration = vi.fn();
+    render(<GitHubIntegrationDialog onOpenAdministration={onOpenAdministration} returnFocusTo={null} onClose={vi.fn()} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
+    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alert").textContent).toContain("INTEGRATION_VIEW");
+  });
+
   it("shows the server connection and binds a catalog repository to the current project", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/control/me") return json({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
+      if (path === "/api/control/status") return json({ claimed: true, bootstrapConfigured: false });
+      if (path === "/api/control/me") return json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
       if (path === "/api/control/integrations/github") return json({ app: { name: "All My Friends Are Agents", slug: "all-my-friends-are-agents", clientId: "Iv23test" }, connections: [connection] });
       if (path === "/api/control/projects/current/repository" && init?.method === "GET") return json({ repository: { configured: false }, defaults: { checkoutPath: "/srv/amfaa", worktreeRoot: "/srv/worktrees", policyRevision: 1 } });
       if (path.startsWith("/api/control/integrations/github/repositories?")) return json({ catalog });
@@ -59,7 +74,7 @@ describe("GitHubIntegrationDialog", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<GitHubIntegrationDialog returnFocusTo={null} onClose={vi.fn()} />);
+    render(<GitHubIntegrationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={vi.fn()} />);
 
     expect(await screen.findByRole("heading", { name: "GitHub connected" })).toBeTruthy();
     expect(screen.getByText("@virusimmortal00")).toBeTruthy();
@@ -86,29 +101,13 @@ describe("GitHubIntegrationDialog", () => {
     });
   });
 
-  it("keeps server-owner bootstrap inside the UI before loading GitHub settings", async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const path = String(input);
-      if (path === "/api/control/me") return json({ error: "Authentication required." }, 401);
-      if (path === "/api/control/status") return json({ claimed: false, bootstrapConfigured: true });
-      if (path === "/api/control/bootstrap" && init?.method === "POST") return json({ principal: { id: "owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-claimed" });
-      if (path === "/api/control/integrations/github") return json({ app: { name: "All My Friends Are Agents", slug: "all-my-friends-are-agents", clientId: "Iv23test" }, connections: [] });
-      if (path === "/api/control/projects/current/repository") return json({ repository: { configured: false }, defaults: { checkoutPath: "/srv/amfaa", worktreeRoot: "/srv/worktrees", policyRevision: 1 } });
-      return json({ error: `Unexpected request: ${path}` }, 500);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<GitHubIntegrationDialog returnFocusTo={null} onClose={vi.fn()} />);
-    expect(await screen.findByRole("heading", { name: "Claim server owner" })).toBeTruthy();
-    await user.type(screen.getByLabelText("Local bootstrap secret"), "bootstrap-secret");
-    await user.type(screen.getByLabelText("Username"), "server-owner");
-    await user.type(screen.getByLabelText("Password"), "strong-local-password");
-    await user.click(screen.getByRole("button", { name: "Claim owner" }));
-
-    expect(await screen.findByRole("button", { name: "Connect GitHub" })).toBeTruthy();
-    const bootstrapCall = fetchMock.mock.calls.find(([path]) => path === "/api/control/bootstrap");
-    expect(JSON.parse(String(bootstrapCall?.[1]?.body))).toEqual({ bootstrapSecret: "bootstrap-secret", username: "server-owner", password: "strong-local-password" });
+  it.each([true, false])("routes claimed=%s to administration without duplicate credentials", async (claimed) => {
+    vi.stubGlobal("fetch", vi.fn(async (input) => String(input).endsWith("/status") ? json({ claimed, bootstrapConfigured: true }) : json({ error: "Authentication required." }, 401)));
+    const onOpenAdministration = vi.fn();
+    render(<GitHubIntegrationDialog onOpenAdministration={onOpenAdministration} returnFocusTo={null} onClose={vi.fn()} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
+    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    expect(screen.queryByLabelText("Password")).toBeNull();
   });
 
   it("blocks every dialog dismissal path while repository configuration is in progress", async () => {
@@ -116,7 +115,8 @@ describe("GitHubIntegrationDialog", () => {
     const configurationResponse = new Promise<Response>((resolve) => { resolveConfiguration = resolve; });
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/control/me") return json({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
+      if (path === "/api/control/status") return json({ claimed: true, bootstrapConfigured: false });
+      if (path === "/api/control/me") return json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
       if (path === "/api/control/integrations/github") return json({ app: { name: "All My Friends Are Agents", slug: "all-my-friends-are-agents", clientId: "Iv23test" }, connections: [connection] });
       if (path === "/api/control/projects/current/repository" && init?.method === "GET") return json({ repository: { configured: false }, defaults: { checkoutPath: "/srv/amfaa", worktreeRoot: "/srv/worktrees", policyRevision: 1 } });
       if (path.startsWith("/api/control/integrations/github/repositories?")) return json({ catalog });
@@ -127,7 +127,7 @@ describe("GitHubIntegrationDialog", () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
 
-    render(<GitHubIntegrationDialog returnFocusTo={null} onClose={onClose} />);
+    render(<GitHubIntegrationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={onClose} />);
     await user.click(await screen.findByRole("button", { name: "Use repository" }));
     expect(await screen.findByRole("button", { name: "Configuring…" })).toBeTruthy();
 

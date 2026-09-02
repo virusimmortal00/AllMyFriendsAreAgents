@@ -1,4 +1,5 @@
 import type express from "express";
+import type { ControlSessionResponse } from "../shared/control-session.js";
 import { clearControlSession, controlRoute, setControlSession, type ControlPlaneStore } from "./control-plane.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 
@@ -16,16 +17,16 @@ export function registerControlPlaneRoutes(input: { app: express.Express; contro
     const authenticated = await control.authenticate(request.body?.username, request.body?.password);
     if (!authenticated) throw new Error("Bootstrapped owner authentication failed.");
     setControlSession(response, authenticated.token);
-    response.status(201).json({ principal, csrfToken: authenticated.csrfToken });
+    response.set("Cache-Control", "no-store").status(201).json({ principal, csrfToken: authenticated.csrfToken, expiresAt: authenticated.expiresAt } satisfies ControlSessionResponse);
   }));
   app.post("/api/control/login", controlRoute(async (request, response) => {
     const authenticated = await control.authenticate(request.body?.username, request.body?.password);
     if (!authenticated) return response.status(401).json({ error: "Control-plane credentials are invalid." });
     setControlSession(response, authenticated.token);
-    response.json({ principal: authenticated.principal, csrfToken: authenticated.csrfToken });
+    response.set("Cache-Control", "no-store").json({ principal: authenticated.principal, csrfToken: authenticated.csrfToken, expiresAt: authenticated.expiresAt } satisfies ControlSessionResponse);
   }));
   app.post("/api/control/logout", controlRoute((request, response) => { control.require(request, undefined, true); control.logout(request); clearControlSession(response); response.status(204).end(); }));
-  app.get("/api/control/me", controlRoute((request, response) => { const session = control.require(request); response.set("Cache-Control", "no-store").json({ principal: session.publicPrincipal, csrfToken: session.csrfToken }); }));
+  app.get("/api/control/me", controlRoute((request, response) => { const session = control.require(request); response.set("Cache-Control", "no-store").json({ principal: session.publicPrincipal, csrfToken: session.csrfToken, expiresAt: session.expiresAt } satisfies ControlSessionResponse); }));
   app.get("/api/control/principals", controlRoute((request, response) => { const actor = control.require(request).principal; response.set("Cache-Control", "no-store").json({ principals: control.principals(actor) }); }));
   app.post("/api/control/principals", controlRoute(async (request, response) => { const actor = control.require(request, undefined, true).principal; response.status(201).json(await control.createPrincipal(actor, request.body || {})); }));
   app.put("/api/control/principals/:id/grants", controlRoute(async (request, response) => { const actor = control.require(request, undefined, true).principal; response.json(await control.updateGrants(actor, String(request.params.id), request.body || {})); }));

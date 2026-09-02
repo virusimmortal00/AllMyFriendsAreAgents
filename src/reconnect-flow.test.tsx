@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import App from "./App";
+import { updateControlSession } from "./control-session-state";
 import { ApiRequestError } from "./api";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend } from "./client-persistence";
 import { TRANSCRIPT_TIMESTAMPS_STORAGE_KEY } from "./transcript-view";
@@ -125,6 +126,7 @@ async function chooseMenuItem(user: ReturnType<typeof userEvent.setup>, menuName
 }
 
 beforeEach(() => {
+  updateControlSession({ status: null, session: null, checked: false, error: "" });
   window.history.replaceState({}, "", "/");
   Object.defineProperty(window, "localStorage", { configurable: true, value: memoryStorage() });
   Object.defineProperty(window, "sessionStorage", { configurable: true, value: memoryStorage() });
@@ -592,6 +594,42 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("button", { name: "Close Diagnostics and return to Chat" }));
     expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
     expect(pushState).not.toHaveBeenCalled();
+  });
+
+  it("returns from denied Diagnostics through administration and signs out without leaving the room", async () => {
+    let authenticated = false;
+    const session = { principal: { id: "durable-owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-control-csrf", expiresAt: new Date(Date.now() + 28_800_000).toISOString() };
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = String(input);
+      if (path === "/api/control/status") return Response.json({ claimed: true, bootstrapConfigured: true });
+      if (path === "/api/control/me") return authenticated ? Response.json(session) : Response.json({ error: "Sign in required" }, { status: 401 });
+      if (path === "/api/control/login") { authenticated = true; return Response.json(session); }
+      if (path === "/api/control/logout") { authenticated = false; return new Response(null, { status: 204 }); }
+      if (path === "/api/control/diagnostics/query") return authenticated ? Response.json({ records: [], chunks: [], nextCursor: null, scannedBytes: 0, serializedBytes: 0, malformedRecords: 0, scanLimitReached: false }) : Response.json({ error: "Unavailable" }, { status: 403 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    await renderConnected();
+    const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
+    await chooseMenuItem(user, "Window", "Diagnostics");
+    await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Sign in to server administration" }));
+    expect(screen.queryByRole("heading", { name: "Owner diagnostics" })).toBeNull();
+    await user.type(await screen.findByLabelText("Username"), "server-owner");
+    await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
+    await screen.findByRole("heading", { name: "Owner diagnostics" });
+    await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
+    await screen.findByText("No matching records.");
+    await chooseMenuItem(user, "Window", "Server Administration");
+    await user.click(await screen.findByRole("button", { name: "Sign out" }));
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);
+    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    expect(api.joinRoom).toHaveBeenCalledOnce();
+    expect(window.location.pathname).toBe("/");
   });
 
   it("toggles and persists visual timestamps from the View menu", async () => {

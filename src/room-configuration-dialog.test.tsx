@@ -2,9 +2,13 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
+import { ServerAdministration } from "./server-administration";
+import { WorkspaceSurface } from "./workspace-surface";
+import { updateControlSession } from "./control-session-state";
 import { RoomConfigurationDialog, RoomPropertiesDialog } from "./room-configuration-dialog";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); updateControlSession({ status: null, session: null, checked: false, error: "" }); vi.unstubAllGlobals(); });
 
 describe("RoomConfigurationDialog", () => {
   it("separates base prompt, summarizer, and feature flags and saves only changed fields", async () => {
@@ -24,11 +28,11 @@ describe("RoomConfigurationDialog", () => {
         defaults: { basePromptText: "Default merit rule" },
         routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0, promotionEligible: false },
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(Response.json({ principal: { role: "OWNER" }, csrfToken: "control-proof" }))
+      .mockResolvedValueOnce(Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "control-proof" }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ settings: { basePromptRevision: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
-    render(<RoomConfigurationDialog returnFocusTo={null} onClose={onClose} />);
+    render(<RoomConfigurationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={onClose} />);
     expect(await screen.findByRole("heading", { name: "Base Prompt" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Summarizer" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Agent Routing" })).toBeTruthy();
@@ -62,12 +66,12 @@ describe("RoomConfigurationDialog", () => {
     let loginAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === "/api/control/me") return authenticated ? Response.json({ principal: { role: "OWNER" }, csrfToken: "fresh-control-proof" }) : Response.json({ error: "Authentication required" }, { status: 401 });
+      if (url === "/api/control/me") return authenticated ? Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fresh-control-proof" }) : Response.json({ error: "Authentication required" }, { status: 401 });
       if (url === "/api/control/status") return Response.json({ claimed, bootstrapConfigured: true });
       if (url === "/api/control/login" || url === "/api/control/bootstrap") {
         if (++loginAttempts === 1) return Response.json({ error: "Invalid administrator credentials" }, { status: 401 });
         authenticated = true;
-        return Response.json({ principal: { role: "OWNER" }, csrfToken: "login-control-proof" });
+        return Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "login-control-proof" });
       }
       if (url === "/api/control/integrations/github") return Response.json({ connections: [] });
       if (url === "/api/control/projects/current/repository") return Response.json({ error: "Not configured" }, { status: 404 });
@@ -77,17 +81,23 @@ describe("RoomConfigurationDialog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+    function AuthenticationFlow() {
+      const [administrationOpen, setAdministrationOpen] = useState(false);
+      return <><RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => setAdministrationOpen(true)} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />
+        {administrationOpen ? <WorkspaceSurface name="Server Administration" onClose={() => setAdministrationOpen(false)}><ServerAdministration destination="Room Properties" onContinue={() => setAdministrationOpen(false)} /></WorkspaceSurface> : null}</>;
+    }
+    render(<AuthenticationFlow />);
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
     const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
     await user.clear(prompt);
     await user.type(prompt, "Draft room rule");
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    const signIn = await screen.findByRole("button", { name: "Administrator sign-in…" });
+    const signIn = await screen.findByRole("button", { name: "Sign in to server administration" });
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
     await user.click(signIn);
-    await screen.findByRole("heading", { name: claimed ? "Server administrator sign in" : "Claim server owner" });
-    await user.keyboard("{Escape}");
+    await screen.findByLabelText("Username");
+    expect(screen.queryByRole("dialog", { name: "Room Properties" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
     expect(screen.queryByRole("dialog", { name: "GitHub" })).toBeNull();
     expect(document.activeElement).toBe(signIn);
     expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
@@ -98,11 +108,12 @@ describe("RoomConfigurationDialog", () => {
     await user.type(screen.getByLabelText("Password"), "synthetic-test-password");
     if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "synthetic-bootstrap-secret");
     await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
-    expect(await screen.findByText("Invalid administrator credentials")).toBeTruthy();
+    expect(await screen.findByText(/Could not sign in or claim/)).toBeTruthy();
     expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
+    await user.type(screen.getByLabelText("Password"), "synthetic-test-password");
+    if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "synthetic-bootstrap-secret");
     await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
-    await screen.findByRole("heading", { name: "Connect GitHub" });
-    await user.click(screen.getByRole("button", { name: "Close GitHub integration" }));
+    await screen.findByRole("dialog", { name: "Room Properties" });
     expect(document.activeElement).toBe(signIn);
     await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true));
@@ -133,7 +144,7 @@ describe("RoomConfigurationDialog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
+    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
 
     const roomName = screen.getByRole("textbox", { name: "Room name" });
     expect(roomName).toBeTruthy();
@@ -172,7 +183,7 @@ describe("RoomConfigurationDialog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
 
     const roomName = screen.getByRole("textbox", { name: "Room name" });
     await user.clear(roomName);
@@ -204,7 +215,7 @@ describe("RoomConfigurationDialog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
+    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
 
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
     const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
@@ -239,7 +250,7 @@ describe("RoomConfigurationDialog", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<RoomConfigurationDialog returnFocusTo={null} onClose={vi.fn()} />);
+    render(<RoomConfigurationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={vi.fn()} />);
     expect(await screen.findByRole("heading", { name: "Summarizer" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Choose model…" }));
     expect((await screen.findByRole("alert")).textContent).toContain("connection was interrupted");
