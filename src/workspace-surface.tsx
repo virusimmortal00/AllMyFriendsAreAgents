@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import { useScrollEdges } from "./scroll-edges";
 
-export const WORKSPACE_NAMES = ["Improvements", "Tasks", "Continuations", "Investigations", "Reviewed contributions", "Diagnostics"] as const;
+export const WORKSPACE_NAMES = ["Improvements", "Tasks", "Continuations", "Investigations", "Reviewed contributions", "Diagnostics", "Server Administration"] as const;
 export type WorkspaceName = (typeof WORKSPACE_NAMES)[number];
 
 /**

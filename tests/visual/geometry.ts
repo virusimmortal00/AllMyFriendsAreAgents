@@ -62,8 +62,10 @@ export function measureScrollAffordances() {
       continue;
     }
     const gutter = element.offsetWidth - element.clientWidth - (parseFloat(style.borderLeftWidth) || 0) - (parseFloat(style.borderRightWidth) || 0);
+    const requiresTrack = element.closest(".classic-scrollbars") && CSS.supports("selector(::-webkit-scrollbar)") && !matchMedia("(forced-colors: active)").matches;
     const edge = element.dataset.overlayScroll === "true" && element.dataset.scrollEdges === expected && style.boxShadow?.includes("inset");
-    if (gutter < 10 && !edge) issues.push(`${element.classList.item(0) || element.tagName}: overflowing content has neither a native scrollbar gutter nor a directional edge.`);
+    if (gutter < 10 && requiresTrack) issues.push("An opted-in form is missing its visible native scroll track.");
+    else if (gutter < 10 && !edge) issues.push(`${element.classList.item(0) || element.tagName}: overflowing content has neither a native scrollbar gutter nor a directional edge.`);
   }
   return issues;
 }

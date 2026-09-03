@@ -10,10 +10,10 @@ describe("visual fixture fidelity", () => {
     expect(normalizeRoomAgentRoster(visualRoster).entries.map((entry) => entry.agentId)).toEqual(visualRoster.entries.map((entry) => entry.agentId));
     expect(fixtureRoom.roster?.entries).toHaveLength(9);
   });
-  it("explicitly maps every registered view without duplicate identities", () => {
-    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual(Object.values(VIEWS).map((view) => view.id).sort());
+  it("explicitly maps every registered view and additional administration states", () => {
+    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...Object.values(VIEWS), VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.ownerDiagnosticsQuery].map((view) => view.id).sort());
     expect(new Set(APP_SCENARIOS.map((scenario) => scenario.id)).size).toBe(APP_SCENARIOS.length);
-    expect(expectedVisualKeys()).toHaveLength(714);
+    expect(expectedVisualKeys()).toHaveLength(846);
     expect(expectedVisualKeys().filter((key) => key.includes("--compact-room-chat--"))).toHaveLength(6);
   });
   it("rejects unmocked external-state mutations", () => {

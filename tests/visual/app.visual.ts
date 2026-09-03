@@ -12,7 +12,10 @@ async function menu(page: Page, name: string, item?: string) {
 }
 
 async function openScenario(page: Page, id: string) {
-  if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
+  if (id.startsWith("server-administration")) {
+    await menu(page, "Window", "Server Administration");
+    await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
+  } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");
     if (id !== "room-properties-general") await page.getByRole("tab", { name: "Agent behavior" }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
@@ -27,7 +30,7 @@ async function openScenario(page: Page, id: string) {
       await page.getByRole("textbox", { name: "Agent alias", exact: true }).fill("Alpha navigation");
       await page.getByRole("button", { name: id === "manage-agents-conflict" ? "Save roster" : "Cancel", exact: true }).click();
     }
-  } else if (id === "your-profile") await menu(page, "You", "Profile...");
+  } else if (id.startsWith("your-profile")) await menu(page, "You", "Profile...");
   else if (id === "help") await menu(page, "Help", "Help topics");
   else if (id === "room-menu") await menu(page, "Room");
   else if (id === "window-menu") await menu(page, "Window");
@@ -46,6 +49,10 @@ async function openScenario(page: Page, id: string) {
     if (id === "reviewed-contribution-detail") await page.getByRole("button", { name: /Consistent navigation controls/ }).click();
   } else if (id.startsWith("owner-diagnostics")) {
     await menu(page, "Window", "Diagnostics");
+    if (id === "owner-diagnostics-sign-in") {
+      await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
+      await expect(page.getByRole("alert")).toBeVisible();
+    }
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");
       await page.getByLabel("Trace ID").fill(fixtureTraceId);
@@ -70,6 +77,19 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
     const visible = (el: HTMLElement) => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden";
     const contained = (el: HTMLElement) => { const r = el.getBoundingClientRect(); return r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; };
     if (document.documentElement.scrollWidth > innerWidth + 1) issues.push("Page has horizontal overflow.");
+    for (const button of document.querySelectorAll<HTMLElement>(".administration-sign-in")) {
+      if (!visible(button)) continue;
+      if (button.parentElement!.getBoundingClientRect().width > 360 && button.getBoundingClientRect().width > 320) issues.push("The sign-in command is stretched across its panel.");
+    }
+    for (const dialog of document.querySelectorAll<HTMLElement>('.github-integration-window[data-presentation="authentication"], .roster-window[data-presentation="authentication"]')) {
+      if (visible(dialog) && innerWidth > 720 && dialog.getBoundingClientRect().width > 441) issues.push("A short sign-in dialog exceeds its content-sized width.");
+    }
+    for (const navigation of document.querySelectorAll<HTMLElement>(".room-model-selection__navigation")) {
+      const pane = navigation.closest<HTMLElement>(".room-properties-page-content");
+      if (!visible(navigation) || !pane) continue;
+      const boundary = pane.getBoundingClientRect().top;
+      if (navigation.parentElement!.getBoundingClientRect().top < boundary && navigation.getBoundingClientRect().top > boundary + 1) issues.push("Scrolled model filters can peek above the sticky Back row.");
+    }
     for (const hidden of document.querySelectorAll<HTMLElement>('[hidden]:not([hidden="until-found"])')) {
       if (hidden.getClientRects().length) issues.push("An inactive hidden element still occupies layout space.");
     }

@@ -17,7 +17,7 @@ describe("human profile photos", () => {
   it("saves a changed display name and removed photo together", async () => {
     const onProfileChange = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
-    render(<HumanProfileDialog
+    render(<HumanProfileDialog onOpenAdministration={() => undefined}
       human={{ id: "human-1", name: "Ada", style: DEFAULT_PARTICIPANT_STYLES.you, avatarUrl: "data:image/jpeg;base64,/9j/AA==" }}
       busy={false}
       returnFocusTo={null}
@@ -38,7 +38,7 @@ describe("human profile photos", () => {
 
   it("keeps profile changes local until Save and rejects a blank display name", async () => {
     const onProfileChange = vi.fn().mockResolvedValue(undefined);
-    render(<HumanProfileDialog
+    render(<HumanProfileDialog onOpenAdministration={() => undefined}
       human={{ id: "human-1", name: "Ada", style: DEFAULT_PARTICIPANT_STYLES.you }}
       busy={false}
       returnFocusTo={null}

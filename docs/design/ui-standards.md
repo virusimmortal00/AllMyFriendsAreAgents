@@ -67,7 +67,11 @@ New `View` commands must be created with `presentationCommand`. New full-workspa
   that hide overlay scrollbars. Shared CSS gives the real browser scrollbar
   neutral gray colors while preserving native behavior. Fine-pointer layouts
   expose a 14px classic track with a raised thumb where native scrollbar parts
-  can be styled; touch layouts retain their platform scrollbar sizing.
+  can be styled; touch layouts normally retain their platform scrollbar sizing.
+  Long forms can opt into the shared `classic-scrollbars` treatment when
+  overlay-only cues are insufficient: Administration, Diagnostics, and Room
+  Properties expose the same native track and thumb on both pointer types.
+  This remains browser scrolling, with a real gutter and no added input handler.
   Do not mix non-auto `scrollbar-color` with native scrollbar-part styling: the
   former overrides the latter. A stable native gutter prevents
   content-width jumps when overflow changes. The thumb communicates position

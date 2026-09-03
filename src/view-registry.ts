@@ -37,6 +37,7 @@ export const VIEWS = {
   reviewedContributionDetail: defineView({ id: "WORK-09", name: "Reviewed Contribution Detail", state: "Review gates and contribution detail", category: "workspace" }),
   ownerDiagnosticsQuery: defineView({ id: "WORK-10", name: "Owner Diagnostics Query", state: "Bounded diagnostic search controls", category: "workspace" }),
   ownerDiagnosticsResults: defineView({ id: "WORK-11", name: "Owner Diagnostics Results", state: "Result list and selected diagnostic detail", category: "workspace" }),
+  serverAdministration: defineView({ id: "WORK-12", name: "Server Administration", state: "Claim, sign-in, and active administrator session", category: "workspace" }),
   roomPropertiesGeneral: defineView({ id: "ROOM-01", name: "Room Properties — General", state: "Room name, topic, and conversation energy", category: "room" }),
   roomPropertiesAgentBehavior: defineView({ id: "ROOM-02", name: "Room Properties — Agent Behavior", state: "Base prompt, summarizer, and routing", category: "room" }),
   roomSummarizerModelPicker: defineView({ id: "ROOM-03", name: "Room Summarizer Model Picker", state: "Lazy-loaded model search, filters, and results", category: "room" }),

@@ -1,3 +1,6 @@
+import type { ControlPrincipal, ControlSessionResponse, ControlStatus } from "../shared/control-session";
+import { controlSessionRevision, updateControlSession } from "./control-session-state";
+export type { ControlPrincipal } from "../shared/control-session";
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
 import type { ConversationEnergy } from "../shared/conversation-energy";
@@ -15,7 +18,10 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
 const GITHUB_DISCOVERY_TIMEOUT_MS = 30_000;
 let controlCsrfToken = "";
+let controlMutationPending = false;
+export const isControlMutationPending = () => controlMutationPending;
 let rosterCsrfToken = "";
+let rosterAccessKind: "room-member" | "control" | undefined;
 const pollVoteIds = new Map<string,string>();
 const pollCloseIds = new Map<string,string>();
 
@@ -45,6 +51,7 @@ export class ApiRequestError extends Error {
 }
 
 export async function request(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS, acceptedErrorStatuses: readonly number[] = []) {
+  const sessionRevision = controlSessionRevision();
   const controller = new AbortController();
   const externalSignal = options.signal;
   const abortFromCaller = () => controller.abort(externalSignal?.reason);
@@ -60,6 +67,7 @@ export async function request(path: string, options: RequestInit = {}, timeoutMs
       signal: controller.signal,
     });
     if (!response.ok && !acceptedErrorStatuses.includes(response.status)) {
+      if (response.status === 401 && path.startsWith("/api/control/") && (!controlMutationPending || ["/api/control/login", "/api/control/bootstrap", "/api/control/logout"].includes(path)) && sessionRevision === controlSessionRevision()) clearControlSessionState();
       const body = (await response.json().catch(() => ({}))) as { error?: string };
       throw new ApiRequestError(body.error || `Request failed with status ${response.status}`, false, response.status, body);
     }
@@ -166,6 +174,7 @@ export async function loadRoster(): Promise<RosterResponse> {
   rosterCsrfToken = "";
   const result: RosterResponse = await request("/api/roster", { method: "GET", cache: "no-store" }).then((response) => response.json());
   rosterCsrfToken = result.access?.csrfToken || "";
+  rosterAccessKind = result.access?.kind;
   return result;
 }
 
@@ -204,11 +213,59 @@ export async function updateRoomConfiguration(update: Partial<{ basePromptText: 
   return request("/api/room/settings", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(update) }).then((response) => response.json());
 }
 
-export interface ControlPrincipal { id: string; username: string; role: "OWNER" | "ADMIN" | "MEMBER"; capabilities: string[]; revision: number; }
-export async function loadControlStatus() { return request("/api/control/status", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ claimed: boolean; bootstrapConfigured: boolean }>); }
-export async function loadControlMe() { const result = await request("/api/control/me", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
-export async function controlLogin(username: string, password: string) { const result = await request("/api/control/login", { method: "POST", body: JSON.stringify({ username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
-export async function bootstrapControlPlane(bootstrapSecret: string, username: string, password: string) { const result = await request("/api/control/bootstrap", { method: "POST", body: JSON.stringify({ bootstrapSecret, username, password }) }).then((response) => response.json() as Promise<{ principal: ControlPrincipal; csrfToken: string }>); controlCsrfToken = result.csrfToken; return result; }
+export function clearControlSessionState() {
+  controlCsrfToken = "";
+  if (rosterAccessKind === "control") rosterCsrfToken = "";
+  updateControlSession({ session: null, checked: true });
+}
+
+function acceptControlSession(result: ControlSessionResponse) {
+  controlCsrfToken = result.csrfToken;
+  updateControlSession({ session: { principal: result.principal, expiresAt: result.expiresAt }, status: { claimed: true, bootstrapConfigured: false }, checked: true, error: "" });
+}
+
+export async function loadControlStatus(): Promise<ControlStatus> {
+  return request("/api/control/status", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+export async function loadControlMe(): Promise<ControlSessionResponse> {
+  const revision = controlSessionRevision();
+  const result = await request("/api/control/me", { method: "GET", cache: "no-store" }).then((response) => response.json() as Promise<ControlSessionResponse>);
+  if (!controlMutationPending && revision === controlSessionRevision()) acceptControlSession(result);
+  return result;
+}
+async function mutateControlSession(path: "/api/control/login" | "/api/control/bootstrap", body: object) {
+  if (controlMutationPending) throw new ApiRequestError("An administrator session change is already in progress.");
+  controlMutationPending = true;
+  clearControlSessionState();
+  const revision = controlSessionRevision();
+  try {
+    const result = await request(path, { method: "POST", body: JSON.stringify(body) }).then((response) => response.json() as Promise<ControlSessionResponse>);
+    if (revision === controlSessionRevision()) acceptControlSession(result);
+    return result;
+  } finally { controlMutationPending = false; }
+}
+export function controlLogin(username: string, password: string) {
+  return mutateControlSession("/api/control/login", { username, password });
+}
+export function bootstrapControlPlane(bootstrapSecret: string, username: string, password: string) {
+  return mutateControlSession("/api/control/bootstrap", { bootstrapSecret, username, password });
+}
+export async function controlLogout() {
+  if (controlMutationPending) throw new ApiRequestError("An administrator session change is already in progress.");
+  controlMutationPending = true;
+  const csrfToken = controlCsrfToken;
+  // Invalidate pending reads while retaining the busy session summary until logout completes.
+  updateControlSession({});
+  try {
+    await request("/api/control/logout", { method: "POST", headers: { "X-AMFAA-CSRF": csrfToken }, body: "{}" });
+  } catch (failure) {
+    if (!(failure instanceof ApiRequestError) || failure.status !== 401) throw failure;
+  } finally {
+    clearControlSessionState();
+    controlMutationPending = false;
+  }
+}
+
 export async function loadProviderSetup() { return request("/api/provider-setup", { method: "GET", cache: "no-store" }).then((response) => response.json()); }
 export async function initiateProviderSetup() {
   // Roster access no longer initializes an administrator session. Step up only

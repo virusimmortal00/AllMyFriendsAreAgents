@@ -29,7 +29,7 @@ function focusableElements(container: HTMLElement | null) {
     .filter((element) => !element.closest("[hidden], [inert], [aria-hidden=\"true\"]"));
 }
 
-export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: () => void, returnFocusTo: HTMLElement | null = null, active = true) {
+export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: () => void, returnFocusTo: HTMLElement | null = null, active = true, resumeFocus?: RefObject<HTMLElement | null>) {
   const dialogRef = useRef<T>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -38,14 +38,15 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
     if (!active) return;
     const restoreFocusTo = returnFocusTo || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     const unlockBodyScroll = lockBodyScroll();
-    const initialFocus = dialogRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+    const initialFocus = (resumeFocus?.current && dialogRef.current?.contains(resumeFocus.current) ? resumeFocus.current : null)
+      || dialogRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
       || focusableElements(dialogRef.current)[0];
     (initialFocus || dialogRef.current)?.focus();
     return () => {
       unlockBodyScroll();
       if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
     };
-  }, [active, returnFocusTo]);
+  }, [active, returnFocusTo, resumeFocus]);
 
   function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key === "Escape") {

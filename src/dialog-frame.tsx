@@ -5,6 +5,7 @@ import { viewAttributes, type ViewDefinition } from "./view-registry";
 
 export function DialogFrame({
   title,
+  active = true,
   closeLabel,
   closeDisabled = false,
   returnFocusTo = null,
@@ -23,6 +24,7 @@ export function DialogFrame({
   onClose,
 }: {
   title: string;
+  active?: boolean;
   closeLabel?: string | null;
   closeDisabled?: boolean;
   returnFocusTo?: HTMLElement | null;
@@ -41,20 +43,22 @@ export function DialogFrame({
   onClose: () => void;
 }) {
   const titleId = useId();
+  const resumeFocus = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   useScrollEdges(bodyRef);
-  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo);
+  const { dialogRef, onDialogKeyDown, onBackdropMouseDown } = useModalOverlay(onClose, returnFocusTo, active, resumeFocus);
 
-  return <div className={`modal-backdrop dialog-backdrop ${backdropClassName}`.trim()} onMouseDown={onBackdropMouseDown}>
+  return <div hidden={!active} className={`modal-backdrop dialog-backdrop ${backdropClassName}`.trim()} onMouseDown={onBackdropMouseDown}>
     <section
       ref={dialogRef}
       className={`dialog-window agent-settings-window ${layout === "property-sheet" ? "dialog-window--property-sheet " : ""}${className}`.trim()}
       role={role}
-      aria-modal="true"
+      aria-modal={active ? true : undefined}
       aria-labelledby={titleId}
       aria-describedby={ariaDescribedBy}
       tabIndex={-1}
       onKeyDown={onDialogKeyDown}
+      onFocusCapture={(event) => { resumeFocus.current = event.target as HTMLElement; }}
       data-responsive-layout={dataResponsiveLayout}
       data-presentation={dataPresentation}
       {...(view ? viewAttributes(view) : {})}

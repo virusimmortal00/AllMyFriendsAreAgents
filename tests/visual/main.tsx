@@ -11,7 +11,7 @@ function VisualFixture() {
   const scenario = new URLSearchParams(location.search).get("scenario");
   return <main className="desktop">
     <button type="button" onClick={() => setOpen(true)}>Open roster fixture</button>
-    {open ? <RosterManagerDialog initialRoster={visualRoster}
+    {open ? <RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={visualRoster}
       initialSelectedAgentId={scenario === "roster-detail" ? visualRoster.entries[0].agentId : undefined}
       returnFocusTo={null} onSaved={() => undefined} onClose={() => setOpen(false)} /> : null}
   </main>;

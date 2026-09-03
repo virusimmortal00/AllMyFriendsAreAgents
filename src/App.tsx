@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { ApiRequestError, checkReady, clearControlSessionState, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
@@ -28,6 +28,8 @@ import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomPropertiesDialog } from "./room-configuration-dialog";
+import { refreshControlSession } from "./control-session";
+import { ServerAdministration, type AdministrationDestination } from "./server-administration";
 import { Diagnostics } from "./diagnostics";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
@@ -157,6 +159,7 @@ export default function App() {
   const [workshopError, setWorkshopError] = useState("");
   const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
   const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
+  const [administrationDestination, setAdministrationDestination] = useState<AdministrationDestination | null>(null);
   const [workspaceView, setWorkspaceView] = useState<LocalWorkspaceName | null>(null);
   const [clientError, setClientError] = useState("");
   const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
@@ -325,6 +328,8 @@ export default function App() {
         if (disconnected) {
           setConnectionEpoch((current) => current + 1);
           if (previousInstance && nextRoom.server?.instanceId && previousInstance !== nextRoom.server.instanceId) {
+            clearControlSessionState();
+            void refreshControlSession();
             showTemporaryNotice("Server updated — reconnected.");
           } else {
             showTemporaryNotice("Reconnected.");
@@ -727,6 +732,25 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
+  function openAdministration(destination: AdministrationDestination | null = null) {
+    setAdministrationDestination(destination);
+    setProfileOpen(false);
+    setGitHubIntegrationOpen(false);
+    setRosterOpen(false);
+    showWorkspace("Server Administration");
+  }
+
+  function continueFromAdministration(destination: AdministrationDestination) {
+    setAdministrationDestination(null);
+    if (destination === "Diagnostics") showWorkspace("Diagnostics");
+    else {
+      showChat();
+      if (destination === "GitHub") setGitHubIntegrationOpen(true);
+      else if (destination === "Manage room agents") setRosterOpen(true);
+      else setRoomPropertiesOpen(true);
+    }
+  }
+
   const activeWorkspaceName: WorkspaceName | null = improvementsView ? "Improvements" : workspaceView;
   const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
@@ -805,6 +829,7 @@ export default function App() {
         workspaceCommand({ label: "Continuations", accessKey: "o", checked: workspaceView === "Continuations", onSelect: () => { if (workspaceView !== "Continuations") showWorkspace("Continuations"); } }),
         workspaceCommand({ label: "Investigations", accessKey: "n", checked: workspaceView === "Investigations", onSelect: () => { if (workspaceView !== "Investigations") showWorkspace("Investigations"); } }),
         workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
+        workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
         workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
     ]), view: VIEWS.windowMenu },
     {
@@ -837,7 +862,8 @@ export default function App() {
       case "Continuations": workspaceContent = <Continuations refreshKey={connectionEpoch} />; break;
       case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} />; break;
       case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
-      case "Diagnostics": workspaceContent = <Diagnostics />; break;
+      case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
+      case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
       default: workspaceView satisfies never;
     }
   }
@@ -889,9 +915,9 @@ export default function App() {
           </>}
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
-        {githubIntegrationOpen ? <GitHubIntegrationDialog returnFocusTo={githubIntegrationTrigger.current} onClose={() => setGitHubIntegrationOpen(false)} /> : null}
-        {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {githubIntegrationOpen ? <GitHubIntegrationDialog onOpenAdministration={() => openAdministration("GitHub")} returnFocusTo={githubIntegrationTrigger.current} onClose={() => setGitHubIntegrationOpen(false)} /> : null}
+        {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
           <AgentSettingsDialog
@@ -908,6 +934,7 @@ export default function App() {
           />
         ) : null}
         {rosterOpen ? <RosterManagerDialog
+          onOpenAdministration={() => openAdministration("Manage room agents")}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}
