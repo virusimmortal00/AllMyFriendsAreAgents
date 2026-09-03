@@ -11,6 +11,7 @@ import { GitHubClientError, type GitHubContributionClient } from "./github-clien
 import { GitHubContributionBroker } from "./github-contribution-broker.js";
 import { GITHUB_POLICY_REVISION, type GitHubBrokerRequest, type GitHubExternalResult } from "./github-contribution-record.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
+import { githubBrokerRepositoryReferences } from "./github-broker-repository-references.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 
 const exec = promisify(execFile);
@@ -117,9 +118,30 @@ describe("scoped GitHub contribution broker", () => {
     const value = await fixture(); value.client.failNext = new GitHubClientError("rate limited", true);
     const publish = { ...value.request, operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:retry:0001", issueNumber: undefined, title: "Contribution", body: "Evidence" };
     await expect(value.broker.execute(value.auth, publish)).resolves.toEqual({ kind: "failed", reason: "rate limited", retryable: true });
+    expect(githubBrokerRepositoryReferences((await GitHubContributionStore.open(value.file)).records())).toMatchObject([{ reconciled: false }]);
     value.client.pull = { id: "existing", url: "https://github.test/pull/44", number: 44 };
     await expect(value.broker.execute(value.auth, publish)).resolves.toMatchObject({ kind: "ok", value: { id: "existing" } });
+    expect(githubBrokerRepositoryReferences((await GitHubContributionStore.open(value.file)).records())).toMatchObject([{ terminal: true, reconciled: true }]);
     expect(value.client.calls.filter((call) => call === "create-pull")).toHaveLength(0);
+  });
+
+  it("retains a lost mutation response across restart and a later authorization rejection", async () => {
+    const value = await fixture();
+    const comment = value.client.comment.bind(value.client);
+    value.client.comment = async () => { await comment(); throw new GitHubClientError("Fixture response lost after mutation", true); };
+    const request = { ...value.request, operation: "COMMENT" as const, body: "Fixture comment" };
+    expect(await value.broker.execute(value.auth, request)).toEqual({ kind: "failed", reason: "Fixture response lost after mutation", retryable: true });
+    expect(value.client.calls).toEqual(["comment"]);
+    const failed = await GitHubContributionStore.open(value.file);
+    expect(failed.records().map(({ outcome }) => outcome)).toEqual(["PENDING", "FAILED"]);
+    expect(failed.latest(request.idempotencyKey)?.detail).toMatch(/^retryable:/);
+    expect(githubBrokerRepositoryReferences(failed.records())).toMatchObject([{ terminal: false, reconciled: false }]);
+    value.setEmergency(true);
+    expect(await value.broker.execute(value.auth, request)).toEqual({ kind: "rejected", reason: "Emergency stop is active" });
+    const rejected = await GitHubContributionStore.open(value.file);
+    expect(rejected.records().map(({ outcome }) => outcome)).toEqual(["PENDING", "FAILED", "REJECTED"]);
+    expect(githubBrokerRepositoryReferences(rejected.records())).toMatchObject([{ terminal: false, reconciled: false }]);
+    expect(value.client.calls).toEqual(["comment"]);
   });
 
   it("rejects an existing draft whose externally observed head or base changed", async () => {

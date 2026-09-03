@@ -28,6 +28,12 @@ export class RoomLifecycleStore {
   }
   close() { this.database.close(); }
 
+  /** Server-control lookup only; room-facing identity repositories remain room-scoped. */
+  projectRoomIds(projectId: string): string[] {
+    return (this.database.prepare(`SELECT r.id FROM rooms r JOIN durable_projects p ON p.project_id=r.project_id
+      WHERE p.project_id=? AND p.server_id=r.server_id ORDER BY r.id`).all(projectId) as Array<{ id: string }>).map((row) => row.id);
+  }
+
   ensureCanonicalMembership(humanId: string) {
     const now = new Date().toISOString();
     this.database.prepare("INSERT OR IGNORE INTO room_memberships(room_id,human_id,role,created_at,updated_at) VALUES (?,?,?,?,?)")

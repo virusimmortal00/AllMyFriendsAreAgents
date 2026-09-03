@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import type { RepairProjectRepositoryInput, RepositoryRepairStatus } from "../shared/project-repository-repair.js";
 
 export {
   LegacyPatGitHubCredentialProvider,
@@ -46,6 +47,8 @@ export interface ProjectRepositoryConnection {
   readonly disabledAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Optional v1 extension: old records need no rewrite. Never projected publicly. */
+  readonly repairReceipt?: { readonly keyDigest: string; readonly requestDigest: string; readonly revision: number };
 }
 
 export interface PublicRepositoryConnectionStatus {
@@ -92,6 +95,10 @@ export type RepositoryCheckoutVerificationResult =
 
 interface StoredConnections { readonly schemaVersion: 1; readonly connections: readonly ProjectRepositoryConnection[] }
 
+type RepairRepositoryInput = Omit<RepairProjectRepositoryInput, "expectedBindingRevision" | "expectedRepositoryRevision"> & {
+  readonly expectedRevision: number;
+};
+
 export class ProjectRepositoryConnectionStore {
   private queue: Promise<void> = Promise.resolve();
   private constructor(readonly filePath: string, private records: Map<string, ProjectRepositoryConnection>) {}
@@ -118,13 +125,18 @@ export class ProjectRepositoryConnectionStore {
   get(projectId: string) { const value = this.records.get(projectId); return value ? structuredClone(value) : undefined; }
   list() { return [...this.records.values()].map((value) => structuredClone(value)); }
 
-  async compareAndSet(projectId: string, expectedRevision: number, next: ProjectRepositoryConnection): Promise<boolean> {
+  async compareAndSet(projectId: string, expectedRevision: number, next: ProjectRepositoryConnection,
+    beforeCommit?: () => Promise<void>): Promise<boolean> {
     let accepted = false;
     const operation = this.queue.then(async () => {
       const current = this.records.get(projectId);
       if ((current?.revision || 0) !== expectedRevision) return;
-      this.records.set(projectId, structuredClone(next));
-      await this.persist();
+      if (next.state === "verified") assertExclusiveOwnership(next, this.list());
+      const records = new Map(this.records);
+      records.set(projectId, structuredClone(next));
+      await this.persist(records, beforeCommit);
+      // Publish in-memory authority only after the atomic file replacement succeeds.
+      this.records = records;
       accepted = true;
     });
     this.queue = operation.then(() => undefined, () => undefined);
@@ -132,11 +144,17 @@ export class ProjectRepositoryConnectionStore {
     return accepted;
   }
 
-  private async persist() {
+  private async persist(records: Map<string, ProjectRepositoryConnection>, beforeCommit?: () => Promise<void>) {
     const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, connections: this.list() }, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, this.filePath);
-    await chmod(this.filePath, 0o600);
+    try {
+      const file = await open(temporary, "wx", 0o600);
+      try {
+        await file.writeFile(`${JSON.stringify({ schemaVersion: 1, connections: [...records.values()] }, null, 2)}\n`);
+        await file.sync();
+      } finally { await file.close(); }
+      await beforeCommit?.();
+      await rename(temporary, this.filePath);
+    } finally { await unlink(temporary).catch(() => undefined); }
   }
 }
 
@@ -158,6 +176,64 @@ export class ProjectRepositoryConnectionService {
 
   connect(input: ConnectRepositoryInput): Promise<RepositoryConnectionResult> {
     return this.serialize(() => this.connectLocked(input));
+  }
+
+  async inspectRepair(): Promise<RepositoryRepairStatus> {
+    const current = this.inspectServer();
+    if (!current || current.state === "disabled") return { state: "unavailable", authority: current ? "disabled" : "missing", reason: "enabled-connection-required" };
+    const verified = await this.revalidateAuthority(current.revision);
+    const authority = verified.kind === "ok" ? "verified" : "unverified";
+    try {
+      await this.requireRepairAuthority(current);
+      return { state: "available", authority, reason: "explicit-path-validation-required" };
+    } catch { return { state: "blocked", authority, reason: "credentials-or-durable-references-require-attention" }; }
+  }
+
+  /** One atomic replacement; never disable/reconnect or change remote, policy or credential scope. */
+  repair(input: RepairRepositoryInput, validateBinding: () => void = () => undefined): Promise<RepositoryConnectionResult> {
+    return this.serialize(async () => {
+      if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1
+        || typeof input.idempotencyKey !== "string" || !SAFE_ID.test(input.idempotencyKey)
+        || typeof input.checkoutPath !== "string" || typeof input.worktreeRoot !== "string") {
+        return { kind: "rejected", reason: "Repository repair input is not canonical." };
+      }
+      const current = this.store.get(this.projectId);
+      if (!current || current.state === "disabled") return { kind: "rejected", reason: "No enabled repository connection exists." };
+      const keyDigest = digest(input.idempotencyKey);
+      const requestDigest = digest({ expectedRevision: input.expectedRevision, checkoutPath: input.checkoutPath, worktreeRoot: input.worktreeRoot });
+      const receipt = current.repairReceipt;
+      const replay = receipt?.keyDigest === keyDigest && receipt.requestDigest === requestDigest && receipt.revision === current.revision;
+      if (receipt?.keyDigest === keyDigest && receipt.requestDigest !== requestDigest) return { kind: "rejected", reason: "Repair idempotency key was already used for a different request." };
+      if (!replay && current.revision !== input.expectedRevision) return conflict(current.revision);
+      try {
+        validateBinding();
+        if (replay) {
+          if (!this.credentialAvailable(current.credentialReference)) throw new Error("Credential reference is unavailable for this project.");
+          const verified = await this.revalidateAuthority(current.revision);
+          validateBinding();
+          return verified.kind === "ok" ? { kind: "ok", connection: current } : verified;
+        }
+        await this.requireRepairAuthority(current);
+        const evidence = await inspectCheckout(input.checkoutPath, input.worktreeRoot, current.defaultBranch);
+        if (evidence.remote.canonical !== current.remote.canonical) throw new Error("Replacement checkout remote does not match the saved repository identity.");
+        const timestamp = this.now();
+        const next: ProjectRepositoryConnection = { ...current, ...evidence, revision: current.revision + 1, state: "verified",
+          validatedAt: timestamp, updatedAt: timestamp,
+          repairReceipt: { keyDigest, requestDigest, revision: current.revision + 1 } };
+        if (!await this.store.compareAndSet(this.projectId, current.revision, next, async () => {
+          await this.requireRepairAuthority(current);
+          validateBinding();
+        })) return conflict(this.store.get(this.projectId)?.revision || 0);
+        await this.log("repair", next, "accepted");
+        return { kind: "ok", connection: next };
+      } catch (error) { return { kind: "rejected", reason: safeError(error) }; }
+    });
+  }
+
+  private async requireRepairAuthority(current: ProjectRepositoryConnection) {
+    const blockers = (await this.references()).filter((value) => !value.terminal || !value.reconciled);
+    if (blockers.length) throw new Error(`Repository repair has ${blockers.length} active or unreconciled durable reference(s).`);
+    if (!this.credentialAvailable(current.credentialReference)) throw new Error("Credential reference is unavailable for this project.");
   }
 
   reconcile(expectedRevision: number): Promise<RepositoryConnectionResult> {
@@ -338,8 +414,8 @@ async function inspectCheckout(checkoutInput: string, worktreeInput: string, def
   if (await realpath(top) !== checkoutPath) throw new Error("Checkout must be the repository's canonical top-level worktree.");
   const commonRaw = await git(checkoutPath, ["rev-parse", "--git-common-dir"]);
   const commonDirectory = await realpath(path.resolve(checkoutPath, commonRaw));
-  const expectedCommon = await realpath(path.join(checkoutPath, ".git"));
-  if (commonDirectory !== expectedCommon) throw new Error("Canonical checkout has an invalid or linked common Git directory relationship.");
+  const expectedCommon = path.join(checkoutPath, ".git");
+  if (!(await lstat(expectedCommon)).isDirectory() || commonDirectory !== expectedCommon) throw new Error("Canonical checkout has an invalid or linked common Git directory relationship.");
   const remotes = (await git(checkoutPath, ["remote"])).split("\n").map((value) => value.trim()).filter(Boolean);
   if (remotes.length !== 1) throw new Error("Repository must have exactly one configured remote.");
   const urls = (await git(checkoutPath, ["remote", "get-url", "--all", remotes[0]!])).split("\n").map((value) => value.trim()).filter(Boolean);
@@ -385,7 +461,19 @@ async function canonicalFuturePath(value: string) {
     const parent = path.dirname(existing); if (parent === existing) throw new Error("Worktree root has no canonical ancestor.");
     suffix.unshift(path.basename(existing)); existing = parent;
   }
+  if (!(await stat(existing)).isDirectory()) throw new Error("Assignment worktree root must have a directory ancestor.");
   return path.join(await realpath(existing), ...suffix);
+}
+
+function assertExclusiveOwnership(next: ProjectRepositoryConnection, records: readonly ProjectRepositoryConnection[]) {
+  for (const other of records) {
+    if (other.projectId === next.projectId || other.state === "disabled") continue;
+    if ([other.checkoutPath, other.commonDirectory, other.worktreeRoot].some((left) =>
+      [next.checkoutPath, next.commonDirectory, next.worktreeRoot].some((right) => pathsOverlap(left, right)))) {
+      throw new Error("Repository checkout or assignment root is already owned by another project.");
+    }
+    if (other.credentialReference === next.credentialReference) throw new Error("Credential reference is already assigned to another project.");
+  }
 }
 
 function pathsOverlap(left: string, right: string) {
@@ -425,7 +513,10 @@ function normalizeConnection(value: unknown): ProjectRepositoryConnection | unde
     || !path.isAbsolute(item.commonDirectory) || !path.isAbsolute(item.worktreeRoot) || !SAFE_BRANCH.test(item.defaultBranch)
     || !Number.isSafeInteger(item.policyRevision) || item.policyRevision < 1 || !SAFE_ID.test(item.credentialReference) || !SHA256.test(item.identityDigest)
     || !validStoredRemote(remote)
-    || !protectedBranches || !validationCommands || !sensitivePaths) return undefined;
+    || !protectedBranches || !validationCommands || !sensitivePaths
+    || (item.repairReceipt !== undefined && (!item.repairReceipt || !SHA256.test(item.repairReceipt.keyDigest)
+      || !SHA256.test(item.repairReceipt.requestDigest) || !Number.isSafeInteger(item.repairReceipt.revision)
+      || item.repairReceipt.revision < 2 || item.repairReceipt.revision > item.revision))) return undefined;
   return structuredClone(item);
 }
 
@@ -438,4 +529,8 @@ function validStoredRemote(remote: Partial<CanonicalRemoteIdentity> | undefined)
 
 function conflict(actualRevision: number): RepositoryConnectionResult { return { kind: "conflict", reason: "Repository connection revision is stale.", actualRevision }; }
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
-function safeError(error: unknown) { return error instanceof Error ? error.message.replace(/[\r\n]+/g, " ").slice(0, 500) : "Repository validation failed."; }
+function safeError(error: unknown) {
+  // Filesystem and child-process errors may embed private paths, remote URLs or Git output.
+  if (!(error instanceof Error) || "code" in error || "stderr" in error) return "Repository validation or persistence failed. Check server-side paths and Git metadata.";
+  return error.message.replace(/[\r\n]+/g, " ").slice(0, 500);
+}
