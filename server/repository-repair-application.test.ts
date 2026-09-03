@@ -78,9 +78,9 @@ async function fixture(backend: "json" | "sqlite") {
     const port = (listener.address() as net.AddressInfo).port;
     await new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
     const base = `http://127.0.0.1:${port}`;
-    const child = spawn(process.execPath, ["--import", "tsx", "--import", "./server/fixtures/repository-repair-isolation.mjs", "server/index.ts"], {
+    const child = spawn(process.execPath, ["--import", "tsx", "--import", "./server/fixtures/server-isolation.mjs", "server/index.ts"], {
       cwd: sourceRoot, stdio: ["ignore", "ignore", "ignore"], env: {
-        PATH: process.env.PATH, NODE_ENV: "test", AMFAA_REPAIR_TEST_DIRECTORY: root,
+        PATH: process.env.PATH, NODE_ENV: "test", AMFAA_TEST_DIRECTORY: root,
         ALL_MY_FRIENDS_ARE_AGENTS_HOST: "127.0.0.1", ALL_MY_FRIENDS_ARE_AGENTS_PORT: String(port),
         ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: backend, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: data,
         ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH: databasePath, ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: projectPath,

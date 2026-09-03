@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -11,12 +12,11 @@ const ISOLATED_SERVER_TEST_TIMEOUT_MS = 15_000;
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map(async ({ child, directory }) => {
-    if (child && child.exitCode === null) {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const stopped = once(child, "exit");
       child.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 2_000);
-        child.once("exit", () => { clearTimeout(timer); resolve(); });
-      });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+      try { await stopped; } finally { clearTimeout(timer); }
     }
     if (directory) await rm(directory, { recursive: true, force: true });
   }));
@@ -33,13 +33,21 @@ async function availablePort() {
 
 async function serverFixture() {
   const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-identity-api-"));
+  const project = path.join(directory, "project");
+  await mkdir(project);
   const port = await availablePort();
-  const child = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
+  const child = spawn(process.execPath, ["--import", "tsx", "--import", "./server/fixtures/server-isolation.mjs", "server/index.ts"], {
     cwd: path.resolve(import.meta.dirname, ".."),
     env: {
-      ...process.env,
+      PATH: process.env.PATH,
+      NODE_ENV: "test",
+      AMFAA_TEST_DIRECTORY: directory,
+      ALL_MY_FRIENDS_ARE_AGENTS_HOST: "127.0.0.1",
       ALL_MY_FRIENDS_ARE_AGENTS_PORT: String(port),
-      ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: directory,
+      ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: path.join(directory, "data"),
+      ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: project,
+      ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR: path.join(directory, "worktrees"),
+      ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND: path.join(directory, "missing-opencode"),
       ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: "json",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -52,7 +60,7 @@ async function serverFixture() {
   while (Date.now() < readyDeadline) {
     if (child.exitCode !== null) throw new Error(`Identity test server exited early (${child.exitCode}): ${stderr}`);
     try {
-      if ((await fetch(`${base}/api/ready`)).ok) return { base };
+      if ((await fetch(`${base}/api/ready`, { signal: AbortSignal.timeout(500) })).ok) return { base };
     } catch {
       // The isolated server is still starting.
     }
