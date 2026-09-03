@@ -96,6 +96,8 @@ export class CommandRuntime {
   private readonly live = new Map<string, LiveAttempt>();
   private readonly livePov = new Map<string, AbortController>();
   private readonly recoveredQueued = new Map<string,{attempt:CommandAttempt;submission:CommandSubmission;timer?:unknown}>();
+  private readonly backgroundOperations = new Set<Promise<unknown>>();
+  private readonly shutdown = new AbortController();
   private closing=false;
 
   constructor(private readonly dependencies: CommandRuntimeDependencies) {
@@ -117,13 +119,14 @@ export class CommandRuntime {
       else if(attempt.status==="queued")await this.launch(submission,attempt.agentId,attempt.attempt,attempt,true);
       else this.armRecovered(attempt, submission);
     }
-    for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="pov")this.startPov(execution,submission);}
+    for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="pov")await this.startPov(execution,submission);}
     for(const execution of await this.dependencies.store.listPendingGhExecutions(this.roomId)){const submission=await this.dependencies.store.getCommandSubmission(this.roomId,execution.submissionId);if(submission?.invocation.command==="gh")await (execution.status==="queued"?this.executeGh(execution,submission):this.deliverGhResult(execution)).catch(()=>undefined);}
     for(const poll of await this.dependencies.store.listCommandPolls(this.roomId,{limit:100,state:"CLOSED"}))await this.publishPollClosed(poll);
   }
 
   async close() {
     this.closing=true;
+    this.shutdown.abort();
     for (const [attemptId, live] of this.live) {
       if (live.timer) this.clock.clearTimeout(live.timer);
       live.controller.abort();
@@ -132,13 +135,17 @@ export class CommandRuntime {
     }
     for(const recovered of this.recoveredQueued.values())if(recovered.timer)this.clock.clearTimeout(recovered.timer);
     this.recoveredQueued.clear();
-    const terminal:Promise<unknown>[]=[];
     for(const [executionId,controller] of this.livePov){controller.abort();this.livePov.delete(executionId);}
+    // Provider cancellation must not wait forever, but already-started durable
+    // writes must finish before the caller closes or removes the backing store.
+    while (this.backgroundOperations.size) await Promise.allSettled([...this.backgroundOperations]);
+    const terminal:Promise<unknown>[]=[];
     for(const execution of await this.dependencies.store.listPendingPovExecutions(this.roomId))if(!execution.currentTargetAgentId)terminal.push(this.finishPov(execution.executionId,"cancelled","server shutdown cancelled POV execution"));
     await Promise.all(terminal);
   }
 
   async submit(input: CommandInput, invoker: CommandInvoker, clientSubmissionId: string): Promise<CommandResponse> {
+    if (this.closing) return { kind: "private-error", message: "The command runtime is shutting down." };
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientSubmissionId)) return { kind: "private-error", message: "A valid command request ID is required." };
     await this.dependencies.store.compactCommandRecords(this.roomId,timestamp(this.clock));
     const parsed = this.parseInput(input);
@@ -317,19 +324,46 @@ export class CommandRuntime {
     return result;
   }
 
-  private deferRecovered(attempt:CommandAttempt,submission:CommandSubmission){if(this.closing||this.recoveredQueued.has(attempt.attemptId))return;const recovered:{attempt:CommandAttempt;submission:CommandSubmission;timer?:unknown}={attempt,submission};recovered.timer=this.clock.setTimeout(()=>{this.recoveredQueued.delete(attempt.attemptId);void this.launch(submission,attempt.agentId,attempt.attempt,attempt,true);},Math.min(250,this.stage1Ms));this.recoveredQueued.set(attempt.attemptId,recovered);}
+  private observe<T>(operation: Promise<T>): Promise<T> {
+    this.backgroundOperations.add(operation);
+    void operation.then(() => this.backgroundOperations.delete(operation), () => this.backgroundOperations.delete(operation));
+    return operation;
+  }
+
+  private background(operation: Promise<unknown>) {
+    this.observe(operation.catch((error) => logOperationSafely(this.dependencies.operationLog, "error", "command.background.failed", { error, outcome: "failed", reason: "durable-recovery-will-retry" })));
+  }
+
+  private async providerResult(operation: Promise<CommandExecutionResult>) {
+    const signal = this.shutdown.signal;
+    let cancelled!: () => void;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      cancelled = () => reject(new Error("Command provider wait cancelled by shutdown."));
+      signal.addEventListener("abort", cancelled, { once: true });
+      if (signal.aborted) cancelled();
+    });
+    try { return await Promise.race([operation, cancellation]); }
+    finally { signal.removeEventListener("abort", cancelled); }
+  }
+
+  private deferRecovered(attempt:CommandAttempt,submission:CommandSubmission){if(this.closing||this.recoveredQueued.has(attempt.attemptId))return;const recovered:{attempt:CommandAttempt;submission:CommandSubmission;timer?:unknown}={attempt,submission};recovered.timer=this.clock.setTimeout(()=>{this.recoveredQueued.delete(attempt.attemptId);this.background(this.launch(submission,attempt.agentId,attempt.attempt,attempt,true));},Math.min(250,this.stage1Ms));this.recoveredQueued.set(attempt.attemptId,recovered);}
   private async launch(submission: CommandSubmission, agentId: ActiveAgentId, attemptNumber: number, acceptedAttempt?:CommandAttempt, recovered=false) {
-    if (attemptNumber > MAX_COMMAND_ATTEMPTS) return;
+    if (this.closing || attemptNumber > MAX_COMMAND_ATTEMPTS) return;
     let attempt=acceptedAttempt;
     if(!attempt){const now=timestamp(this.clock);const created=await this.dependencies.store.createCommandAttempt({ attemptId: stableId(submission.submissionId,"attempt",String(attemptNumber)), roomId:this.roomId,submissionId:submission.submissionId,attempt:attemptNumber,agentId,generationId:null,status:"queued",reason:null,...this.captureEpoch(agentId),createdAt:now,updatedAt:now });if(created.kind==="duplicate"&&created.attempt.status!=="queued")return;attempt=created.attempt;}
     if (!await this.launchEligible(submission,agentId)){if(recovered&&this.agentCurrent(agentId)){this.deferRecovered(attempt,submission);return;}return this.failAndReassign(attempt,submission,"eligibility changed before launch");}
+    if (this.closing) return;
     const reservation=this.dependencies.reserveLaunch?.(agentId);
     if(this.dependencies.reserveLaunch&&!reservation){if(recovered){this.deferRecovered(attempt,submission);return;}return this.failAndReassign(attempt,submission,"shared generation capacity changed before launch");}
     this.recoveredQueued.delete(attempt.attemptId);
     const live: LiveAttempt = { controller:new AbortController(),partial:"",...(reservation?{reservation}:{}) };
     this.live.set(attempt.attemptId,live);
-    live.timer = this.clock.setTimeout(()=>void this.stage1(attempt,submission),this.stage1Ms);
-    void this.dependencies.executeTask(agentId,(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,{ signal:live.controller.signal, partial:(text)=>{ live.partial=sanitizeDiagnosticText(text)||""; void this.captureLateStallPartial(attempt,submission,live.partial); }, active:async (generationId)=>this.markActive(attempt,generationId,submission) }).then((result)=>this.complete(attempt,submission,result)).catch((error)=>this.fail(attempt,submission,error));
+    live.timer = this.clock.setTimeout(()=>this.background(this.stage1(attempt,submission)),this.stage1Ms);
+    this.background(this.providerResult(this.dependencies.executeTask(agentId,(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,{
+      signal:live.controller.signal,
+      partial:(text)=>{ if(this.closing)return;live.partial=sanitizeDiagnosticText(text)||"";this.background(this.captureLateStallPartial(attempt,submission,live.partial)); },
+      active:(generationId)=>this.closing?Promise.resolve(false):this.observe(this.markActive(attempt,generationId,submission)),
+    })).then((result)=>{if(!this.closing)return this.complete(attempt,submission,result);}).catch((error)=>{if(!this.closing)return this.fail(attempt,submission,error);}));
   }
 
   private async launchEligible(submission: CommandSubmission, agentId: ActiveAgentId) {
@@ -342,10 +376,10 @@ export class CommandRuntime {
     if (!this.agentCurrent(attempt.agentId)) { await this.stage1(attempt,submission,"eligibility changed at generation start"); return false; }
     const active={...attempt,generationId,status:"active" as const,updatedAt:timestamp(this.clock,attempt.updatedAt)};
     const claimed=await this.dependencies.store.compareAndSetCommandAttempt(attempt.updatedAt,active);
-    if(claimed.kind!=="accepted") return false;
+    if(claimed.kind!=="accepted" || this.closing) return false;
     if (live.timer) this.clock.clearTimeout(live.timer);
     if(live.reservation?.activate)live.reservation.activate(generationId);else live.reservation?.release();
-    live.timer=this.clock.setTimeout(()=>void this.stage2(active,submission),this.stage2Ms);
+    live.timer=this.clock.setTimeout(()=>this.background(this.stage2(active,submission)),this.stage2Ms);
     return true;
   }
 
@@ -365,6 +399,7 @@ export class CommandRuntime {
   private async captureLateStallPartial(attempt:CommandAttempt,submission:CommandSubmission,text:string) { if(!text)return; const current=(await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId)).find((item)=>item.attemptId===attempt.attemptId); if(current?.status!=="superseded"||!current.reason?.includes("stalled"))return; await this.captureDiagnostic({agentId:current.agentId,attemptId:current.attemptId,generationId:current.generationId||undefined,correlationId:`${current.attemptId}:stage-2`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"task"}>).prompt,reason:"generation-stalled",text,metadata:{stage:2}}); }
 
   private async failAndReassign(attempt:CommandAttempt,submission:CommandSubmission,reason:string) {
+    if (this.closing) return;
     const attempts=await this.dependencies.store.listCommandAttempts(this.roomId,submission.submissionId); const current=attempts.find((item)=>item.attemptId===attempt.attemptId); if(!current||!(current.status==="queued"||current.status==="active")) return;
     const superseded={...current,status:"superseded" as const,reason:safeLabel(reason).slice(0,200),updatedAt:timestamp(this.clock,current.updatedAt)};
     this.clearLive(current.attemptId,true);
@@ -375,13 +410,13 @@ export class CommandRuntime {
   }
 
   private agentCurrent(agentId:ActiveAgentId){const entry=roomAgentEntry(this.dependencies.roster(),agentId);return Boolean(entry?.enabled&&!entry.selectionConfirmationRequired);}
-  private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){if(current.currentTargetAgentId)return;const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){if(active.currentTargetAgentId)return;const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);void this.runPovTargets(active,submission,controller).then(()=>this.finishPov(active.executionId,"completed",null)).catch(async(error)=>{if(error instanceof PovDeliveryPendingError){this.livePov.delete(active.executionId);return;}if(controller.signal.aborted){const durable=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(durable?.currentTargetAgentId){this.livePov.delete(active.executionId);return;}}return this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error));});}
-  private async runPovTargets(execution:CommandPovExecution,submission:CommandSubmission,controller:AbortController){for(;;){if(controller.signal.aborted)throw new Error("POV execution was cancelled.");const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||current.status!=="active")return;if(current.currentTargetAgentId){await this.resumePovDelivery(current,submission);continue;}const agentId=current.targetAgentIds.find((candidate)=>!current.processedTargetAgentIds.includes(candidate));if(!agentId)return;if(!await this.launchEligible(submission,agentId)){const skipped={...current,processedTargetAgentIds:[...current.processedTargetAgentIds,agentId],updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,skipped);if(claimed.kind!=="accepted")throw new Error("POV target eligibility changed concurrently.");continue;}const authority=this.captureEpoch(agentId);const result=await this.dependencies.executePov(agentId,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal);const messages=(result.visibleMessages||[]).filter(Boolean).slice(0,3).map((message)=>message.slice(0,MAX_COMMAND_DELIVERY_MESSAGE));const outbox={...current,currentTargetAgentId:agentId,generationId:result.generationId||null,deliveryMessages:messages,deliveryResult:durableDeliveryResult(result),...authority,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,outbox);if(claimed.kind!=="accepted")throw new Error("POV target ownership changed before durable result persistence.");await this.resumePovDelivery(outbox,submission,result);}}
+  private async startPov(execution:CommandPovExecution,submission:CommandSubmission){const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||!(current.status==="queued"||current.status==="active")||this.livePov.has(current.executionId))return;if(this.closing){if(current.currentTargetAgentId)return;const cancelled={...current,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,cancelled);return;}const active={...current,status:"active" as const,reason:null,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,active);if(claimed.kind!=="accepted")return;if(this.closing){if(active.currentTargetAgentId)return;const cancelled={...active,status:"cancelled" as const,reason:"server shutdown cancelled POV execution",updatedAt:timestamp(this.clock,active.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(active.updatedAt,cancelled);return;}const controller=new AbortController();this.livePov.set(active.executionId,controller);this.background(this.runPovTargets(active,submission,controller).then(()=>this.finishPov(active.executionId,"completed",null)).catch(async(error)=>{if(error instanceof PovDeliveryPendingError){this.livePov.delete(active.executionId);return;}if(controller.signal.aborted){const durable=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(durable?.currentTargetAgentId){this.livePov.delete(active.executionId);return;}}return this.finishPov(active.executionId,controller.signal.aborted?"cancelled":"failed",error instanceof Error?error.message:String(error));}));}
+  private async runPovTargets(execution:CommandPovExecution,submission:CommandSubmission,controller:AbortController){for(;;){if(controller.signal.aborted)throw new Error("POV execution was cancelled.");const current=await this.dependencies.store.getPovExecution(this.roomId,submission.submissionId);if(!current||current.status!=="active")return;if(current.currentTargetAgentId){await this.resumePovDelivery(current,submission);continue;}const agentId=current.targetAgentIds.find((candidate)=>!current.processedTargetAgentIds.includes(candidate));if(!agentId)return;if(!await this.launchEligible(submission,agentId)){const skipped={...current,processedTargetAgentIds:[...current.processedTargetAgentIds,agentId],updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,skipped);if(claimed.kind!=="accepted")throw new Error("POV target eligibility changed concurrently.");continue;}const authority=this.captureEpoch(agentId);const result=await this.providerResult(this.dependencies.executePov(agentId,(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,controller.signal));const messages=(result.visibleMessages||[]).filter(Boolean).slice(0,3).map((message)=>message.slice(0,MAX_COMMAND_DELIVERY_MESSAGE));const outbox={...current,currentTargetAgentId:agentId,generationId:result.generationId||null,deliveryMessages:messages,deliveryResult:durableDeliveryResult(result),...authority,updatedAt:timestamp(this.clock,current.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,outbox);if(claimed.kind!=="accepted")throw new Error("POV target ownership changed before durable result persistence.");await this.resumePovDelivery(outbox,submission,result);}}
   private async resumePovDelivery(execution:CommandPovExecution,submission:CommandSubmission,result?:CommandExecutionResult){if(result)authorizeSourceWorkForCurrentBoot(this.dependencies.store,"pov-delivery",execution.executionId);const agentId=execution.currentTargetAgentId;if(!agentId)return;const messages=execution.deliveryMessages||[];const durableResult=result||{generationId:execution.generationId||undefined,visibleMessages:messages,...execution.deliveryResult};const provenanceBlocker=durableResult.permission==="writable"?await sourceWorkReconciliationBlocker(this.dependencies.store,"pov-delivery",execution.executionId):null;if(provenanceBlocker||!this.povAuthorityCurrent(execution)){await this.captureDiagnostic({agentId,attemptId:execution.executionId,generationId:execution.generationId||undefined,correlationId:`${execution.executionId}:${agentId}:authority-changed`,prompt:(submission.invocation as Extract<CommandInvocation,{command:"pov"}>).prompt,reason:provenanceBlocker?"provenance-reconciliation-required":"authority-changed-before-delivery",text:messages.join("\n"),metadata:{visibleMessages:messages.length}});}else try{await this.dependencies.deliverPov(stableId(execution.executionId,agentId),agentId,messages,durableResult);}catch(error){throw new PovDeliveryPendingError(error instanceof Error?error.message:String(error));}const completed={...execution,processedTargetAgentIds:[...execution.processedTargetAgentIds,agentId],currentTargetAgentId:null,generationId:null,deliveryMessages:undefined,deliveryResult:undefined,roomEpoch:undefined,rosterRevision:undefined,agentConfigurationRevision:undefined,updatedAt:timestamp(this.clock,execution.updatedAt)};const claimed=await this.dependencies.store.compareAndSetPovExecution(execution.updatedAt,completed);if(claimed.kind!=="accepted")throw new Error("POV delivery completion changed concurrently.");}
   private async finishPov(executionId:string,status:"completed"|"failed"|"cancelled",reason:string|null){const current=(await this.dependencies.store.listPendingPovExecutions(this.roomId)).find((item)=>item.executionId===executionId);if(!current)return;const terminal={...current,status,reason:reason?safeLabel(reason).slice(0,200):null,updatedAt:timestamp(this.clock,current.updatedAt)};await this.dependencies.store.compareAndSetPovExecution(current.updatedAt,terminal);this.livePov.delete(executionId);}
   private captureEpoch(agentId:ActiveAgentId){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,agentId);return{roomEpoch:this.dependencies.roomEpoch?.()||"0",rosterRevision:roster.revision,agentConfigurationRevision:entry?.configurationRevision||0};}
   private povAuthorityCurrent(execution:CommandPovExecution){if(!execution.currentTargetAgentId)return false;const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,execution.currentTargetAgentId);return this.agentCurrent(execution.currentTargetAgentId)&&(!execution.roomEpoch||!this.dependencies.roomEpochCurrent||this.dependencies.roomEpochCurrent(execution.roomEpoch))&&(execution.rosterRevision===undefined||execution.rosterRevision===roster.revision)&&(execution.agentConfigurationRevision===undefined||execution.agentConfigurationRevision===(entry?.configurationRevision||0));}
   private attemptCurrent(attempt:CommandAttempt){const roster=normalizeRoomAgentRoster(this.dependencies.roster());const entry=roomAgentEntry(roster,attempt.agentId);return this.agentCurrent(attempt.agentId)&&(!attempt.roomEpoch||!this.dependencies.roomEpochCurrent||this.dependencies.roomEpochCurrent(attempt.roomEpoch))&&(attempt.rosterRevision===undefined||attempt.rosterRevision===roster.revision)&&(attempt.agentConfigurationRevision===undefined||attempt.agentConfigurationRevision===(entry?.configurationRevision||0));}
   private clearLive(attemptId:string,abort=false) { const live=this.live.get(attemptId); if(!live)return; if(live.timer)this.clock.clearTimeout(live.timer); if(abort)live.controller.abort(); live.reservation?.release(); this.live.delete(attemptId); }
-  private armRecovered(attempt:CommandAttempt,submission:CommandSubmission) { const live:LiveAttempt={controller:new AbortController(),partial:""}; this.live.set(attempt.attemptId,live); const timeout=attempt.status==="queued"?this.stage1Ms:this.stage2Ms; const elapsed=Math.max(0,this.clock.now()-Date.parse(attempt.updatedAt)); live.timer=this.clock.setTimeout(()=>void (attempt.status==="queued"?this.stage1(attempt,submission,"server restarted before generation launch"):this.stage2(attempt,submission)),Math.max(0,timeout-elapsed)); }
+  private armRecovered(attempt:CommandAttempt,submission:CommandSubmission) { const live:LiveAttempt={controller:new AbortController(),partial:""}; this.live.set(attempt.attemptId,live); const timeout=attempt.status==="queued"?this.stage1Ms:this.stage2Ms; const elapsed=Math.max(0,this.clock.now()-Date.parse(attempt.updatedAt)); live.timer=this.clock.setTimeout(()=>this.background(attempt.status==="queued"?this.stage1(attempt,submission,"server restarted before generation launch"):this.stage2(attempt,submission)),Math.max(0,timeout-elapsed)); }
 }

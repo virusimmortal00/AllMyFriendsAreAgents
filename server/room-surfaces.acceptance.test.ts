@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActiveAgentId } from "../shared/participants.js";
 import { registerCommandRoutes } from "./command-api.js";
 import { CommandRuntime } from "./command-runtime.js";
@@ -23,7 +23,8 @@ const backends:ReadonlyArray<readonly[string,(root:string)=>Promise<{store:RoomR
   ["SQLite",async(root)=>{const database=path.join(root,"room.sqlite");let store:RoomRepository=await SqliteRoomRepository.open(root,database);return{get store(){return store;},async reopen(){(store as SqliteRoomRepository).close();store=await SqliteRoomRepository.open(root,database);return store;},close(){(store as SqliteRoomRepository).close();}};}],
 ];
 
-async function eventually(assertion:()=>void|Promise<void>){let failure:unknown;for(let index=0;index<1000;index++){try{await assertion();return;}catch(error){failure=error;await new Promise((resolve)=>setImmediate(resolve));}}throw failure;}
+// Durable writes need elapsed time, not a fixed number of event-loop turns.
+async function eventually(assertion:()=>void|Promise<void>){await vi.waitFor(assertion,{timeout:5_000,interval:10});}
 
 describe.each(backends)("%s real room surface",(_backend,open)=>{
   it("drives humans and agents through authenticated HTTP/tool boundaries with durable exactly-once results",async()=>{
