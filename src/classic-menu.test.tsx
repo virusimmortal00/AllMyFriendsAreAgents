@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassicMenuBar, type ClassicMenuDefinition } from "./classic-menu";
+import { DialogFrame } from "./dialog-frame";
 
 afterEach(() => cleanup());
 
@@ -98,6 +99,32 @@ describe("Windows-style application menu", () => {
 
     expect(document.activeElement).toBe(insideDialog);
     expect(onHelp).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu", { name: "View" })).toBeNull();
+  });
+
+  it("restores application shortcuts while a mounted dialog is inactive", async () => {
+    const user = userEvent.setup();
+    const onHelp = vi.fn();
+    const content = (active: boolean) => <>
+      <ClassicMenuBar menus={menus()} onHelp={onHelp} />
+      <DialogFrame title="Room Properties" active={active} onClose={() => undefined}>
+        <input aria-label="Retained draft" defaultValue="Unsaved changes" />
+      </DialogFrame>
+    </>;
+    const view = render(content(true));
+    const draft = screen.getByRole("textbox", { name: "Retained draft" });
+    view.rerender(content(false));
+    await user.keyboard("{F10}");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Room" }));
+    await user.keyboard("{Escape}{Alt>}v{/Alt}");
+    expect(screen.getByRole("menu", { name: "View" })).toBeTruthy();
+    await user.keyboard("{Escape}{F1}");
+    expect(onHelp).toHaveBeenCalledOnce();
+    view.rerender(content(true));
+    expect(screen.getByRole("textbox", { name: "Retained draft" })).toBe(draft);
+    expect((draft as HTMLInputElement).value).toBe("Unsaved changes");
+    await user.keyboard("{F10}{F1}{Alt>}v{/Alt}");
+    expect(onHelp).toHaveBeenCalledOnce();
     expect(screen.queryByRole("menu", { name: "View" })).toBeNull();
   });
 });

@@ -53,7 +53,7 @@ export function DialogFrame({
       ref={dialogRef}
       className={`dialog-window agent-settings-window ${layout === "property-sheet" ? "dialog-window--property-sheet " : ""}${className}`.trim()}
       role={role}
-      aria-modal="true"
+      aria-modal={active ? true : undefined}
       aria-labelledby={titleId}
       aria-describedby={ariaDescribedBy}
       tabIndex={-1}

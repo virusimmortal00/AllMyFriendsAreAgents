@@ -94,6 +94,11 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toHaveCount(0);
+  await page.keyboard.press("F10");
+  await expect(page.getByRole("menuitem", { name: "You", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menu", { name: "You", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(mutations.filter((path) => path === "/api/room/settings")).toHaveLength(0);
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");

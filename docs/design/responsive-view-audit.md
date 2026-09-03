@@ -1,5 +1,65 @@
 # Responsive view audit
 
+## Administration keyboard handoff — 2026-09-03
+
+The review correction affects application-menu access (`CHAT-04`) while Room
+Properties (`ROOM-01`/`ROOM-02`) is retained but hidden behind Server
+Administration (`WORK-12`). `DialogFrame` now exposes `aria-modal` only while
+active. A hidden property sheet preserves its draft without suppressing F10,
+Alt access keys, or F1 in the administration workspace; reactivating the sheet
+restores modal shortcut handling. The regression failed before the correction
+and checks both directions. Active-dialog markup and all styling are unchanged.
+
+Main's repository-relocation changes were integrated while preserving both the
+administration instructions and relocation runbook link. The combined branch
+passed `pnpm check:quality`: 1,422 tests across 185 files, one intentional skip,
+integration/UI contracts, visual typechecking, and the production build.
+
+The complete `pnpm capture:visual --workers=4` run passed 654 browser checks,
+with six intentional compact-chat skips, and produced 846/846 screenshots with
+zero geometry failures. The recovery journey explicitly opens the application
+menu with F10 while Room Properties is hidden, closes the menu, authenticates,
+and returns to the retained draft and focus target. This passes in Chromium and
+WebKit at Phone, Short phone, Minimum phone, Tablet, Short laptop, and Desktop.
+
+Source-input digest:
+`f51babaef8caf3d635f1efc71654b1765f5f8356f8bdebda9f7ac8720fcdbdca`.
+
+Fresh independent review covered all 84 images for `CHAT-04` and `WORK-12`
+across both engines and all six checkpoints. All 36 sessions completed;
+**70 images pass every question and 14 remain flagged**. Exact capture and
+receipt validation found no integrity errors. All 84 image hashes match the
+preceding capture, consistent with the change to inactive modal semantics.
+
+| View | Images | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll/actions | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CHAT-04 Window Menu | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| WORK-12 Server Administration | 72 | 12 | 0 | 0 | 2 | 12 | 0 | 14 |
+
+The 14 judgments are disputed under the existing design contracts:
+
+- Twelve object to unused lower canvas in Tablet or Desktop administration
+  states. The standard explicitly keeps full workspaces on the allocated gray
+  canvas while operational panels end at their content. Enlarging the panels or
+  moving commands to consume that canvas is not required by the contract.
+- Two Chromium Minimum phone claim images report undersized touch commands and
+  window chrome. A fresh 320×568 coarse-pointer measurement confirms every menu
+  title and both claim/session commands are 44px high. The existing 16px caption
+  close control follows the separate caption-control role explicitly distinguished
+  from command density in the standard. Rendered checks verify reachable exits.
+
+Original verdicts remain unchanged. `pnpm check:visual-review` remains **failed**
+for these judgments and the **762 images outside this final two-view review**;
+no full-matrix approval is claimed. Reproduce with `pnpm capture:visual --workers=4`,
+then `pnpm review:visual --run <capture-directory>` with repeated
+`--key <manifest-key>` arguments selecting `CHAT-04` and `WORK-12`, followed by
+`pnpm check:visual-review --run <capture-directory> --review <review.json> --receipts <receipts.json>`.
+
+Earlier reviews below retain their original judgments and source digests. They
+are historical evidence, not current-source approvals. Physical devices, native
+browser chrome, software keyboards, text enlargement, landscape, and live
+provider/GitHub authentication remain unverified.
+
 ## Diagnostics session review — 2026-09-02 (focused review complete; disputed findings retained)
 
 The final code review added recovery coverage for `WORK-10` Diagnostics Query
