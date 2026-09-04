@@ -16,7 +16,7 @@ capture run must never be reported as a visually approved interface.
   PNG attachments, design standards, and seven questions. Fresh sessions do not
   inherit the implementation conversation or previous verdicts. A model's
   image judgment is still fallible; automation does not guarantee correctness.
-- Fixtures explicitly cover all 48 registered views: startup/recovery, chat
+- Fixtures explicitly cover all 48 registered views plus the intentional empty-roster state: startup/recovery, chat
   controls, populated workspaces, Room Properties, roster and conflict flows,
   profile/status, GitHub authentication/connection/repository states, and help.
   The app fixtures navigate production components against fictional API replies.
@@ -105,7 +105,10 @@ room state. Test fixtures are not included in the production entry point.
 The matrix covers Phone (390×844), Short phone (390×660), Minimum phone
 (320×568), Tablet (768×1024), Short laptop (1024×600), and Desktop (1440×900)
 in both engines. Compact Room Chat is only captured at the three narrow sizes;
-the other 47 views run at all six sizes. Server Administration and Your Profile additionally capture signed-out and unclaimed states; Diagnostics captures the denied-query sign-in path. The matrix defines the exact scenario
+every other registered view runs at all six sizes, and the roster adds an empty
+first-agent state at all six sizes. Server Administration and Your Profile
+additionally capture signed-out and unclaimed states; Diagnostics captures the
+denied-query sign-in path. The matrix defines the exact scenario
 and screenshot count, with no inferred coverage. The actual browser dimensions
 must equal the requested ones. Top/bottom positions belong to the named scenario's
 pane, not every scrolling region in the image.

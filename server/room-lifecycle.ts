@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { defaultRoomAgentRoster } from "../shared/roster.js";
+import { emptyRoomAgentRoster } from "../shared/roster.js";
 import { createDefaultRoomState } from "./room-store.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 import { runSqliteMigrations } from "./storage/sqlite-migrations.js";
@@ -54,7 +54,7 @@ export class RoomLifecycleStore {
     if(projectId&&!this.database.prepare("SELECT 1 FROM durable_projects WHERE project_id=?").get(projectId)) throw new Error("Project attachment is unavailable.");
     const roomId=randomUUID(),now=new Date().toISOString(),server=this.database.prepare("SELECT server_id FROM durable_servers ORDER BY created_at LIMIT 1").get() as {server_id:string}|undefined;
     if(!server) throw new Error("Durable server identity is unavailable.");
-    const state=createDefaultRoomState(this.projectRoot),roster=defaultRoomAgentRoster();
+    const state=createDefaultRoomState(this.projectRoot),roster=emptyRoomAgentRoster();
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.database.prepare(`INSERT INTO rooms(id,slug,name,topic,writable_agent,conversation_energy,project_path,participant_styles_json,status,roster_revision,roster_schema_version,server_id,project_id,identity_revision,lifecycle_revision,attachment_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)

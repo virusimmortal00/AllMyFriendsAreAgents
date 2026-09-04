@@ -11,7 +11,7 @@ import {
   type ImprovementChange,
 } from "../../shared/improvement-domain.js";
 import { AGENT_PROFILES, SUPPORTED_AGENT_IDS, isActiveAgentId, isAgentId, isParticipantId, normalizeWritableAgent, type ActiveAgentId } from "../../shared/participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../../shared/roster.js";
+import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../../shared/roster.js";
 import { createDefaultRoomState } from "../room-store.js";
 import type { AgentId, AgentSession, RoomMessage, RoomSettings, RoomState, SpeakerId } from "../types.js";
 import { CLEAR_EMERGENCY_STOP, emergencyStopProjection, normalizeStoredImprovement, paginateImprovements } from "./improvement-storage.js";

@@ -13,6 +13,7 @@ import { AssignmentGitBroker, claimsFor, type AssignmentGitClaims, type Assignme
 import { AssignmentGitBrokerServer, parseGitArguments } from "./git-broker-server.js";
 import { RoomStore } from "./room-store.js";
 import { confinedWriterInvocation, resolveGitExecutablePath, resolveGitExecutablePaths, verifyWriterConfinement, WRITER_BOUNDARY_REVISION, type ConfinedWriterGrant } from "./writer-confinement.js";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
 
 const exec = promisify(execFile);
 const directories: string[] = [];
@@ -41,7 +42,7 @@ async function fixture() {
   await writeFile(path.join(root, "tracked.txt"), "base\n"); await git(root, "add", "tracked.txt"); await git(root, "commit", "-m", "base");
   const base = await git(root, "rev-parse", "HEAD");
   const state = path.join(root, ".state"); const worktrees = path.join(state, "worktrees");
-  const store = await RoomStore.open(root, state); await store.updateSettings({ writableAgent: "codex-sol" });
+  const store = await RoomStore.open(root, state); await store.updateRoster(1, legacyDefaultRoomAgentRoster().entries); await store.updateSettings({ writableAgent: "codex-sol" });
   await store.createImprovement(createImprovement({ id: "imp-1", risk: "LOW", author: actor, now: "2099-01-01T00:00:00.000Z" }));
   const registry = new DeveloperTeamRegistry([member]);
   const bridge = new DeveloperBridgeService(store, registry, () => "2099-01-01T00:01:00.000Z");

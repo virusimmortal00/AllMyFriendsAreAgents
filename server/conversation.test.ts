@@ -3,6 +3,7 @@ import { latestHumanBroadcastPolicy, latestHumanInvitesWholeRoom, parseAgentTurn
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
+import { emptyRoomAgentRoster } from "../shared/roster.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
   return {
@@ -163,6 +164,15 @@ describe("agent turn parsing", () => {
 });
 
 describe("agent conversations", () => {
+  it("does not schedule a provider turn for an empty room roster", async () => {
+    const state = { ...roomState([]), roster: emptyRoomAgentRoster() };
+    const performTurn = vi.fn();
+
+    expect(rankRoomAgents(state)).toEqual([]);
+    await runAgentConversation([], 3, performTurn);
+    expect(performTurn).not.toHaveBeenCalled();
+  });
+
   it("lets an agent start another turn after the other agent mentions them", async () => {
     const responses = [
       { mentionedAgents: ["claude-sonnet" as const] },

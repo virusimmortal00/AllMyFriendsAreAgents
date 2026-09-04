@@ -19,12 +19,35 @@ afterEach(async () => {
 });
 
 describe("JSON to SQLite import", () => {
+  it("preserves an intentionally empty roster through JSON-to-SQLite import and restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-empty-json-import-"));
+    temporaryDirectories.push(projectRoot);
+    const sourceStateDirectory = path.join(projectRoot, "json-state");
+    const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
+    const source = await RoomStore.open(projectRoot, sourceStateDirectory);
+    expect(source.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+
+    await importJsonRoomToSqlite({ projectRoot, sourceStateDirectory, databasePath });
+    const imported = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(imported.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    imported.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    reopened.close();
+  });
+
   it("copies normalized room state without modifying the source JSON", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-json-import-test-"));
     temporaryDirectories.push(projectRoot);
     const sourceStateDirectory = path.join(projectRoot, "json-state");
     const databasePath = path.join(projectRoot, "sqlite-state", "amfaa.sqlite");
     const legacyStore = await RoomStore.open(projectRoot, sourceStateDirectory);
+    await legacyStore.updateRoster(1, [
+      { agentId: "codex-sol", enabled: true },
+      { agentId: "claude-sonnet", enabled: true },
+      { agentId: "codex-terra", enabled: true },
+    ]);
     await legacyStore.updateSettings({ roomName: "Imported Room" });
     await legacyStore.addMessage("you", "Keep this transcript", "chat", undefined, undefined, {
       id: "import-human-1234",

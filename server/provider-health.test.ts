@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultRoomAgentRoster, roomAgentProviderScope } from "../shared/roster.js";
+import { legacyDefaultRoomAgentRoster, roomAgentProviderScope } from "../shared/roster.js";
 import { ProviderInvocationError } from "./provider-failure.js";
 import { classifyProviderScopedFailure, isProviderUsageExhaustion, providerActionRequiredReason, ProviderHealthRegistry } from "./provider-health.js";
 
@@ -46,7 +46,7 @@ describe("provider usage exhaustion classification", () => {
 describe("ProviderHealthRegistry", () => {
   it("fans out through provider identity while leaving unrelated providers available", async () => {
     const registry = ProviderHealthRegistry.memory();
-    const roster = defaultRoomAgentRoster();
+    const roster = legacyDefaultRoomAgentRoster();
     await registry.recordActionRequired("cursor", "usage_exhausted", 1_000);
 
     for (const agent of ["cursor-grok", "cursor-composer", "cursor-gemini-flash", "cursor-glm"]) {
