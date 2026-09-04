@@ -7,12 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandRuntime } from "./command-runtime.js";
 import { RoomStore } from "./room-store.js";
 import { registerRoomCommandToolRoute, RoomCommandToolBroker, type CommandToolLeaseEvent } from "./room-command-tool.js";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
 
 const roots:string[]=[];afterEach(async()=>Promise.all(roots.splice(0).map((root)=>rm(root,{recursive:true,force:true}))));
 
 async function fixture() {
   const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-room-command-tool-"));roots.push(root);const store=await RoomStore.open(root,path.join(root,"state"));
-  const current=store.snapshot().roster!.entries.map((entry)=>entry.agentId==="codex-sol"?{...entry,commandPermissions:{allowAll:false,allowed:["help" as const,"poll" as const]}}:entry);await store.updateRoster(1,current);
+  const current=legacyDefaultRoomAgentRoster().entries.map((entry)=>entry.agentId==="codex-sol"?{...entry,commandPermissions:{allowAll:false,allowed:["help" as const,"poll" as const]}}:entry);await store.updateRoster(1,current);
   const runtime=new CommandRuntime({store,roster:()=>store.snapshot().roster!,canLaunch:()=>true,executeTask:async()=>({}),executePov:async()=>({}),deliverPov:async()=>undefined,publishStatus:async()=>undefined,deliverTask:async()=>undefined});
   const broker=new RoomCommandToolBroker(runtime);const token=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"session-bound",allowedCommands:["help","poll"]});return{store,runtime,broker,token};
 }

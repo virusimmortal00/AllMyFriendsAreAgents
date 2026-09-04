@@ -13,6 +13,24 @@ afterEach(async () => {
 });
 
 describe("SQLite room repository", () => {
+  it("starts a fresh canonical room empty and keeps it empty across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-empty-room-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+
+    expect(store.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    expect(store.snapshot().sessions).toEqual({});
+    store.close();
+
+    const database = new DatabaseSync(databasePath);
+    expect((database.prepare("SELECT count(*) AS total FROM room_agents WHERE room_id = ?").get(DEFAULT_ROOM_ID) as { total: number }).total).toBe(0);
+    database.close();
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    reopened.close();
+  });
+
   it("persists exactly one private command projection across restart", async () => {
     const projectRoot=await mkdtemp(path.join(os.tmpdir(),"amfaa-private-command-"));temporaryDirectories.push(projectRoot);const databasePath=path.join(projectRoot,"amfaa.sqlite");
     const store=await SqliteRoomRepository.open(projectRoot,databasePath);const first=await store.addPrivateCommandResponseOnce("submission-1","human-a","sanitized help");const duplicate=await store.addPrivateCommandResponseOnce("submission-1","human-a","changed");expect(duplicate).toEqual(first);store.close();
@@ -25,6 +43,7 @@ describe("SQLite room repository", () => {
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
     const message = await store.addMessage("you", "Cursor checkpoint");
     await store.setLastSeenMessageId("codex-sol", message.id);
     await store.putAgentContextSummary({ agentId: "codex-sol", spanStartId: store.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 }, "cached summary");
@@ -34,7 +53,7 @@ describe("SQLite room repository", () => {
     expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
     expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBe("cached summary");
     const suppliedCursor = reopened.snapshot().roster!.entries.map((entry) => ({ ...entry, lastSeenMessageId: "forged" }));
-    expect(await reopened.updateRoster(1, suppliedCursor)).toMatchObject({ kind: "accepted" });
+    expect(await reopened.updateRoster(2, suppliedCursor)).toMatchObject({ kind: "accepted" });
     expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
     await reopened.updateRoomConfiguration({ preflightMode: "shadow" }, "owner");
     expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
@@ -83,8 +102,10 @@ describe("SQLite room repository", () => {
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    expect(await store.updateRoster(1, [{ agentId: "codex-sol", harness: "codex", enabled: true }])).toMatchObject({ kind: "accepted", roster: { revision: 2 } });
     const confirmed = store.snapshot().roster!.entries.map(({ selectionConfirmationRequired: _confirmation, sessionInvalidationReason: _reason, ...entry }) => entry);
-    expect(await store.updateRoster(1, confirmed)).toMatchObject({ kind: "accepted" });
+    expect(store.snapshot().roster?.entries[0]).toMatchObject({ selectionConfirmationRequired: true });
+    expect(await store.updateRoster(2, confirmed)).toMatchObject({ kind: "accepted" });
     store.close();
 
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
@@ -135,6 +156,7 @@ describe("SQLite room repository", () => {
     temporaryDirectories.push(projectRoot);
     const databasePath = path.join(projectRoot, "data", "amfaa.sqlite");
     const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
     const humanStyle = { ...DEFAULT_PARTICIPANT_STYLES.you, fontFamily: "Georgia" as const, bold: true };
 
     await store.updateSettings({ roomName: "SQLite Room", writableAgent: "codex-sol" });

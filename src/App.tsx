@@ -21,7 +21,7 @@ import { Continuations } from "./continuations";
 import { Investigations } from "./investigations";
 import { Contributions } from "./contributions";
 import { RosterManagerDialog } from "./roster-manager";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
+import { emptyRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
 import { ClassicMenuBar, type ClassicMenuDefinition } from "./classic-menu";
 import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agent-list-sort";
 import { HumanProfileDialog } from "./human-avatar";
@@ -47,7 +47,7 @@ const EMPTY_ROOM: RoomState = {
     participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
   },
   status: "idle",
-  roster: defaultRoomAgentRoster(),
+  roster: emptyRoomAgentRoster(),
 };
 const MINIMUM_LOADING_MS = 450;
 const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";

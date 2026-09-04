@@ -36,6 +36,7 @@ export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   { id: "your-profile-signed-out", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
   { id: "your-profile-unclaimed", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
   { id: "owner-diagnostics-sign-in", view: VIEWS.ownerDiagnosticsQuery, shots: ["top"] },
+  { id: "manage-agents-empty", view: VIEWS.manageAgentsRoster, shots: ["top"] },
 ];
 export const VISUAL_SCENARIOS = [...ROSTER_SCENARIOS, ...APP_SCENARIOS];
 export function scenarioApplies(scenario: { id: string }, viewport: { width: number }) {

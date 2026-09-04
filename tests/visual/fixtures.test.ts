@@ -11,9 +11,9 @@ describe("visual fixture fidelity", () => {
     expect(fixtureRoom.roster?.entries).toHaveLength(9);
   });
   it("explicitly maps every registered view and additional administration states", () => {
-    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...Object.values(VIEWS), VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.ownerDiagnosticsQuery].map((view) => view.id).sort());
+    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...Object.values(VIEWS), VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.ownerDiagnosticsQuery, VIEWS.manageAgentsRoster].map((view) => view.id).sort());
     expect(new Set(APP_SCENARIOS.map((scenario) => scenario.id)).size).toBe(APP_SCENARIOS.length);
-    expect(expectedVisualKeys()).toHaveLength(846);
+    expect(expectedVisualKeys()).toHaveLength(858);
     expect(expectedVisualKeys().filter((key) => key.includes("--compact-room-chat--"))).toHaveLength(6);
   });
   it("rejects unmocked external-state mutations", () => {

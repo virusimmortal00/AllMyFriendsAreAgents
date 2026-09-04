@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { normalizeRoomAgentRoster, roomAgentTurnEpoch } from "../shared/roster.js";
+import { legacyDefaultRoomAgentRoster, normalizeRoomAgentRoster, roomAgentTurnEpoch } from "../shared/roster.js";
 import { advanceAgentContextCursor } from "./agent-context-cursor.js";
 import { RoomStore } from "./room-store.js";
 
@@ -14,6 +14,7 @@ describe("agent context cursor advancement", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-context-cursor-rule-"));
     temporaryDirectories.push(root);
     const store = await RoomStore.open(root, path.join(root, "state"));
+    await store.updateRoster(1, legacyDefaultRoomAgentRoster().entries);
     const message = await store.addMessage("you", "Replay this delta");
     const roster = normalizeRoomAgentRoster(store.snapshot().roster);
     const epoch = roomAgentTurnEpoch(roster, "codex-sol")!;

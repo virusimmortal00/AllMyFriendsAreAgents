@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resolveStorageConfiguration } from "./config.js";
 import { openRoomRepository } from "./open-room-repository.js";
 import { __testing as agentRunnerTesting } from "../agent-runner.js";
+import { legacyDefaultRoomAgentRoster } from "../../shared/roster.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,6 +54,7 @@ describe("room repository factory", () => {
     const configuration = resolveStorageConfiguration(projectRoot, { ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: path.join(base, "state") });
 
     const first = await openRoomRepository(projectRoot, configuration);
+    await first.updateRoster(1, legacyDefaultRoomAgentRoster().entries);
     const firstEpoch = first.snapshot().deployment!.epoch;
     await first.setSession("codex-sol", "same-epoch-session", "read-only", firstEpoch);
     const restarted = await openRoomRepository(projectRoot, configuration);

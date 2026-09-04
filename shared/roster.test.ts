@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_IDS, AGENT_PROFILES } from "./participants.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentModelReference, roomAgentProviderScope, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
+import { emptyRoomAgentRoster, enabledRoomAgentIds, legacyDefaultRoomAgentRoster, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, resolveRoomAgentTarget, resolveRoomAgentTargetPrefix, roomAgentModelReference, roomAgentProviderScope, roomAgentTurnEpoch, roomAgentTurnEpochIsCurrent, validateRosterEntries } from "./roster.js";
 
 describe("room roster contract", () => {
   it("migrates missing command permissions to allow-all and rejects malformed updates", () => {
@@ -8,11 +8,12 @@ describe("room roster contract", () => {
     expect(legacy.entries[0]?.commandPermissions).toEqual({ allowAll: true, allowed: ["task", "pov", "poll", "help"] });
     expect(validateRosterEntries([{ ...legacy.entries[0]!, commandPermissions: { allowAll: false, allowed: ["unknown" as never] } }])).toBeUndefined();
   });
-  it("defaults to the public roster without Gemini Pro", () => {
-    const roster = defaultRoomAgentRoster();
-    expect(roster.revision).toBe(1);
-    expect(enabledRoomAgentIds(roster)).toEqual(AGENT_IDS);
-    expect(enabledRoomAgentIds(roster)).not.toContain("cursor-gemini");
+  it("separates an empty fresh-room roster from the historical compatibility roster", () => {
+    expect(emptyRoomAgentRoster()).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    const legacy = legacyDefaultRoomAgentRoster();
+    expect(legacy.revision).toBe(1);
+    expect(enabledRoomAgentIds(legacy)).toEqual(AGENT_IDS);
+    expect(enabledRoomAgentIds(legacy)).not.toContain("cursor-gemini");
   });
 
   it("accepts ordered catalog entries and rejects executable or duplicate substitutions", () => {
@@ -138,7 +139,8 @@ describe("room roster contract", () => {
   });
 
   it("fails legacy or malformed projections back to the safe default", () => {
-    expect(normalizeRoomAgentRoster({ revision: 4, entries: [{ agentId: "unknown", enabled: true }] })).toEqual(defaultRoomAgentRoster());
+    expect(normalizeRoomAgentRoster({ revision: 4, entries: [{ agentId: "unknown", enabled: true }] })).toEqual(legacyDefaultRoomAgentRoster());
+    expect(normalizeRoomAgentRoster(undefined)).toEqual(legacyDefaultRoomAgentRoster());
     expect(normalizeRoomAgentRoster({ revision: 4, entries: [] })).toEqual({ schemaVersion: 3, revision: 4, entries: [] });
   });
 
