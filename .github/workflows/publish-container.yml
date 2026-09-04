@@ -1,0 +1,177 @@
+name: Publish container image
+
+on:
+  pull_request:
+    paths: [Dockerfile, .dockerignore, compose.yaml, 'scripts/container-*', '.github/workflows/publish-container.yml']
+  workflow_run:
+    workflows: [Quality gates]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+# One producer owns all moving tags. Queue order is not trusted: promotion also
+# rechecks the current main SHA while holding this workflow-wide serialization.
+concurrency:
+  group: container-publication-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/virusimmortal00/all-my-friends-are-agents
+
+jobs:
+  acceptance:
+    name: Isolated multi-platform image acceptance
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      publish: ${{ steps.source.outputs.publish }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Verify exact source quality and trigger authority
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/container-release-policy.mjs
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Verify controlled build-context isolation
+        run: node scripts/container-image-check.mjs context
+      - name: Build the exact image that will be tested and published
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.IMAGE_NAME }}:sha-${{ steps.source.outputs.sha }}
+          build-args: VCS_REF=${{ steps.source.outputs.sha }}
+          provenance: mode=max
+          sbom: true
+      - name: Verify all resulting image layers exclude private sentinels
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: node scripts/container-image-check.mjs layers "$IMAGE_NAME:sha-$SOURCE_SHA"
+      - name: Verify both architectures, fresh install, restart, and preserved state
+        env:
+          EXPECTED_APP_REVISION: ${{ steps.source.outputs.sha }}
+        run: |
+          result=0
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --init --network none --platform "$platform" \
+              --entrypoint /app/node_modules/.bin/vitest "$IMAGE_NAME:sha-$EXPECTED_APP_REVISION" \
+              run server/agent-runner.test.ts -t 'agent process cancellation' || result=1
+            node scripts/container-image-check.mjs runtime "$IMAGE_NAME:sha-$EXPECTED_APP_REVISION" "$platform" || result=1
+          done
+          exit "$result"
+      - name: Export tested image with index and attestations
+        if: steps.source.outputs.publish == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: docker image save "$IMAGE_NAME:sha-$SOURCE_SHA" | gzip > tested-image.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.source.outputs.publish == 'true'
+        with:
+          name: tested-container
+          path: tested-image.tar.gz
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    needs: acceptance
+    # The signed source claim uses the triggering workflow SHA, not checkout ref.
+    if: needs.acceptance.outputs.publish == 'true' && needs.acceptance.outputs.sha == github.sha
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tested-container
+      - run: gunzip -c tested-image.tar.gz | docker image load
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested image without replacing a revision tag
+        id: image
+        env:
+          SOURCE_SHA: ${{ needs.acceptance.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/quality-gates.yml/runs?head_sha=$SOURCE_SHA&event=push&branch=main&per_page=20" |
+            jq -e --arg sha "$SOURCE_SHA" --arg repo "$GITHUB_REPOSITORY" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .head_repository.full_name == $repo and .event == "push" and .head_branch == "main")] | sort_by(.id) | last | .status == "completed" and .conclusion == "success"' >/dev/null
+          reference="$IMAGE_NAME:sha-$SOURCE_SHA"
+          if docker buildx imagetools inspect "$reference" > existing-image.txt 2> inspect-error.txt; then
+            echo 'Revision tag already exists; refusing to replace it.' >&2
+            exit 1
+          fi
+          # Network/auth failures are not evidence of an absent immutable tag.
+          if ! grep -Eq 'manifest unknown|^ERROR: ghcr.io/[^ ]+: not found$|unexpected status from HEAD request.*404 Not Found' inspect-error.txt; then
+            echo 'Could not establish revision-tag absence.' >&2
+            exit 1
+          fi
+          docker push "$reference"
+          digest=$(docker buildx imagetools inspect "$reference" --format '{{json .Manifest}}' | jq -er .digest)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Sign the tested registry digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Promote only current main or an immutable release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.acceptance.outputs.sha }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          RELEASE_VERSION: ${{ needs.acceptance.outputs.version }}
+        run: |
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            # No moving semver aliases; an older release cannot demote a channel.
+            if docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_VERSION" >/dev/null 2>version-error.txt; then
+              echo 'Version tag already exists; refusing to replace it.' >&2
+              exit 1
+            fi
+            grep -Eq 'manifest unknown|^ERROR: ghcr.io/[^ ]+: not found$|unexpected status from HEAD request.*404 Not Found' version-error.txt
+            docker buildx imagetools create --tag "$IMAGE_NAME:$RELEASE_VERSION" "$IMAGE_NAME@$IMAGE_DIGEST"
+          elif [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" == "$SOURCE_SHA" ]]; then
+            docker buildx imagetools create --tag "$IMAGE_NAME:main" "$IMAGE_NAME@$IMAGE_DIGEST"
+            test "$(docker buildx imagetools inspect "$IMAGE_NAME:main" --format '{{json .Manifest}}' | jq -er .digest)" = "$IMAGE_DIGEST"
+          else
+            echo 'Main advanced; leaving its channel unchanged.'
+          fi

@@ -12,3 +12,9 @@ dist/
 *.tsbuildinfo
 test-results/
 playwright-report/
+.env
+.env.*
+!.env.example
+!.env.compose.example
+!.env.container.example
+.container-isolation-sentinel

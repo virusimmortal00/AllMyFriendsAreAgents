@@ -1,0 +1,68 @@
+name: all-my-friends-are-agents
+
+services:
+  amfaa:
+    image: ${AMFAA_IMAGE:-ghcr.io/virusimmortal00/all-my-friends-are-agents:main}
+    build:
+      context: .
+      args:
+        VCS_REF: ${AMFAA_VCS_REF:-local}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - path: .env.container
+        required: false
+    environment:
+      NODE_ENV: production
+      ALL_MY_FRIENDS_ARE_AGENTS_HOST: 0.0.0.0
+      # Docker publishes the port on host loopback only. This opt-in permits the
+      # process to bind its container interface without making it a public API.
+      ALL_MY_FRIENDS_ARE_AGENTS_ALLOW_UNAUTHENTICATED_REMOTE: "true"
+      ALL_MY_FRIENDS_ARE_AGENTS_PORT: 53147
+      ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: /data
+      ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR: /worktrees
+      ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH: /workspace
+      ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: ${AMFAA_STORAGE_BACKEND:-sqlite}
+      ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH: /data/amfaa.sqlite
+    ports:
+      - "127.0.0.1:${AMFAA_HOST_PORT:-53147}:53147"
+      # Retain the conventional development URL and existing loopback tunnels.
+      - "127.0.0.1:${AMFAA_WEB_HOST_PORT:-4173}:53147"
+    volumes:
+      - type: bind
+        source: ${AMFAA_PROJECT_PATH:-.}
+        target: /workspace
+        read_only: true
+        bind:
+          create_host_path: false
+      - amfaa-data:/data
+      - amfaa-worktrees:/worktrees
+      - amfaa-vault-keys:/home/node/.allmyfriendsareagents
+      - opencode-cache:/home/node/.cache
+      - opencode-config:/home/node/.config/opencode
+      - opencode-data:/home/node/.local/share/opencode
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:53147/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+volumes:
+  amfaa-data:
+  amfaa-worktrees:
+  amfaa-vault-keys:
+  opencode-cache:
+  opencode-config:
+  opencode-data:
