@@ -53,7 +53,11 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
     if (route === "/api/ready") return ok(fixtureRoom.server);
     if (route === "/api/state") return ok(fixtureRoom);
     if (route === "/api/polls") return ok({ items: scenario === "poll-cards" ? [{ pollId: "poll-navigation", revision: 1, question: "Which view should we review next?", options: ["Room properties", "Task details"], tallies: [2, 1], state: "OPEN", totalVotes: 3, closedAt: null, ownVote: null, canClose: true }] : [] });
-    if (route === "/api/roster") return scenario === "manage-agents-sign-in" ? unauthorized : ok({ roster: visualRoster, catalog: [], ...(scenario === "manage-agents-model-picker" ? { modelDiscovery: fixtureModels } : {}) });
+    if (route === "/api/roster") return scenario === "manage-agents-sign-in"
+      ? unauthorized
+      : scenario === "manage-agents-empty"
+        ? ok({ roster: { schemaVersion: 3, revision: 1, entries: [] }, catalog: [], modelDiscovery: fixtureModels })
+        : ok({ roster: visualRoster, catalog: [], ...(scenario === "manage-agents-model-picker" ? { modelDiscovery: fixtureModels } : {}) });
     if (route === "/api/room/settings") return ok({ settings, defaults: { basePromptText: settings.basePromptText } });
     if (route === "/api/room/settings/models") return ok(fixtureModels);
     if (route === "/api/model-details") return ok({ providerId: "fixture-provider", modelId: url.searchParams.get("modelId"), offers: [], fetchedAt: fixtureTime });

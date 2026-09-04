@@ -24,6 +24,11 @@ async function openScenario(page: Page, id: string) {
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
   } else if (id.startsWith("manage-agents-") || id === "unsaved-changes-confirmation") {
     await menu(page, "Room", "Manage agents...");
+    if (id === "manage-agents-empty") {
+      await expect(page.getByText("Create your first agent", { exact: true })).toBeVisible();
+      if ((page.viewportSize()?.width || 0) <= 720) await expect(page.getByRole("button", { name: "Choose a model →" })).toBeVisible();
+      else await expect(page.getByRole("heading", { name: "Choose a model" })).toBeVisible();
+    }
     if (id === "manage-agents-model-picker") await page.getByRole("button", { name: "＋ Add another agent" }).click();
     if (id === "manage-agents-conflict" || id === "unsaved-changes-confirmation") {
       await page.getByRole("button", { name: "View Alpha configuration" }).click();

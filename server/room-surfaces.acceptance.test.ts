@@ -15,6 +15,7 @@ import { RoomStore } from "./room-store.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import { CANONICAL_ROOM_ID } from "./storage/room-repository.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
 
 const roots:string[]=[];
 afterEach(async()=>Promise.all(roots.splice(0).map((root)=>rm(root,{recursive:true,force:true}))));
@@ -28,7 +29,7 @@ async function eventually(assertion:()=>void|Promise<void>){await vi.waitFor(ass
 
 describe.each(backends)("%s real room surface",(_backend,open)=>{
   it("drives humans and agents through authenticated HTTP/tool boundaries with durable exactly-once results",async()=>{
-    const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-room-surfaces-"));roots.push(root);const backend=await open(root);const store=backend.store;
+    const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-room-surfaces-"));roots.push(root);const backend=await open(root);const store=backend.store;await store.updateRoster(1,legacyDefaultRoomAgentRoster().entries);
     const humans=new HumanPresenceRegistry();const sessions=new HumanSessions();const providerCalls:ActiveAgentId[]=[];
     const runtime=new CommandRuntime({store,roster:()=>store.snapshot().roster!,canLaunch:()=>true,executeTask:async(agent,_prompt,hooks)=>{await hooks.active(`task-${agent}`);return{generationId:`task-${agent}`,visibleMessages:[`task-${agent}`]};},executePov:async(agent)=>{providerCalls.push(agent);return{generationId:`pov-${agent}`,visibleMessages:[`view-${agent}`]};},deliverPov:async(id,agent,messages)=>{for(const[index,message]of messages.entries())await store.addCommandDeliveryMessageOnce(id,index,agent,message,store.snapshot().settings.participantStyles[agent]);},publishStatus:async(id,text)=>{await store.addCommandAuditMessageOnce(id,text);},deliverTask:async(id,agent,messages)=>{for(const[index,message]of messages.entries())await store.addCommandDeliveryMessageOnce(id,index,agent,message,store.snapshot().settings.participantStyles[agent]);}});
     const broker=new RoomCommandToolBroker(runtime);const agentToken=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"fake-provider-session",allowedCommands:["help","task","pov","poll"]});

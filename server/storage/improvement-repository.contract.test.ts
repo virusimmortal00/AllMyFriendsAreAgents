@@ -215,6 +215,7 @@ describe.each(factories)("%s canonical improvement repository contract", (_backe
     temporaryDirectories.push(root);
     const fixture = await makeFixture(root);
     try {
+      await fixture.repository.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
       await fixture.repository.addMessage("you", "transcript must survive", "chat", undefined, undefined, {
         id: "human-test-id", name: "Tester",
       });

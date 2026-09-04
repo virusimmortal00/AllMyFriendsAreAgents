@@ -12,6 +12,7 @@ import { DeveloperBridgeService } from "./developer-bridge.js";
 import { DeveloperTeamRegistry, hashToken, type DeveloperTeamMemberRevision } from "./developer-team.js";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
 
 const exec = promisify(execFile);
 const directories: string[] = [];
@@ -51,6 +52,7 @@ async function repositoryFixture(kind: "json" | "sqlite" = "json", implementatio
   const repository = kind === "json"
     ? await RoomStore.open(root, state)
     : await SqliteRoomRepository.open(root, path.join(state, "room.sqlite"));
+  await repository.updateRoster(repository.snapshot().roster!.revision, legacyDefaultRoomAgentRoster().entries);
   await repository.updateSettings({ writableAgent: "codex-sol" });
   await repository.createImprovement(createImprovement({ id: "imp-1", risk: "LOW", author: actor, now: "2099-01-01T00:00:00.000Z" }));
   const registry = new DeveloperTeamRegistry([member]);

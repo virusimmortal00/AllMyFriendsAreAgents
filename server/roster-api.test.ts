@@ -21,6 +21,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService}={}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-roster-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
+  if (options.control) await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
   const humans = new HumanPresenceRegistry();
   const human = humans.join({ name: "Ada" });
   const sessions = new HumanSessions();
@@ -172,9 +173,10 @@ describe("live roster API", () => {
   it("terminates deactivated agent work and clears visible generation state", async () => {
     const api = await fixture();
     try {
+      await api.store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
       const terminate = vi.spyOn(api.processes, "terminateScope");
       api.generations.start("generation-sol", "codex-sol");
-      const response = await api.call("/api/roster", { method: "PUT", body: JSON.stringify({ expectedRevision: 1, entries: [{ agentId: "claude-sonnet", enabled: true }] }) });
+      const response = await api.call("/api/roster", { method: "PUT", body: JSON.stringify({ expectedRevision: 2, entries: [{ agentId: "claude-sonnet", enabled: true }] }) });
       expect(response.status).toBe(200);
       expect(terminate).toHaveBeenCalledWith("agent:codex-sol");
       expect(api.generations.snapshot()).toEqual({});

@@ -11,6 +11,7 @@ import { ApiRequestError } from "./api";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend } from "./client-persistence";
 import { TRANSCRIPT_TIMESTAMPS_STORAGE_KEY } from "./transcript-view";
 import type { HumanPresence, RoomState } from "./types";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster";
 
 const api = vi.hoisted(() => ({
   checkReady: vi.fn(),
@@ -100,6 +101,7 @@ function room(instanceId: string, messages: RoomState["messages"] = [], state: P
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
     status: "idle",
+    roster: legacyDefaultRoomAgentRoster(),
     humans: [human],
     server: { instanceId, protocolVersion: ROOM_PROTOCOL_VERSION },
     ...state,

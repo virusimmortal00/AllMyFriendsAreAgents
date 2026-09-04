@@ -59,7 +59,13 @@ function register(entry: NormalizedRoomAgentRosterEntry) {
   return entry;
 }
 
-export function defaultRoomAgentRoster(): RoomAgentRoster {
+/** Fresh rooms have no participants until a room member adds one explicitly. */
+export function emptyRoomAgentRoster(): RoomAgentRoster {
+  return { schemaVersion: 3, revision: 1, entries: [] };
+}
+
+/** Compatibility projection for rooms persisted before rosters were authoritative. */
+export function legacyDefaultRoomAgentRoster(): RoomAgentRoster {
   return { schemaVersion: 3, revision: 1, entries: AGENT_IDS.flatMap((agentId) => legacyRosterEntry(agentId, true) || []) };
 }
 
@@ -89,16 +95,16 @@ function normalizedEntry(input: unknown, options: { migrateLegacySelection?: boo
 }
 
 export function normalizeRoomAgentRoster(input: unknown): RoomAgentRoster {
-  if (!input || typeof input !== "object") return defaultRoomAgentRoster();
+  if (!input || typeof input !== "object") return legacyDefaultRoomAgentRoster();
   const value = input as Partial<RoomAgentRoster>;
   const revision = Number.isSafeInteger(value.revision) && Number(value.revision) > 0 ? Number(value.revision) : 1;
-  if (!Array.isArray(value.entries) || value.entries.length > MAX_ROOM_AGENTS) return defaultRoomAgentRoster();
+  if (!Array.isArray(value.entries) || value.entries.length > MAX_ROOM_AGENTS) return legacyDefaultRoomAgentRoster();
   const entries = value.entries.map((entry) => normalizedEntry(entry, { migrateLegacySelection: value.schemaVersion !== 3, preserveServerPointers: true }));
-  if (entries.some((entry) => !entry)) return defaultRoomAgentRoster();
+  if (entries.some((entry) => !entry)) return legacyDefaultRoomAgentRoster();
   const resolved = entries as NormalizedRoomAgentRosterEntry[];
   const ids = new Set(resolved.map(({ agentId }) => agentId));
   const names = new Set(resolved.map(({ conversationalName }) => conversationalName.toLocaleLowerCase()));
-  return ids.size === resolved.length && names.size === resolved.length ? { schemaVersion: 3, revision, entries: resolved } : defaultRoomAgentRoster();
+  return ids.size === resolved.length && names.size === resolved.length ? { schemaVersion: 3, revision, entries: resolved } : legacyDefaultRoomAgentRoster();
 }
 
 export function validateRosterEntries(input: unknown): readonly RoomAgentRosterEntry[] | undefined {

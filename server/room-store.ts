@@ -48,7 +48,7 @@ import { emptyJsonTaskState, normalizeJsonTaskState, paginateTasks, type JsonTas
 import { CANONICAL_ROOM_ID, type CreateTaskResult, type TaskEvent, type TaskListQuery } from "./storage/room-repository.js";
 import { canTransitionContinuation, canTransitionContinuationInbox, continuationAuditMatches, continuationInboxMatchesJob, continuationInboxMutationMatches, continuationInboxStartsJobResult, continuationProjectionMatches, continuationProvenanceHash, continuationRecordIsCanonical, continuationRecordProvenanceMatches, finalizeContinuationAudit, normalizeContinuationAuditEvent, normalizeContinuationInboxEntry, normalizeContinuationPolicy, normalizeContinuationRecord, type CasResult, type ContinuationAuditEvent, type ContinuationInboxEntry, type ContinuationPolicy, type ContinuationRecord } from "./continuation-record.js";
 import { emptyJsonContinuationState, hasActiveOwner, normalizeJsonContinuationState, type JsonContinuationState } from "./storage/continuation-storage.js";
-import { defaultRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
+import { emptyRoomAgentRoster, enabledRoomAgentIds, legacyDefaultRoomAgentRoster, normalizeRoomAgentRoster, participantConfigurationFingerprint, participantConfigurationFingerprintMatches, roomAgentEntry, validateRosterEntries, type RoomAgentRosterEntry } from "../shared/roster.js";
 import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
@@ -68,7 +68,7 @@ function migrateSpeaker(speaker: unknown): SpeakerId {
   return migrateLegacyAgentId(speaker) || "system";
 }
 
-function migrateSessions(input: unknown, roster = defaultRoomAgentRoster(), storedRoster?: unknown) {
+function migrateSessions(input: unknown, roster = legacyDefaultRoomAgentRoster(), storedRoster?: unknown) {
   const value = input && typeof input === "object" ? input as Record<string, AgentSession> : {};
   const rawEntries = storedRoster && typeof storedRoster === "object" && Array.isArray((storedRoster as { entries?: unknown }).entries)
     ? (storedRoster as { entries: Array<{ agentId?: unknown; harness?: unknown }> }).entries
@@ -130,7 +130,7 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
       {
         id: randomUUID(),
         speaker: "system",
-        text: "Welcome to AllMyFriendsAreAgents. Everyone is here—set a topic or start chatting.",
+        text: "Welcome to AllMyFriendsAreAgents. Add your first agent from Room > Manage agents, then start chatting.",
         timestamp: new Date().toISOString(),
         kind: "status",
       },
@@ -145,7 +145,7 @@ export function createDefaultRoomState(projectRoot: string): RoomState {
       projectPath: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot,
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
-    roster: defaultRoomAgentRoster(),
+    roster: emptyRoomAgentRoster(),
     roomConfiguration: defaultRoomConfiguration(),
     status: "idle",
   };

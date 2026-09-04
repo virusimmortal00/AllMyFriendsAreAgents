@@ -233,7 +233,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
             </div>
           ) : (
             <div className="roster-workspace" data-mobile-pane={mobilePane}>
-              <aside className="roster-rail" aria-label="Configured agents">
+              <aside className={`roster-rail${!loading && entries.length === 0 ? " roster-rail--empty" : ""}`} aria-label="Configured agents">
                 <header className="roster-rail__header"><span><strong>Your agents</strong><small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small></span><label>View<select aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label></header>
                 {loading ? <p className="roster-empty" role="status">Loading roster…</p> : (
                   <div className="roster-editor classic-scroll-region" role="list" aria-label="Room agent roster">

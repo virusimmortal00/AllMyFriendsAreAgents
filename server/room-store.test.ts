@@ -12,6 +12,21 @@ afterEach(async () => {
 });
 
 describe("room style persistence", () => {
+  it("starts a fresh JSON room empty and keeps it empty across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-empty-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+
+    expect(store.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    expect(store.snapshot().sessions).toEqual({});
+    expect(store.snapshot().messages[0]?.text).toContain("Room > Manage agents");
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(reopened.snapshot().roster).toEqual({ schemaVersion: 3, revision: 1, entries: [] });
+    expect(reopened.snapshot().sessions).toEqual({});
+  });
+
   it("retries private command persistence after an interrupted JSON save without duplicating the node", async () => {
     const projectRoot=await mkdtemp(path.join(os.tmpdir(),"all-my-friends-private-retry-"));temporaryDirectories.push(projectRoot);const stateDirectory=path.join(projectRoot,"state");const store=await RoomStore.open(projectRoot,stateDirectory);const mutable=store as unknown as {save:()=>Promise<void>};const save=mutable.save.bind(store);let interrupt=true;mutable.save=async()=>{if(interrupt){interrupt=false;throw new Error("interrupted save");}await save();};
     await expect(store.addPrivateCommandResponseOnce("retry-submission","human-a","sanitized help")).rejects.toThrow("interrupted save");await expect(store.addPrivateCommandResponseOnce("retry-submission","human-a","sanitized help")).resolves.toMatchObject({recipientHumanId:"human-a"});const reopened=await RoomStore.open(projectRoot,stateDirectory);expect(reopened.snapshot().messages.filter(({id})=>id==="command-private:retry-submission")).toHaveLength(1);
@@ -48,6 +63,7 @@ describe("room style persistence", () => {
     temporaryDirectories.push(projectRoot);
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
     const firstId = store.snapshot().messages[0].id;
     const message = await store.addMessage("you", "checkpoint");
     await store.setLastSeenMessageId("codex-sol", message.id);
@@ -287,6 +303,7 @@ describe("room style persistence", () => {
     temporaryDirectories.push(projectRoot);
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
     const deployment = { schemaVersion: 1 as const, commitSha: "f".repeat(40), reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"a".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" };
     await store.setDeployment(deployment);
     await store.setSession("codex-sol", "existing-session", "read-only", deployment.epoch);
