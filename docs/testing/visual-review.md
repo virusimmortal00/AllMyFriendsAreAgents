@@ -3,7 +3,8 @@
 ## Outcome
 
 Catch visible defects that CSS-string and DOM-only tests cannot detect. A green
-capture run must never be reported as a visually approved interface.
+capture run must never be reported as a visually approved interface. Require visual
+evidence for changed UI areas, without making unrelated PRs pay for a full audit.
 
 ## Current state
 
@@ -89,6 +90,47 @@ capture run must never be reported as a visually approved interface.
   text enlargement, and device-specific behavior are outside this matrix, not
   silently certified by emulation.
 
+## Scope the change
+
+`pnpm capture:visual` compares the working tree with the merge base of
+`origin/main`. It includes every commit in the branch, staged/unstaged changes,
+new files, deletions, and both paths of renames. CI uses the PR base commit.
+A missing comparison base fails with an actionable error; it never silently
+skips capture or selects only the last commit.
+
+- Backend-only, documentation-only, unit-test-only, and review-tooling-only
+  changes need no screenshot capture or account-backed visual approval. Record
+  visual evidence as **not applicable**, not as a visual pass.
+- Mapped feature components select their affected registered views, including
+  related detail, recovery, and nested-dialog states. For example, `src/tasks.tsx`
+  selects WORK-04 and WORK-05: 36 screenshots across both engines, six sizes,
+  and the detail view's two scroll positions.
+- Shared styles, application composition, shared contracts, dependencies,
+  public assets, and unmapped UI files conservatively select all views. An
+  unknown UI path never counts as no impact. Keep the feature boundaries in
+  `scripts/visual-scope.ts` current when moving or reusing components; add a
+  regression test for each narrowed boundary. Shared CSS currently has file-level
+  scope, so an edit in `src/styles.css` selects all views.
+- Indirect UI effects, such as changed server-provided text, need author judgment.
+  Use repeated `--view <stable-ID>` options to add affected views; these only
+  expand the inferred selection. Use `--full` for an intentional complete audit.
+
+Inspect the selection before starting browsers or spending Codex allowance:
+
+```bash
+pnpm capture:visual --base origin/main --plan-only
+pnpm capture:visual --base origin/main --view WORK-04 --view WORK-05
+pnpm capture:visual --full
+```
+
+`test-results/visual/scope.json` explains the changed paths, selected views,
+comparison commit, and expected screenshot count. The capture manifest retains
+its declared scope. Review and validation recompute the affected scenarios from
+that base; removing an affected scenario or adding a newly affected view after
+capture invalidates the evidence. A complete scoped run can pass without images
+of unrelated views. Every expected image **within** the scope still needs a
+current seven-question verdict and receipt. An empty selection is not approval.
+
 ## Capture
 
 ```bash
@@ -102,7 +144,7 @@ reuse an existing server, serves fictional API responses, blocks all external
 requests, and rejects unmocked APIs. It never starts the real API or reads live
 room state. Test fixtures are not included in the production entry point.
 
-The matrix covers Phone (390×844), Short phone (390×660), Minimum phone
+For each selected view, the matrix covers Phone (390×844), Short phone (390×660), Minimum phone
 (320×568), Tablet (768×1024), Short laptop (1024×600), and Desktop (1440×900)
 in both engines. Compact Room Chat is only captured at the three narrow sizes;
 every other registered view runs at all six sizes, and the roster adds an empty
@@ -117,14 +159,16 @@ must not artificially hide native UI affordances. This does not force an operati
 system to keep overlay scrollbars visible. WebKit uses its normal launch options.
 Each run creates a unique directory under ignored `test-results/visual/` with:
 
-- `manifest.json`: source-input digest, Git commit, dirty status, platform,
+- `manifest.json` (schema version 2): declared scope, source-input digest, Git commit, dirty status, platform,
   viewport, engine, view ID, screenshot SHA-256, layout failures, and measured
   native scroll regions (name, offset, and maximum in CSS pixels);
 - `screenshots/*.png`: full viewport images, including the window edges;
 - `coverage.json`: captured IDs and the explicit uncovered registry list.
 
-Screenshots are captured even when geometry assertions fail. Filtered runs are
-useful while debugging but cannot satisfy complete-matrix review. Captures use
+Screenshots are captured even when geometry assertions fail. Capture selection
+uses the declared affected views or `--full`; arbitrary Playwright filters are
+rejected so a partial viewport or scroll-position run cannot masquerade as
+complete evidence for a view. Captures use
 fictional names and a fictional provider's standard fallback mark. New fixtures
 must likewise avoid private transcripts, real identities, credentials, or URLs.
 
@@ -179,13 +223,15 @@ pnpm check:visual-review --run test-results/visual/run-EXAMPLE --review test-res
 invocations without raw transcripts/CLI diagnostics; `result.json` records the
 gate outcome. New invocations create new directories without overwriting earlier
 findings. Failed judgments remain failed. Missing/duplicate/unseen images,
-invalid output, process errors, changed inputs, or partial coverage cannot pass.
+invalid output, process errors, changed inputs, or partial coverage of the declared
+scope cannot pass.
 Timeout/auth failures leave completed evidence intact but no overall approval.
 
 For a bounded smoke test, repeat `--key <manifest-key>` to select images. This
-still requires a complete, current capture manifest and intentionally fails the
-overall gate when the remaining images have not been reviewed. Never call it a
-full visual approval. Previously captured evidence becomes stale when the runner,
+still requires a complete, current capture manifest for the declared scope and
+intentionally fails that scope's gate when its remaining images have not been
+reviewed. Use capture-time scope selection to review only affected views. Previously
+captured evidence becomes stale when the runner,
 review prompt, criteria, fixture, or UI source changes; recapture before reviewing.
 
 ## Independent review criteria
@@ -250,8 +296,12 @@ images are still necessary; a JSON file is not a security boundary.
 
 ## CI and rollout
 
-`Visual evidence` runs without secrets or write permissions on PR code and
-uploads artifacts even when the layout test fails. Do not add a model key to
+`Visual evidence` runs a lightweight scope check on every PR without secrets or
+write permissions. It skips browser installation and capture when no UI input
+changed, and records a not-applicable summary. Keeping the workflow present
+avoids a missing check on non-UI PRs. UI PRs capture only selected scenarios and
+upload artifacts even when layout checks fail. Manual dispatch supports a
+comparison base or an explicit full audit. Do not add a model key to
 that job or execute artifact-supplied instructions in a privileged workflow.
 The local reviewer is not connected to an automatic artifact download or PR
 publication service. Review CI evidence only after verifying its source and

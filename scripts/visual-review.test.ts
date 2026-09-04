@@ -2,15 +2,16 @@ import { describe, expect, it } from "vitest";
 import { expectedVisualKeys, VISUAL_SCENARIOS, VISUAL_VIEWPORTS } from "../tests/visual/matrix.js";
 import { captureSchema, hashBytes, validateVisualReceipts, validateVisualReview, VISUAL_QUESTIONS } from "./visual-review.js";
 
-function fixture() {
+function fixture(scenarioIds?: string[]) {
   const bytes = new Uint8Array([1, 2, 3]);
   const digest = hashBytes("source");
-  const captures = expectedVisualKeys().map((key) => {
+  const captures = expectedVisualKeys(scenarioIds).map((key) => {
     const [engine, viewportId, scenarioId] = key.split("--");
     const { width, height } = VISUAL_VIEWPORTS.find((item) => item.id === viewportId)!;
     return { key, engine, viewId: VISUAL_SCENARIOS.find((item) => item.id === scenarioId)!.view.id, viewport: { width, height }, screenshotSha256: hashBytes(bytes), layoutIssues: [] as string[], scrollRegions: [] };
   });
-  const run = { schemaVersion: 1, inputDigest: digest, headCommit: "a".repeat(40), dirty: false, implementationAgentId: "author", platform: "test", createdAt: "2026-08-30T00:00:00.000Z", capturePassed: true, captures };
+  const scope = scenarioIds ? { mode: "affected", baseCommit: "b".repeat(40), scenarioIds, extraViewIds: [] } : { mode: "full" };
+  const run = { schemaVersion: 2, scope, inputDigest: digest, headCommit: "a".repeat(40), dirty: false, implementationAgentId: "author", platform: "test", createdAt: "2026-08-30T00:00:00.000Z", capturePassed: true, captures };
   const reviews: any[] = [];
   const receiptEntries: any[] = [];
   const completedAt = "2026-08-30T01:00:00.000Z";
@@ -28,6 +29,30 @@ function fixture() {
 }
 
 describe("independent screenshot review gate", () => {
+  it("accepts complete independent evidence for only the affected views", () => {
+    const { run, review, receipts, digest, readImage, promptHash } = fixture(["room-tasks-list", "room-task-detail"]);
+    expect(run.captures).toHaveLength(36);
+    expect(validateVisualReview(run, review, digest, readImage)).toEqual([]);
+    expect(validateVisualReceipts(run, review, receipts, promptHash)).toEqual([]);
+  });
+  it.each(["missing viewport", "missing bottom shot", "missing review", "extra image", "failed layout", "failed judgment", "stale source"])("rejects scoped evidence with %s", (kind) => {
+    const { run, review, digest, readImage } = fixture(["room-tasks-list", "room-task-detail"]);
+    if (kind === "missing viewport") run.captures = run.captures.filter((capture) => capture.viewport.width !== 390);
+    if (kind === "missing bottom shot") run.captures = run.captures.filter((capture) => !capture.key.endsWith("--bottom"));
+    if (kind === "missing review") review.reviews.pop();
+    if (kind === "extra image") run.captures.push(fixture().run.captures[0]);
+    if (kind === "failed layout") run.captures[0].layoutIssues.push("Clipped action");
+    if (kind === "failed judgment") review.reviews[0].answers.outcome.verdict = "fail";
+    expect(validateVisualReview(run, review, kind === "stale source" ? hashBytes("changed") : digest, readImage).length).toBeGreaterThan(0);
+  });
+  it("rejects empty, duplicated, or unknown scopes instead of claiming approval", () => {
+    for (const scenarios of [[], ["room-tasks-list", "room-tasks-list"]]) {
+      const { run, review, digest, readImage } = fixture(scenarios);
+      expect(validateVisualReview(run, review, digest, readImage).length).toBeGreaterThan(0);
+    }
+    const { run, review, digest, readImage } = fixture(["unknown"]);
+    expect(() => validateVisualReview(run, review, digest, readImage)).toThrow();
+  });
   it("requires bounded factual scroll measurements rather than silently omitting them", () => {
     const capture = fixture().run.captures[0];
     expect(captureSchema.safeParse({ ...capture, scrollRegions: undefined }).success).toBe(false);

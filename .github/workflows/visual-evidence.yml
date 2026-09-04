@@ -4,6 +4,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      full:
+        description: Capture all views instead of changed views
+        type: boolean
+        default: false
+      base:
+        description: Comparison branch or commit for changed views
+        type: string
+        default: origin/main
 
 permissions:
   contents: read
@@ -20,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -29,11 +39,33 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium webkit
       - run: pnpm run check:visual-types
-      - run: pnpm run capture:visual
+      - name: Determine affected views
+        id: scope
+        env:
+          VISUAL_BASE: ${{ github.event.pull_request.base.sha || inputs.base || 'origin/main' }}
+          VISUAL_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: |
+          if [ "$VISUAL_FULL" = "true" ]; then
+            pnpm run capture:visual --full --plan-only
+          else
+            pnpm run capture:visual --base "$VISUAL_BASE" --plan-only
+          fi
+      - if: steps.scope.outputs.required == 'true'
+        run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Capture affected views
+        if: steps.scope.outputs.required == 'true'
+        env:
+          VISUAL_BASE: ${{ github.event.pull_request.base.sha || inputs.base || 'origin/main' }}
+          VISUAL_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: |
+          if [ "$VISUAL_FULL" = "true" ]; then
+            pnpm run capture:visual --full
+          else
+            pnpm run capture:visual --base "$VISUAL_BASE"
+          fi
       - name: Upload evidence even when layout checks fail
-        if: always()
+        if: always() && steps.scope.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: visual-evidence-${{ github.sha }}
