@@ -43,8 +43,8 @@ export function scenarioApplies(scenario: { id: string }, viewport: { width: num
   return scenario.id !== "compact-room-chat" || viewport.width <= 720;
 }
 
-export function expectedVisualKeys() {
+export function expectedVisualKeys(scenarioIds: readonly string[] = VISUAL_SCENARIOS.map((scenario) => scenario.id)) {
   return VISUAL_ENGINES.flatMap((engine) => VISUAL_VIEWPORTS.flatMap((viewport) =>
-    VISUAL_SCENARIOS.filter((scenario) => scenarioApplies(scenario, viewport)).flatMap((scenario) => scenario.shots.map((shot) =>
+    VISUAL_SCENARIOS.filter((scenario) => scenarioIds.includes(scenario.id) && scenarioApplies(scenario, viewport)).flatMap((scenario) => scenario.shots.map((shot) =>
       `${engine}--${viewport.id}--${scenario.id}--${shot}`))));
 }

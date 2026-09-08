@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { codexEnvironment, codexReviewArgs, codexBatchVerdictSchema, executeCodex, groupReviewCaptures, parseCodexResult, requireChatGptLogin, reviewPrompt } from "./codex-visual-review.js";
 import { hashBytes, reviewSchema, runSchema, validateVisualCapture, validateVisualReceipts, validateVisualReview, visualInputDigest } from "./visual-review.js";
+import { validateVisualScope } from "./visual-scope.js";
 
 function readRegular(path: string, maxBytes: number) {
   const stat = lstatSync(path);
@@ -22,7 +23,7 @@ async function main() {
   if (!lstatSync(screenshots).isDirectory() || lstatSync(screenshots).isSymbolicLink()) throw new Error("Expected a real screenshot directory.");
   const run = runSchema.parse(JSON.parse(readRegular(resolve(directory, "manifest.json"), 512_000).toString()));
   const readImage = (key: string) => readRegular(resolve(screenshots, `${key}.png`), 20_000_000);
-  const preflight = validateVisualCapture(run, visualInputDigest(root), readImage);
+  const preflight = [...validateVisualScope(run.scope, root), ...validateVisualCapture(run, visualInputDigest(root), readImage)];
   if (preflight.length) throw new Error(preflight.join("\n"));
   const requested = values.key;
   if (requested && (new Set(requested).size !== requested.length || requested.some((key) => !run.captures.some((capture) => capture.key === key)))) {
@@ -102,6 +103,7 @@ async function main() {
     review.reviews.sort((a, b) => a.key.localeCompare(b.key));
     persist();
     const errors = [
+      ...validateVisualScope(run.scope, root),
       ...validateVisualReview(run, review, visualInputDigest(root), readImage),
       ...validateVisualReceipts(run, review, receiptDocument(), (captures) => hashBytes(reviewPrompt(captures, standards))),
     ];
@@ -109,7 +111,7 @@ async function main() {
     if (failed) errors.unshift("Codex review did not complete successfully.");
     writeFileSync(resolve(output, "result.json"), `${JSON.stringify({ passed: errors.length === 0, reviewed: review.reviews.length, expected: run.captures.length, errors }, null, 2)}\n`);
     if (errors.length) throw new Error(`Visual approval FAILED. ${review.reviews.length}/${run.captures.length} images reviewed.\n${errors.join("\n")}\nEvidence: ${output}`);
-    console.log(`Visual approval passed for the capture matrix only. Uncovered views and real-device behavior remain unverified.\nEvidence: ${output}`);
+    console.log(`Visual approval passed for the declared ${run.scope.mode} scope only. Uncovered views and real-device behavior remain unverified.\nEvidence: ${output}`);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", interrupt);

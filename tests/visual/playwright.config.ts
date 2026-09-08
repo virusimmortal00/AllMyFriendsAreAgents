@@ -2,9 +2,16 @@ import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import { VISUAL_ENGINES, VISUAL_VIEWPORTS } from "./matrix";
 
+export function visualTestPattern(scenarioIds: readonly string[]) {
+  const titles = [...scenarioIds];
+  if (scenarioIds.some((id) => ["room-chat", "roster-populated", "roster-detail"].includes(id))) titles.push("control density remains stable across resize boundaries and views");
+  return new RegExp(`(?:^|\\s)(?:${titles.map((title) => title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$`);
+}
+
 export default defineConfig({
   testDir: ".",
   testMatch: "*.visual.ts",
+  ...(process.env.VISUAL_SCENARIO_IDS ? { grep: visualTestPattern(JSON.parse(process.env.VISUAL_SCENARIO_IDS)) } : {}),
   outputDir: "../../test-results/visual-runtime",
   forbidOnly: Boolean(process.env.CI),
   retries: 0,

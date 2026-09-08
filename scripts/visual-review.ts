@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { expectedVisualKeys, VISUAL_SCENARIOS, VISUAL_VIEWPORTS } from "../tests/visual/matrix.js";
+import { scopeScenarioIds, visualScopeSchema } from "./visual-scope.js";
 
 export const VISUAL_QUESTIONS = ["screenUse", "navigation", "retroStyle", "proportion", "emptyArea", "scrollAndActions", "outcome"] as const;
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -20,7 +21,7 @@ export const captureSchema = z.object({
   scrollRegions: z.array(scrollRegionSchema).max(20),
 }).strict();
 export const runSchema = z.object({
-  schemaVersion: z.literal(1), inputDigest: sha, headCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  schemaVersion: z.literal(2), scope: visualScopeSchema, inputDigest: sha, headCommit: z.string().regex(/^[a-f0-9]{40}$/),
   dirty: z.boolean(), implementationAgentId: z.string().min(3), platform: z.string(),
   createdAt: z.iso.datetime(), capturePassed: z.boolean(), captures: z.array(captureSchema),
 }).strict();
@@ -63,10 +64,19 @@ export function hashBytes(bytes: Uint8Array | string) { return createHash("sha25
 export function visualInputDigest(root = process.cwd()) {
   // Include newly added source/fixtures as well as tracked inputs, but never local
   // state, secrets, screenshots, or verdicts. A review-only commit stays valid.
-  const inputs = ["src", "shared", "public", "tests/visual", "scripts/visual-review.ts", "scripts/capture-visual.ts", "scripts/check-visual-review.ts", "scripts/codex-visual-review.ts", "scripts/review-visual.ts", "package.json", "pnpm-lock.yaml", "tsconfig.visual.json", "docs/design/ui-standards.md", "docs/testing/visual-review.md"];
+  const inputs = ["src", "shared", "public", "tests/visual", "scripts/visual-scope.ts", "scripts/visual-review.ts", "scripts/capture-visual.ts", "scripts/check-visual-review.ts", "scripts/codex-visual-review.ts", "scripts/review-visual.ts", "package.json", "pnpm-lock.yaml", "tsconfig.visual.json", "docs/design/ui-standards.md", "docs/testing/visual-review.md"];
   const files = [...new Set(execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ...inputs], { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean))].sort();
   const hash = createHash("sha256");
-  for (const file of files) hash.update(file).update("\0").update(hashBytes(readFileSync(resolve(root, file)))).update("\0");
+  for (const file of files) {
+    let bytes: Uint8Array;
+    try { bytes = readFileSync(resolve(root, file)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      hash.update(file).update("\0deleted\0");
+      continue;
+    }
+    hash.update(file).update("\0").update(hashBytes(bytes)).update("\0");
+  }
   return hash.digest("hex");
 }
 
@@ -75,7 +85,9 @@ export function validateVisualCapture(runValue: unknown, currentInputDigest: str
   const errors: string[] = [];
   if (!run.capturePassed) errors.push("The browser capture run failed.");
   if (run.inputDigest !== currentInputDigest) errors.push("The review is stale: UI, fixture, or review-contract inputs changed.");
-  const expected = expectedVisualKeys().sort();
+  const scenarios = scopeScenarioIds(run.scope);
+  const expected = expectedVisualKeys(scenarios).sort();
+  if (!expected.length || new Set(scenarios).size !== scenarios.length) errors.push("Visual approval requires a nonempty, unique scenario scope.");
   if (JSON.stringify(run.captures.map((capture) => capture.key).sort()) !== JSON.stringify(expected)) errors.push("Capture coverage is missing, duplicated, or unexpected.");
   for (const capture of run.captures) {
     const [engine, viewportId, scenarioId] = capture.key.split("--");
@@ -98,7 +110,7 @@ export function validateVisualReview(runValue: unknown, reviewValue: unknown, cu
   const review = reviewSchema.parse(reviewValue);
   const errors = validateVisualCapture(run, currentInputDigest, readImage);
   if (review.inputDigest !== run.inputDigest) errors.push("The review is stale: UI, fixture, or review-contract inputs changed.");
-  if (JSON.stringify(review.reviews.map((item) => item.key).sort()) !== JSON.stringify(expectedVisualKeys().sort())) errors.push("Every expected screenshot needs exactly one independent review.");
+  if (JSON.stringify(review.reviews.map((item) => item.key).sort()) !== JSON.stringify(expectedVisualKeys(scopeScenarioIds(run.scope)).sort())) errors.push("Every expected screenshot needs exactly one independent review.");
   for (const capture of run.captures) {
     const item = review.reviews.find((entry) => entry.key === capture.key);
     if (!item) continue;
