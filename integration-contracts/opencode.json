@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 9,
-    "reviewedOn": "2026-09-02",
-    "result": "Re-inspected the mapped source at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f for the broker repair-reference follow-up. The previously inspected complete downstream diff remains pinned through 6883ca5bd35a5494fb2759018373308911c79e01. Confirmed password-backed server authentication and lifecycle, SDK health/session/structured-response shapes, CLI completed-text projection, model metadata, inline permissions, and custom-tool contracts. The application now distinguishes read-only broker operations from unresolved mutations using the full durable audit; OpenCode transport, permissions, output validation, plugin version, and admitted runtime versions are unchanged.",
+    "revision": 12,
+    "reviewedOn": "2026-09-08",
+    "result": "Re-inspected the mapped CLI, authenticated server, session, SDK, permission, and custom-tool source at v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01 for generation-attempt tool leases. Confirmed provider sessions are explicitly created/resumed and tool context identifies provider sessions; inline tool configuration and permissions remain server supplied. The application-owned generation/attempt lifetime is a local authorization boundary, not an upstream session guarantee. Missing-session retries receive new opaque leases; prior attempts, cancellation, and completion cannot retain authority. No runtime version, transport, provider schema, or permission expansion is introduced. Re-inspected the custom-tool definition, plugin package, and configuration loader at the same upstream commit for live diagnostics recovery. tool.schema is Zod and the definition retains descriptions; explicit configuration directories are supported. Added model-facing cursor provenance guidance and a bounded invalid-cursor recovery message without changing server authorization. Live evidence showed an invented initial cursor, not a stale lease. Inspected the custom-tool registry, provider schema transformations, and LLM tool handoff at that same commit: the registry converts Zod input schemas, and optional-field nullability transformations are provider-specific. Repeated OpenRouter GPT calls supplied every optional selector despite omission guidance. The adapter now explicitly admits null for unused optional selectors and removes nulls before the server request; invented non-null cursors remain rejected. This is an adapter input-schema extension, not a server query or permission expansion. Final review verified that null-only identity/correlation objects must be omitted after normalization because the server rejects empty selectors. Added adapter-to-broker regression coverage while retaining non-empty selector values and the existing upstream schema contract.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
@@ -55,7 +55,10 @@
       "packages/sdk/js/src/v2/client.ts",
       "packages/sdk/js/src/v2/gen/sdk.gen.ts",
       "packages/sdk/js/src/v2/gen/types.gen.ts",
-      "packages/schema/src/v1/session.ts"
+      "packages/schema/src/v1/session.ts",
+      "packages/opencode/src/tool/registry.ts",
+      "packages/opencode/src/provider/transform.ts",
+      "packages/opencode/src/session/llm.ts"
     ]
   },
   "surfaces": [
@@ -85,7 +88,8 @@
       "tests": [
         "server/agent-runner.test.ts",
         "server/opencode-structured-transport.test.ts",
-        "server/structured-room-turn.test.ts"
+        "server/structured-room-turn.test.ts",
+        "server/room-tool-attempt.test.ts"
       ]
     },
     {
@@ -110,7 +114,9 @@
         "server/conversation.test.ts",
         "src/message-format.test.ts",
         "server/context-summarizer.test.ts",
-        "server/provider-health.test.ts"
+        "server/provider-health.test.ts",
+        "server/room-tool-attempt.test.ts",
+        "server/room-tool-application.test.ts"
       ]
     },
     {
@@ -134,17 +140,24 @@
       "local": [
         "server/agent-tools/**",
         "server/agent-runner.ts",
-        "tsconfig.node.json"
+        "tsconfig.node.json",
+        "server/room-tool-attempt.ts"
       ],
       "upstream": [
         "packages/opencode/src/config/config.ts",
         "packages/plugin/package.json",
-        "packages/plugin/src/tool.ts"
+        "packages/plugin/src/tool.ts",
+        "packages/opencode/src/tool/registry.ts",
+        "packages/opencode/src/provider/transform.ts",
+        "packages/opencode/src/session/llm.ts"
       ],
       "tests": [
         "server/agent-runner.test.ts",
         "server/room-command-tool.test.ts",
-        "server/room-diagnostics-tool.test.ts"
+        "server/room-diagnostics-tool.test.ts",
+        "server/room-tool-attempt.test.ts",
+        "server/room-tool-application.test.ts",
+        "server/room-diagnostics-adapter.test.ts"
       ]
     },
     {

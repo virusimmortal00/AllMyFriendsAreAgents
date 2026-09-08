@@ -1,5 +1,6 @@
 import express from "express";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
@@ -18,37 +19,46 @@ function emptyResult(): DiagnosticQueryResult {
 function fixture() {
   let now = Date.parse("2026-08-28T12:00:00.000Z");
   let binding: RoomDiagnosticsCapabilityBinding = {
-    effective: true, participantId: "codex-sol", providerSessionId: "provider-session-one", roomId: "room-one", projectId: "project-one", manifestRevision: 7,
+    effective: true, participantId: "codex-sol", roomId: "room-one", projectId: "project-one", manifestRevision: 7,
     caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false },
     allowedScopes: ["self", "room", "project"],
   };
   const query = vi.fn<DiagnosticsQueryService["query"]>(async () => emptyResult());
   const events: RoomDiagnosticsLeaseEvent[] = [];
   const broker = new RoomDiagnosticsToolBroker({ query }, (participantId) => participantId === binding.participantId ? binding : undefined, () => now, (event) => events.push(event));
-  const token = broker.issue("codex-sol")!;
+  let active = true;
+  const token = broker.issue("codex-sol", attempt(() => active))!;
   const input = { requestId: "diagnostic-request-01", query: { window: "last-hour", scope: "room", streams: ["generations"], severities: ["warn"], identity: { generationId: "generation-one" }, correlation: { correlationId: "correlation-one" }, limit: 12 } } as const;
-  return { broker, token, input, query, events, setNow: (value: number) => { now = value; }, getNow: () => now, setBinding: (value: RoomDiagnosticsCapabilityBinding) => { binding = value; }, getBinding: () => binding };
+  return { endAttempt: () => { active = false; }, broker, token, input, query, events, setNow: (value: number) => { now = value; }, getNow: () => now, setBinding: (value: RoomDiagnosticsCapabilityBinding) => { binding = value; }, getBinding: () => binding };
 }
 
 describe("lease-bound room_diagnostics broker", () => {
+  it("rejects an invented cursor and permits a fresh query with a new request ID", async () => {
+    const api = fixture();
+    await expect(api.broker.execute(api.token, { requestId: "invented-cursor-request", query: { window: "last-hour", scope: "self", cursor: "invented-cursor" } })).rejects.toMatchObject({ code: "invalid-cursor" });
+    expect(api.query).not.toHaveBeenCalled();
+    expect(api.events.at(-1)).toMatchObject({ outcome: "rejected", reason: "query-rejected" });
+    expect(await api.broker.execute(api.token, { requestId: "recovered-query-request", query: { window: "last-hour", scope: "self" } })).toMatchObject({ records: [], nextCursor: null });
+    expect(api.events.at(-1)).toMatchObject({ outcome: "accepted" });
+  });
   it("advertises and issues only under current effective server capability policy", () => {
     const api = fixture();
     api.setBinding({ ...api.getBinding(), effective: false });
-    expect(api.broker.issue("codex-sol")).toBeUndefined();
-    expect(api.broker.issue("claude-sonnet")).toBeUndefined();
+    expect(api.broker.issue("codex-sol", attempt())).toBeUndefined();
+    expect(api.broker.issue("claude-sonnet", attempt())).toBeUndefined();
     expect(api.events[0]).toMatchObject({ outcome: "issued", reason: "lease-issued", participantId: "codex-sol", manifestRevision: 7 });
     expect(JSON.stringify(api.events)).not.toContain("provider-session-one");
   });
 
-  it("binds participant, provider session, room, project, and manifest and fails closed on substitution or staleness", async () => {
+  it("binds participant, generation attempt, room, project, and manifest and fails closed on substitution or staleness", async () => {
     const participant = fixture();
     expect(await participant.broker.execute(participant.token, { ...participant.input, participantId: "claude-sonnet" })).toBeUndefined();
     expect(participant.query).not.toHaveBeenCalled();
 
     const session = fixture();
-    session.setBinding({ ...session.getBinding(), providerSessionId: "provider-session-two" });
+    session.endAttempt();
     expect(await session.broker.execute(session.token, session.input)).toBeUndefined();
-    expect(session.events.at(-1)).toMatchObject({ outcome: "revoked", reason: "provider-session-stale" });
+    expect(session.events.at(-1)).toMatchObject({ outcome: "revoked", reason: "generation-attempt-stale" });
 
     const manifest = fixture();
     manifest.setBinding({ ...manifest.getBinding(), manifestRevision: 8 });
@@ -59,6 +69,15 @@ describe("lease-bound room_diagnostics broker", () => {
     scope.setBinding({ ...scope.getBinding(), roomId: "room-two" });
     expect(await scope.broker.execute(scope.token, scope.input)).toBeUndefined();
     expect(scope.events.at(-1)).toMatchObject({ outcome: "revoked", reason: "capability-revoked" });
+  });
+
+  it("retains distinct attempt audit events when retries issue leases in the same millisecond", async () => {
+    const api = fixture();
+    await api.broker.execute(api.token, api.input);
+    const next = api.broker.issue("codex-sol", { ...attempt(), attemptOrdinal: 2 })!;
+    await api.broker.execute(next, api.input);
+    expect(api.broker.audit().filter(({ outcome }) => outcome === "accepted").map(({ attemptOrdinal }) => attemptOrdinal)).toEqual([1, 2]);
+    expect(await api.broker.execute(api.token, api.input)).toBeUndefined();
   });
 
   it("expires and explicitly revokes leases before diagnostics are reachable", async () => {
@@ -111,16 +130,16 @@ describe("lease-bound room_diagnostics broker", () => {
   it("distinguishes audit events from separate leases and absorbs operation-log failures", async () => {
     let now = Date.parse("2026-08-28T12:00:00.000Z");
     const binding: RoomDiagnosticsCapabilityBinding = {
-      effective: true, participantId: "codex-sol", providerSessionId: "session", roomId: "room-one", projectId: "project-one", manifestRevision: 7,
+      effective: true, participantId: "codex-sol", roomId: "room-one", projectId: "project-one", manifestRevision: 7,
       caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false }, allowedScopes: ["room"],
     };
     const operationLog = vi.fn(async () => { throw new Error("audit sink unavailable"); });
     const broker = new RoomDiagnosticsToolBroker({ query: async () => emptyResult() }, () => binding, () => now, operationLog);
-    const first = broker.issue("codex-sol")!;
+    const first = broker.issue("codex-sol", attempt())!;
     await broker.execute(first, { requestId: "diagnostic-request-01", query: { window: "last-hour", scope: "room" } });
     expect(broker.revoke("codex-sol")).toBe(true);
     now += 1;
-    const second = broker.issue("codex-sol")!;
+    const second = broker.issue("codex-sol", attempt())!;
     await broker.execute(second, { requestId: "diagnostic-request-01", query: { window: "last-hour", scope: "room" } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const accepted = broker.audit().filter(({ outcome }) => outcome === "accepted");
@@ -170,10 +189,10 @@ describe("lease-bound room_diagnostics broker", () => {
     const directory = path.join(root, "logs", "authoritative-v1"); await mkdir(directory, { recursive: true });
     const record = { envelopeVersion: 1, recordId: "record-one", stream: "generations", timestamp: "2026-08-28T11:45:00.000Z", severity: "warn", event: "generation.evidence", projectId: "project-one", roomId: "room-one", agentId: "codex-sol", selfId: "codex-sol", visibility: "room", content: { evidence: "preserve diagnostic evidence", authorization: "Bearer top-secret", nested: { apiKey: "remove-me", note: "password=hunter2" } } };
     await writeFile(path.join(directory, `${DIAGNOSTIC_STREAM_FILES.generations}.jsonl`), `${JSON.stringify(record)}\n`);
-    const binding: RoomDiagnosticsCapabilityBinding = { effective: true, participantId: "codex-sol", providerSessionId: "session", roomId: "room-one", projectId: "project-one", manifestRevision: 1, caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false }, allowedScopes: ["self", "room", "project"] };
+    const binding: RoomDiagnosticsCapabilityBinding = { effective: true, participantId: "codex-sol", roomId: "room-one", projectId: "project-one", manifestRevision: 1, caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false }, allowedScopes: ["self", "room", "project"] };
     const events: RoomDiagnosticsLeaseEvent[] = [];
     const broker = new RoomDiagnosticsToolBroker(new LocalFileDiagnosticsQueryService(root, "project-one"), () => binding, () => Date.parse("2026-08-28T12:00:00.000Z"), (event) => events.push(event));
-    const token = broker.issue("codex-sol")!;
+    const token = broker.issue("codex-sol", attempt())!;
     const transcript = [{ speaker: "human", text: "existing room message" }];
     const before = structuredClone(transcript);
     const result = await broker.execute(token, { requestId: "redaction-request-01", query: { window: "last-hour", scope: "room", streams: ["generations"] } });
@@ -196,3 +215,5 @@ describe("lease-bound room_diagnostics broker", () => {
     } finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
   });
 });
+
+function attempt(isActive: () => boolean = () => true): RoomToolAttempt { return { generationId: "fixture-generation", attemptOrdinal: 1, agentId: "codex-sol", isActive }; }

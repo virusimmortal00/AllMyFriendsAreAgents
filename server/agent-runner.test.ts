@@ -645,9 +645,11 @@ const journalEntries = [];
 const journal = { append: async (entry) => { journalEntries.push(entry); } };
 let refreshCount = 0;
 let invalidations = 0;
+const attempts = [];
 const context = {
   historyTool: { configDirectory: ${JSON.stringify(directory)}, url: "http://127.0.0.1/history", token: "history-placeholder" },
-  refreshScopedTools: () => {
+  refreshScopedTools: (attempt) => {
+    attempts.push(attempt);
     refreshCount += 1;
     const binding = state.sessions["codex-sol"]?.id || "fresh";
     return {
@@ -661,7 +663,7 @@ const evidence = {};
 const result = await withLogContext({ jobId: "fixture-job", traceId: "a".repeat(32), requestId: "fixture-request" }, () => withConversationRun(() => withConversationTurn("codex-sol", () => runAgent("codex-sol", state, "Verify scoped tools.", false, journal, undefined, undefined, undefined, sessionLifecycle, undefined, undefined, undefined, undefined, context, { evidence }))));
 const retained = JSON.stringify(journalEntries);
 const leaks = ["command-ses_stale-placeholder", "command-fresh-placeholder", "history-placeholder", "diagnostics-fresh-placeholder", "http://127.0.0.1/command", "http://127.0.0.1/history", "http://127.0.0.1/diagnostics"].some((value) => retained.includes(value));
-process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, journalLeaksScopedValues: leaks,
+process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessionId, refreshCount, invalidations, attemptOrdinals: attempts.map(a => a.attemptOrdinal), retiredAttempts: attempts.every(a => !a.isActive()), journalLeaksScopedValues: leaks,
   correlation: {
     entries: journalEntries.map(({ type, attemptOrdinal }) => ({ type, attemptOrdinal })),
     oneGeneration: new Set(journalEntries.map(({ generationId }) => generationId)).size === 1,
@@ -693,6 +695,8 @@ process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessi
         sessionId: "ses_room_tool_smoke",
         refreshCount: 2,
         invalidations: 1,
+        attemptOrdinals: [1, 2],
+        retiredAttempts: true,
         journalLeaksScopedValues: false,
         correlation: {
           entries: [

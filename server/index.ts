@@ -1,5 +1,6 @@
 import express from "express";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
@@ -295,7 +296,7 @@ async function refreshAgentCapabilities() {
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {
     const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
-    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: toolLease.providerSessionFresh && !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
   capabilityStatuses = next;
@@ -544,14 +545,16 @@ function roomEventStream(humanId: string) {
   return stream;
 }
 
-function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>) {
+function commandToolContext(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>, attempt: RoomToolAttempt) {
+  const epoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(state.roster), agent);
+  const scopedAttempt = { ...attempt, isActive: () => attempt.isActive() && Boolean(epoch && roomAgentTurnEpochIsCurrent(normalizeRoomAgentRoster(roomSnapshot().roster), epoch)) };
   const entry = roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent);
   const ceiling = capabilityEnabled(capabilityStatuses[agent], "github_read") ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS;
   const allowedCommands = entry?.enabled ? effectiveAllowedCommands(normalizeCommandPermissions(entry.commandPermissions), ceiling) : [];
   if (!entry || !allowedCommands.length) return undefined;
   return {
     url: `http://127.0.0.1:${port}/api/agent-tools/room-command`,
-    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, providerSessionId: state.sessions[agent]?.id || null, allowedCommands, roomId:CANONICAL_ROOM_ID }),
+    token: roomCommandToolBroker.issue({ agentId: agent, displayName: entry.conversationalName || agent, attempt: scopedAttempt, allowedCommands, roomId:CANONICAL_ROOM_ID }),
     allowedCommands,
     guide: roomCommandGuide(allowedCommands),
   };
@@ -567,15 +570,14 @@ function diagnosticsCapabilityBinding(participantId: string): RoomDiagnosticsCap
   const manifestRevision = Number.parseInt(createHash("sha256").update(JSON.stringify({ policyRevision: status.policyRevision, rosterRevision: roster.revision, participantConfigurationRevision: entry.configurationRevision, capability: status.capabilities.room_diagnostics })).digest("hex").slice(0, 12), 16);
   return {
     effective: capabilityEnabled(status, "room_diagnostics"), participantId,
-    providerSessionId: state.sessions[participantId]?.id || null,
     roomId: CANONICAL_ROOM_ID, projectId: diagnosticsProjectId, manifestRevision,
     caller: { principalId: participantId, selfId: participantId, roomIds: [CANONICAL_ROOM_ID], projectIds: [diagnosticsProjectId], operator: false },
     allowedScopes: ["self", "room", "project"],
   };
 }
 
-function diagnosticsToolContext(participantId: import("../shared/participants.js").ActiveAgentId) {
-  const token = roomDiagnosticsToolBroker.issue(participantId);
+function diagnosticsToolContext(participantId: import("../shared/participants.js").ActiveAgentId, attempt: RoomToolAttempt) {
+  const token = roomDiagnosticsToolBroker.issue(participantId, attempt);
   return token ? { url: `http://127.0.0.1:${port}/api/agent-tools/room-diagnostics`, token } : undefined;
 }
 
@@ -722,9 +724,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
-        refreshScopedTools: activeAgent ? () => ({
-          commandTool: commandToolContext(activeAgent, roomSnapshot()),
-          diagnosticsTool: diagnosticsToolContext(activeAgent),
+        refreshScopedTools: activeAgent ? (attempt) => ({
+          commandTool: commandToolContext(activeAgent, before, attempt),
+          diagnosticsTool: diagnosticsToolContext(activeAgent, attempt),
         }) : undefined,
       },
       { ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}), evidence },
@@ -974,7 +976,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       undefined, undefined, modelDiscovery,
       {
         historyTool: roomHistoryTool,
-        refreshScopedTools: () => ({ commandTool: commandToolContext(agent, roomSnapshot()), diagnosticsTool: diagnosticsToolContext(agent) }),
+        refreshScopedTools: (attempt) => ({ commandTool: commandToolContext(agent, before, attempt), diagnosticsTool: diagnosticsToolContext(agent, attempt) }),
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
       },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
@@ -1047,7 +1049,7 @@ const commandRuntime = new CommandRuntime({
   githubRead:githubReadService,
   publishGhResult:async(executionId,summary,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",commandMessageText(summary,text),undefined,{burstId:executionId,sequence:0,kind:"command"});broadcast();},
 });
-const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(agent)=>store.snapshot().sessions[agent]?.id||null,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
+const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{generationId:event.generationId,attemptOrdinal:event.attemptOrdinal,agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
 registerRoomCommandToolRoute(app, roomCommandToolBroker);
 const roomDiagnosticsToolBroker = new RoomDiagnosticsToolBroker(diagnosticsQueryService, diagnosticsCapabilityBinding, Date.now, (event) => structuredLogger.log(event.outcome === "rejected" || event.outcome === "revoked" || event.outcome === "expired" ? "warn" : "info", "room-diagnostics-tool.lease", { ...event }));
 registerRoomDiagnosticsToolRoute(app, roomDiagnosticsToolBroker);
