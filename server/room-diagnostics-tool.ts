@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type express from "express";
 import {
   DIAGNOSTIC_STREAMS,
@@ -37,7 +38,6 @@ export interface RoomDiagnosticsSelector {
 export interface RoomDiagnosticsCapabilityBinding {
   readonly effective: boolean;
   readonly participantId: string;
-  readonly providerSessionId: string | null;
   readonly roomId: string;
   readonly projectId: string;
   readonly manifestRevision: number;
@@ -46,6 +46,7 @@ export interface RoomDiagnosticsCapabilityBinding {
 }
 
 interface DiagnosticsLease extends RoomDiagnosticsCapabilityBinding {
+  readonly attempt: RoomToolAttempt;
   readonly digest: Buffer;
   readonly issuedAt: number;
   readonly expiresAt: number;
@@ -54,11 +55,13 @@ interface DiagnosticsLease extends RoomDiagnosticsCapabilityBinding {
 }
 
 export type RoomDiagnosticsLeaseOutcome = "issued" | "refreshed" | "accepted" | "replayed" | "rejected" | "expired" | "revoked";
-export type RoomDiagnosticsLeaseReason = "lease-issued" | "lease-refreshed" | "tool-call-accepted" | "idempotent-replay" | "invalid-request" | "request-substitution" | "bounded-call-limit" | "scope-forbidden" | "query-rejected" | "lease-expired" | "provider-session-stale" | "manifest-stale" | "capability-revoked" | "explicit-revocation";
+export type RoomDiagnosticsLeaseReason = "lease-issued" | "lease-refreshed" | "tool-call-accepted" | "idempotent-replay" | "invalid-request" | "request-substitution" | "bounded-call-limit" | "scope-forbidden" | "query-rejected" | "lease-expired" | "generation-attempt-stale" | "manifest-stale" | "capability-revoked" | "explicit-revocation";
 export interface RoomDiagnosticsLeaseEvent {
   readonly id: string;
   readonly at: string;
   readonly participantId: string;
+  readonly generationId: string;
+  readonly attemptOrdinal: number;
   readonly outcome: RoomDiagnosticsLeaseOutcome;
   readonly reason: RoomDiagnosticsLeaseReason;
   readonly requestIdDigest: string | null;
@@ -118,15 +121,15 @@ export class RoomDiagnosticsToolBroker {
     private readonly operationLog?: (event: RoomDiagnosticsLeaseEvent) => Promise<unknown> | unknown,
   ) {}
 
-  issue(participantId: string): string | undefined {
+  issue(participantId: string, attempt: RoomToolAttempt): string | undefined {
     this.prune();
     const binding = this.currentBinding(participantId);
-    if (!binding?.effective || binding.participantId !== participantId || !validBinding(binding)) return undefined;
+    if (attempt.agentId !== participantId || !binding?.effective || binding.participantId !== participantId || !validBinding(binding)) return undefined;
     const existing = [...this.leases.entries()].find(([, lease]) => lease.participantId === participantId);
     if (existing) this.leases.delete(existing[0]);
     const token = `${randomUUID()}${randomUUID()}`;
     const issuedAt = this.now();
-    const lease: DiagnosticsLease = { ...binding, digest: digest(token), issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, requests: new Map(), cursorRanges: new Map() };
+    const lease: DiagnosticsLease = { ...binding, attempt, digest: digest(token), issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, requests: new Map(), cursorRanges: new Map() };
     this.leases.set(digest(token).toString("hex"), lease);
     this.record(lease, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", null, null, null, null, null, `${binding.manifestRevision}:issue`);
     return token;
@@ -205,11 +208,11 @@ export class RoomDiagnosticsToolBroker {
     for (const [key, lease] of this.leases) if (lease.expiresAt <= now) { this.leases.delete(key); this.record(lease, "expired", "lease-expired", null, null, null, null, null, `${lease.manifestRevision}:expired:${lease.expiresAt}`); }
   }
 
-  private record(binding: Pick<RoomDiagnosticsCapabilityBinding, "participantId" | "manifestRevision"> & Partial<Pick<DiagnosticsLease, "issuedAt">>, outcome: RoomDiagnosticsLeaseOutcome, reason: RoomDiagnosticsLeaseReason, requestId: string | null, scope: DiagnosticVisibility | null, window: RoomDiagnosticsWindow | null, resultCount: number | null, resultBytes: number | null, dedupe: string) {
-    const id = fingerprint(`${binding.participantId}:${binding.issuedAt ?? "unissued"}:${dedupe}`);
+  private record(binding: DiagnosticsLease, outcome: RoomDiagnosticsLeaseOutcome, reason: RoomDiagnosticsLeaseReason, requestId: string | null, scope: DiagnosticVisibility | null, window: RoomDiagnosticsWindow | null, resultCount: number | null, resultBytes: number | null, dedupe: string) {
+    const id = fingerprint(`${binding.attempt.generationId}:${binding.attempt.attemptOrdinal}:${binding.participantId}:${binding.issuedAt}:${dedupe}`);
     if (this.recorded.has(id)) return;
     this.recorded.add(id); if (this.recorded.size > 1_000) this.recorded.delete(this.recorded.values().next().value!);
-    const event = { id: id.slice(0, 24), at: new Date(this.now()).toISOString(), participantId: binding.participantId, outcome, reason, requestIdDigest: requestId === null ? null : requestDigest(requestId), scope, window, resultCount, resultBytes, manifestRevision: binding.manifestRevision } satisfies RoomDiagnosticsLeaseEvent;
+    const event = { generationId: binding.attempt.generationId, attemptOrdinal: binding.attempt.attemptOrdinal, id: id.slice(0, 24), at: new Date(this.now()).toISOString(), participantId: binding.participantId, outcome, reason, requestIdDigest: requestId === null ? null : requestDigest(requestId), scope, window, resultCount, resultBytes, manifestRevision: binding.manifestRevision } satisfies RoomDiagnosticsLeaseEvent;
     this.events.push(event); if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
     try {
       const logged = this.operationLog?.(event);
@@ -228,7 +231,7 @@ function validBinding(binding: RoomDiagnosticsCapabilityBinding) {
 
 function bindingRejection(lease: DiagnosticsLease, current: RoomDiagnosticsCapabilityBinding | undefined): RoomDiagnosticsLeaseReason | undefined {
   if (!current?.effective || current.participantId !== lease.participantId) return "capability-revoked";
-  if (current.providerSessionId !== lease.providerSessionId) return "provider-session-stale";
+  if (!lease.attempt.isActive() || lease.attempt.agentId !== lease.participantId) return "generation-attempt-stale";
   if (current.manifestRevision !== lease.manifestRevision) return "manifest-stale";
   if (current.roomId !== lease.roomId || current.projectId !== lease.projectId || current.caller.principalId !== lease.caller.principalId) return "capability-revoked";
   return undefined;

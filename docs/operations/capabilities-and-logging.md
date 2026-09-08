@@ -6,7 +6,7 @@ The server is the authority for agent capabilities. For every configured roster 
 
 `conversation` requires an enabled roster entry, a currently available selected OpenCode model, and an available OpenCode runtime. `github_read` additionally requires the server-only read binding, server ceiling, current catalog grant, and fresh provider-session binding. `project_write` is never effective in the room lane: writes require the existing exclusive, governed implementation-worker assignment and its confined worktree. Selecting a legacy writable participant does not turn a room generation into a writer.
 
-The lease and manifest fields in this projection come from `RoomCommandToolBroker`, the component that issues the actual `room_command` lease. Its safe snapshot contains no token or provider session identity. It records bounded, deduplicated issued/refreshed/expired/revoked and accepted/rejected events with only a closed command name and, for `/gh`, a `recent`, `pr`, `issue`, or `ci` selector family—never arguments. It compares session identity internally and exposes only freshness and a stable reason.
+The lease and manifest fields in this projection come from `RoomCommandToolBroker`, the component that issues the actual `room_command` lease. Its safe snapshot contains no token or provider session identity. It records bounded, deduplicated issued/refreshed/expired/revoked and accepted/rejected events with only a closed command name and, for `/gh`, a `recent`, `pr`, `issue`, or `ci` selector family—never arguments. Command and diagnostics leases bind a server-owned generation ID and attempt ordinal. Provider-session replacement does not invalidate a current attempt. A missing-session retry retires the previous attempt before clearing the session and issues new opaque leases. Completion, startup failure, cancellation, and roster/capability changes deny obsolete leases before cached results or new operations are reachable. `generation-attempt-stale` describes retired tool authority; it is not a provider-session mismatch. Lease audit records correlate generation/attempt identity without retaining tokens, endpoints, provider-session identifiers, or command arguments.
 
 The `/gh` contract is strictly read-only. The command grammar accepts only `recent`, `pr <positive number>`, `issue <positive number>`, and `ci [positive PR number]`. The server broker performs fixed GitHub GET requests against the configured repository. It does not expose a token, arbitrary URL, HTTP method, request body, ref, shell, `gh` CLI, contribution operation, merge, or deployment operation to an agent. Disabling the capability removes `/gh` from the issued room-command token and guide; recovery rechecks permission before execution.
 
@@ -248,3 +248,18 @@ evidence retain their established visibility and bounds.
 - `governed_worker_only` or `exclusive_writer_elsewhere`: use an explicit governed implementation handoff; do not try to alter room-agent mode.
 
 Agents see only commands currently effective for them. They never see a disabled command, credential, or hidden reason payload. Humans receive the same bounded denial semantics, and ordinary conversation behavior remains read-only and otherwise unchanged.
+
+## Generation-attempt tool lifetime
+
+Tool attempts are ephemeral server-owned lifetimes. They span prompt preparation
+and execution, expire with the existing bounded lease timeout, and cannot survive
+server restart. A completed generation's newly persisted provider session does
+not imply that its command or diagnostics lease remains usable. A subsequent
+generation receives independent leases even when it resumes that provider session.
+Queued room-command calls recheck attempt authority after resolving the room
+runtime; concurrent identical requests share one operation. Runtime authorization
+still validates the current participant and command permissions at dispatch.
+
+This implements the immediate lease/session transition slice of #143. Durable
+provider-session rotation thresholds and owner reset controls remain separate work;
+no persisted session schema or rotation policy changes in this slice.

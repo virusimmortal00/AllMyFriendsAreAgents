@@ -5,6 +5,7 @@ import { AIM_SMILEY_SHORTCUTS } from "../shared/aim-smileys.js";
 import { CHAT_FONT_FAMILIES } from "../shared/chat-style.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, historicalAgentProvider, type ActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfigurationFingerprintMatches, roomAgentEntry, type RoomAgentRosterEntry } from "../shared/roster.js";
+import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type { GenerationJournal, GenerationJournalEvent } from "./generation-journal.js";
 import { conversationLogFields, withLogContext } from "./structured-logger.js";
 import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
@@ -47,7 +48,7 @@ export interface AgentContextRuntime {
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
   readonly diagnosticsTool?: { readonly url: string; readonly token: string };
-  readonly refreshScopedTools?: () => Pick<AgentContextRuntime, "commandTool" | "diagnosticsTool">;
+  readonly refreshScopedTools?: (attempt: RoomToolAttempt) => Pick<AgentContextRuntime, "commandTool" | "diagnosticsTool">;
   readonly structuredTransport?: Pick<OpenCodePerTurnStructuredTransport, "run">;
   readonly operationLog?: OperationLog;
 }
@@ -721,9 +722,9 @@ function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEn
   return decision.kind === "reuse" ? decision.session : undefined;
 }
 
-function refreshAgentScopedTools(context: AgentContextRuntime | undefined) {
+function refreshAgentScopedTools(context: AgentContextRuntime | undefined, attempt: RoomToolAttempt) {
   if (!context?.refreshScopedTools) return context;
-  const tools = context.refreshScopedTools();
+  const tools = context.refreshScopedTools(attempt);
   return { ...context, commandTool: tools.commandTool, diagnosticsTool: tools.diagnosticsTool };
 }
 
@@ -746,8 +747,14 @@ export async function runAgent(
 ): Promise<RunResult> {
   const generationId = randomUUID();
   if (commandControl?.evidence) commandControl.evidence.generationId = generationId;
+  let toolsActive = true;
   return withLogContext({ generationId, attemptOrdinal: 1 }, async () => {
     let attemptOrdinal = 1;
+    const toolAttempt = (): RoomToolAttempt => {
+      const ordinal = attemptOrdinal;
+      return Object.freeze({ generationId, attemptOrdinal: ordinal, agentId: agent,
+        isActive: () => toolsActive && attemptOrdinal === ordinal && !signal?.aborted });
+    };
     const append = (event: GenerationJournalEvent) => journal?.append({ ...conversationLogFields(), ...event, attemptOrdinal });
     const startedAt = Date.now();
     const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
@@ -775,7 +782,7 @@ export async function runAgent(
     if (sessionDecision.kind === "invalidate" && storedSession) {
       await sessionLifecycle?.invalidate(agent, storedSession.id, sessionDecision.reason);
     }
-    let activeContext = refreshAgentScopedTools(context);
+    let activeContext = refreshAgentScopedTools(context, toolAttempt());
     const { prompt, cursorMessageId } = await buildPromptBundle(agent, state, instruction, includeDiff, permission, activeContext, structuredOutput);
     const secureWriterRequested = permission === "writable"
       && process.env.ALL_MY_FRIENDS_ARE_AGENTS_GIT_SECURITY_BOUNDARY === WRITER_BOUNDARY_ACTIVATION;
@@ -834,7 +841,7 @@ export async function runAgent(
       });
       if (structuredOutput) {
         const transport = activeContext?.structuredTransport || new OpenCodePerTurnStructuredTransport(processSupervisor);
-        const invokeStructured = async (sessionId?: string) => {
+        const invokeStructured = async (sessionId?: string) => withLogContext({ attemptOrdinal }, async () => {
           if (commandControl?.evidence) commandControl.evidence.attemptOrdinal = attemptOrdinal;
           const scopedToolEnvironment = currentScopedToolEnvironment();
           const environment = agentChildProcessEnvironment({
@@ -866,15 +873,15 @@ export async function runAgent(
             timeoutMs: runTimeout(permission, includeDiff),
             scope: processScopes,
           });
-        };
+        });
         let structuredResult: OpenCodeStructuredTurnResult;
         try {
           structuredResult = await invokeStructured(existing?.id);
         } catch (error) {
           if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
-          await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
-          activeContext = refreshAgentScopedTools(context);
           attemptOrdinal += 1;
+          await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
+          activeContext = refreshAgentScopedTools(context, toolAttempt());
           await append({ type: "generation.retry", generationId, agent, reason: "structured session was unavailable", staleSessionId: existing.id });
           structuredResult = await invokeStructured();
         }
@@ -886,7 +893,7 @@ export async function runAgent(
           providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
           finish: structuredResult.finish, transport: "sdk-server",
         });
-        await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, transport: "sdk-server" });
+        await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, transport: "sdk-server" });
         return {
           sessionId: structuredResult.sessionId,
           text,
@@ -932,8 +939,8 @@ export async function runAgent(
         result = await invoke(resumedSessionId);
       } catch (error) {
         if (!existing || !isMissingOpenCodeSessionError(error)) throw error;
+        toolsActive = false;
         await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
-        activeContext = refreshAgentScopedTools(context);
         await append({
           type: "generation.retry", generationId, agent,
           reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
@@ -941,6 +948,8 @@ export async function runAgent(
         });
         resumedSessionId = undefined;
         attemptOrdinal += 1;
+        toolsActive = true;
+        activeContext = refreshAgentScopedTools(context, toolAttempt());
         result = await invoke();
       }
       const parsed = parseOpenCodeOutput(result.stdout);
@@ -998,9 +1007,10 @@ export async function runAgent(
       if (failedProtocol?.errors[0]) throw new ProviderInvocationError(failedProtocol.errors[0]);
       throw error;
     } finally {
+      toolsActive = false;
       lifecycle?.finish(generationId);
     }
-  });
+  }).finally(() => { toolsActive = false; });
 }
 
 export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_IDS): Promise<Partial<Record<ActiveAgentId, boolean>>> {

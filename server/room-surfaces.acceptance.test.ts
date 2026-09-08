@@ -1,5 +1,6 @@
 import express from "express";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -32,7 +33,7 @@ describe.each(backends)("%s real room surface",(_backend,open)=>{
     const root=await mkdtemp(path.join(os.tmpdir(),"amfaa-room-surfaces-"));roots.push(root);const backend=await open(root);const store=backend.store;await store.updateRoster(1,legacyDefaultRoomAgentRoster().entries);
     const humans=new HumanPresenceRegistry();const sessions=new HumanSessions();const providerCalls:ActiveAgentId[]=[];
     const runtime=new CommandRuntime({store,roster:()=>store.snapshot().roster!,canLaunch:()=>true,executeTask:async(agent,_prompt,hooks)=>{await hooks.active(`task-${agent}`);return{generationId:`task-${agent}`,visibleMessages:[`task-${agent}`]};},executePov:async(agent)=>{providerCalls.push(agent);return{generationId:`pov-${agent}`,visibleMessages:[`view-${agent}`]};},deliverPov:async(id,agent,messages)=>{for(const[index,message]of messages.entries())await store.addCommandDeliveryMessageOnce(id,index,agent,message,store.snapshot().settings.participantStyles[agent]);},publishStatus:async(id,text)=>{await store.addCommandAuditMessageOnce(id,text);},deliverTask:async(id,agent,messages)=>{for(const[index,message]of messages.entries())await store.addCommandDeliveryMessageOnce(id,index,agent,message,store.snapshot().settings.participantStyles[agent]);}});
-    const broker=new RoomCommandToolBroker(runtime);const agentToken=broker.issue({agentId:"codex-sol",displayName:"Sol",providerSessionId:"fake-provider-session",allowedCommands:["help","task","pov","poll"]});
+    const broker=new RoomCommandToolBroker(runtime);const agentToken=broker.issue({agentId:"codex-sol",displayName:"Sol",attempt:attempt(),allowedCommands:["help","task","pov","poll"]});
     const app=express();app.use(express.json());app.post("/api/humans",(request,response)=>response.status(201).json(joinHumanWithSession(request,response,humans,sessions)));registerCommandRoutes({app,runtime,store,humans,sessions,developers:new DeveloperTeamRegistry([])});registerRoomCommandToolRoute(app,broker);
     const server=app.listen(0,"127.0.0.1");await new Promise<void>((resolve)=>server.once("listening",resolve));const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const join=async(name:string)=>{const response=await fetch(`${base}/api/humans`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name})});expect(response.status).toBe(201);return{human:await response.json() as {id:string},cookie:(response.headers.get("set-cookie")||"").split(";")[0]!};};
@@ -56,3 +57,5 @@ describe.each(backends)("%s real room surface",(_backend,open)=>{
     }finally{if(server.listening)await new Promise<void>((resolve)=>server.close(()=>resolve()));await runtime.close().catch(()=>undefined);backend.close();}
   });
 });
+
+function attempt(isActive: () => boolean = () => true): RoomToolAttempt { return { generationId: "fixture-generation", attemptOrdinal: 1, agentId: "codex-sol", isActive }; }
