@@ -36,7 +36,6 @@ export class RoomCommandToolBroker {
   private readonly events: CommandToolLeaseEvent[] = [];
   private readonly lastByAgent = new Map<ActiveAgentId, CommandToolLeaseSnapshot>();
   private readonly recorded = new Set<string>();
-  private readonly attempts = new Map<number, Pick<RoomToolAttempt, "generationId" | "attemptOrdinal">>();
   private manifestRevision = 0;
 
   constructor(private readonly runtime: CommandRuntime|((roomId:string)=>CommandRuntime|Promise<CommandRuntime>), private readonly now: () => number = Date.now, private readonly operationLog?: (event: CommandToolLeaseEvent) => Promise<unknown> | unknown) {}
@@ -48,10 +47,8 @@ export class RoomCommandToolBroker {
     const token = `${randomUUID()}${randomUUID()}`;
     const key = digest(token).toString("hex");
     const issuedAt = this.now(); const manifestRevision = ++this.manifestRevision;
-    this.attempts.set(manifestRevision, { generationId: input.attempt.generationId, attemptOrdinal: input.attempt.attemptOrdinal });
-    if (this.attempts.size > 1_000) this.attempts.delete(this.attempts.keys().next().value!);
     this.leases.set(key, { digest: digest(token), ...input, roomId:input.roomId||CANONICAL_ROOM_ID, allowedCommands: [...input.allowedCommands], issuedAt, expiresAt: issuedAt + LEASE_LIFETIME_MS, manifestRevision, requests: new Map() });
-    this.record(input.agentId, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", issuedAt, issuedAt + LEASE_LIFETIME_MS, manifestRevision, `${manifestRevision}:issue`);
+    this.record(input, existing ? "refreshed" : "issued", existing ? "lease-refreshed" : "lease-issued", issuedAt, issuedAt + LEASE_LIFETIME_MS, manifestRevision, `${manifestRevision}:issue`);
     return token;
   }
 
@@ -61,18 +58,18 @@ export class RoomCommandToolBroker {
     const lease = this.leases.get(supplied.toString("hex"));
     if (!lease || lease.digest.length !== supplied.length || !timingSafeEqual(lease.digest, supplied)) return undefined;
     const metadata = commandMetadata(input.invocation);
-    if(!lease.attempt.isActive() || lease.attempt.agentId !== lease.agentId){this.leases.delete(supplied.toString("hex"));this.record(lease.agentId,"revoked","generation-attempt-stale",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:revoked`,metadata);return undefined;}
-    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(input.clientSubmissionId)) { this.record(lease.agentId,"rejected","invalid-request-id",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:invalid:${input.clientSubmissionId}`,metadata); return { kind: "private-error", message: "A valid command request ID is required." } as const; }
+    if(!lease.attempt.isActive() || lease.attempt.agentId !== lease.agentId){this.leases.delete(supplied.toString("hex"));this.record(lease,"revoked","generation-attempt-stale",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:revoked`,metadata);return undefined;}
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(input.clientSubmissionId)) { this.record(lease,"rejected","invalid-request-id",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:invalid:${input.clientSubmissionId}`,metadata); return { kind: "private-error", message: "A valid command request ID is required." } as const; }
     const requestFingerprint = fingerprint(input);
     const replay = lease.requests.get(input.clientSubmissionId);
-    if (replay) { if(replay.fingerprint !== requestFingerprint)this.record(lease.agentId,"rejected","request-id-substitution",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:substitution:${input.clientSubmissionId}`,metadata); return replay.fingerprint === requestFingerprint ? replay.result : { kind: "private-error", message: "That request ID is already bound to a different room command." } as const; }
-    if (lease.requests.size >= 8) { this.record(lease.agentId,"rejected","bounded-call-limit",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:limit:${input.clientSubmissionId}`,metadata); return { kind: "private-error", message: "This room command session has reached its bounded call limit." } as const; }
+    if (replay) { if(replay.fingerprint !== requestFingerprint)this.record(lease,"rejected","request-id-substitution",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:substitution:${input.clientSubmissionId}`,metadata); return replay.fingerprint === requestFingerprint ? replay.result : { kind: "private-error", message: "That request ID is already bound to a different room command." } as const; }
+    if (lease.requests.size >= 8) { this.record(lease,"rejected","bounded-call-limit",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:limit:${input.clientSubmissionId}`,metadata); return { kind: "private-error", message: "This room command session has reached its bounded call limit." } as const; }
     const operation = typeof input.invocation === "object" && input.invocation ? input.invocation.command : undefined;
     const command = operation==="polls"||operation==="poll_vote"||operation==="poll_close"?"poll":operation==="gh_diagnostic"?"gh":operation;
     if (!command || !lease.allowedCommands.includes(command as RoomCommandName)) {
       const rejected = Promise.resolve({ kind: "private-error", message: "That command is not available to this participant." } as const);
       lease.requests.set(input.clientSubmissionId, { fingerprint: requestFingerprint, result: rejected });
-      this.record(lease.agentId,"rejected","permission-not-granted",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:permission:${input.clientSubmissionId}`,metadata);
+      this.record(lease,"rejected","permission-not-granted",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:permission:${input.clientSubmissionId}`,metadata);
       return rejected;
     }
     // Install the replay entry before resolving a room runtime. Recheck the
@@ -83,7 +80,7 @@ export class RoomCommandToolBroker {
       if (!lease.attempt.isActive() || lease.attempt.agentId !== lease.agentId || lease.expiresAt <= this.now()) {
         this.leases.delete(supplied.toString("hex"));
         const expired = lease.expiresAt <= this.now();
-        this.record(lease.agentId, expired ? "expired" : "revoked", expired ? "lease-expired" : "generation-attempt-stale", lease.issuedAt, lease.expiresAt, lease.manifestRevision, `${lease.manifestRevision}:queued-denied`, metadata);
+        this.record(lease, expired ? "expired" : "revoked", expired ? "lease-expired" : "generation-attempt-stale", lease.issuedAt, lease.expiresAt, lease.manifestRevision, `${lease.manifestRevision}:queued-denied`, metadata);
         return undefined;
       }
       const invoker = { kind: "agent" as const, id: lease.agentId, displayName: lease.displayName };
@@ -93,7 +90,7 @@ export class RoomCommandToolBroker {
         : operation === "poll_close" ? runtime.closePoll(special.pollId || "", invoker, input.clientSubmissionId, special.expectedRevision ?? -1)
         : operation === "gh_diagnostic" ? runtime.getGhDiagnostic(invoker, special.submissionId || "")
         : runtime.submit(input.invocation as CommandInvocation, invoker, input.clientSubmissionId);
-      this.record(lease.agentId, "accepted", "tool-call-accepted", lease.issuedAt, lease.expiresAt, lease.manifestRevision, `${lease.manifestRevision}:accepted:${input.clientSubmissionId}`, metadata);
+      this.record(lease, "accepted", "tool-call-accepted", lease.issuedAt, lease.expiresAt, lease.manifestRevision, `${lease.manifestRevision}:accepted:${input.clientSubmissionId}`, metadata);
       return operationResult;
     });
     lease.requests.set(input.clientSubmissionId, { fingerprint: requestFingerprint, result });
@@ -104,17 +101,17 @@ export class RoomCommandToolBroker {
     this.prune(); const located = [...this.leases.entries()].find(([, candidate]) => candidate.agentId === agentId); const lease = located?.[1]; const previous = this.lastByAgent.get(agentId);
     if (!lease) return previous || { agentId, present: false, status: "missing", issuedAt: null, expiresAt: null, effectiveCommands: [], lastManifestIssuance: null, lastRejection: null };
     const attemptActive = lease.attempt.agentId === agentId && lease.attempt.isActive();
-    if (!attemptActive) { this.leases.delete(located![0]); this.record(agentId,"revoked","generation-attempt-stale",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:revoked`); return this.lastByAgent.get(agentId)!; }
+    if (!attemptActive) { this.leases.delete(located![0]); this.record(lease,"revoked","generation-attempt-stale",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:revoked`); return this.lastByAgent.get(agentId)!; }
     return { agentId, present: true, status: "active", issuedAt: new Date(lease.issuedAt).toISOString(), expiresAt: new Date(lease.expiresAt).toISOString(), effectiveCommands: [...lease.allowedCommands], lastManifestIssuance: { revision: lease.manifestRevision, issuedAt: new Date(lease.issuedAt).toISOString() }, lastRejection: previous?.lastRejection || null };
   }
 
   audit(limit = 100) { return this.events.slice(-Math.max(1, Math.min(limit, 200))); }
 
-  private record(agentId: ActiveAgentId, outcome: CommandToolLeaseOutcome, reason: CommandToolLeaseReason, issuedAt: number | null, expiresAt: number | null, manifestRevision: number | null, dedupe: string, metadata: { command: RoomCommandName | null; selectorFamily: CommandToolSelectorFamily | null } = { command: null, selectorFamily: null }) {
+  private record(binding: Pick<CommandToolLease, "agentId" | "attempt">, outcome: CommandToolLeaseOutcome, reason: CommandToolLeaseReason, issuedAt: number | null, expiresAt: number | null, manifestRevision: number | null, dedupe: string, metadata: { command: RoomCommandName | null; selectorFamily: CommandToolSelectorFamily | null } = { command: null, selectorFamily: null }) {
+    const { agentId, attempt } = binding;
     const dedupeId = createHash("sha256").update(dedupe).digest("hex");
     if (this.recorded.has(dedupeId)) return; this.recorded.add(dedupeId); if (this.recorded.size > 1_000) this.recorded.delete(this.recorded.values().next().value!);
-    const attempt = manifestRevision === null ? undefined : this.attempts.get(manifestRevision);
-    const event = { generationId: attempt?.generationId ?? null, attemptOrdinal: attempt?.attemptOrdinal ?? null, id: dedupeId.slice(0, 24), at: new Date(this.now()).toISOString(), agentId, outcome, reason, ...metadata, issuedAt: issuedAt === null ? null : new Date(issuedAt).toISOString(), expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(), manifestRevision } satisfies CommandToolLeaseEvent;
+    const event = { generationId: attempt.generationId, attemptOrdinal: attempt.attemptOrdinal, id: dedupeId.slice(0, 24), at: new Date(this.now()).toISOString(), agentId, outcome, reason, ...metadata, issuedAt: issuedAt === null ? null : new Date(issuedAt).toISOString(), expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(), manifestRevision } satisfies CommandToolLeaseEvent;
     this.events.push(event); if (this.events.length > 500) this.events.splice(0, this.events.length - 500);
     const prior = this.lastByAgent.get(agentId); this.lastByAgent.set(agentId, { agentId, present: outcome === "issued" || outcome === "refreshed" || outcome === "accepted" || outcome === "rejected", status: outcome === "expired" ? "expired" : outcome === "revoked" ? "revoked" : "active", issuedAt: event.issuedAt, expiresAt: event.expiresAt, effectiveCommands: outcome === "expired" || outcome === "revoked" ? [] : this.snapshotCommands(agentId), lastManifestIssuance: manifestRevision && event.issuedAt ? { revision: manifestRevision, issuedAt: event.issuedAt } : prior?.lastManifestIssuance || null, lastRejection: outcome === "rejected" ? { at: event.at, reason: reason as CommandToolRejectionReason } : prior?.lastRejection || null });
     void this.operationLog?.(event);
@@ -124,7 +121,7 @@ export class RoomCommandToolBroker {
 
   private prune() {
     const now = this.now();
-    for (const [key, lease] of this.leases) if (lease.expiresAt <= now) { this.leases.delete(key); this.record(lease.agentId,"expired","lease-expired",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:expired`); }
+    for (const [key, lease] of this.leases) if (lease.expiresAt <= now) { this.leases.delete(key); this.record(lease,"expired","lease-expired",lease.issuedAt,lease.expiresAt,lease.manifestRevision,`${lease.manifestRevision}:expired`); }
   }
 }
 

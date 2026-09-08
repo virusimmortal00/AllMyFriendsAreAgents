@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
+import { currentLogContext } from "./structured-logger.js";
 import { runAgent } from "./agent-runner.js";
 import type { CommandRuntime } from "./command-runtime.js";
 import type { DiagnosticQueryResult } from "./diagnostics-query.js";
@@ -23,6 +24,7 @@ function fixture() {
   let binding: RoomDiagnosticsCapabilityBinding = { effective: true, participantId: "codex-sol", roomId: "room-one", projectId: "project-one", manifestRevision: 1, caller: { principalId: "codex-sol", selfId: "codex-sol", roomIds: ["room-one"], projectIds: ["project-one"], operator: false }, allowedScopes: ["self", "room"] };
   const query = vi.fn(async (): Promise<DiagnosticQueryResult> => ({ records: [], chunks: [], nextCursor: null, scannedBytes: 0, serializedBytes: 200, malformedRecords: 0, scanLimitReached: false }));
   const diagnostics = new RoomDiagnosticsToolBroker({ query }, () => binding);
+  const logs: Record<string, unknown>[] = [];
   const issued: { attempt: RoomToolAttempt; command: string; diagnostics: string }[] = [];
   const controller = new AbortController();
   const commandInput = { invocation: { command: "help" as const }, clientSubmissionId: "attempt-help-0001" };
@@ -30,6 +32,7 @@ function fixture() {
   const use = async (lease = issued.at(-1)!) => [await command.execute(lease.command, commandInput), await diagnostics.execute(lease.diagnostics, diagnosticsInput)];
   const invalidations = vi.fn(async (agent: string) => { delete state.sessions[agent]; });
   const run = (execute: () => Promise<void>, accepted = true, failPreparation = false) => runAgent("codex-sol", state, "Answer once.", false, undefined, controller.signal, undefined, undefined, { invalidate: invalidations }, undefined, undefined, undefined, discovery, {
+    operationLog: (_level, event, fields) => { logs.push({ ...currentLogContext(), ...fields, event }); },
     refreshScopedTools: (attempt) => {
       const commandToken = command.issue({ agentId: "codex-sol", displayName: "Sol", attempt, allowedCommands: ["help"], roomId: "room-one" });
       const diagnosticsToken = diagnostics.issue("codex-sol", attempt)!;
@@ -43,7 +46,7 @@ function fixture() {
     } },
   }, { onGenerationStart: async () => accepted });
   const stored = { id: "prior-provider-session", permission: "read-only" as const, codeEpoch: epoch, configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }) };
-  return { state, stored, command, diagnostics, issued, use, run, submit, query, invalidations, controller, revokeCapability: () => { binding = { ...binding, effective: false }; } };
+  return { logs, state, stored, command, diagnostics, issued, use, run, submit, query, invalidations, controller, revokeCapability: () => { binding = { ...binding, effective: false }; } };
 }
 
 describe("room tool generation-attempt lifetime", () => {
@@ -70,6 +73,8 @@ describe("room tool generation-attempt lifetime", () => {
       expect((await api.use()).every(Boolean)).toBe(true);
       expect((await api.use()).every(Boolean)).toBe(true);
     });
+    expect(api.logs.filter((record) => record.event === "agent.tool-policy.environment").map((record) => record.attemptOrdinal)).toEqual(mode === "missing-session" ? [1, 2] : [1]);
+    expect(api.logs.find((record) => record.event === "agent.generation.completed")?.attemptOrdinal).toBe(invocations);
     expect(api.submit).toHaveBeenCalledTimes(invocations);
     expect(api.query).toHaveBeenCalledTimes(invocations);
     expect(api.invalidations).toHaveBeenCalledTimes(["first", "reuse"].includes(mode) ? 0 : 1);

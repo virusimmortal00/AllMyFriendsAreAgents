@@ -841,7 +841,7 @@ export async function runAgent(
       });
       if (structuredOutput) {
         const transport = activeContext?.structuredTransport || new OpenCodePerTurnStructuredTransport(processSupervisor);
-        const invokeStructured = async (sessionId?: string) => {
+        const invokeStructured = async (sessionId?: string) => withLogContext({ attemptOrdinal }, async () => {
           if (commandControl?.evidence) commandControl.evidence.attemptOrdinal = attemptOrdinal;
           const scopedToolEnvironment = currentScopedToolEnvironment();
           const environment = agentChildProcessEnvironment({
@@ -873,7 +873,7 @@ export async function runAgent(
             timeoutMs: runTimeout(permission, includeDiff),
             scope: processScopes,
           });
-        };
+        });
         let structuredResult: OpenCodeStructuredTurnResult;
         try {
           structuredResult = await invokeStructured(existing?.id);
@@ -893,7 +893,7 @@ export async function runAgent(
           providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
           finish: structuredResult.finish, transport: "sdk-server",
         });
-        await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, agentId: agent, durationMs, permission, transport: "sdk-server" });
+        await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, transport: "sdk-server" });
         return {
           sessionId: structuredResult.sessionId,
           text,

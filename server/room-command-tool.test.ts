@@ -20,6 +20,19 @@ async function fixture() {
 }
 
 describe("server-owned room_command broker",()=>{
+  it("retains audit correlation for an older active lease after 1,001 later issuances", async () => {
+    const api = await fixture();
+    let now = Date.parse("2026-09-08T00:00:00.000Z");
+    const broker = new RoomCommandToolBroker(api.runtime, () => now);
+    const token = broker.issue({ agentId: "codex-sol", displayName: "Sol", attempt: { ...attempt(), generationId: "older-generation", attemptOrdinal: 2 }, allowedCommands: ["help"] });
+    for (let i = 0; i < 1_001; i++) broker.issue({ agentId: "claude-sonnet", displayName: "Fixture", attempt: { ...attempt(), agentId: "claude-sonnet", generationId: `later-${i}` }, allowedCommands: ["help"] });
+    await broker.execute(token, { invocation: { command: "help" }, clientSubmissionId: "older-lease-help" });
+    expect(broker.audit().find((event) => event.agentId === "codex-sol" && event.outcome === "accepted")).toMatchObject({ generationId: "older-generation", attemptOrdinal: 2 });
+    now += 11 * 60_000;
+    broker.snapshot("codex-sol");
+    expect(broker.audit().find((event) => event.agentId === "codex-sol" && event.outcome === "expired")).toMatchObject({ generationId: "older-generation", attemptOrdinal: 2 });
+  });
+
   it("projects safe command-family lease audit without duplicate or argument records",async()=>{
     const api=await fixture();let now=Date.parse("2026-08-27T00:00:00.000Z");let session:string|null="session-a";const observed:CommandToolLeaseEvent[]=[];
     const broker=new RoomCommandToolBroker(api.runtime,()=>now,(event)=>observed.push(event));
