@@ -19,13 +19,17 @@ async function stop(child: ChildProcess) {
   try { await exited; } finally { clearTimeout(timer); }
 }
 async function until(check: () => Promise<boolean>) { await expect.poll(check, { timeout: 15_000, interval: 100 }).toBe(true); }
-async function fixture(backend: "json" | "sqlite") {
+async function fixture(backend: "json" | "sqlite", withPeer = false) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-protected-app-")); cleanups.push(() => rm(root, { recursive: true, force: true }));
   const checkout = path.join(root, "project"), data = path.join(root, "state"), database = path.join(data, "room.sqlite");
   await mkdir(checkout);
   const rooms = backend === "json" ? await RoomStore.open(checkout, data) : await SqliteRoomRepository.open(checkout, database);
   const roomId = rooms.roomId;
   await rooms.updateRoster(rooms.snapshot().roster!.revision, [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1, commandPermissions: { allowAll: false, allowed: ["help", "task", "pov"] } }]);
+  if (withPeer) {
+    const roster = rooms.snapshot().roster!;
+    await rooms.updateRoster(roster.revision, [...roster.entries, { ...roster.entries[0], agentId: "codex-terra", conversationalName: "Terra" }]);
+  }
   if (rooms instanceof SqliteRoomRepository) rooms.close();
   let input: any; let workerResponse: http.ServerResponse | undefined; let termination = true;
   const reports: { returning: boolean; hasCommandTool: boolean; resumed: boolean }[] = [];
@@ -46,7 +50,7 @@ async function fixture(backend: "json" | "sqlite") {
   const listener = net.createServer(); listener.listen(0, "127.0.0.1"); await once(listener, "listening");
   const port = (listener.address() as net.AddressInfo).port; await new Promise<void>((resolve) => listener.close(() => resolve()));
   const base = `http://127.0.0.1:${port}`;
-  const env = { PATH: process.env.PATH, NODE_ENV: "test", AMFAA_TEST_DIRECTORY: root,
+  const env = { ALL_MY_FRIENDS_ARE_AGENTS_AGENT_CONCURRENCY: "1", PATH: process.env.PATH, NODE_ENV: "test", AMFAA_TEST_DIRECTORY: root,
     ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TEAM_JSON: JSON.stringify([{ memberId: "protected-cli", displayName: "Fixture CLI", roles: ["AUTHOR"], capabilities: ["ROOM_READ", "COMMAND_RUN"], token: "fixture-protected-cli-token-not-a-real-secret" }]),
     ALL_MY_FRIENDS_ARE_AGENTS_HOST: "127.0.0.1", ALL_MY_FRIENDS_ARE_AGENTS_PORT: String(port),
     ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND: backend, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: data,
@@ -70,6 +74,21 @@ async function fixture(backend: "json" | "sqlite") {
     termination: (value: boolean) => { termination = value; } };
 }
 describe.each(["json", "sqlite"] as const)("protected work through real CLI and application (%s)", (backend) => {
+  it("continues to an available peer when the protected participant ranks first", async () => {
+    const f = await fixture(backend, true); const app = await f.start();
+    await f.cli("start", "Keep Sol protected", "--agent", "codex-sol", "--request-id", "fixture-peer-0001");
+    await until(async () => Boolean(f.input()));
+    const before = await (await app.call("/api/state")).json();
+    const response = await app.call("/api/messages", { text: "@Sol please consider this", clientMessageId: randomUUID() });
+    expect(response.status).toBe(202);
+    await until(async () => {
+      const state = await (await app.call("/api/state")).json();
+      return state.messages.slice(before.messages.length).some((message: any) => message.speaker === "codex-terra");
+    });
+    const state = await (await app.call("/api/state")).json();
+    expect(state.messages.slice(before.messages.length).some((message: any) => message.speaker === "codex-sol")).toBe(false);
+    expect((await f.cli("list"))[0].phase).toBe("busy");
+  }, 40_000);
   it("excludes ordinary dispatch, returns without a human trigger, and reopens with one acknowledged report", async () => {
     const f = await fixture(backend); const app = await f.start();
     expect((await fetch(f.base + "/api/protected-work?roomId=" + f.roomId)).status).toBe(404);

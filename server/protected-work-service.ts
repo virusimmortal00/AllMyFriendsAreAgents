@@ -175,6 +175,7 @@ export class ProtectedWorkService {
         await this.patch(record, { phase: "blocked", blocker: "Return authority changed. Findings are retained." });
         return;
       }
+      if (record.report!.cursor !== this.options.cursor()) return;
       if (!record.report!.text) { await this.finish(record, "no-update"); return; }
       if (await this.options.deliver(record)) await this.finish(record, "delivered");
     } catch (error) {

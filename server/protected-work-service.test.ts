@@ -7,7 +7,7 @@ import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { InvestigationService, type InvestigationExecutorInput, type InvestigationExecutorResult } from "./investigation-service.js";
-import { ParticipantReservations, ProtectedWorkStore } from "./protected-work-store.js";
+import { ParticipantReservations, ProtectedWorkStore, type ProtectedReturnReport } from "./protected-work-store.js";
 import { ProtectedReturnCapacityError, ProtectedWorkService } from "./protected-work-service.js";
 import { protectedReturnCursor } from "./protected-return.js";
 
@@ -32,7 +32,7 @@ async function fixture(backend: "json" | "sqlite" = "json") {
   await investigations.initialize();
   cleanup.push(async () => { await investigations.shutdown(); reject?.(new Error("cleanup")); await expect.poll(() => investigations.activeCount()).toBe(0); });
   const work = await ProtectedWorkStore.open(path.join(root, "protected"));
-  const runReturn = vi.fn(async () => ({ text: "Here are the relevant findings.", relevance: "relevant" as const, cursor: protectedReturnCursor(rooms.snapshot()) }));
+  const runReturn = vi.fn(async (): Promise<ProtectedReturnReport> => ({ text: "Here are the relevant findings.", relevance: "relevant" as const, cursor: protectedReturnCursor(rooms.snapshot()) }));
   const options = { roomId: rooms.roomId, canStart: () => true, departureCursor: () => rooms.snapshot().messages.at(-1)?.id ?? null,
     cursor: () => protectedReturnCursor(rooms.snapshot()), hasDelivered: (workId: string) => rooms.snapshot().messages.some((message) => message.id === `command-delivery:${workId}:0`),
     runReturn, scheduleReturn: async (_workId: string, operation: () => Promise<void>) => operation(),
@@ -62,6 +62,28 @@ describe("protected participation", () => {
     await f.finish(); await f.service.tick();
     expect(f.runReturn).toHaveBeenCalledOnce(); expect(f.reservations.allows("codex-sol")).toBe(true);
     expect(f.rooms.snapshot().messages.at(-1)?.text).toBe("Here are the relevant findings.");
+  });
+  it.each(["message", "topic"] as const)("reassesses no-update when %s changes during final authority validation", async (change) => {
+    const f = await fixture(); await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
+    f.runReturn.mockImplementation(async () => ({ text: null, relevance: "superseded", cursor: protectedReturnCursor(f.rooms.snapshot()) }));
+    const returnBlocker = f.investigations.returnBlocker.bind(f.investigations);
+    let changed = false;
+    vi.spyOn(f.investigations, "returnBlocker").mockImplementation(async (workId) => {
+      const result = await returnBlocker(workId);
+      if (!changed && f.runReturn.mock.calls.length === 1) {
+        changed = true;
+        if (change === "message") await f.rooms.addMessage("you", "New relevant context");
+        else await f.rooms.updateSettings({ topic: "Changed return context" });
+      }
+      return result;
+    });
+    await f.service.tick();
+    expect((await f.service.list())[0].phase).toBe("report-pending");
+    expect(f.reservations.allows("codex-sol")).toBe(false);
+    expect(f.options.deliver).not.toHaveBeenCalled();
+    await f.service.tick();
+    expect(f.runReturn).toHaveBeenCalledTimes(2);
+    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "no-update" });
   });
   it("replays exact admission and rejects a substituted objective under the same request ID", async () => {
     const f = await fixture(); const job = await f.start();

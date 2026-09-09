@@ -694,7 +694,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn): Promise<TurnResult> {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
-  if (!protectedReservations.allows(agent)) return { cancelled: true, outcomeReason: "participant-protected" };
+  if (!protectedReservations.allows(agent)) return { failed: true, outcomeReason: "participant-protected" };
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
   const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
