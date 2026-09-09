@@ -85,8 +85,8 @@ export class ProtectedWorkService {
       const result = await this.investigations.request({ investigationId: workId, owner: input.owner, objective: record.objective,
         trigger: "Explicit protected read-only review/research", signal: "AUTHENTICATED_HUMAN" });
       if (result.kind !== "ok") {
-        await this.patch(record, { phase: "available", disposition: "no-update", blocker: result.kind === "not_found" ? "Investigation unavailable." : result.reason });
-        this.reservations.release(input.owner, workId);
+        const rejected = await this.patch(record, { phase: "available", disposition: "no-update", blocker: result.kind === "not_found" ? "Investigation unavailable." : result.reason });
+        if (rejected) this.reservations.release(input.owner, workId);
         throw new Error(result.kind === "not_found" ? "Investigation unavailable." : result.reason);
       }
       this.options.changed?.();
@@ -141,8 +141,8 @@ export class ProtectedWorkService {
         if (record.phase === "blocked") continue;
         const job = (await this.investigations.list()).find((job) => job.investigationId === record.workId);
         if (!job) {
-          await this.patch(record, { phase: "available", disposition: "no-update", blocker: "Admission was interrupted before worker creation." });
-          this.reservations.release(record.owner, record.workId);
+          const recovered = await this.patch(record, { phase: "available", disposition: "no-update", blocker: "Admission was interrupted before worker creation." });
+          if (recovered) this.reservations.release(record.owner, record.workId);
           continue;
         }
         if (!record.package) {

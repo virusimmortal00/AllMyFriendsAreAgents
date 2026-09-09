@@ -133,6 +133,28 @@ describe("protected participation", () => {
     expect(f.options.deliver).not.toHaveBeenCalled();
     expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("CLOSED");
   });
+  it("retains exclusion when missing-job recovery loses a race to Stop", async () => {
+    const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
+    let raced = false;
+    vi.spyOn(f.investigations, "list").mockImplementation(async () => {
+      if (!raced) { raced = true; await f.service.action(job.workId, "stop"); }
+      return [];
+    });
+    await f.service.tick();
+    expect((await f.service.list())[0].phase).toBe("stopping");
+    expect(f.reservations.allows("codex-sol")).toBe(false);
+    await f.service.tick();
+    expect((await f.service.list())[0].phase).toBe("available");
+    expect(f.reservations.allows("codex-sol")).toBe(true);
+  });
+  it("rejects public acknowledgement of a protected inbox while allowing internal return closure", async () => {
+    const f = await fixture(); await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
+    const entry = (await f.investigations.inbox("codex-sol"))[0];
+    expect(await f.investigations.acknowledgePublicInbox(entry.inboxEntryId, true)).toEqual({ kind: "not_found" });
+    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("UNREAD");
+    await f.service.tick();
+    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "delivered" });
+  });
   it("replays exact admission and rejects a substituted objective under the same request ID", async () => {
     const f = await fixture(); const job = await f.start();
     expect((await f.start()).workId).toBe(job.workId);
