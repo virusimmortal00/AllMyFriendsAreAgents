@@ -76,6 +76,13 @@ GitHub network or credential test; verify a fresh room-scoped `/gh` read after
 repair. The application remains reachable when repository health fails so an
 administrator can repair it.
 
+Enabled repositories are inspected concurrently. Each response has a 35-second
+deadline, allowing the six sequential Git commands per repository (up to five
+seconds each) to complete on slower mounts. The Compose request allows 40
+seconds and its health command 45 seconds. A deadline returns unhealthy;
+subsequent probes share unfinished inspections until they settle, preventing
+overlapping waves of Git processes. Successful later inspections restore health.
+
 Operator-managed rollout controllers must check both endpoints after startup
 and restart, reject missing/invalid responses, and treat failed repository
 readiness as requiring attention. Do not automatically replace saved paths,
