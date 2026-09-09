@@ -1634,3 +1634,13 @@ consideration using the retained full capture and 54 passing affected-image
 judgments; it does not change the validator result or approve unreviewed images.
 The unrelated Task Detail and Durable Continuations findings are tracked in
 [#175](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/175).
+
+The final PR review update keeps the same affected view IDs and layout primitives.
+Protected action retries retain their request identities; protected checkpoints
+and unassessed inbox findings are excluded from the autonomous presentation.
+Affected screenshot fixtures now use a fixed browser clock and deterministic
+start timestamps. The captures above are historical after these source changes.
+The renewed full capture and independent seven-question judgments for the final
+revision are recorded in [PR #174](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/174).
+The same scoped exception applies only to the 804 images outside the 54 affected
+images; neither that exception nor the screenshot CI job supplies visual approval.

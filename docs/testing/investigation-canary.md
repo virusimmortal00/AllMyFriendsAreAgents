@@ -84,6 +84,15 @@ bounded to three 60-second attempts, with current-context revalidation before
 idempotent delivery. Further worker execution needs a new protected request;
 the ordinary investigation Resume control cannot bypass the return boundary.
 
+Final review regression coverage also verifies concurrent and durable replay of
+rejected admission, inbox closure before reservation release, serialization of
+dismissal against delivery, and preservation of an already delivered disposition
+after acknowledgement failure. The browser tests retain action identities after
+lost responses and exclude unassessed protected findings from the autonomous
+inbox. Durable history retention and archival are tracked separately in
+[#176](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/176); do not
+truncate active receipts or audit chains to enforce an ad hoc storage limit.
+
 ### Protected browser smoke evidence
 
 On 2026-09-09, a fresh production build was exercised in desktop Chromium using
