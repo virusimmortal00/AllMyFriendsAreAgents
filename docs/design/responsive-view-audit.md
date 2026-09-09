@@ -1571,23 +1571,24 @@ seven-question review, not these historical labels, as verification evidence.
 
 ## Protected work validation (#154)
 
-Final full-matrix capture `run-9UpyTF` passed with **858/858 screenshots**, **678
+Initial full-matrix capture `run-9UpyTF` passed with **858/858 screenshots**, **678
 passing browser tests**, and six expected larger-screen skips for the phone-only
 compact view. Input digest:
 `137a40014dafba043bda9a8f6ebd6ca8262984d73c2731396440c97014980198`.
 
-Independent visual approval remains **Pending** for the changed states. Historical
-verdicts do not approve them. The Chromium/WebKit interaction test covers Phone,
+Whole-matrix visual approval remains **Pending**. The latest 54 affected
+screenshots have passing independent judgments on all seven criteria; this does
+not approve the other 804 screenshots. Historical verdicts are not substituted. The Chromium/WebKit interaction test covers Phone,
 Short phone, Minimum phone, Tablet, Short laptop, and Desktop (12 projects):
 initiation, the disabled stop-requested control, blocked catch-up, explicit
 no-update, and return to Chat. It checks accessible controls and control density.
 
 | View | Screen use and navigation | Style, proportion, empty area | Scroll and actions | Outcome |
 | --- | --- | --- | --- | --- |
-| CHAT-01 | P/T/L/D retain the transcript and composer; the existing roster entry opens participant status | Existing classic frame; protected objective and timer wrap in their own content-height line without overlapping adjacent participants | Roster retains native scrolling; no new page overflow; status button remains reachable | Layout and interaction checked; independent review Pending |
-| CHAT-02 | Compact Phone, Short phone, and Minimum phone retain the existing chat navigation | Compact presentation remains unchanged; T/L/D use CHAT-01 rather than this phone-only variant | Composer and navigation remain reachable | Layout checked at its supported sizes; independent review Pending |
-| WORK-07 | P/T/L/D use Window → Investigations and the persistent close control | Existing classic controls; content-sized form and status card; wide-screen content keeps the existing maximum width | Native vertical scrolling retains start, stop, retry, and no-update actions; short screens may scroll | Initiation and return interaction checked; independent review Pending |
-| PERSON-02 | P/T/L/D retain the participant dialog and close controls | Protected objective/timer and stop action use existing dialog primitives; no new view identity | Body scrolls at constrained heights; Close stays outside the scrolling body | Layout checked with protected data injected into the standalone dialog fixture; independent review Pending |
+| CHAT-01 | P/T/L/D retain the transcript and composer; the existing roster entry opens participant status | Existing classic frame; protected objective and timer wrap in their own content-height line without overlapping adjacent participants | Roster retains native scrolling; no new page overflow; status button remains reachable | Affected image judgments pass; whole-matrix gate Pending |
+| CHAT-02 | Compact Phone, Short phone, and Minimum phone retain the existing chat navigation | Compact presentation remains unchanged; T/L/D use CHAT-01 rather than this phone-only variant | Composer and navigation remain reachable | Affected image judgments pass at supported sizes; whole-matrix gate Pending |
+| WORK-07 | P/T/L/D use Window → Investigations and the persistent close control | Existing classic controls; content-sized form and status card; wide-screen content keeps the existing maximum width | Native vertical scrolling retains start, stop, retry, and no-update actions; short screens may scroll | Interaction and affected image judgments pass; whole-matrix gate Pending |
+| PERSON-02 | P/T/L/D retain the participant dialog and close controls | Protected objective/timer and stop action use existing dialog primitives; no new view identity | Body scrolls at constrained heights; Close stays outside the scrolling body | Affected image judgments pass with protected fixture data; whole-matrix gate Pending |
 
 The rendered check found and corrected a fixed-height metadata-row overlap; the
 capture now rejects protected text extending beyond its roster row. The fixture
@@ -1602,7 +1603,23 @@ when it identified a short native participant dropdown and redundant form framin
 in WORK-07. The original seven-question verdicts and invocation receipts are
 retained in `run-9UpyTF/codex-review-RvtGSA`; failures have not been rewritten.
 The form now uses the shared `classic-select` and separator-based grouping.
-Recapture and review of the affected views are pending.
+The next full capture, `run-FqDzjm`, also captured 858/858 screenshots. Its
+`codex-review-eJ1yck` run reviewed all 54 affected screenshots and rejected three:
+minimum-phone inbox expiry/action grouping in both engines, plus an unclear
+minimum-phone overflow cue in WebKit. Expiry metadata now occupies a separate
+block above the actions, and Investigations opts into the shared native-scrollbar
+primitive.
+
+The latest full capture is `run-v5flVV`: 858/858 screenshots, 678 passing browser
+tests, and six expected compact-view skips. Input digest:
+`1b7442d528f570e55026fbeffb384b4a5584c0b836d15197148477de44c7aa40`.
+Fresh affected-view review in `codex-review-vJywr1` inspected all 54 images and
+returned passing judgments for all seven questions on every image. Per-image
+verdicts and all 24 completed invocation receipts are retained there.
+`pnpm check:visual-review` was run against that exact capture/review/receipt set;
+it fails only with “Every expected screenshot needs exactly one independent
+review.” The remaining 804 screenshots were not independently reviewed in this
+current capture. This is affected-view evidence, not whole-matrix acceptance.
 
 That partial review also rejected existing Room Task Detail and Durable
 Continuations framing, plus Room Task Detail dropdown sizing. Those components
