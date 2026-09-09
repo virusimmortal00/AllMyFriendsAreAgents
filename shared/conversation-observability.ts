@@ -133,7 +133,7 @@ export type ConversationDecisionReason = "eligible" | "target-active" | "target-
   | "pair-cap-reached" | "secondary-chance-missed" | "soft-budget-exhausted" | "participant-limit"
   | "no-fresh-candidate" | "source-already-used" | "no-continuation-cue" | "hard-message-ceiling" | "hard-turn-ceiling"
   | "follow-up-allowance-exhausted" | "deferred-replaced" | "run-cancelled" | "run-failed" | "run-ended" | "candidate-not-completed";
-export type ConversationTurnReason = "agent-disabled" | "agent-health-unavailable" | "generation-capacity-unavailable"
+export type ConversationTurnReason = "participant-protected" | "agent-disabled" | "agent-health-unavailable" | "generation-capacity-unavailable"
   | "provider-health-unavailable" | "provider-failed" | "generation-failed" | "preparation-failed" | "turn-failed"
   | "cancelled" | "delivered" | "yielded" | "malformed-disposition" | "no-visible-output" | DeliveryReason;
 

@@ -1,3 +1,4 @@
+import type { ProtectedWorkRequest, ProtectedWorkView } from "../shared/protected-work";
 import type { ControlPrincipal, ControlSessionResponse, ControlStatus } from "../shared/control-session";
 import { controlSessionRevision, updateControlSession } from "./control-session-state";
 export type { ControlPrincipal } from "../shared/control-session";
@@ -35,7 +36,7 @@ function roomPath(endpoint:"state"|"messages"|"events"){
 }
 export function roomEventsPath(){return roomPath("events");}
 
-const GLOBAL_API_ROOTS=new Set(["ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","rooms"]);
+const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","rooms"]);
 export function scopedRequestPath(path:string){
   const roomId=routedRoomId();
   if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
@@ -533,3 +534,14 @@ export async function setInvestigationPolicy(expectedRevision: number, enabled: 
 export async function investigationAction(investigationId: string, action: "cancel" | "resume") { return request(`/api/investigations/${encodeURIComponent(investigationId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
 export async function loadInvestigationInbox(owner: AgentId, signal?: AbortSignal): Promise<InvestigationInboxEntry[]> { return request(`/api/investigations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store", signal }).then((response) => response.json()); }
 export async function acknowledgeInvestigationInbox(inboxEntryId: string, close: boolean) { return request(`/api/investigations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }
+
+export const protectedWorkRoomId = () => routedRoomId() || "00000000-0000-4000-8000-000000000001";
+export async function loadProtectedWork(signal?: AbortSignal): Promise<ProtectedWorkView[]> {
+  return request(`/api/protected-work?roomId=${encodeURIComponent(protectedWorkRoomId())}`, { method: "GET", cache: "no-store", signal }).then((response) => response.json());
+}
+export async function startProtectedWork(input: Omit<ProtectedWorkRequest, "roomId">) {
+  return request("/api/protected-work", { method: "POST", body: JSON.stringify({ ...input, roomId: protectedWorkRoomId() }) }).then((response) => response.json());
+}
+export async function protectedWorkAction(workId: string, action: "stop" | "retry-return" | "dismiss", requestId: string) {
+  return request(`/api/protected-work/${encodeURIComponent(workId)}/${action}`, { method: "POST", body: JSON.stringify({ roomId: protectedWorkRoomId(), requestId }) }).then((response) => response.json());
+}

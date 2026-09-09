@@ -1,3 +1,5 @@
+import type { ProtectedWorkView } from "../shared/protected-work";
+import { ProtectedWorkControls, ProtectedWorkStatus } from "./protected-work";
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
 import { useScrollEdges } from "./scroll-edges";
 import {
@@ -83,6 +85,7 @@ export function ConfirmationDialog({
 }
 
 export function RoomRoster({
+  protectedWork = [],
   availability,
   agentHealth,
   providerHealth,
@@ -103,6 +106,7 @@ export function RoomRoster({
   activeAgents?: ReadonlySet<AgentId>;
   humans: HumanPresence[];
   currentHumanId: string;
+  protectedWork?: readonly ProtectedWorkView[];
   agents?: readonly ActiveAgentId[];
   roster?: RoomAgentRoster;
   agentListSort?: AgentListSort;
@@ -134,6 +138,7 @@ export function RoomRoster({
         {presentAgents.map((item, index) => {
           const agent = item.agentId;
           const active = activeAgents?.has(agent) ?? false;
+          const protectedJob = protectedWork.find((work) => work.owner === agent && work.phase !== "available");
           const { alias, providerId, modelId, authorId } = item;
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
@@ -172,6 +177,7 @@ export function RoomRoster({
                   <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
                   {health && !active ? <small className={`presence-health${health.status === "action_required" ? " presence-health--action-required" : ""}`} title={healthText(health)}>{healthText(health)}</small> : null}
                 </span>
+                {protectedJob ? <small className="presence-protected-work"><ProtectedWorkStatus work={protectedJob} /></small> : null}
               </span>
               <span className="presence-agent-actions">
                 {active ? (
@@ -179,7 +185,7 @@ export function RoomRoster({
                     <i /><i /><i />
                   </span>
                 ) : null}
-                {onConfigureAgent && health && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
+                {onConfigureAgent && (health || protectedJob) && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
                   event.stopPropagation();
                   onConfigureAgent(agent);
                 }}>⚙</button> : null}
@@ -206,6 +212,7 @@ export function RoomRoster({
 }
 
 export function AgentSettingsDialog({
+  protectedWork, onProtectedWorkChanged,
   agent,
   available,
   health,
@@ -217,6 +224,8 @@ export function AgentSettingsDialog({
   onRequestProviderRecovery,
   onClose,
 }: {
+  protectedWork?: ProtectedWorkView;
+  onProtectedWorkChanged?: () => Promise<void>;
   agent: ActiveAgentId;
   available: boolean;
   health?: AgentHealth;
@@ -238,6 +247,7 @@ export function AgentSettingsDialog({
 
   return (
     <DialogFrame title="Agent Settings" closeLabel="Close agent settings" bodyClassName="agent-settings-body" view={VIEWS.agentStatus} onClose={requestClose} actions={<button type="button" className="classic-button" onClick={requestClose}>Close</button>}>
+          {protectedWork ? <section aria-label="Protected work"><ProtectedWorkStatus work={protectedWork} />{onProtectedWorkChanged ? <ProtectedWorkControls work={protectedWork} onChanged={onProtectedWorkChanged} /> : null}</section> : null}
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
             <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />

@@ -72,7 +72,7 @@ export class ConversationDecisions {
       : result?.failed ? "turn-failed" : parsed?.dispositionStatus === "malformed" ? "malformed-disposition"
       : parsed?.dispositionAction === "yield" || parsed?.suppressionReason === "legacy-no-response" ? "yielded"
       : (result?.visibleMessageCount || 0) > 0 ? "delivered" : "no-visible-output");
-    const blocked = reason === "agent-health-unavailable" || reason === "generation-capacity-unavailable" || reason === "provider-health-unavailable";
+    const blocked = reason === "participant-protected" || reason === "agent-health-unavailable" || reason === "generation-capacity-unavailable" || reason === "provider-health-unavailable";
     this.emit({ kind: "turn-finished", turnId: turn.observation!.turnId!, pendingDecisionId: turn.observation!.pendingDecisionId, agentId: turn.agent,
       generationId: turn.evidence?.generationId || null, attemptOrdinal: turn.evidence?.attemptOrdinal ?? null, durationMs: Math.max(0, Date.now() - startedAt),
       outcome: threw ? "failed" : result?.cancelled ? "cancelled" : blocked ? "blocked" : result?.failed ? "failed"

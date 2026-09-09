@@ -13,6 +13,17 @@ vi.mock("./api", () => ({
 describe("investigation visibility and controls", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
+  it("keeps protected checkpoints and unassessed inbox findings out of the autonomous presentation", async () => {
+    const data = await loadInvestigations(); const entries = await loadInvestigationInbox("codex-sol");
+    vi.mocked(loadInvestigations).mockResolvedValueOnce({ ...data, jobs: [{ ...data.jobs[0], investigationId: "protected-fixture" }] });
+    vi.mocked(loadInvestigationInbox).mockResolvedValueOnce([{ ...entries[0], investigationId: "protected-fixture" }]);
+    render(<Investigations refreshKey={0} />);
+    await screen.findByText(/Corroborate identity mismatch/);
+    expect(screen.queryByText(/Checked the mapping/)).toBeNull();
+    expect(screen.queryByText(/Bounded finding/)).toBeNull();
+    expect(screen.queryByText(/One question/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Acknowledge" })).toBeNull();
+  });
   it("shows bounded state and exposes policy, cancel, resume, acknowledge, and close controls", async () => {
     render(<Investigations refreshKey={0} />); await screen.findByText(/Corroborate identity mismatch/); expect(screen.getByText(/Checked the mapping/)).toBeTruthy(); expect(screen.getByText(/Bounded finding/)).toBeTruthy(); fireEvent.click(screen.getByRole("checkbox")); fireEvent.click(screen.getByRole("button", { name: "Cancel" })); fireEvent.click(screen.getByRole("button", { name: "Resume" })); fireEvent.click(screen.getByRole("button", { name: "Acknowledge" })); fireEvent.click(screen.getByRole("button", { name: "Close" })); await waitFor(() => { expect(setInvestigationPolicy).toHaveBeenCalledWith(2, false); expect(investigationAction).toHaveBeenCalledWith("investigation-1", "cancel"); expect(investigationAction).toHaveBeenCalledWith("investigation-1", "resume"); expect(acknowledgeInvestigationInbox).toHaveBeenCalledWith("inbox-1", false); expect(acknowledgeInvestigationInbox).toHaveBeenCalledWith("inbox-1", true); }); expect(loadInvestigations).toHaveBeenCalled(); expect(loadInvestigationInbox).toHaveBeenCalledWith("codex-sol", expect.any(AbortSignal));
   });

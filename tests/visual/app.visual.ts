@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { hashBytes } from "../../scripts/visual-review";
 import { APP_SCENARIOS, scenarioApplies } from "./matrix";
-import { appFixtureResponse, fixtureTraceId } from "./app-fixtures";
+import { appFixtureResponse, fixtureTraceId, fixtureTime } from "./app-fixtures";
 import { measureControlDensity, measureScrollAffordances, measureScrollRegions } from "./geometry";
 
 async function menu(page: Page, name: string, item?: string) {
@@ -228,6 +228,12 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
     for (const el of document.querySelectorAll<HTMLElement>(".dialog-body, .workspace-view__body, .chat-panel, .dialog-window")) {
       if (visible(el) && el.scrollWidth > el.clientWidth + 1) issues.push(`${el.className} has horizontal overflow (${el.scrollWidth}/${el.clientWidth}).`);
     }
+    for (const status of document.querySelectorAll<HTMLElement>(".presence-protected-work")) {
+      if (!visible(status)) continue;
+      const row = status.closest(".presence-row")?.getBoundingClientRect();
+      const bounds = status.getBoundingClientRect();
+      if (!row || bounds.bottom > row.bottom + 1 || bounds.right > row.right + 1) issues.push("Protected participant status overlaps its roster row.");
+    }
     return issues;
   });
   layoutIssues.push(...await page.evaluate(measureScrollAffordances));
@@ -255,6 +261,7 @@ for (const scenario of APP_SCENARIOS) {
       }
       return route.continue();
     });
+    if (["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
     await page.goto(`/tests/visual/index.html?scenario=${scenario.id}`);
     if (scenario.view.category !== "application") await expect(page.locator(".app-window")).toBeVisible();
     await openScenario(page, scenario.id);

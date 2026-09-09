@@ -30,7 +30,15 @@ jobs:
           node-version: 24
           cache: pnpm
       - name: Install Linux confinement test dependency
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends --yes bubblewrap
+        run: |
+          # bubblewrap comes from Ubuntu; unrelated vendor mirrors must not block it.
+          test -f /etc/apt/sources.list.d/ubuntu.sources
+          ubuntu_sources=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+          )
+          sudo apt-get "${ubuntu_sources[@]}" update
+          sudo apt-get "${ubuntu_sources[@]}" install --no-install-recommends --yes bubblewrap
       - run: pnpm install --frozen-lockfile
       - name: Enforce upstream integration contracts
         run: pnpm run check:integration-contracts -- --verify-upstream
