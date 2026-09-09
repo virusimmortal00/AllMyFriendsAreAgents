@@ -76,7 +76,15 @@ describe("independent investigation lane", () => {
   });
   it("persists tool-boundary checkpoints and reconciles restart without claiming an orphan is running", async () => {
     const value = await fixture(); const executor = value.executor as DeferredExecutor; await value.service.request({ owner: "codex-sol", objective: "Check", trigger: "signal", signal: "AGENT_DECISION", evidenceRefs: value.evidence }); await eventually(() => executor.inputs.length === 1); await executor.inputs[0].progress("WAITING_TOOL", "Reading local tests", { summary: "Inspected parser", opaqueState: "next:test-file" }); expect((await value.service.list())[0]).toMatchObject({ status: "WAITING_TOOL", checkpoint: { summary: "Inspected parser" } });
-    const reopenedStore = await InvestigationStore.open(value.stateDirectory); const restarted = new InvestigationService(reopenedStore, value.rooms, new DeferredExecutor()); services.push(restarted); await restarted.initialize(); expect((await restarted.list())[0]).toMatchObject({ status: "CHECKPOINTED", blocker: expect.stringContaining("Ready to resume") }); await restarted.resume((await restarted.list())[0].investigationId); await eventually(() => restarted.activeCount() === 1);
+    // Preserve the last durable pre-crash image, then stop the old executor before
+    // reopening. Two live store instances are not a supported restart scenario.
+    const file = path.join(value.stateDirectory, "investigations.json");
+    const crashImage = await readFile(file, "utf8");
+    await value.service.shutdown();
+    await eventually(() => value.service.activeCount() === 0);
+    await writeFile(file, crashImage);
+    const reopenedRooms = await RoomStore.open(value.root, path.join(value.root, "room"));
+    const reopenedStore = await InvestigationStore.open(value.stateDirectory); const restarted = new InvestigationService(reopenedStore, reopenedRooms, new DeferredExecutor()); services.push(restarted); await restarted.initialize(); expect((await restarted.list())[0]).toMatchObject({ status: "CHECKPOINTED", blocker: expect.stringContaining("Ready to resume") }); await restarted.resume((await restarted.list())[0].investigationId); await eventually(() => restarted.activeCount() === 1);
   });
   it("archives expired inbox results and clears the durable waiting disposition", async () => {
     let clock = new Date("2026-08-25T00:00:00.000Z"); const value = await fixture(new DeferredExecutor(), { now: () => clock }); const executor = value.executor as DeferredExecutor; await value.service.request({ owner: "codex-sol", objective: "Retention", trigger: "signal", signal: "AGENT_DECISION", evidenceRefs: value.evidence }); await eventually(() => executor.inputs.length === 1); executor.resolve(); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); clock = new Date("2026-09-02T00:00:00.000Z"); expect(await value.service.inbox("codex-sol")).toMatchObject([{ status: "ARCHIVED" }]); expect((await value.service.list())[0]).toMatchObject({ status: "ARCHIVED", resultWaiting: false });

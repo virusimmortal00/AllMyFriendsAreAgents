@@ -55,6 +55,8 @@ export class ActiveGenerationTracker {
     return Object.fromEntries(this.generations);
   }
 
+  hasAgent(agent: string) { return [...this.generations.values(), ...this.reservations.values()].some((value) => value === agent); }
+
   size() { return this.generations.size + this.reservations.size; }
 
   reserve(agent: AgentId, limit: number) {

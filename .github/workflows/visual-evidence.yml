@@ -29,7 +29,15 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Install browser dependencies from Ubuntu repositories
+        run: |
+          # Playwright invokes apt itself; retain signed Ubuntu sources for those calls.
+          test -f /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/apt.conf.d/99-ubuntu-sources >/dev/null <<'APT'
+          Dir::Etc::sourcelist "/etc/apt/sources.list.d/ubuntu.sources";
+          Dir::Etc::sourceparts "-";
+          APT
+          pnpm exec playwright install --with-deps chromium webkit
       - run: pnpm run check:visual-types
       - run: pnpm run capture:visual
       - name: Upload evidence even when layout checks fail

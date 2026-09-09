@@ -47,6 +47,10 @@ import { validHumanAvatarDataUrl } from "../shared/human-avatar.js";
 import { ContinuationService, HttpContinuationExecutor } from "./continuation-service.js";
 import { registerContinuationRoutes, roomContinuationRequestValidationError, roomContinuationRequestsMatch } from "./continuation-api.js";
 import type { ContinuationInitiationOutcome, RoomContinuationWorkRequest } from "../shared/protocol.js";
+import { ParticipantReservations, ProtectedWorkStore } from "./protected-work-store.js";
+import { ProtectedReturnCapacityError, ProtectedWorkService } from "./protected-work-service.js";
+import { registerProtectedWorkRoutes } from "./protected-work-api.js";
+import { protectedReturnCursor, protectedReturnInstruction, parseProtectedReturn } from "./protected-return.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { HttpInvestigationExecutor, InvestigationService } from "./investigation-service.js";
 import { registerInvestigationRoutes } from "./investigation-api.js";
@@ -387,6 +391,13 @@ const continuationService = new ContinuationService(store, store, assignmentLife
   emergencyStopped: () => coordinatorHeartbeat.status().runtime.emergencyStopped,
 });
 await continuationService.initialize();
+const protectedReservations = new ParticipantReservations((agent) => activeGenerations.hasAgent(agent));
+const protectedWorkStore = await ProtectedWorkStore.open(storageConfiguration.dataDirectory);
+// Restore exclusion before command recovery can launch a persisted foreground task.
+for (const work of await protectedWorkStore.list()) {
+  if (work.roomId !== CANONICAL_ROOM_ID) throw new Error("Protected work belongs to a different room.");
+  if (work.phase !== "available") protectedReservations.restore(work.owner, work.workId);
+}
 const investigationStore = await InvestigationStore.open(storageConfiguration.dataDirectory);
 const investigationExecutor = new HttpInvestigationExecutor(
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_EXECUTOR_URL?.trim() || "http://127.0.0.1/investigation-executor-not-configured",
@@ -394,6 +405,7 @@ const investigationExecutor = new HttpInvestigationExecutor(
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_PROGRESS_BASE_URL?.trim() || `http://127.0.0.1:${port}`,
 );
 const investigationService = new InvestigationService(investigationStore, store, investigationExecutor, {
+  ownerAllowed: (agent, workId) => protectedReservations.allows(agent, workId),
   configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATIONS_ENABLED === "true",
   maxConcurrentGlobal: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY"),
   defaultTokenLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT"),
@@ -431,7 +443,8 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId) {
+function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId, protectedWorkId?: string) {
+  if (!protectedReservations.allows(agent, protectedWorkId)) return undefined;
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
   const capacity = roomGenerationCapacity.reserve(CANONICAL_ROOM_ID, entry?.providerId || "opencode");
   if (!capacity) return undefined;
@@ -682,6 +695,7 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn): Promise<TurnResult> {
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
+  if (!protectedReservations.allows(agent)) return { failed: true, outcomeReason: "participant-protected" };
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
   const rosterEpoch = activeAgent ? roomAgentTurnEpoch(initialRoster, activeAgent) : undefined;
   const providerId = activeAgent ? roomAgentProviderScope(initialRoster, activeAgent) : undefined;
@@ -956,12 +970,13 @@ async function runJob(job: () => Promise<void>, propagateFailure = false) {
 function commandAgentAvailable(agent: import("../shared/participants.js").ActiveAgentId) {
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
   const active = activeGenerations.snapshot();
-  return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
+  return Boolean(protectedReservations.allows(agent) && entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent)
     && providerHealth.canAttempt(entry.providerId || "opencode")
     && !Object.values(active).includes(agent) && activeGenerations.size() < agentConcurrency && !jobs.busy);
 }
 
 async function performCommandTask(agent: import("../shared/participants.js").ActiveAgentId, prompt: string, hooks: import("./command-runtime.js").CommandLaunchHooks) {
+  if (!protectedReservations.allows(agent)) throw new Error("Participant is reserved for protected work.");
   const before = roomSnapshot();
   const providerId = roomAgentProviderScope(normalizeRoomAgentRoster(before.roster), agent);
   const providerAttempt = providerHealth.claimAttempt(providerId);
@@ -1291,6 +1306,55 @@ app.post("/api/humans", (request, response) => {
 registerTaskRoutes({ app, store, humans, sessions: humanSessions, developerTeam, broadcast });
 registerContinuationRoutes({ app, service: continuationService, progressChannel: continuationExecutor, humans, sessions: humanSessions, developers: developerTeam, broadcast });
 registerInvestigationRoutes({ app, service: investigationService, progressChannel: investigationExecutor, humans, sessions: humanSessions, broadcast });
+
+const protectedWorkService = new ProtectedWorkService(protectedWorkStore, investigationService, protectedReservations, {
+  roomId: CANONICAL_ROOM_ID,
+  canStart: (agent) => {
+    const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
+    return Boolean(entry?.enabled && !entry.selectionConfirmationRequired && agentHealth.canAttempt(agent) && providerHealth.canAttempt(entry.providerId || "opencode"));
+  },
+  departureCursor: () => store.snapshot().messages.filter((message) => !message.recipientHumanId).at(-1)?.id ?? null,
+  cursor: () => protectedReturnCursor(store.snapshot()),
+  hasDelivered: (workId) => store.snapshot().messages.some((message) => message.id === `command-delivery:${workId}:0`),
+  scheduleReturn: (workId, operation) => new Promise<void>((resolve, reject) => {
+    if (!jobs.enqueue(`protected-return:${workId}`, async () => { try { await operation(); resolve(); } catch (error) { reject(error); } })) resolve();
+  }),
+  runReturn: async (record, signal) => {
+    const agent = record.owner as import("../shared/participants.js").ActiveAgentId;
+    const reservation = reserveCanonicalGeneration(agent, record.workId);
+    if (!reservation) throw new ProtectedReturnCapacityError();
+    const before = roomSnapshot();
+    const cursor = protectedReturnCursor(before);
+    const activity = roomActivity.abortSignal(roomActivity.current());
+    try {
+      const result = await runAgent(agent, { ...before, sessions: {}, settings: { ...before.settings, writableAgent: "nobody" } },
+        protectedReturnInstruction(record), false, generationJournal, AbortSignal.any([signal, activity.signal]),
+        undefined, activeGenerations, { invalidate: async (owner) => store.clearSession(owner) }, agentProcesses,
+        undefined, undefined, modelDiscovery, { summaryStore: store, summarizer: contextSummarizer, historyTool: roomHistoryTool,
+          operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
+        { onGenerationStart: async (id) => reservation.activate(id) });
+      const parsed = result.structuredTurn
+        ? interpretStructuredRoomTurn(agent, result.structuredTurn, before.settings.participantStyles[agent], 1, currentEnabledAgents())
+        : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 1, currentEnabledAgents());
+      const report = parseProtectedReturn(parsed.visibleMessages.join("\n"), cursor);
+      if (signal.aborted || activity.signal.aborted) throw new Error("Conversation changed during catch-up.");
+      // Keep worker and chat sessions separate. The return uses authoritative
+      // transcript context; its private assessment is not persisted as chat history.
+      return report;
+    } finally { activity.dispose(); reservation.release(); }
+  },
+  deliver: async (record) => {
+    if (!record.report?.text || record.report.cursor !== protectedReturnCursor(store.snapshot())) return false;
+    await store.addCommandDeliveryMessageOnce(record.workId, 0, record.owner as AgentId, record.report.text);
+    broadcast();
+    return true;
+  },
+  changed: broadcast,
+  onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
+});
+registerProtectedWorkRoutes({ app, roomId: CANONICAL_ROOM_ID, service: protectedWorkService, humans, sessions: humanSessions,
+  developers: developerTeam, member: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined });
+
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
 if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
   authorizations: githubIntegrationRuntime.authorizations, catalogs: githubIntegrationRuntime.catalogs, configuration: githubIntegrationRuntime.configuration });
@@ -1569,6 +1633,7 @@ app.post("/api/actions", async (request, response) => {
 app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
+await protectedWorkService.initialize();
 const httpServer = app.listen(port, host, () => {
   void structuredLogger.log("info", "server.listening", { host, port });
   void structuredLogger.log("info", "developer-team.configured", { members: developerTeam.roster().length });
@@ -1598,6 +1663,7 @@ async function shutdown(signal: string) {
   activeGenerations.clear();
   presenceAnnouncements.shutdown();
   continuationService.shutdown();
+  await protectedWorkService.shutdown();
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
   if (dormantRoomTimer) clearInterval(dormantRoomTimer);

@@ -5,7 +5,7 @@ import { savePendingSend } from "../../src/client-persistence";
 import { createImprovement } from "../../shared/improvement-domain";
 import { workshopView } from "../../shared/workshop";
 import type { WorkshopResponse } from "../../src/types";
-import { fixtureHuman, fixtureRoom, fixtureTime } from "./app-fixtures";
+import { appFixtureResponse, fixtureHuman, fixtureRoom, fixtureTime } from "./app-fixtures";
 
 export const appScenario = new URLSearchParams(location.search).get("scenario") || "room-chat";
 // This entry is served only by the isolated fixture Vite config. The production
@@ -31,7 +31,7 @@ export function AppFixture() {
   if (appScenario === "startup") return <LoadingScreen />;
   if (appScenario === "join-room") return <NameEntry onJoin={() => undefined} />;
   if (appScenario === "join-recovery") return <LoadingScreen joining error="The room is temporarily unavailable. Try again or choose a different name." onRetry={() => undefined} onCancel={() => undefined} />;
-  return <><App />{overlayOpen && appScenario === "agent-status" ? <AgentSettingsDialog agent={fixtureRoom.roster!.entries[0].agentId} providerId="fixture-provider" available={false} health={{ status: "cooldown", reason: "rate_limit", message: "The provider is temporarily busy. Try again shortly.", since: fixtureTime }} onClose={() => setOverlayOpen(false)} /> : null}
+  return <><App />{overlayOpen && appScenario === "agent-status" ? <AgentSettingsDialog agent={fixtureRoom.roster!.entries[0].agentId} providerId="fixture-provider" protectedWork={(appFixtureResponse("http://127.0.0.1:4187/api/protected-work", "GET", "agent-status").body as import("../../shared/protected-work").ProtectedWorkView[])[0]} onProtectedWorkChanged={async () => undefined} available={false} health={{ status: "cooldown", reason: "rate_limit", message: "The provider is temporarily busy. Try again shortly.", since: fixtureTime }} onClose={() => setOverlayOpen(false)} /> : null}
     {overlayOpen && appScenario.startsWith("improvement-workshop") ? <WorkshopDialog data={appScenario.endsWith("recovery") ? null : workshop} loading={false} missing={false} error={appScenario.endsWith("recovery") ? "The request timed out. Your conversation is still available." : ""} onRetry={() => undefined} onClose={() => setOverlayOpen(false)} /> : null}
     {overlayOpen && appScenario === "confirmation" ? <ConfirmationDialog returnFocusTo={null} title="Stop background work?" description="Current work will stop. You can review the saved results before starting again." confirmLabel="Stop work" onConfirm={() => setOverlayOpen(false)} onCancel={() => setOverlayOpen(false)} /> : null}
   </>;
