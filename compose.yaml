@@ -53,9 +53,9 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:53147/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - Promise.all(['/api/ready','/api/ready/repositories'].map(async p=>{const r=await fetch('http://127.0.0.1:53147'+p,{signal:AbortSignal.timeout(40000)});return r.ok&&(await r.json()).ready===true})).then(rs=>{if(rs.some(r=>!r))process.exit(1)}).catch(()=>process.exit(1))
       interval: 15s
-      timeout: 5s
+      timeout: 45s
       retries: 8
       start_period: 30s
 

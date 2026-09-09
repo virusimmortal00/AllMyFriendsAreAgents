@@ -168,11 +168,13 @@ describe("repository repair through application startup and HTTP routes", () => 
     const body = { expectedBindingRevision: 1, expectedRepositoryRevision: 1, idempotencyKey: "interrupted-reads-repair", checkoutPath: f.relocated, worktreeRoot: f.assignments };
     for (let restart = 0; restart < 2; restart++) {
       app = await f.start(f.relocated);
+      expect((await app.call("/api/ready/repositories", "GET", undefined, false)).status).toBe(restart === 0 ? 503 : 200);
       expect(await (await app.call(route + "/repair")).json()).toMatchObject({ repair: { state: "available" } });
       const repaired = await app.call(route + "/repair", "POST", body);
       expect(repaired.status).toBe(200);
       const state = await repaired.json();
       expect(state).toMatchObject({ repository: { revision: 2 }, binding: { revision: 1 } });
+      expect(await (await app.call("/api/ready/repositories", "GET", undefined, false)).json()).toEqual({ ready: true });
       if (backend === "sqlite") expect((await app.readProject(state.binding.projectId)).status).toBe(202);
       await app.stop();
       expect(await readFile(brokerPath, "utf8")).toBe(auditBefore);

@@ -11,6 +11,23 @@ async function fixture(secret = "local-bootstrap-secret-with-32-characters") { c
 function request(token?: string, csrf?: string) { return { method: "POST", header(name: string) { if (name.toLowerCase() === "cookie" && token) return `${CONTROL_SESSION_COOKIE}=${token}`; if (name.toLowerCase() === "x-amfaa-csrf") return csrf; return undefined; } } as express.Request; }
 
 describe("durable control plane", () => {
+  it("requires local proof for recovery and persists the new password across restart", async () => {
+    const { directory, store, secret } = await fixture();
+    await store.bootstrap(secret, "owner", "original-owner-password");
+    const session = (await store.authenticate("owner", "original-owner-password"))!;
+    await expect(store.recoverOwnerLocal("wrong-proof", "replacement-owner-password")).rejects.toMatchObject({ status: 403 });
+    await expect(store.recoverOwnerLocal(secret, "short")).rejects.toMatchObject({ status: 400 });
+    expect(store.require(request(session.token)).publicPrincipal.username).toBe("owner");
+    await store.recoverOwnerLocal(secret, "replacement-owner-password");
+    expect(() => store.require(request(session.token))).toThrow(/Authenticate/);
+    const reopened = await ControlPlaneStore.open(directory);
+    await expect(reopened.authenticate("owner", "original-owner-password")).resolves.toBeUndefined();
+    await expect(reopened.authenticate("owner", "replacement-owner-password")).resolves.toBeDefined();
+    const state = JSON.parse(await readFile(path.join(directory, "control-plane.json"), "utf8"));
+    expect(state.audit.at(-1).action).toBe("OWNER_RECOVERED");
+    expect(JSON.stringify(state)).not.toContain("replacement-owner-password");
+  });
+
   it("allows exactly one race-safe owner bootstrap and rejects replay across restart", async () => {
     const { directory, store, secret } = await fixture();
     const second = await ControlPlaneStore.open(directory, secret);

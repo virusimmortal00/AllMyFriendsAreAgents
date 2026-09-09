@@ -25,6 +25,7 @@
     "canary:investigations:real": "tsx scripts/investigation-real-provider-canary.ts",
     "check:planning-docs": "tsx scripts/check-planning-doc-sync.ts",
     "control:owner": "tsx scripts/control-plane.ts",
+    "control:owner:container": "node scripts/reset-container-owner.mjs",
     "logs:agents": "tsx scripts/review-agent-generations.ts",
     "room:tool": "tsx scripts/room-tool.ts",
     "service:start": "zsh scripts/run-application-service.zsh",

@@ -311,6 +311,7 @@ export interface GitHubDeviceAuthorization {
   readonly failureReason?: "github-unavailable" | "invalid-credential" | "storage-failed";
 }
 export interface CurrentProjectGitHubStatus {
+  readonly readiness?: import("../shared/project-repository-repair").RepositoryRepairStatus;
   readonly binding?: { readonly projectId: string; readonly revision: number; readonly state: "ready" | "revoked"; readonly connectionId: string; readonly installationId: number; readonly githubRepositoryId: number; readonly repository: string; readonly updatedAt: string };
   readonly repository: { readonly configured: boolean; readonly revision?: number; readonly state?: "verified" | "disabled"; readonly repository?: string };
   readonly defaults?: { readonly checkoutPath: string; readonly worktreeRoot: string; readonly policyRevision: number };
@@ -337,6 +338,16 @@ export async function refreshGitHubRepositoryCatalog(connectionId: string, expec
 }
 export async function loadCurrentProjectGitHubStatus(): Promise<CurrentProjectGitHubStatus> {
   return request("/api/control/projects/current/repository", { method: "GET", cache: "no-store" }).then((response) => response.json());
+}
+export async function repairCurrentProjectGitHubRepository(input: import("../shared/project-repository-repair").RepairProjectRepositoryInput): Promise<CurrentProjectGitHubStatus> {
+  try {
+    return await request("/api/control/projects/current/repository/repair", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(input) }, GITHUB_DISCOVERY_TIMEOUT_MS).then((response) => response.json());
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.body && typeof error.body === "object" && "reason" in error.body && typeof error.body.reason === "string") {
+      throw new ApiRequestError(error.body.reason, error.outcomeUnknown, error.status, error.body);
+    }
+    throw error;
+  }
 }
 export async function configureCurrentProjectGitHubRepository(input: {
   readonly githubConnectionId: string;

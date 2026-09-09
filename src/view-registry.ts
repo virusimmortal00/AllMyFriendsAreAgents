@@ -56,6 +56,7 @@ export const VIEWS = {
   githubChooseRepo: defineView({ id: "GH-05", name: "GitHub — Choose Project Repository", state: "Connected account with repository selection", category: "github" }),
   githubConfiguredRepo: defineView({ id: "GH-06", name: "GitHub — Configured Repository", state: "Connected and configured summary", category: "github" }),
   githubEmptyRepo: defineView({ id: "GH-07", name: "GitHub — Empty Repository Access", state: "No repositories available and recovery action", category: "github" }),
+  githubRepairRepo: defineView({ id: "GH-08", name: "GitHub — Repair Repository", state: "Repository verification failed and explicit path repair", category: "github" }),
   improvementWorkshop: defineView({ id: "AUX-01", name: "Improvement Workshop", state: "Loaded improvement facts and evidence", category: "supporting" }),
   improvementWorkshopRecovery: defineView({ id: "AUX-02", name: "Improvement Workshop Recovery", state: "Loading, unavailable, missing, and retry states", category: "supporting" }),
   help: defineView({ id: "AUX-03", name: "Help", state: "Navigation and room help topics", category: "supporting" }),

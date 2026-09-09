@@ -1,4 +1,5 @@
 import express from "express";
+import { registerRepositoryReadiness } from "./repository-readiness.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import path from "node:path";
@@ -1197,6 +1198,7 @@ app.post("/api/provider-health/:providerId/recover", async (request, response) =
   response.json({ providerId, health: providerHealth.snapshot()[providerId], recoveryAttemptAvailable: true });
 });
 
+registerRepositoryReadiness(app, projectRepositoryConnectionStore, (projectId) => projectRepositoryRegistry.forProject(projectId).connection);
 app.get("/api/ready", (_request, response) => {
   response.set("Cache-Control", "no-store").json({ ready: true, ...serverIdentity });
 });

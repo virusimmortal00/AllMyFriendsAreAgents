@@ -82,6 +82,11 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
     const visible = (el: HTMLElement) => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden";
     const contained = (el: HTMLElement) => { const r = el.getBoundingClientRect(); return r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; };
     if (document.documentElement.scrollWidth > innerWidth + 1) issues.push("Page has horizontal overflow.");
+    for (const menu of document.querySelectorAll<HTMLElement>(".dropdown-menu")) {
+      if (!visible(menu)) continue;
+      const bounds = menu.getBoundingClientRect();
+      if (bounds.left < -1 || bounds.right > innerWidth + 1) issues.push("An application menu extends outside the viewport.");
+    }
     for (const button of document.querySelectorAll<HTMLElement>(".administration-sign-in")) {
       if (!visible(button)) continue;
       if (button.parentElement!.getBoundingClientRect().width > 360 && button.getBoundingClientRect().width > 320) issues.push("The sign-in command is stretched across its panel.");

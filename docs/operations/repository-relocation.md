@@ -10,7 +10,12 @@ Reconnecting GitHub does not replace saved checkout paths.
 The authenticated control API provides an explicit repair operation. It does not
 disable/reconnect the repository, change its remote, select another branch,
 reauthorize an account, or grant write access. There is no automatic path
-substitution and no repair button in the GitHub integration dialog yet.
+substitution. **Room → GitHub integration...** checks current filesystem
+authority and shows **Repair repository paths** when repair is available.
+Review the suggested server-side paths before submitting. On an uncertain
+response, **Retry repair** retains the same paths, revisions, and request key.
+Keep the dialog open until the result is confirmed. Conflicts refresh status;
+validation errors retain editable paths and explain the rejection.
 
 ## Migration preflight
 

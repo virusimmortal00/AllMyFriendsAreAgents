@@ -377,6 +377,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .classic-summary { min-width: 0; padding: 9px; border: 2px inset white; background: #fff; }
 .classic-status { display: inline-flex; align-items: center; gap: 6px; color: #111; font-size: 11px; font-weight: 700; }
 .classic-status::before { content: ""; width: 9px; height: 9px; flex: 0 0 auto; border: 1px inset white; background: #00a000; }
+.classic-status[data-attention="true"]::before { background: #b06000; }
 .classic-link { color: #0000ee; text-decoration: underline; }
 .classic-tabs { display: flex; align-items: end; gap: 2px; padding: 8px 8px 0; border-bottom: 2px groove white; background: var(--chrome); }
 .classic-tabs [role="tab"] { position: relative; bottom: -2px; min-height: 27px; padding: 3px 12px 5px; border: 2px outset white; background: var(--chrome); font: 12px "MS Sans Serif", Arial, sans-serif; }
@@ -400,6 +401,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .github-mark { display: block; flex: 0 0 auto; }
 .github-integration-body { display: grid; gap: 10px; padding: 10px 12px 12px; background: var(--chrome); font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
 .github-integration-card, .github-control-login { display: grid; gap: 10px; }
+.github-repair { display: grid; gap: 10px; min-width: 0; }
+.github-repair .classic-input { width: 100%; min-width: 0; }
+.github-repair .classic-button { justify-self: start; }
 .github-control-login { padding: 14px; border: 2px groove white; background: var(--chrome); }
 .github-integration-card h3, .github-control-login h3, .github-integration-card p, .github-control-login p { margin: 0; }
 .github-control-login label, .github-integration-card label { display: grid; gap: 4px; font-weight: 700; }

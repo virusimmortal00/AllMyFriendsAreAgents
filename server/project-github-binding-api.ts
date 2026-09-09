@@ -21,6 +21,7 @@ export function registerProjectGitHubBindingRoutes(input: {
     if (!status) throw new ControlError(404, "Project repository configuration was not found.");
     const defaults = defaultsForProject(projectId);
     response.set("Cache-Control", "no-store").json({ ...status, ...(defaults ? { defaults } : {}),
+      readiness: await bindings.inspectRepair(projectId),
       repair: { href: `/api/control/projects/${encodeURIComponent(projectId)}/repository/repair`, method: "POST",
         capability: "PROJECT_REPOSITORY_CONFIGURE", accountReauthorizationReplacesPaths: false } });
   };

@@ -45,6 +45,34 @@ const catalog = {
 afterEach(() => { cleanup(); updateControlSession({ status: null, session: null, checked: false, error: "" }); vi.unstubAllGlobals(); });
 
 describe("GitHubIntegrationDialog", () => {
+  it("repairs stale paths and retries an uncertain response with the same request", async () => {
+    const attempts: string[] = [];
+    let repaired = false;
+    vi.stubGlobal("fetch", vi.fn(async (input, options) => {
+      const route = String(input);
+      if (route.endsWith("/status")) return json({ claimed: true });
+      if (route.endsWith("/me")) return json({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-csrf", expiresAt: "2099-01-01T00:00:00Z" });
+      if (route === "/api/control/integrations/github") return json({ connections: [connection] });
+      if (route.includes("/repositories?")) return json({ catalog });
+      if (route.endsWith("/repository/repair")) {
+        attempts.push(String(options.body));
+        expect(new Headers(options.headers).get("X-AMFAA-CSRF")).toBe("fictional-csrf");
+        if (attempts.length === 1) throw new Error("Lost response");
+        repaired = true; return json({ repository: { configured: true, revision: 2 } });
+      }
+      if (route.endsWith("/repository")) return json({ binding: { revision: 1 }, repository: { configured: true, revision: repaired ? 2 : 1, repository: "github.com/example/project" }, defaults: { checkoutPath: "/workspace", worktreeRoot: "/worktrees" }, readiness: { authority: repaired ? "verified" : "unverified", state: "available" } });
+      throw new Error("Unexpected route");
+    }));
+    const user = userEvent.setup();
+    render(<GitHubIntegrationDialog onOpenAdministration={vi.fn()} returnFocusTo={null} onClose={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Repair repository paths" }));
+    expect(screen.getByLabelText("Checkout path").hasAttribute("disabled")).toBe(true);
+    await user.click(await screen.findByRole("button", { name: "Retry repair" }));
+    await screen.findByText("Repository verified");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    expect(JSON.parse(attempts[0])).toMatchObject({ expectedBindingRevision: 1, expectedRepositoryRevision: 1, checkoutPath: "/workspace", worktreeRoot: "/worktrees" });
+  });
   it("offers administration after capability denial without discarding a valid session", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input) => {
       if (String(input).endsWith("/status")) return json({ claimed: true, bootstrapConfigured: false });
