@@ -8,6 +8,82 @@ pnpm run canary:investigations
 
 The command validates the default-off and authentication gates, evidence confinement, public projections, read-only capability payload, inbox-only completion and closure, per-agent and global concurrency, room-activity independence, checkpoint/restart recovery, uncheckpointed shutdown, project-identity revocation, provider-session collision, budget exhaustion, failed or malformed providers, policy revocation, emergency stop, forged-checkpoint rejection, and production reopening of the durable audit chain. A JSON report and the isolated durable state remain in the printed run directory.
 
+## Durable recovery checks
+
+```bash
+pnpm exec vitest run server/investigation-recovery.test.ts server/investigation-service.test.ts server/investigation-api.test.ts
+```
+
+Recovery tests close and reopen both the room repository and investigation store
+for JSON and SQLite. They verify retained checkpoints, one accepted concurrent
+resume, rejected old callbacks, one durable inbox result, and denial after scope
+or policy changes. The canary seeds its collision session through the room store
+with an enabled fixture participant and verifies that reopening preserves it.
+
+New investigations persist a server-only read-only admission in the audited job.
+This admission is checked on dispatch, progress, completion, and resume; it never
+grants implementation or source-write authority. Legacy jobs without admission
+remain readable, but cannot resume automatically. Preserve their checkpoints and
+create a fresh explicitly authorized request. Moving JSON state to another
+canonical directory or migrating to another backend also requires fresh admission.
+Explicit reconciliation denials, policy changes, project changes, and emergency
+stop continue to prevent execution.
+
+These checks cover the autonomous investigation lane. Protected participation has
+additional application tests using the real authenticated CLI, a disposable room
+server, and deterministic loopback worker/model fixtures:
+
+```bash
+pnpm exec vitest run server/protected-work-application.test.ts server/protected-work-service.test.ts server/protected-work-store.test.ts server/protected-return.test.ts
+pnpm exec playwright test --config tests/visual/playwright.config.ts protected-work.visual.ts
+```
+
+The application tests exercise ordinary action/task/mention exclusion, automatic
+return without another human message, stop acknowledgement, and restart on JSON
+and SQLite. The service tests cover concurrent admission, stale callbacks,
+configuration/policy revocation, return interruption budgets, and message delivery
+before acknowledgement. Browser interaction checks supplement the independent
+screenshot review required by `docs/testing/visual-review.md`.
+
+## Protected work controls and executor termination
+
+In the canonical room, choose **Window → Investigations**, select a participant,
+and enter a bounded objective. Who’s Here and participant status show its work
+phase and elapsed execution time. **Stop and return to chat** preserves partial
+findings and waits for confirmed worker termination before catch-up. A blocked
+return retains its package and offers retry or an explicit no-update disposition.
+
+The CLI uses the same room-scoped API:
+
+```bash
+pnpm room:tool work list --room=<room-id>
+pnpm room:tool work start "Review the navigation tests" --room=<room-id> --agent=<participant-id> --request-id=<stable-request-id>
+pnpm room:tool work stop --room=<room-id> --work-id=<work-id> --request-id=<stable-stop-id>
+pnpm room:tool work retry-return --room=<room-id> --work-id=<work-id> --request-id=<stable-retry-id>
+pnpm room:tool work dismiss --room=<room-id> --work-id=<work-id> --request-id=<stable-dismiss-id>
+```
+
+Configure `ALL_MY_FRIENDS_ARE_AGENTS_DEVELOPER_TOKEN` locally from a developer-team
+member with `ROOM_READ` for listing and `COMMAND_RUN` for mutations. The legacy
+room read/chat token does not gain command authority. Reuse the start request ID
+with the same objective when retrying an uncertain response. Mutations target the
+exact work identity; an old stop cannot affect a replacement request.
+
+For interrupted attempts the executor must implement
+`DELETE <INVESTIGATION_EXECUTOR_URL>/<investigation-id>/attempts/<attempt>` using
+the same bearer authentication as dispatch. Return `{ "terminated": true }` only
+after that exact worker has stopped. Request abort, a missing endpoint, an error,
+or an unconfirmed response leaves participation blocked. The server waits at
+most two seconds per acknowledgement request; the operator can retry Stop when
+the executor is reachable. Late results cannot overwrite retained findings.
+The deterministic canary executor acknowledges its held fixtures; its optional
+real-provider mode deliberately does not claim termination acknowledgement.
+
+Completed reports use a separate context-aware read-only chat turn. Catch-up is
+bounded to three 60-second attempts, with current-context revalidation before
+idempotent delivery. Further worker execution needs a new protected request;
+the ordinary investigation Resume control cannot bypass the return boundary.
+
 ## Automated limited real-provider canary
 
 Run this only after the deterministic canary passes and only when two provider calls are acceptable:

@@ -43,8 +43,8 @@ function output(value: unknown) {
 
 async function main() {
   const command = process.argv[2] || "state";
-  if (!(["state", "send", "wait", "diagnostics"].includes(command))) {
-    throw new Error("Usage: pnpm room:tool <state|send|wait|diagnostics> [message] [--agent=id] [--search=text] [--reason=value] [--limit=50] [--timeout=120]");
+  if (!(["state", "send", "wait", "diagnostics", "work"].includes(command))) {
+    throw new Error("Usage: pnpm room:tool <state|send|wait|diagnostics|work> [message] [--agent=id] [--search=text] [--reason=value] [--limit=50] [--timeout=120]");
   }
 
   const configuration = resolveStorageConfiguration(projectRoot);
@@ -74,6 +74,24 @@ async function main() {
     }
     throw new Error(`Timed out after ${timeoutSeconds}s waiting for the active room.`);
   };
+
+  if (command === "work") {
+    const [operation = "list", ...words] = commandArguments();
+    const roomId = option("room");
+    if (!roomId) throw new Error("Protected work requires --room=<room-id>.");
+    if (!["list", "start", "stop", "retry-return", "dismiss"].includes(operation)) throw new Error("Usage: room:tool work <list|start|stop|retry-return|dismiss> [objective] --room=<id> [--agent=<id>] [--work-id=<id>] [--request-id=<stable-id>]");
+    const requestId = option("request-id");
+    if (operation !== "list" && !requestId) throw new Error("Mutations require --request-id=<stable-id>; reuse it when retrying.");
+    const owner = option("agent");
+    const workId = option("work-id");
+    if (operation === "start" && (!owner || !words.join(" ").trim())) throw new Error("Start requires --agent=<id> and a bounded objective.");
+    if (operation !== "list" && operation !== "start" && !workId) throw new Error("This operation requires --work-id=<id>.");
+    const route = operation === "list" ? `/api/protected-work?roomId=${encodeURIComponent(roomId)}` : operation === "start" ? "/api/protected-work" : `/api/protected-work/${encodeURIComponent(workId!)}/${operation}`;
+    const response = await fetch(`${baseUrl}${route}`, { headers, method: operation === "list" ? "GET" : "POST",
+      ...(operation === "list" ? {} : { body: JSON.stringify({ roomId, requestId, ...(operation === "start" ? { owner, objective: words.join(" ").trim() } : {}) }) }) });
+    if (!response.ok) throw new Error(`Protected work returned ${response.status}: ${await response.text()}`);
+    return output(await response.json());
+  }
 
   if (command === "state") return output(await room());
   if (command === "diagnostics") {

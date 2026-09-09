@@ -1,3 +1,4 @@
+import { useProtectedWork } from "./protected-work";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, clearControlSessionState, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
@@ -174,6 +175,7 @@ export default function App() {
   const [hasInitialState, setHasInitialState] = useState(false);
   const [minimumLoadingComplete, setMinimumLoadingComplete] = useState(false);
   const [human, setHuman] = useState<HumanPresence | null>(null);
+  const protectedWork = useProtectedWork(Boolean(human));
   const [joinError, setJoinError] = useState("");
   const [joinPending, setJoinPending] = useState(false);
   const [joinRequestRevision, setJoinRequestRevision] = useState(0);
@@ -860,7 +862,7 @@ export default function App() {
     switch (workspaceView) {
       case "Tasks": workspaceContent = <Tasks refreshKey={connectionEpoch} />; break;
       case "Continuations": workspaceContent = <Continuations refreshKey={connectionEpoch} />; break;
-      case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} />; break;
+      case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} protectedWork={protectedWork} agents={roster.entries.filter((entry) => entry.enabled)} />; break;
       case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
       case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
       case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
@@ -891,7 +893,7 @@ export default function App() {
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
+            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -922,6 +924,8 @@ export default function App() {
         {configuredAgent ? (
           <AgentSettingsDialog
             agent={configuredAgent}
+            protectedWork={protectedWork.work.find((work) => work.owner === configuredAgent && work.phase !== "available")}
+            onProtectedWorkChanged={protectedWork.refresh}
             available={room.availability?.[configuredAgent] !== false}
             health={room.agentHealth?.[configuredAgent]}
             providerHealth={configuredProviderId ? room.providerHealth?.[configuredProviderId] : undefined}

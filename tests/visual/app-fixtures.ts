@@ -50,6 +50,7 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
   const ok = (body: unknown): FixtureResponse => ({ status: 200, body });
   const unauthorized = { status: 401, body: { error: "Owner sign-in required." } };
   if (method === "GET") {
+    if (route === "/api/protected-work") return ok(["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario) ? [{ workId: "protected-fixture", roomId: "00000000-0000-4000-8000-000000000001", owner: visualRoster.entries[0].agentId, objective: "Review navigation recovery", phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.now() - 65_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }] : []);
     if (route === "/api/ready") return ok(fixtureRoom.server);
     if (route === "/api/state") return ok(fixtureRoom);
     if (route === "/api/polls") return ok({ items: scenario === "poll-cards" ? [{ pollId: "poll-navigation", revision: 1, question: "Which view should we review next?", options: ["Room properties", "Task details"], tallies: [2, 1], state: "OPEN", totalVotes: 3, closedAt: null, ownVote: null, canClose: true }] : [] });

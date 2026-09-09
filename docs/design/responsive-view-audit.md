@@ -1568,3 +1568,36 @@ seven-question review, not these historical labels, as verification evidence.
 - Rendered Room Properties measurements confirmed persistent actions and bounded content scroll on both pages at all checkpoints. Agent Behavior content scrolls independently when its 960px phone content or 856px laptop content exceeds the available region.
 - Rendered profile, Help, GitHub administrator sign-in, and Manage Agents administrator sign-in were centered and content-sized at all checkpoints. The Manage Agents sign-in changed from a 1000×576 editor-sized window to a 640×429 content-sized window at L and a 362×465 centered window at P.
 - State variants and interaction contracts are covered by the focused component tests, layout-structure contract, UI standards suite, overlay tests, and reconnect-flow suite. The configured GitHub state was additionally adapted from the sibling worktree’s reported desktop/375px visual checks and re-expressed through shared primitives.
+
+## Protected work validation (#154)
+
+Final full-matrix capture `run-9UpyTF` passed with **858/858 screenshots**, **678
+passing browser tests**, and six expected larger-screen skips for the phone-only
+compact view. Input digest:
+`137a40014dafba043bda9a8f6ebd6ca8262984d73c2731396440c97014980198`.
+
+Independent visual approval remains **Pending** for the changed states. Historical
+verdicts do not approve them. The Chromium/WebKit interaction test covers Phone,
+Short phone, Minimum phone, Tablet, Short laptop, and Desktop (12 projects):
+initiation, the disabled stop-requested control, blocked catch-up, explicit
+no-update, and return to Chat. It checks accessible controls and control density.
+
+| View | Screen use and navigation | Style, proportion, empty area | Scroll and actions | Outcome |
+| --- | --- | --- | --- | --- |
+| CHAT-01 | P/T/L/D retain the transcript and composer; the existing roster entry opens participant status | Existing classic frame; protected objective and timer wrap in their own content-height line without overlapping adjacent participants | Roster retains native scrolling; no new page overflow; status button remains reachable | Layout and interaction checked; independent review Pending |
+| CHAT-02 | Compact Phone, Short phone, and Minimum phone retain the existing chat navigation | Compact presentation remains unchanged; T/L/D use CHAT-01 rather than this phone-only variant | Composer and navigation remain reachable | Layout checked at its supported sizes; independent review Pending |
+| WORK-07 | P/T/L/D use Window → Investigations and the persistent close control | Existing classic controls; content-sized form and status card; wide-screen content keeps the existing maximum width | Native vertical scrolling retains start, stop, retry, and no-update actions; short screens may scroll | Initiation and return interaction checked; independent review Pending |
+| PERSON-02 | P/T/L/D retain the participant dialog and close controls | Protected objective/timer and stop action use existing dialog primitives; no new view identity | Body scrolls at constrained heights; Close stays outside the scrolling body | Layout checked with protected data injected into the standalone dialog fixture; independent review Pending |
+
+The rendered check found and corrected a fixed-height metadata-row overlap; the
+capture now rejects protected text extending beyond its roster row. The fixture
+also supplies protected work to the standalone participant dialog so its new
+controls are actually captured. Use `pnpm capture:visual` to reproduce the full
+matrix and `pnpm exec playwright test --config tests/visual/playwright.config.ts
+protected-work.visual.ts` for the interaction flow. Screenshots are retained in
+the ignored capture directory; no credentials or real room content are included.
+
+Account-backed independent review and its receipt validator have not run because
+the required explicit authorization to consume Codex allowance is pending.
+Physical-device browser chrome, software keyboards, text enlargement, and live
+provider behavior remain unverified by this browser matrix.

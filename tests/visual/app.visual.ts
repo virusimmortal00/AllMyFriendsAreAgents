@@ -228,6 +228,12 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
     for (const el of document.querySelectorAll<HTMLElement>(".dialog-body, .workspace-view__body, .chat-panel, .dialog-window")) {
       if (visible(el) && el.scrollWidth > el.clientWidth + 1) issues.push(`${el.className} has horizontal overflow (${el.scrollWidth}/${el.clientWidth}).`);
     }
+    for (const status of document.querySelectorAll<HTMLElement>(".presence-protected-work")) {
+      if (!visible(status)) continue;
+      const row = status.closest(".presence-row")?.getBoundingClientRect();
+      const bounds = status.getBoundingClientRect();
+      if (!row || bounds.bottom > row.bottom + 1 || bounds.right > row.right + 1) issues.push("Protected participant status overlaps its roster row.");
+    }
     return issues;
   });
   layoutIssues.push(...await page.evaluate(measureScrollAffordances));

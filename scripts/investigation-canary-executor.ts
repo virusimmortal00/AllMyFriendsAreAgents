@@ -27,6 +27,15 @@ app.get("/health", (_request, response) => response.json({ ready: true, mode }))
 app.get("/control/state", (_request, response) => response.json({ mode, dispatches, pending: pending.map(({ dispatch }) => ({ sequence: dispatch.sequence, investigationId: dispatch.investigationId, aborted: dispatch.aborted })) }));
 app.post("/control/mode", (request, response) => { const candidate = request.body?.mode; if (!["success", "hold", "checkpoint-hold", "collision", "over-budget", "failure", "malformed", "real"].includes(candidate)) return response.status(400).json({ error: "Unknown executor mode." }); mode = candidate; response.json({ mode }); });
 app.post("/control/release", (request, response) => { const count = Math.max(1, Number(request.body?.count) || 1); const released: number[] = []; while (pending.length && released.length < count) { const item = pending.shift()!; if (!item.dispatch.aborted && !item.response.headersSent) item.response.json(result(item.dispatch, {})); released.push(item.dispatch.sequence); } response.json({ released, remaining: pending.length }); });
+app.delete("/v1/investigations/:id/attempts/:attempt", (request, response) => {
+  const item = dispatches.find((entry) => entry.investigationId === request.params.id && entry.attempt === Number(request.params.attempt));
+  if (!item) return response.status(404).json({ terminated: false });
+  if (item.mode === "real") return response.json({ terminated: false });
+  item.aborted = true;
+  const index = pending.findIndex((entry) => entry.dispatch === item);
+  if (index >= 0) { const [held] = pending.splice(index, 1); if (!held.response.writableEnded) held.response.end(); }
+  return response.json({ terminated: true });
+});
 app.post("/v1/investigations", async (request, response) => {
   const body = request.body as Record<string, any>; const dispatch: Dispatch = { sequence: ++sequence, investigationId: String(body.investigationId || ""), attempt: Number(body.attempt || 0), owner: String(body.owner || ""), mode, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : [], excludedCapabilities: Array.isArray(body.excludedCapabilities) ? body.excludedCapabilities.map(String) : [], forbiddenProviderSessionIds: Array.isArray(body.forbiddenProviderSessionIds) ? body.forbiddenProviderSessionIds.map(String) : [], checkpoint: body.checkpoint ?? null, remainingBudget: body.remainingBudget || {}, receivedAt: new Date().toISOString(), aborted: false }; dispatches.push(dispatch); request.once("aborted", () => { dispatch.aborted = true; }); response.once("close", () => { if (!response.writableEnded) dispatch.aborted = true; });
   if (mode === "failure") return response.status(503).json({ error: "Intentional canary provider failure." });
