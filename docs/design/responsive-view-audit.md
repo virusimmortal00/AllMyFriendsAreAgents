@@ -1627,3 +1627,10 @@ are outside this change. Whole-matrix visual acceptance remains failed/pending;
 passing affected-view evidence does not override unrelated failed judgments.
 Physical-device browser chrome, software keyboards, text enlargement, and live
 provider behavior remain unverified by this browser matrix.
+
+For PR #174, the maintainer approved a scoped exception on 2026-09-09 for the
+804 screenshots outside the affected-view review. This permits review and merge
+consideration using the retained full capture and 54 passing affected-image
+judgments; it does not change the validator result or approve unreviewed images.
+The unrelated Task Detail and Durable Continuations findings are tracked in
+[#175](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/175).

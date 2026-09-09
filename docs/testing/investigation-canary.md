@@ -84,6 +84,37 @@ bounded to three 60-second attempts, with current-context revalidation before
 idempotent delivery. Further worker execution needs a new protected request;
 the ordinary investigation Resume control cannot bypass the return boundary.
 
+### Protected browser smoke evidence
+
+On 2026-09-09, a fresh production build was exercised in desktop Chromium using
+the real application API, isolated JSON storage, and the deterministic executor
+and model fixtures from `server/protected-work-application.test.ts`. Browser
+requests were not intercepted or mocked. The manual smoke verified:
+
+1. Join, open Window → Investigations, and start protected work.
+2. Return to Chat and mention the busy participant: the objective and elapsed
+   timer remain visible, and no foreground model dispatch occurs.
+3. Complete the held worker: one return report appears automatically and the
+   participant becomes available.
+4. Start another job, refuse executor termination, and press Stop: the participant
+   remains blocked and no return assessment runs.
+5. Confirm termination and press Stop again: one report appears for that job;
+   a later mention receives an ordinary reply.
+
+Server-side assertions checked one stable report identity per job, exactly two
+fresh read-only return assessments without command tools, and ordinary dispatch
+resumption. The browser reported no uncaught errors. A temporary harness reused
+the application-test fixture; this manual desktop check complements the committed
+JSON/SQLite CLI tests and the separate responsive browser matrix.
+
+No intended live investigation executor was configured for this check. Its
+completion and exact-attempt termination remain unverified. Before enabling this
+experimental lane against a deployed executor, run one bounded completion and
+one confirmed-cancellation case with that executor using disposable state, verify
+worker termination independently, and confirm that refusal or timeout preserves
+busy exclusion. The optional real-provider canary below does not establish this
+termination contract. Keep the policy disabled until those checks pass.
+
 ## Automated limited real-provider canary
 
 Run this only after the deterministic canary passes and only when two provider calls are acceptable:
