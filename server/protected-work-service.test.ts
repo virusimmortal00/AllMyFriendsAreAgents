@@ -85,6 +85,54 @@ describe("protected participation", () => {
     expect(f.runReturn).toHaveBeenCalledTimes(2);
     expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "no-update" });
   });
+  it("shares pending admission failures and preserves failure on durable replay", async () => {
+    const f = await fixture();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const admission = vi.spyOn(f.investigations, "request").mockImplementation(async () => { await gate; return { kind: "rejected", reason: "Investigations disabled" }; });
+    const first = f.start();
+    await expect.poll(() => admission.mock.calls.length).toBe(1);
+    const second = f.start();
+    let completed = false; const outcomes = Promise.allSettled([first, second]).then((value) => { completed = true; return value; });
+    await new Promise((resolve) => setTimeout(resolve, 10)); expect(completed).toBe(false);
+    release();
+    expect((await outcomes).every((result) => result.status === "rejected")).toBe(true);
+    expect(admission).toHaveBeenCalledOnce(); expect(f.reservations.allows("codex-sol")).toBe(true);
+    const reopened = await ProtectedWorkStore.open(path.join(f.root, "protected"));
+    const restored = new ProtectedWorkService(reopened, f.investigations, new ParticipantReservations(() => false), f.options);
+    await restored.initialize(); cleanup.push(() => restored.shutdown());
+    await expect(restored.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Inspect bounded evidence", requestId: "request-0001" }, "human:fixture")).rejects.toThrow("Investigations disabled");
+  });
+  it.each(["tick", "dismiss"] as const)("keeps exclusion until inbox closure succeeds and recovers via %s without duplicate delivery", async (recovery) => {
+    const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
+    const acknowledge = f.investigations.acknowledge.bind(f.investigations);
+    let attempts = 0;
+    vi.spyOn(f.investigations, "acknowledge").mockImplementation(async (id, close) => {
+      expect(f.reservations.allows("codex-sol")).toBe(false);
+      if (++attempts === 1) return { kind: "conflict", reason: "Concurrent inbox update" };
+      return acknowledge(id, close);
+    });
+    await f.service.tick();
+    expect((await f.service.list())[0].phase).not.toBe("available");
+    expect(f.reservations.allows("codex-sol")).toBe(false);
+    if (recovery === "tick") await f.service.tick(); else await f.service.action(job.workId, "dismiss");
+    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "delivered" });
+    expect(f.options.deliver).toHaveBeenCalledOnce();
+    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("CLOSED");
+  });
+  it("does not publish a stale report after dismissal during final authority validation", async () => {
+    const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
+    const check = f.investigations.returnBlocker.bind(f.investigations); let dismissed = false;
+    vi.spyOn(f.investigations, "returnBlocker").mockImplementation(async (id) => {
+      const result = await check(id);
+      if (!dismissed && f.runReturn.mock.calls.length) { dismissed = true; await f.service.action(job.workId, "dismiss"); }
+      return result;
+    });
+    await f.service.tick();
+    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "no-update" });
+    expect(f.options.deliver).not.toHaveBeenCalled();
+    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("CLOSED");
+  });
   it("replays exact admission and rejects a substituted objective under the same request ID", async () => {
     const f = await fixture(); const job = await f.start();
     expect((await f.start()).workId).toBe(job.workId);

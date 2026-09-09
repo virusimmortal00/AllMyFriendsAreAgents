@@ -18,6 +18,15 @@ export class ProtectedWorkService {
   private closed = false;
   private processing = false;
   private readonly admissions = new Set<string>();
+  private readonly starts = new Map<string, { digest: string; promise: Promise<ProtectedWorkView> }>();
+  private readonly mutations = new Map<string, Promise<unknown>>();
+  private async exclusive<T>(workId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutations.get(workId) || Promise.resolve();
+    const pending = previous.catch(() => undefined).then(operation);
+    this.mutations.set(workId, pending);
+    try { return await pending; }
+    finally { if (this.mutations.get(workId) === pending) this.mutations.delete(workId); }
+  }
   private readonly returns = new Map<string, AbortController>();
   constructor(private readonly store: ProtectedWorkStore, private readonly investigations: InvestigationService,
     readonly reservations: ParticipantReservations, private readonly options: {
@@ -45,9 +54,20 @@ export class ProtectedWorkService {
     if (this.closed || input.roomId !== this.options.roomId) throw new Error("Protected work is unavailable for this room.");
     const workId = `protected-${digest([input.roomId, actor, input.requestId])}`;
     const requestDigest = digest([input.roomId, input.owner, input.objective]);
+    const pending = this.starts.get(workId);
+    if (pending) {
+      if (pending.digest !== requestDigest) throw new Error("Request ID already belongs to different protected work.");
+      return pending.promise;
+    }
+    const promise = this.admit(input, workId, requestDigest);
+    this.starts.set(workId, { digest: requestDigest, promise });
+    try { return await promise; } finally { this.starts.delete(workId); }
+  }
+  private async admit(input: ProtectedWorkRequest, workId: string, requestDigest: string) {
     const existing = await this.store.get(workId);
     if (existing) {
       if (existing.requestDigest !== requestDigest) throw new Error("Request ID already belongs to different protected work.");
+      if (existing.phase === "available" && existing.blocker && !existing.package) throw new Error(existing.blocker);
       return protectedWorkView(existing);
     }
     if (!this.options.canStart(input.owner)) throw new Error("Participant is unavailable for protected work.");
@@ -77,6 +97,9 @@ export class ProtectedWorkService {
     } finally { this.admissions.delete(workId); }
   }
   async action(workId: string, action: "stop" | "retry-return" | "dismiss", request?: { actor: string; id: string }) {
+    return this.exclusive(workId, () => this.applyAction(workId, action, request));
+  }
+  private async applyAction(workId: string, action: "stop" | "retry-return" | "dismiss", request?: { actor: string; id: string }) {
     const record = await this.store.get(workId);
     if (!record || record.roomId !== this.options.roomId) throw new Error("Protected work not found.");
     const key = request ? digest([request.actor, request.id]) : undefined;
@@ -84,11 +107,14 @@ export class ProtectedWorkService {
     if (receipt && receipt.action !== action) throw new Error("Request ID already belongs to a different operation.");
     if (receipt || record.phase === "available") return protectedWorkView(record);
     const acknowledgement = key ? { actions: [...(record.actions || []), { key, action }] } : {};
+    if (this.options.hasDelivered(workId)) {
+      await this.finish(record, "delivered", acknowledgement);
+      return protectedWorkView((await this.store.get(workId))!);
+    }
     if (action === "dismiss") {
       if (!record.stoppedAt) throw new Error("Worker termination must be confirmed before returning without an update.");
       this.returns.get(workId)?.abort();
-      const next = await this.patch(record, { ...acknowledgement, phase: "available", disposition: "no-update", blocker: null });
-      if (next) this.reservations.release(record.owner, workId);
+      await this.finish(record, "no-update", acknowledgement, true);
     } else if (action === "retry-return") {
       if (record.stoppedAt && record.phase === "catching-up") {
         if (key) await this.patch(record, acknowledgement);
@@ -111,7 +137,7 @@ export class ProtectedWorkService {
       for (let record of await this.store.list()) {
         if (this.admissions.has(record.workId)) continue;
         if (record.phase === "available") continue;
-        if (this.options.hasDelivered(record.workId)) { await this.finish(record, "delivered"); continue; }
+        if (this.options.hasDelivered(record.workId)) { await this.exclusive(record.workId, async () => { const current = await this.store.get(record.workId); if (current && current.phase !== "available") await this.finish(current, "delivered"); }); continue; }
         if (record.phase === "blocked") continue;
         const job = (await this.investigations.list()).find((job) => job.investigationId === record.workId);
         if (!job) {
@@ -147,7 +173,7 @@ export class ProtectedWorkService {
   private async returnToChat(workId: string) {
     let record = await this.store.get(workId);
     if (this.closed || !record?.package || record.phase === "available" || record.phase === "blocked") return;
-    if (this.options.hasDelivered(workId)) { await this.finish(record, "delivered"); return; }
+    if (this.options.hasDelivered(workId)) { await this.exclusive(workId, async () => { const current = await this.store.get(workId); if (current && current.phase !== "available") await this.finish(current, "delivered"); }); return; }
     try {
       const authority = await this.investigations.returnBlocker(workId);
       if (authority || !this.options.canStart(record.owner as AgentId)) {
@@ -166,7 +192,10 @@ export class ProtectedWorkService {
         try { report = await this.options.runReturn(record, controller.signal); }
         finally { clearTimeout(timeout); this.returns.delete(workId); }
         if (controller.signal.aborted || this.closed) throw new Error("Return interrupted. Findings are retained.");
-        const next = await this.patch(record, { phase: "report-pending", report });
+        const next = await this.exclusive(workId, async () => {
+          if (controller.signal.aborted || this.closed) return undefined;
+          return this.patch(record, { phase: "report-pending", report });
+        });
         if (!next) return;
         record = next;
       }
@@ -175,28 +204,35 @@ export class ProtectedWorkService {
         await this.patch(record, { phase: "blocked", blocker: "Return authority changed. Findings are retained." });
         return;
       }
-      if (record.report!.cursor !== this.options.cursor()) return;
-      if (!record.report!.text) { await this.finish(record, "no-update"); return; }
-      if (await this.options.deliver(record)) await this.finish(record, "delivered");
+      await this.exclusive(workId, async () => {
+        const current = await this.store.get(workId);
+        if (!current || current.revision !== record.revision || current.phase !== "report-pending" || current.report?.cursor !== this.options.cursor()) return;
+        if (!current.report.text) { await this.finish(current, "no-update"); return; }
+        if (await this.options.deliver(current)) await this.finish(current, "delivered");
+      });
     } catch (error) {
-      const latest = await this.store.get(workId);
-      if (latest && latest.phase !== "available" && error instanceof ProtectedReturnCapacityError) {
-        await this.patch(latest, { phase: "catching-up", returnAttempts: Math.max(0, latest.returnAttempts - 1), blocker: error.message });
-        return;
-      }
-      if (latest && latest.phase !== "available") await this.patch(latest, {
-        phase: latest.returnAttempts >= 3 || !latest.returnAttempts ? "blocked" : "catching-up",
-        blocker: redactInvestigationText(error instanceof Error ? error.message : "Return failed.").slice(0, 2_000),
+      await this.exclusive(workId, async () => {
+        const latest = await this.store.get(workId);
+        if (latest && latest.phase !== "available" && error instanceof ProtectedReturnCapacityError) {
+          await this.patch(latest, { phase: "catching-up", returnAttempts: Math.max(0, latest.returnAttempts - 1), blocker: error.message });
+          return;
+        }
+        if (latest && latest.phase !== "available") await this.patch(latest, {
+          phase: latest.returnAttempts >= 3 || !latest.returnAttempts ? "blocked" : "catching-up",
+          blocker: redactInvestigationText(error instanceof Error ? error.message : "Return failed.").slice(0, 2_000),
+        });
       });
     }
   }
-  private async finish(record: ProtectedWorkRecord, disposition: "delivered" | "no-update") {
-    if (await this.patch(record, { phase: "available", disposition, blocker: null })) {
-      this.reservations.release(record.owner, record.workId);
-      for (const entry of await this.investigations.inbox(record.owner as AgentId)) {
-        if (entry.investigationId === record.workId && (entry.status === "UNREAD" || entry.status === "ACKNOWLEDGED")) await this.investigations.acknowledge(entry.inboxEntryId, true);
+  private async finish(record: ProtectedWorkRecord, disposition: "delivered" | "no-update", acknowledgement: Partial<ProtectedWorkRecord> = {}, explicit = false) {
+    for (const entry of await this.investigations.inbox(record.owner as AgentId)) {
+      if (entry.investigationId === record.workId && (entry.status === "UNREAD" || entry.status === "ACKNOWLEDGED")) {
+        const result = await this.investigations.acknowledge(entry.inboxEntryId, true);
+        if (result.kind !== "ok") throw new Error("Return acknowledgement failed. Findings are retained; retry return.");
       }
     }
+    if (!explicit && disposition === "no-update" && record.report?.cursor !== this.options.cursor()) return;
+    if (await this.patch(record, { ...acknowledgement, phase: "available", disposition, blocker: null })) this.reservations.release(record.owner, record.workId);
   }
   private async patch(record: ProtectedWorkRecord, patch: Partial<ProtectedWorkRecord>) {
     const next = { ...record, ...patch, revision: record.revision + 1, updatedAt: new Date().toISOString() };

@@ -29,9 +29,13 @@ export function ProtectedWorkStatus({ work }: { work: ProtectedWorkView }) {
 }
 export function ProtectedWorkControls({ work, onChanged }: { work: ProtectedWorkView; onChanged: () => Promise<void> }) {
   const [pending, setPending] = useState(false); const [error, setError] = useState("");
+  const requests = useRef(new Map<string, string>());
   const action = async (value: "stop" | "retry-return" | "dismiss") => {
     setPending(true); setError("");
-    try { await protectedWorkAction(work.workId, value); await onChanged(); }
+    const key = JSON.stringify([work.workId, value]);
+    const requestId = requests.current.get(key) || crypto.randomUUID();
+    requests.current.set(key, requestId);
+    try { await protectedWorkAction(work.workId, value, requestId); requests.current.delete(key); await onChanged(); }
     catch (failure) { setError(failure instanceof Error ? failure.message : "Work changed."); }
     finally { setPending(false); }
   };

@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { hashBytes } from "../../scripts/visual-review";
 import { APP_SCENARIOS, scenarioApplies } from "./matrix";
-import { appFixtureResponse, fixtureTraceId } from "./app-fixtures";
+import { appFixtureResponse, fixtureTraceId, fixtureTime } from "./app-fixtures";
 import { measureControlDensity, measureScrollAffordances, measureScrollRegions } from "./geometry";
 
 async function menu(page: Page, name: string, item?: string) {
@@ -261,6 +261,7 @@ for (const scenario of APP_SCENARIOS) {
       }
       return route.continue();
     });
+    if (["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
     await page.goto(`/tests/visual/index.html?scenario=${scenario.id}`);
     if (scenario.view.category !== "application") await expect(page.locator(".app-window")).toBeVisible();
     await openScenario(page, scenario.id);

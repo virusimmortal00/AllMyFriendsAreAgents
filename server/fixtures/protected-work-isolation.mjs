@@ -9,5 +9,5 @@ const fetchLocal = globalThis.fetch;
 globalThis.fetch = (input, options) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   if (url.hostname !== "127.0.0.1") throw new Error("External fetch is disabled in the protected-work fixture.");
-  return fetchLocal(input, options);
+  return fetchLocal(input, { ...options, redirect: "manual" });
 };

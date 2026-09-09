@@ -542,6 +542,6 @@ export async function loadProtectedWork(signal?: AbortSignal): Promise<Protected
 export async function startProtectedWork(input: Omit<ProtectedWorkRequest, "roomId">) {
   return request("/api/protected-work", { method: "POST", body: JSON.stringify({ ...input, roomId: protectedWorkRoomId() }) }).then((response) => response.json());
 }
-export async function protectedWorkAction(workId: string, action: "stop" | "retry-return" | "dismiss") {
-  return request(`/api/protected-work/${encodeURIComponent(workId)}/${action}`, { method: "POST", body: JSON.stringify({ roomId: protectedWorkRoomId(), requestId: crypto.randomUUID() }) }).then((response) => response.json());
+export async function protectedWorkAction(workId: string, action: "stop" | "retry-return" | "dismiss", requestId: string) {
+  return request(`/api/protected-work/${encodeURIComponent(workId)}/${action}`, { method: "POST", body: JSON.stringify({ roomId: protectedWorkRoomId(), requestId }) }).then((response) => response.json());
 }

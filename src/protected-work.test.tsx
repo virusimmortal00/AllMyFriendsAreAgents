@@ -23,11 +23,24 @@ describe("protected work controls", () => {
     await waitFor(() => expect(startProtectedWork).toHaveBeenCalledTimes(2));
     expect(vi.mocked(startProtectedWork).mock.calls[0][0].requestId).toBe(vi.mocked(startProtectedWork).mock.calls[1][0].requestId);
   });
+  it("reuses an action identity after a lost response and renews it only after success", async () => {
+    vi.mocked(protectedWorkAction).mockRejectedValueOnce(new Error("response lost")).mockResolvedValue({});
+    render(<ProtectedWorkControls work={{ ...work, phase: "blocked", stoppedAt: work.createdAt }} onChanged={async () => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry catch-up" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Retry catch-up" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    await waitFor(() => expect((screen.getByRole("button", { name: "Retry catch-up" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Retry catch-up" }));
+    await waitFor(() => expect(protectedWorkAction).toHaveBeenCalledTimes(3));
+    const calls = vi.mocked(protectedWorkAction).mock.calls;
+    expect(calls[0][2]).toBe(calls[1][2]); expect(calls[2][2]).not.toBe(calls[1][2]);
+  });
   it("separates stop requested from confirmation and offers explicit recovery after termination", async () => {
     const changed = vi.fn(async () => {}); vi.mocked(protectedWorkAction).mockResolvedValue({});
     const view = render(<ProtectedWorkControls work={work} onChanged={changed} />);
     fireEvent.click(screen.getByRole("button", { name: "Stop and return to chat" }));
-    await waitFor(() => expect(protectedWorkAction).toHaveBeenCalledWith("work", "stop"));
+    await waitFor(() => expect(protectedWorkAction).toHaveBeenCalledWith("work", "stop", expect.any(String)));
     view.rerender(<ProtectedWorkControls work={{ ...work, phase: "stopping" }} onChanged={changed} />);
     expect((screen.getByRole("button", { name: "Stop requested…" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Return without an update" })).toBeNull();

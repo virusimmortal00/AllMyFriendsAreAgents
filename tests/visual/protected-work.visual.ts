@@ -15,7 +15,7 @@ test("protected review initiation, stop confirmation and return controls remain 
         const body = route.request().postDataJSON();
         expect(body.roomId).toBe("00000000-0000-4000-8000-000000000001");
         expect(body.requestId).toBeTruthy();
-        work = [{ workId: "protected-fixture", roomId: body.roomId, owner: body.owner, objective: body.objective, phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.now() - 2_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }];
+        work = [{ workId: "protected-fixture", roomId: body.roomId, owner: body.owner, objective: body.objective, phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.parse(fixtureTime) - 2_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }];
         return route.fulfill({ status: 202, json: work[0] });
       }
       return route.fulfill({ json: work });
@@ -29,6 +29,7 @@ test("protected review initiation, stop confirmation and return controls remain 
     }
     return route.continue();
   });
+  await page.clock.setFixedTime(new Date(fixtureTime));
   await page.goto("/tests/visual/index.html?scenario=room-chat");
   await page.getByRole("menuitem", { name: "Window", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Investigations", exact: true }).click();
