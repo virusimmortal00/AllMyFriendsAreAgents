@@ -64,6 +64,42 @@ do not turn this mount read-write to evade it.
 
 ## Durable storage contract
 
+### Repository readiness and checkout preparation
+
+Container startup is not proof of repository access. The Compose health check
+requires both `/api/ready` and `/api/ready/repositories` to return HTTP 200 with
+`ready: true`. The second endpoint revalidates every enabled saved repository
+against its actual filesystem and branch. It returns only an aggregate boolean;
+it exposes no paths, identities, or credentials. An empty or explicitly disabled
+repository setup does not fail health. This is a local authority check, not a
+GitHub network or credential test; verify a fresh room-scoped `/gh` read after
+repair. The application remains reachable when repository health fails so an
+administrator can repair it.
+
+Operator-managed rollout controllers must check both endpoints after startup
+and restart, reject missing/invalid responses, and treat failed repository
+readiness as requiring attention. Do not automatically replace saved paths,
+reconnect accounts, or roll back persisted state to clear the failure.
+
+Before initially mounting or deliberately relocating a standalone checkout,
+stop its writers and prepare the saved default branch explicitly:
+
+```bash
+node scripts/prepare-container-checkout.mjs /path/to/standalone-checkout main
+```
+
+Use the repository's actual saved default branch instead of assuming `main`.
+For a detached checkout, preparation attaches that branch at the same commit
+only when its existing reference can fast-forward. It refuses dirty files,
+linked worktrees, a different checked-out branch, and divergent history. It
+never fetches or changes the selected source revision. Keep this preparation
+separate from routine image upgrades; upgrades must retain the project's mount
+and branch. After relocation, use **Room → GitHub integration... → Repair
+repository paths** to validate and save the new paths with owner authorization.
+
+Keep `/workspace`, `/worktrees`, and all existing volume identities stable
+across normal upgrades. Repeated health checks detect later branch/path drift.
+
 | Mount | Contents |
 | --- | --- |
 | `/data` | SQLite database, WAL/SHM, room/control/integration sidecars and encrypted credential envelope |
@@ -104,6 +140,31 @@ An already-claimed owner does not need a replacement bootstrap secret. Existing
 vault-backed repository reads do not enable the legacy contribution broker:
 that separate capability requires its own configured repository and write token.
 Do not borrow a read-only credential or broaden grants during deployment.
+
+## Reset a forgotten owner password
+
+From a source checkout on the Docker host, identify the existing application
+container with `docker ps`, then run:
+
+```bash
+pnpm control:owner:container <container-name>
+```
+
+The command prompts twice without echoing the password. It requires Docker-host
+access, stops the container, and uses its exact image and existing writable data
+mount in an offline temporary container. It calls the canonical owner recovery
+method with a process-local proof, records the recovery audit event, and restores
+the original running state even when recovery fails. No configured bootstrap
+secret or recovery script inside the image is required. Keep external rollout
+controllers paused during recovery so they cannot restart a concurrent writer.
+All administrator sessions end when the server stops; sign in again using the
+existing owner username. Accounts and room history are preserved.
+
+On macOS, append `--generate-clipboard` to generate a random password and copy it
+to the clipboard without printing it. Save it in a password manager before
+replacing the clipboard contents. No password is passed in Docker arguments or
+written to a plaintext file. Docker-host access already permits changing the
+mounted account store; this command does not add a browser recovery endpoint.
 
 ## Publication gates
 

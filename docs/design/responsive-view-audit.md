@@ -1,5 +1,53 @@
 # Responsive view audit
 
+## Repository recovery and menu containment — 2026-09-09
+
+`GH-08` adds an explicit repository-path repair form and `GH-06` reports fresh
+repository verification. Unconfirmed repairs retain the same request for retry.
+During capture, the Window menu extended beyond the minimum-phone viewport and
+navigation intermittently opened a neighboring menu. The shared application menu
+now adjusts its horizontal position when opened or resized. This affects
+`CHAT-03` and `CHAT-04`; capture checks also reject horizontal menu overflow.
+The initial independent review and subsequent repair-form correction are recorded below.
+Real-device behavior and live owner authentication remain unverified.
+
+The full quality gate passed 194 test files (1,481 tests passed, one skipped).
+Chromium and WebKit passed 678 browser checks with six intentional skips across
+Phone, Short phone, Minimum phone, Tablet, Short laptop, and Desktop. The capture
+contains all 882 expected screenshots and no recorded geometry issues, including
+the new repair form and viewport-contained menus. Capture input digest:
+`61781dd0ae854bea4e682f56ba6bf51105a8e6da23538468168df9b2b3b1d3fd`.
+Independent review was explicitly scoped to changed views `GH-06`, `GH-08`,
+`CHAT-03`, and `CHAT-04`: 60 images in 24 fresh reviewer sessions. Of these,
+58 pass all seven questions. WebKit Short phone's repair-form top and bottom
+captures remain flagged for insufficient scroll-position/overflow affordance
+(scroll/actions and outcome questions). The other five questions pass for both.
+Receipt validation found no integrity errors. The full-matrix gate remains
+unsatisfied because the other 822 images were intentionally not reviewed, and
+because these two changed images retain findings. No full visual approval is
+claimed. The next visual correction is a clearer directional scroll affordance
+for the repair form at Short phone size.
+
+### Repair-form scrollbar correction
+
+`GH-08` now opts into the existing classic native scrollbar treatment. The
+repair dialog mounts with this styling already applied, so WebKit calculates
+the native gutter before laying out the form. Entering or leaving repair
+recreates the dialog frame while retaining request state in its parent;
+ordinary retries retain the same frame. The persistent Close footer is retained.
+
+The final quality gate passed 1,481 tests across 194 files, with one intentional
+skip. The complete capture passed 678 browser checks (six intentional skips),
+producing 882 images with zero geometry issues. Final input digest:
+`3fba612bfbe0495171babfb7332165dbee4a4c335ba7c88de3b1ed9c2c335afc`.
+Only the affected repair form was re-reviewed: all 24 images, covering both
+scroll positions in Chromium and WebKit at all six checkpoints, passed all
+seven questions in 12 fresh reviewer sessions. Both prior Short phone findings
+are resolved. Exact-image receipt validation reported no integrity errors;
+the full-matrix checker reports only the intentionally incomplete review scope.
+This is approval of `GH-08` at the captured checkpoints, not full-matrix or
+real-device approval.
+
 ## Administration keyboard handoff — 2026-09-03
 
 The review correction affects application-menu access (`CHAT-04`) while Room
@@ -1466,6 +1514,7 @@ review was not run, so both inventory rows remain `Unverified`.
 | GH-05 | GitHub — Choose Project Repository | Connected account with repository selection | Unverified |
 | GH-06 | GitHub — Configured Repository | Connected and configured summary | Unverified |
 | GH-07 | GitHub — Empty Repository Access | No repositories available and recovery action | Unverified |
+| GH-08 | GitHub — Repair Repository | Repository verification failed and explicit path repair | Pending |
 
 ### Supporting dialogs
 
@@ -1547,6 +1596,8 @@ seven-question review, not these historical labels, as verification evidence.
 | GH-05 | P/T/L/D: Pass; repository chooser occupies the project group only. | P/T/L/D: Repository select/use, access link, and Close are explicit. | P/T/L/D: Pass; inset repository field and raised action. | P/T: full-width select/action; L/D: concise row. | P/T/L/D: No disabled configured-state selector. | P/T/L/D: Body owns overflow; actions remain reachable. | P/T/L/D: Collapsed integration to account and repository concepts. |
 | GH-06 | P/T/L/D: Pass; concise configured repository summary replaces form. | P/T/L/D: Repository link, access link, and Close are conventional. | P/T/L/D: Pass; square green status lamp, inset summary, Primer mark. | P: summary collapses to icon/path then status; T/L/D: compact three-column row. | P/T/L/D: No redundant selector or revision metadata. | P/T/L/D: Long paths wrap; dialog body remains bounded. | P/T/L/D: Added repository normalization for correct path and URL. |
 | GH-07 | P/T/L/D: Pass; empty-access explanation stays in project group. | P/T/L/D: Repository access/retry action and Close are explicit. | P/T/L/D: Pass; classic group and raised recovery. | P: action becomes full-width; T/L/D: content-sized. | P/T/L/D: Empty area is an explicit no-repository state. | P/T/L/D: Copy wraps and body scrolls if needed. | P/T/L/D: Added conventional recovery link and concise copy. |
+
+| GH-08 | P/T/L/D: Pass; bounded repair form. | P/T/L/D: Pass; repair/status commands and persistent Close. | P/T/L/D: Pass; shared classic controls and native scrollbar. | P/T/L/D: Pass; fields fit beside the gutter. | P/T/L/D: Pass; content-sized spacing. | P/T/L/D: Pass; visible native track and reachable actions at both scroll positions. | P/T/L/D: All 24 images pass independent review at the final digest above; real-device behavior remains unverified. |
 
 ### Supporting-dialog audit
 

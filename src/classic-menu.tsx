@@ -64,9 +64,21 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
 
   useLayoutEffect(() => {
     if (openIndex === null) return;
-    const items = [...(menuRefs.current[openIndex]?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)') || [])];
+    const menu = menuRefs.current[openIndex];
+    const position = () => {
+      if (!menu) return;
+      menu.style.transform = "";
+      const bounds = menu.getBoundingClientRect();
+      const availableRight = document.documentElement.clientWidth - 8;
+      const shift = Math.max(8 - bounds.left, Math.min(0, availableRight - bounds.right));
+      if (shift) menu.style.transform = `translateX(${shift}px)`;
+    };
+    position();
+    window.addEventListener("resize", position);
+    const items = [...(menu?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)') || [])];
     items[focusLastRef.current ? items.length - 1 : 0]?.focus();
     focusLastRef.current = false;
+    return () => window.removeEventListener("resize", position);
   }, [openIndex]);
 
   const deactivate = (restoreContentFocus = false) => {

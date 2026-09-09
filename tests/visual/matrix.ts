@@ -23,10 +23,10 @@ const APP_VIEW_KEYS = [
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
   "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail", "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration",
   "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation",
-  "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo",
+  "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
 ] as const satisfies readonly ViewKey[];
-const SCROLLING_VIEWS: readonly ViewKey[] = ["improvementDetail", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionDetail", "ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration"];
+const SCROLLING_VIEWS: readonly ViewKey[] = ["improvementDetail", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionDetail", "ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
 export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   id: key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), view: VIEWS[key],
   shots: SCROLLING_VIEWS.includes(key) ? ["top", "bottom"] : ["top"],

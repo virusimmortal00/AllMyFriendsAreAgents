@@ -133,6 +133,11 @@ repository paths.
 
 Owner transfer and recovery are intentionally unavailable through ordinary room APIs. A local operator can run `pnpm control:owner transfer-owner <existing-username>` or set `ALL_MY_FRIENDS_ARE_AGENTS_OWNER_RECOVERY_PASSWORD` and run `pnpm control:owner recover-owner`; both require the server-side bootstrap proof, revoke affected sessions, and append a redacted audit event.
 
+For a container deployment, run `pnpm control:owner:container <container-name>`
+on the Docker host to reset the password with hidden interactive prompts. The
+command stops and restores the container using its existing data volume. See the
+[container recovery procedure](docs/operations/container-deployment.md#reset-a-forgotten-owner-password).
+
 Provider credentials remain owned by OpenCode or the operating-system keychain. The provider-setup UI returns the fixed **server-local handoff** command `opencode auth login`; it never proxies or scrapes an interactive terminal and never stores API keys or OAuth tokens. The browser may be on a different host than the server, so run the command on the server host, then use Refresh. Setup initiations and refresh outcomes are durably audited with bounded, redacted metadata.
 
 Existing Codex, Claude Code, and Cursor room records are migrated without rewriting transcript messages, participant IDs, names, mentions, or styles. Their nonportable CLI sessions are not resumed. A legacy participant keeps its historical model selection visibly unavailable until an administrator chooses an exact model from OpenCode's discovered catalog; the migration never silently substitutes a different model.

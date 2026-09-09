@@ -3,6 +3,7 @@ import {
   ApiRequestError,
   configureCurrentProjectGitHubRepository,
   loadCurrentProjectGitHubStatus,
+  repairCurrentProjectGitHubRepository,
   loadGitHubIntegration,
   loadGitHubRepositoryCatalog,
   pollGitHubDeviceAuthorization,
@@ -18,6 +19,7 @@ import { AdministrationSignIn } from "./server-administration";
 import { useControlSession } from "./control-session";
 import { DialogFrame } from "./dialog-frame";
 import { VIEWS } from "./view-registry";
+import type { RepairProjectRepositoryInput } from "../shared/project-repository-repair";
 
 
 // GitHub mark from Primer Octicons: https://primer.style/octicons/icon/mark-github-24/
@@ -40,6 +42,9 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [repairPaths, setRepairPaths] = useState({ checkoutPath: "", worktreeRoot: "" });
+  const [repairRequest, setRepairRequest] = useState<RepairProjectRepositoryInput>();
+  const [repairMessage, setRepairMessage] = useState("");
   const readyConnection = integration?.connections.find((connection) => connection.state === "ready");
 
   const loadDashboard = useCallback(async () => {
@@ -57,6 +62,7 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
       if (request !== dashboardRequest.current) return;
       setIntegration(nextIntegration);
       setProject(nextProject);
+      setRepairPaths((current) => current.checkoutPath ? current : { checkoutPath: nextProject?.defaults?.checkoutPath || "", worktreeRoot: nextProject?.defaults?.worktreeRoot || "" });
       setCatalog(nextCatalog);
       setSelectedRepositoryId((current) => current || String(nextCatalog?.repositories[0]?.githubRepositoryId || ""));
     } catch (failure) {
@@ -132,6 +138,30 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
     finally { setWorking(false); }
   }
 
+  async function repairProject() {
+    if (working || !project?.binding || !project.repository.revision) return;
+    const input = repairRequest || { ...repairPaths, expectedBindingRevision: project.binding.revision,
+      expectedRepositoryRevision: project.repository.revision, idempotencyKey: crypto.randomUUID() };
+    setRepairRequest(input);
+    setWorking(true); setError(""); setRepairMessage("");
+    const request = dashboardRequest.current;
+    try {
+      await repairCurrentProjectGitHubRepository(input);
+      if (request !== dashboardRequest.current) return;
+      setRepairRequest(undefined);
+      setRepairMessage("Repository paths repaired. Start a new /gh request in the room.");
+      await loadDashboard();
+    } catch (failure) {
+      if (request !== dashboardRequest.current) return;
+      if (failure instanceof ApiRequestError && (failure.status === 409 || failure.status === 422)) {
+        setRepairRequest(undefined);
+        if (failure.status === 409) await loadDashboard();
+      }
+      setPermissionDenied(failure instanceof ApiRequestError && failure.status === 403);
+      setError(failure instanceof Error ? failure.message : "Repair could not be confirmed. Retry the same repair request.");
+    } finally { setWorking(false); }
+  }
+
   const selectedRepository = catalog?.repositories.find((repository) => String(repository.githubRepositoryId) === selectedRepositoryId);
   const projectRepository = project?.binding?.repository || project?.repository.repository;
   const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
@@ -144,14 +174,17 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
       : !readyConnection
         ? VIEWS.githubConnect
         : project?.repository.configured
-          ? VIEWS.githubConfiguredRepo
+          ? project.readiness?.authority === "unverified" ? VIEWS.githubRepairRepo : VIEWS.githubConfiguredRepo
           : project && repositoryCount === 0
             ? VIEWS.githubEmptyRepo
             : VIEWS.githubChooseRepo;
 
-  return <DialogFrame title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className="github-integration-window" backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={authentication === "required" ? "authentication" : undefined} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
+  // WebKit must create the repair scroll owner with its native gutter already styled.
+  // Remount only when entering/leaving repair; request state stays in this component.
+  return <DialogFrame key={currentView === VIEWS.githubRepairRepo ? "repair" : "integration"} title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className={`github-integration-window${currentView === VIEWS.githubRepairRepo ? " classic-scrollbars" : ""}`} backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={authentication === "required" ? "authentication" : undefined} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
         {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
         {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
+        {repairMessage ? <p role="status">{repairMessage}</p> : null}
         {authentication === "ready" && permissionDenied ? <AdministrationSignIn onOpen={onOpenAdministration} /> : null}
         {sessionError ? <p role="alert">{sessionError}</p> : null}
         {authentication === "required" ? <div className="github-control-login">
@@ -180,12 +213,25 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
             {project.repository.configured && projectRepositoryPath ? <div className="github-repository-summary classic-summary">
               <span className="github-repository-icon" aria-hidden="true" />
               <span><a className="classic-link" href={`https://github.com/${projectRepositoryPath}`} target="_blank" rel="noreferrer">{projectRepositoryPath}</a><small>Used by every room in this project.</small></span>
-              <span className="classic-status">Configured</span>
+              <span className="classic-status" data-attention={project.readiness?.authority === "unverified"}>{project.readiness?.authority === "verified" ? "Repository verified" : project.readiness?.authority === "unverified" ? "Needs repair" : "Configured"}</span>
             </div> : catalog?.repositories.length ? <>
               <label>Repository<select className="classic-select" value={selectedRepositoryId} onChange={(event) => setSelectedRepositoryId(event.target.value)}>{catalog.repositories.map((repository) => <option key={repository.githubRepositoryId} value={repository.githubRepositoryId}>{repository.owner}/{repository.name} · {repository.visibility}</option>)}</select></label>
               {!project.defaults ? <p role="alert">This project is not ready to configure a repository.</p> : null}
               <button type="button" className="classic-button github-use-repository-button" disabled={!selectedRepository || !project.defaults || working} onClick={() => void configureProject()}>{working ? "Configuring…" : "Use repository"}</button>
             </> : <div className="github-empty-repositories classic-summary"><p><strong>No repositories available.</strong><small>Choose which repositories this app can access, then refresh.</small></p>{integration.app ? <a className="classic-button" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Choose repositories on GitHub</a> : null}</div>}
+            {project.repository.configured ? <div className="github-repair">
+              {project.readiness?.authority === "unverified" ? <>
+                <p role="status">The saved repository could not be verified. After a server move, repair its paths here. Signing in to GitHub does not update them.</p>
+                {project.readiness.state === "available" ? <>
+                  <p>Use a standalone checkout on the configured default branch. These paths are on the server.</p>
+                  <label>Checkout path<input className="classic-input" value={repairPaths.checkoutPath} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, checkoutPath: event.target.value })} /></label>
+                  <label>Assignment worktree root<input className="classic-input" value={repairPaths.worktreeRoot} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, worktreeRoot: event.target.value })} /></label>
+                  {session?.principal.role === "OWNER" || session?.principal.capabilities.includes("PROJECT_REPOSITORY_CONFIGURE") ? <button type="button" className="classic-button" disabled={working || !repairPaths.checkoutPath || !repairPaths.worktreeRoot} onClick={() => void repairProject()}>{working ? "Repairing…" : repairRequest ? "Retry repair" : "Repair repository paths"}</button> : <p>An administrator with repository configuration permission must apply the repair.</p>}
+                  {repairRequest && !working ? <p>The outcome is unconfirmed. Retry uses the same paths and request.</p> : null}
+                </> : <p role="alert">{project.readiness.state === "blocked" ? "Repair is blocked. Check GitHub credential availability and finish or reconcile outstanding repository work." : "Repair requires an enabled repository and its matching GitHub connection."}</p>}
+              </> : null}
+              <button type="button" className="classic-button" disabled={working || loading || Boolean(repairRequest)} onClick={() => void loadDashboard()}>Check repository status</button>
+            </div> : null}
           </fieldset> : null}
         </> : null}
   </DialogFrame>;
