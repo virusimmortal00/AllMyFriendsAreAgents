@@ -1597,7 +1597,16 @@ matrix and `pnpm exec playwright test --config tests/visual/playwright.config.ts
 protected-work.visual.ts` for the interaction flow. Screenshots are retained in
 the ignored capture directory; no credentials or real room content are included.
 
-Account-backed independent review and its receipt validator have not run because
-the required explicit authorization to consume Codex allowance is pending.
+An authorized independent review of this capture was stopped after 27 images
+when it identified a short native participant dropdown and redundant form framing
+in WORK-07. The original seven-question verdicts and invocation receipts are
+retained in `run-9UpyTF/codex-review-RvtGSA`; failures have not been rewritten.
+The form now uses the shared `classic-select` and separator-based grouping.
+Recapture and review of the affected views are pending.
+
+That partial review also rejected existing Room Task Detail and Durable
+Continuations framing, plus Room Task Detail dropdown sizing. Those components
+are outside this change. Whole-matrix visual acceptance remains failed/pending;
+passing affected-view evidence does not override unrelated failed judgments.
 Physical-device browser chrome, software keyboards, text enlargement, and live
 provider behavior remain unverified by this browser matrix.

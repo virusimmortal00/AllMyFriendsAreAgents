@@ -49,7 +49,7 @@ export function ProtectedWorkForm({ agents, enabled, onChanged }: { agents: read
   const [pending, setPending] = useState(false); const [error, setError] = useState("");
   const request = useRef<{ content: string; id: string } | null>(null);
   const selected = owner || agents[0]?.agentId;
-  return <form className="protected-work-form classic-group" onSubmit={async (event) => {
+  return <form className="protected-work-form" onSubmit={async (event) => {
     event.preventDefault(); if (!selected || !objective.trim()) return;
     const content = JSON.stringify([selected, objective.trim()]);
     if (request.current?.content !== content) request.current = { content, id: crypto.randomUUID() };
@@ -60,7 +60,7 @@ export function ProtectedWorkForm({ agents, enabled, onChanged }: { agents: read
   }}>
     <h3>Protected review or research</h3>
     <p>The participant pauses ordinary chat, works read-only within the configured budget, then catches up before returning.</p>
-    <label>Participant<select value={selected || ""} onChange={(event) => setOwner(event.target.value as AgentId)} disabled={pending}>{agents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.conversationalName || agent.agentId}</option>)}</select></label>
+    <label>Participant<select className="classic-select" value={selected || ""} onChange={(event) => setOwner(event.target.value as AgentId)} disabled={pending}>{agents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.conversationalName || agent.agentId}</option>)}</select></label>
     <label>Objective<textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={4_000} rows={3} disabled={pending} /></label>
     <button type="submit" className="classic-button" disabled={!enabled || pending || !selected || !objective.trim()}>{pending ? "Starting…" : "Start protected work"}</button>
     {!enabled ? <p>Enable investigations and configure a read-only executor before starting.</p> : null}
