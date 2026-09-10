@@ -1,7 +1,10 @@
 # Shared agent behavior guidance
 
 The room runner supplies a current UTC timestamp and weekday plus six shared
-behavior rules on every prompt build. Optional room customization remains a
+behavior rules on every prompt build. The exact rule text is shared from
+`shared/agent-behavior.ts` with the read-only preview in Room Properties →
+Agent behavior. Expanding that preview does not change room settings. Disabling
+the additional room prompt does not disable shared guidance. Optional room customization remains a
 separate section. The implementation is in `server/agent-behavior.ts`; both CLI
 and structured room turns use it through `server/agent-runner.ts`.
 

@@ -1704,3 +1704,35 @@ The renewed full capture and independent seven-question judgments for the final
 revision are recorded in [PR #174](https://github.com/virusimmortal00/AllMyFriendsAreAgents/pull/174).
 The same scoped exception applies only to the 804 images outside the 54 affected
 images; neither that exception nor the screenshot CI job supplies visual approval.
+
+## Shared behavior rules preview — 2026-09-10
+
+`ROOM-02` Agent Behavior now exposes the exact shared rule text in a read-only
+expander alongside the editable additional room prompt. Disabling that prompt
+does not remove the shared guidance. The embedded `ROOM-03` Summarizer Model
+Picker was also checked for effects from the longer parent form.
+
+Evidence for source-input digest
+`007c053130b901f399ff54641b3f3f370d94cbf1f6003c1c3a26df0820e2abc3`:
+
+- `pnpm run capture:visual --workers 4`: 702 passed, 6 skipped; 906/906 images
+  captured with no layout failures. Capture identifier: `run-hmlJZ9`.
+- Independent review `codex-review-eK0euZ` retained original images,
+  per-image seven-question verdicts, and session receipts. All 48 `ROOM-02`
+  images passed: collapsed and expanded states, top and bottom, Chromium and
+  WebKit at all six matrix sizes. Keyboard Enter toggles the expander without
+  submitting the dialog; every rule remains reachable through native scrolling.
+- Of 24 additional `ROOM-03` images, 22 passed. WebKit Minimum phone/top failed
+  style, proportion, and outcome; Short laptop/top failed style and outcome.
+  The findings concern the existing rounded Sort/Filter dropdowns and their
+  heights. The preceding `run-9qhdF0` Minimum phone capture also shows those
+  controls; this change does not modify model-picker controls or their styles.
+  These findings remain unresolved and are outside the rules-preview change.
+- `pnpm check:visual-review` against this capture, review, and receipts exits 1:
+  the two retained failed verdicts plus intentionally partial review coverage
+  (72/906 images). This is scoped evidence, not full-matrix visual approval.
+  No verdicts were rewritten or reused from the preceding capture.
+
+Physical-device behavior, native browser chrome, software keyboards, and text
+enlargement remain unverified. The preview has not been verified in a deployed
+container; these checks use production components with fictional API fixtures.
