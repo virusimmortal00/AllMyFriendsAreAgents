@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { AIM_5_COLOR_PALETTE, DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AgentProcessSupervisor, __testing, runAgent } from "./agent-runner.js";
+import { defaultRoomConfiguration } from "./room-configuration.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
 import { ProviderInvocationError, providerFailureCode, providerRetryAfterMs } from "./provider-failure.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
@@ -403,6 +404,23 @@ describe("room prompt context", () => {
     expect(prompt).toContain("ROOM DIAGNOSTICS (server-owned, lease-bound)");
     expect(prompt).not.toContain(secret);
     expect(JSON.parse(__testing.opencodeEnvironment({}, "read-only", false, true).OPENCODE_PERMISSION!)).toHaveProperty("room_diagnostics", "allow");
+  });
+
+  it.each([false, true])("refreshes time and retains behavior rules with room customization disabled (structured=%s)", async (structured) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const configured = { ...state, roomConfiguration: { ...defaultRoomConfiguration(), basePromptText: null } };
+      vi.setSystemTime(new Date("2026-09-07T12:00:00Z"));
+      const first = await __testing.buildPromptBundle("codex-sol", configured, "Hello", false, "read-only", undefined, structured);
+      vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+      const next = await __testing.buildPromptBundle("codex-sol", configured, "Hello again", false, "read-only", undefined, structured);
+      expect(first.prompt).toContain("Monday, UTC");
+      expect(next.prompt).toContain("2026-09-10T12:00:00.000Z — Thursday, UTC");
+      expect(next.prompt).not.toContain("Monday, UTC");
+      expect(next.prompt).toContain("BASE BEHAVIOR RULES");
+      expect(next.prompt).toContain("current status is unverified");
+      expect(next.prompt).not.toContain("ROOM BASE PROMPT");
+    } finally { vi.useRealTimers(); }
   });
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {
