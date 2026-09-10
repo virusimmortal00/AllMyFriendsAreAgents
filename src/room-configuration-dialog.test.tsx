@@ -2,6 +2,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
 import { useState } from "react";
 import { ServerAdministration } from "./server-administration";
 import { WorkspaceSurface } from "./workspace-surface";
@@ -43,15 +44,21 @@ describe("RoomConfigurationDialog", () => {
     expect(screen.getByRole("button", { name: "Use built-in default" }).closest("label")).toBeNull();
     expect(screen.getByRole("combobox", { name: "Pre-flight mode" }).classList.contains("classic-select")).toBe(true);
     const user = userEvent.setup();
-    await user.clear(screen.getByLabelText("Prompt", { selector: "textarea" }));
-    await user.type(screen.getByLabelText("Prompt", { selector: "textarea" }), "Temporary prompt");
+    await user.clear(screen.getByLabelText("Additional room prompt", { selector: "textarea" }));
+    await user.type(screen.getByLabelText("Additional room prompt", { selector: "textarea" }), "Temporary prompt");
     await user.click(screen.getByRole("button", { name: "Use built-in default" }));
-    expect((screen.getByRole("textbox", { name: "Prompt" }) as HTMLTextAreaElement).value).toBe("Default merit rule");
+    expect((screen.getByRole("textbox", { name: "Additional room prompt" }) as HTMLTextAreaElement).value).toBe("Default merit rule");
+    const rulesToggle = screen.getByText("Shared behavior rules · always included");
+    await user.click(rulesToggle);
+    expect(rulesToggle.closest("details")?.open).toBe(true);
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(AGENT_BEHAVIOR_RULES);
+    expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
     await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
-    expect((screen.getByRole("textbox", { name: "Prompt" }) as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.getByText(AGENT_BEHAVIOR_RULES[0])).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Additional room prompt" }) as HTMLTextAreaElement).disabled).toBe(true);
     await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
-    await user.clear(screen.getByLabelText("Prompt", { selector: "textarea" }));
-    await user.type(screen.getByLabelText("Prompt", { selector: "textarea" }), "Custom merit rule");
+    await user.clear(screen.getByLabelText("Additional room prompt", { selector: "textarea" }));
+    await user.type(screen.getByLabelText("Additional room prompt", { selector: "textarea" }), "Custom merit rule");
     await user.click(screen.getByRole("button", { name: "OK" }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(fetchMock.mock.calls[1][0]).toBe("/api/control/me");
@@ -88,7 +95,7 @@ describe("RoomConfigurationDialog", () => {
     }
     render(<AuthenticationFlow />);
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
+    const prompt = await screen.findByLabelText("Additional room prompt", { selector: "textarea" });
     await user.clear(prompt);
     await user.type(prompt, "Draft room rule");
     await user.click(screen.getByRole("button", { name: "Apply" }));
@@ -218,7 +225,7 @@ describe("RoomConfigurationDialog", () => {
     render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
 
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    const prompt = await screen.findByLabelText("Prompt", { selector: "textarea" });
+    const prompt = await screen.findByLabelText("Additional room prompt", { selector: "textarea" });
     await user.clear(prompt);
     await user.type(prompt, "Draft merit rule");
     await user.click(screen.getByRole("tab", { name: "General" }));
@@ -226,7 +233,7 @@ describe("RoomConfigurationDialog", () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("tab", { name: "Agent behavior" }).getAttribute("aria-selected")).toBe("true");
-    expect((screen.getByLabelText("Prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Draft merit rule");
+    expect((screen.getByLabelText("Additional room prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Draft merit rule");
   });
 
   it("retries a failed model catalog request without closing the chooser", async () => {

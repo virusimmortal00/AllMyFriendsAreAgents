@@ -90,7 +90,7 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("button", { name: "Close Server Administration and return to Chat" }).click();
   await menu("Room", "Room properties...");
   await page.getByRole("tab", { name: "Agent behavior", exact: true }).click();
-  await page.getByLabel("Prompt", { exact: true }).fill("Fictional draft retained through sign-in.");
+  await page.getByLabel("Additional room prompt", { exact: true }).fill("Fictional draft retained through sign-in.");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toHaveCount(0);
@@ -104,7 +104,7 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toBeVisible();
-  await expect(page.getByLabel("Prompt", { exact: true })).toHaveValue("Fictional draft retained through sign-in.");
+  await expect(page.getByLabel("Additional room prompt", { exact: true })).toHaveValue("Fictional draft retained through sign-in.");
   await expect(page.getByRole("button", { name: "Sign in to server administration", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();

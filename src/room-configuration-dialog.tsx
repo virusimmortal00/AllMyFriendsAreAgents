@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
 import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
 import { ApiRequestError, loadRoomConfiguration, loadRoomConfigurationModels, updateRoomConfiguration, type RoomConfiguration } from "./api";
@@ -131,11 +132,16 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
       {!loading && saved ? <>
         <section className="room-configuration-card classic-property-section" aria-labelledby="base-prompt-heading">
           <h3 id="base-prompt-heading">Base Prompt</h3>
-          <p>Applied after each agent’s identity rules on every turn.</p>
+          <p>Each turn includes the agent’s identity, shared behavior rules, and any additional room prompt below.</p>
+          <details className="room-behavior-rules">
+            <summary onKeyDown={(event) => { if (event.key === "Enter") event.stopPropagation(); }}>Shared behavior rules · always included</summary>
+            <p>Read-only guidance for every agent, even when the room base prompt is disabled. Each turn also receives the current UTC date, time, and weekday.</p>
+            <ol>{AGENT_BEHAVIOR_RULES.map((rule) => <li key={rule}>{rule}</li>)}</ol>
+          </details>
           <label className="classic-check"><input type="checkbox" checked={basePromptEnabled} onChange={(event) => setBasePromptEnabled(event.target.checked)} /><span>Include a room base prompt</span></label>
-          <div className="classic-field-heading"><label htmlFor="room-base-prompt">Prompt</label><button type="button" className="classic-button" disabled={!basePromptEnabled || basePromptText === defaultBasePrompt} onClick={() => setBasePromptText(defaultBasePrompt)}>Use built-in default</button></div>
+          <div className="classic-field-heading"><label htmlFor="room-base-prompt">Additional room prompt</label><button type="button" className="classic-button" disabled={!basePromptEnabled || basePromptText === defaultBasePrompt} onClick={() => setBasePromptText(defaultBasePrompt)}>Use built-in default</button></div>
           <textarea id="room-base-prompt" aria-describedby="room-base-prompt-help" rows={4} maxLength={4000} disabled={!basePromptEnabled} value={basePromptText} onChange={(event) => setBasePromptText(event.target.value)} />
-          <small id="room-base-prompt-help">Revision {saved.basePromptRevision}. An empty value resolves to the built-in default; disabling removes this section explicitly.</small>
+          <small id="room-base-prompt-help">Revision {saved.basePromptRevision}. An empty value resolves to the built-in default; disabling removes only this additional prompt. Shared behavior rules remain included.</small>
         </section>
         <section className="room-configuration-card classic-property-section" aria-labelledby="summarizer-heading">
           <h3 id="summarizer-heading">Summarizer</h3>

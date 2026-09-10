@@ -9,6 +9,7 @@ import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type { GenerationJournal, GenerationJournalEvent } from "./generation-journal.js";
 import { conversationLogFields, withLogContext } from "./structured-logger.js";
 import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
+import { agentBehaviorContext } from "./agent-behavior.js";
 import { roomBasePrompt } from "./room-configuration.js";
 import type { AgentId, RoomState } from "./types.js";
 import { confinedWriterInvocation, WRITER_BOUNDARY_ACTIVATION, type ConfinedWriterGrant } from "./writer-confinement.js";
@@ -282,6 +283,7 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
     ? `- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. Change it only through the optional structured style field. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit values from the supported AIM 5.x palette. Omit style when keeping your current look.`
     : `- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit hex values supported by the AIM 5.x palette. Unsupported values are ignored. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.`;
   const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
+${agentBehaviorContext()}
 ${basePromptSection}
 ${commandGuide}
 ${diagnosticsGuide}

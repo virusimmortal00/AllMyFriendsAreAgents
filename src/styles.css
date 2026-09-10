@@ -1269,3 +1269,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .investigation-workspace .task-card { border: 0; border-top: 1px solid #8a8a8a; }
 
 .investigation-workspace .continuation-inbox-entry small { display: block; overflow-wrap: anywhere; }
+
+.room-behavior-rules { min-width: 0; }
+.room-behavior-rules summary { cursor: pointer; min-height: var(--classic-command-height); padding-block: calc((var(--classic-command-height) - var(--classic-control-line-height)) / 2); font: bold var(--classic-control-font-size)/var(--classic-control-line-height) "MS Sans Serif", Arial, sans-serif; }
+.room-behavior-rules summary:focus-visible { outline: 1px dotted currentColor; outline-offset: 2px; }
+.room-behavior-rules p { margin: 6px 0; }
+.room-behavior-rules ol { margin: 6px 0; padding-left: 24px; overflow-wrap: anywhere; }
+.room-behavior-rules li + li { margin-top: 8px; }

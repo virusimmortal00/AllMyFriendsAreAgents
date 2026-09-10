@@ -18,6 +18,7 @@ async function openScenario(page: Page, id: string) {
   } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");
     if (id !== "room-properties-general") await page.getByRole("tab", { name: "Agent behavior" }).click();
+    if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
   } else if (id.startsWith("github-")) {
     await menu(page, "Room", "GitHub integration...");
@@ -308,15 +309,30 @@ for (const scenario of APP_SCENARIOS) {
     if (scenario.id === "improvement-not-found") await expect(page.getByRole("region", { name: "Bounded heartbeat controls" })).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     await capture(page, info, scenario, "top");
+    if (scenario.id === "room-properties-shared-behavior") {
+      const rules = surface.locator(".room-behavior-rules");
+      const disclosure = rules.locator("summary");
+      await disclosure.focus();
+      await disclosure.press("Enter");
+      await expect(rules).not.toHaveAttribute("open", "");
+      await disclosure.press("Enter");
+      await expect(rules).toHaveAttribute("open", "");
+      for (const rule of await rules.locator("li").all()) {
+        await rule.scrollIntoViewIfNeeded();
+        // Native scrolling can leave a fractional CSS pixel at the boundary.
+        await expect(rule).toBeInViewport({ ratio: 0.99 });
+      }
+      await expect(surface.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
+    }
     if (scenario.id === "room-properties-agent-behavior") {
       const toggle = page.getByRole("checkbox", { name: "Include a room base prompt" });
       await toggle.focus();
       await toggle.press("ArrowRight");
       await expect(toggle).toHaveCSS("outline-style", "dotted");
       await toggle.press("Space");
-      await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeDisabled();
+      await expect(page.getByRole("textbox", { name: "Additional room prompt", exact: true })).toBeDisabled();
       await toggle.press("Space");
-      await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeEnabled();
+      await expect(page.getByRole("textbox", { name: "Additional room prompt", exact: true })).toBeEnabled();
     }
     if (scenario.id === "room-summarizer-model-picker") await expect(page.getByRole("button", { name: "Back to agent behavior", exact: true })).toBeInViewport({ ratio: 1 });
     if (scenario.shots.includes("bottom")) {
