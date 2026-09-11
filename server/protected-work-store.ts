@@ -40,7 +40,7 @@ type ArchiveCheckpoint = z.infer<typeof archiveCheckpointSchema>;
 const archiveSchema = z.object({ checkpoint: archiveCheckpointSchema.nullable(), entries: z.array(archiveEntrySchema), entryBytes: z.number().int().nonnegative() }).strict();
 type Archive = z.infer<typeof archiveSchema>;
 const stateSchema = z.object({ schemaVersion: z.literal(2), records: z.record(z.string(), recordSchema), events: z.array(eventSchema),
-  anchors: z.record(z.string(), eventSchema), archive: archiveSchema }).strict();
+  anchors: z.record(z.string(), eventSchema), actionReceiptCaps: z.record(z.string(), z.number().int().positive()), archive: archiveSchema }).strict();
 type State = z.infer<typeof stateSchema>;
 const legacyStateSchema = z.object({ schemaVersion: z.literal(1), records: z.record(z.string(), recordSchema), events: z.array(eventSchema) }).strict();
 
@@ -130,17 +130,31 @@ function validateArchive(archive: Archive, records: State["records"]) {
   if (entryBytes !== archive.entryBytes) throw new Error("Invalid protected-work archive byte accounting.");
 }
 
-function validate(value: unknown): State {
+function validate(value: unknown, policy: ProtectedWorkRetention): State {
   const state = stateSchema.parse(value);
   validateRecords(state.records, state.events, state.anchors);
+  for (const [workId, cap] of Object.entries(state.actionReceiptCaps)) {
+    const record = state.records[workId];
+    const count = record?.actions?.length ?? 0;
+    if (!record || cap < policy.maxActionReceipts || cap < count || cap - count > policy.actionRecoveryReserve) {
+      throw new Error("Invalid protected-work action receipt cap.");
+    }
+  }
   validateArchive(state.archive, state.records);
   return state;
 }
 
-function migrate(value: unknown) {
+function migrate(value: unknown, policy: ProtectedWorkRetention) {
   const legacy = legacyStateSchema.parse(value);
   validateRecords(legacy.records, legacy.events, {});
-  return validate({ schemaVersion: 2, records: legacy.records, events: legacy.events, anchors: {}, archive: { checkpoint: null, entries: [], entryBytes: 0 } });
+  const actionReceiptCaps = Object.fromEntries(Object.values(legacy.records).flatMap((record) => {
+    const count = record.actions?.length ?? 0;
+    return record.phase !== "available" && count > policy.maxActionReceipts - policy.actionRecoveryReserve
+      ? [[record.workId, Math.max(policy.maxActionReceipts, count + policy.actionRecoveryReserve)]]
+      : [];
+  }));
+  return validate({ schemaVersion: 2, records: legacy.records, events: legacy.events, anchors: {}, actionReceiptCaps,
+    archive: { checkpoint: null, entries: [], entryBytes: 0 } }, policy);
 }
 
 function serializedBytes(value: unknown) { return Buffer.byteLength(JSON.stringify(value)); }
@@ -181,6 +195,7 @@ function archiveTerminalRecords(state: State, policy: ProtectedWorkRetention, no
     state.archive.entries.push(entry);
     delete state.records[record.workId];
     delete state.anchors[record.workId];
+    delete state.actionReceiptCaps[record.workId];
     state.events = state.events.filter((event) => event.workId !== record.workId);
   }
 }
@@ -209,7 +224,8 @@ function maintain(state: State, policy: ProtectedWorkRetention, now: string) {
 }
 
 function hotLedgerBytes(state: State) {
-  return serializedBytes({ schemaVersion: state.schemaVersion, records: state.records, events: state.events, anchors: state.anchors });
+  return serializedBytes({ schemaVersion: state.schemaVersion, records: state.records, events: state.events,
+    anchors: state.anchors, actionReceiptCaps: state.actionReceiptCaps });
 }
 
 async function persist(file: string, state: State) {
@@ -237,11 +253,12 @@ export class ProtectedWorkStore {
     let migrated = false;
     const state = await readFile(file, "utf8").then((raw) => {
       const parsed: unknown = JSON.parse(raw);
-      if ((parsed as { schemaVersion?: unknown }).schemaVersion === 1) { migrated = true; return migrate(parsed); }
-      return validate(parsed);
+      if ((parsed as { schemaVersion?: unknown }).schemaVersion === 1) { migrated = true; return migrate(parsed, policy); }
+      return validate(parsed, policy);
     }).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
-      return validate({ schemaVersion: 2, records: {}, events: [], anchors: {}, archive: { checkpoint: null, entries: [], entryBytes: 0 } });
+      return validate({ schemaVersion: 2, records: {}, events: [], anchors: {}, actionReceiptCaps: {},
+        archive: { checkpoint: null, entries: [], entryBytes: 0 } }, policy);
     });
     const beforeMaintenance = JSON.stringify(state);
     // The migration write is intentionally lossless. Existing v2 ledgers enforce
@@ -251,6 +268,10 @@ export class ProtectedWorkStore {
     return new ProtectedWorkStore(file, state, policy);
   }
   async list() { await this.queue; return structuredClone(Object.values(this.state.records)); }
+  async retainedWorkIds() {
+    await this.queue;
+    return [...Object.keys(this.state.records), ...this.state.archive.entries.map((entry) => entry.record.workId)];
+  }
   async get(id: string) {
     await this.queue;
     return structuredClone(this.state.records[id] ?? this.state.archive.entries.findLast((entry) => entry.record.workId === id)?.record);
@@ -258,8 +279,9 @@ export class ProtectedWorkStore {
   actionReceiptAvailable(record: ProtectedWorkRecord, action: "stop" | "retry-return" | "dismiss") {
     const count = record.actions?.length ?? 0;
     if (action === "retry-return") return count < this.retention.maxActionReceipts - this.retention.actionRecoveryReserve;
-    if (action === "stop") return count < this.retention.maxActionReceipts - 1;
-    return count < this.retention.maxActionReceipts;
+    const cap = this.state.actionReceiptCaps[record.workId] ?? this.retention.maxActionReceipts;
+    if (action === "stop") return count < cap - 1;
+    return count < cap;
   }
   async put(record: ProtectedWorkRecord, expectedRevision: number) {
     record = recordSchema.parse(record);
@@ -277,8 +299,9 @@ export class ProtectedWorkStore {
       next.events.push(event);
       maintain(next, this.retention, record.updatedAt);
       const bytes = hotLedgerBytes(next);
+      const currentBytes = hotLedgerBytes(this.state);
       if (expectedRevision === 0 && bytes > this.retention.maxAdmissionBytes) throw new ProtectedWorkCapacityError();
-      if (expectedRevision > 0 && bytes > this.retention.maxHotLedgerBytes && hotLedgerBytes(this.state) <= this.retention.maxHotLedgerBytes) {
+      if (expectedRevision > 0 && bytes > this.retention.maxHotLedgerBytes && bytes > currentBytes) {
         throw new ProtectedWorkCapacityError("Protected-work recovery reserve is exhausted.");
       }
       await persist(this.file, next);

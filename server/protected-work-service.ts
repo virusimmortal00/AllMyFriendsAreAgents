@@ -20,6 +20,8 @@ export class ProtectedWorkService {
   private readonly admissions = new Set<string>();
   private readonly starts = new Map<string, { digest: string; promise: Promise<ProtectedWorkView> }>();
   private readonly mutations = new Map<string, Promise<unknown>>();
+  private retentionMutation = 0;
+  private retentionCleaned = -1;
   private async exclusive<T>(workId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.mutations.get(workId) || Promise.resolve();
     const pending = previous.catch(() => undefined).then(operation);
@@ -42,6 +44,7 @@ export class ProtectedWorkService {
       onError?: (error: unknown) => void;
     }) {}
   async initialize() {
+    await this.pruneRetiredInvestigations();
     for (const record of await this.store.list()) {
       if (record.roomId !== this.options.roomId) throw new Error("Protected work belongs to a different room.");
       if (record.phase !== "available") this.reservations.restore(record.owner, record.workId);
@@ -82,6 +85,8 @@ export class ProtectedWorkService {
     try {
       saved = await this.store.put(record, 0);
       if (!saved) throw new Error("Protected work changed concurrently.");
+      this.retentionMutation += 1;
+      await this.pruneRetiredInvestigations();
       const result = await this.investigations.request({ investigationId: workId, owner: input.owner, objective: record.objective,
         trigger: "Explicit protected read-only review/research", signal: "AUTHENTICATED_HUMAN" });
       if (result.kind !== "ok") {
@@ -138,6 +143,7 @@ export class ProtectedWorkService {
     if (this.closed || this.processing) return;
     this.processing = true;
     try {
+      await this.pruneRetiredInvestigations();
       for (let record of await this.store.list()) {
         if (this.admissions.has(record.workId)) continue;
         if (record.phase === "available") continue;
@@ -241,8 +247,19 @@ export class ProtectedWorkService {
   private async patch(record: ProtectedWorkRecord, patch: Partial<ProtectedWorkRecord>) {
     const next = { ...record, ...patch, revision: record.revision + 1, updatedAt: new Date().toISOString() };
     if (!await this.store.put(next, record.revision)) return undefined;
+    this.retentionMutation += 1;
+    await this.pruneRetiredInvestigations();
     this.options.changed?.();
     return next;
+  }
+  private async pruneRetiredInvestigations() {
+    const target = this.retentionMutation;
+    if (this.retentionCleaned >= target) return;
+    try {
+      await this.investigations.pruneTerminalProtectedWork(await this.store.retainedWorkIds());
+      this.retentionCleaned = Math.max(this.retentionCleaned, target);
+    }
+    catch (error) { this.options.onError?.(error); }
   }
   async shutdown() { this.closed = true; if (this.timer) clearInterval(this.timer); for (const controller of this.returns.values()) controller.abort(); }
 }

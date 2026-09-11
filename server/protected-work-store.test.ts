@@ -50,9 +50,38 @@ describe("protected-work retention", () => {
       const store = await ProtectedWorkStore.open(directory);
       expect(await store.get(value.workId)).toEqual(value);
       const migrated = JSON.parse(await readFile(path.join(directory, "protected-work.json"), "utf8"));
-      expect(migrated).toMatchObject({ schemaVersion: 2, records: { [value.workId]: value }, anchors: {}, archive: { checkpoint: null, entries: [] } });
+      expect(migrated).toMatchObject({ schemaVersion: 2, records: { [value.workId]: value }, anchors: {}, actionReceiptCaps: {}, archive: { checkpoint: null, entries: [] } });
       expect(migrated.events).toHaveLength(1);
       expect(await (await ProtectedWorkStore.open(directory)).get(value.workId)).toEqual(value);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it("reserves bounded recovery receipts for an oversized active v1 record", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "protected-store-action-migrate-"));
+    try {
+      const now = "2026-01-01T00:00:00.000Z";
+      const actions = Array.from({ length: 5 }, (_, index) => ({ key: `${index}`.padStart(64, "a"), action: "retry-return" as const }));
+      const base = record("protected-legacy-active", now, "blocked");
+      const { returnAttempts, package: workPackage, report, ...beforeActions } = base;
+      const value = { ...beforeActions, actions, returnAttempts, package: workPackage, report };
+      const unsigned = { workId: value.workId, revision: value.revision, at: value.updatedAt, phase: value.phase, recordHash: digest(value), previousHash: null };
+      await writeFile(path.join(directory, "protected-work.json"), JSON.stringify({ schemaVersion: 1, records: { [value.workId]: value }, events: [{ ...unsigned, eventHash: digest(unsigned) }] }));
+      const policy = { maxActionReceipts: 4, actionRecoveryReserve: 2 };
+      const store = await ProtectedWorkStore.open(directory, policy);
+      expect(store.actionReceiptAvailable(value, "retry-return")).toBe(false);
+      expect(store.actionReceiptAvailable(value, "stop")).toBe(true);
+      expect(store.actionReceiptAvailable(value, "dismiss")).toBe(true);
+      const afterStop = { ...value, revision: 2, updatedAt: "2026-01-01T00:00:01.000Z",
+        actions: [...actions, { key: "f".repeat(64), action: "stop" as const }] };
+      expect(await store.put(afterStop, value.revision)).toBe(true);
+      const reopened = await ProtectedWorkStore.open(directory, policy);
+      expect(reopened.actionReceiptAvailable(afterStop, "stop")).toBe(false);
+      expect(reopened.actionReceiptAvailable(afterStop, "dismiss")).toBe(true);
+      const file = path.join(directory, "protected-work.json");
+      const tampered = JSON.parse(await readFile(file, "utf8"));
+      tampered.actionReceiptCaps[value.workId] += 100;
+      await writeFile(file, JSON.stringify(tampered));
+      await expect(ProtectedWorkStore.open(directory, policy)).rejects.toThrow(/receipt cap/);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
@@ -124,6 +153,23 @@ describe("protected-work retention", () => {
       const recovered = { ...active, revision: 2, phase: "available" as const, stoppedAt: "2026-01-01T00:00:02.000Z", updatedAt: "2026-01-01T00:00:02.000Z", disposition: "no-update" as const };
       expect(await store.put(recovered, active.revision)).toBe(true);
       expect(await (await ProtectedWorkStore.open(directory)).get(active.workId)).toEqual(recovered);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  it("allows an oversized migrated ledger to shrink but rejects further growth", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "protected-store-oversized-"));
+    try {
+      const now = "2026-01-01T00:00:00.000Z";
+      const value = { ...record("protected-legacy-oversized", now, "queued"), objective: "x".repeat(2_000) };
+      const unsigned = { workId: value.workId, revision: value.revision, at: value.updatedAt, phase: value.phase, recordHash: digest(value), previousHash: null };
+      await writeFile(path.join(directory, "protected-work.json"), JSON.stringify({ schemaVersion: 1, records: { [value.workId]: value }, events: [{ ...unsigned, eventHash: digest(unsigned) }] }));
+      const policy = { maxAdmissionBytes: 500, maxHotLedgerBytes: 1_000 };
+      const store = await ProtectedWorkStore.open(directory, policy);
+      const grown = { ...value, revision: 2, updatedAt: "2026-01-01T00:00:01.000Z", blocker: "y".repeat(2_000) };
+      await expect(store.put(grown, value.revision)).rejects.toBeInstanceOf(ProtectedWorkCapacityError);
+      const shrunk = { ...value, revision: 2, updatedAt: "2026-01-01T00:00:02.000Z", objective: "Review" };
+      expect(await store.put(shrunk, value.revision)).toBe(true);
+      expect(await (await ProtectedWorkStore.open(directory, policy)).get(value.workId)).toEqual(shrunk);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 

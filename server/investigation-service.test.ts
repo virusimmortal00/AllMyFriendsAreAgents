@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
 import { RoomStore } from "./room-store.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { InvestigationService, type InvestigationExecutor, type InvestigationExecutorInput, type InvestigationExecutorResult } from "./investigation-service.js";
@@ -88,6 +89,19 @@ describe("independent investigation lane", () => {
   });
   it("archives expired inbox results and clears the durable waiting disposition", async () => {
     let clock = new Date("2026-08-25T00:00:00.000Z"); const value = await fixture(new DeferredExecutor(), { now: () => clock }); const executor = value.executor as DeferredExecutor; await value.service.request({ owner: "codex-sol", objective: "Retention", trigger: "signal", signal: "AGENT_DECISION", evidenceRefs: value.evidence }); await eventually(() => executor.inputs.length === 1); executor.resolve(); await eventually(async () => (await value.service.list())[0]?.status === "COMPLETED"); clock = new Date("2026-09-02T00:00:00.000Z"); expect(await value.service.inbox("codex-sol")).toMatchObject([{ status: "ARCHIVED" }]); expect((await value.service.list())[0]).toMatchObject({ status: "ARCHIVED", resultWaiting: false });
+  });
+  it("prunes terminal protected history without deleting nonterminal work", async () => {
+    const value = await fixture(); const executor = value.executor as DeferredExecutor;
+    await value.rooms.updateRoster(value.rooms.snapshot().roster!.revision, legacyDefaultRoomAgentRoster().entries);
+    const requested = await value.service.request({ investigationId: "protected-retention-fixture", owner: "codex-sol",
+      objective: "Retention boundary", trigger: "Protected retention test", signal: "AUTHENTICATED_HUMAN" });
+    expect(requested.kind).toBe("ok"); await eventually(() => executor.inputs.length === 1);
+    expect(await value.service.pruneTerminalProtectedWork([])).toEqual([]);
+    expect(await value.store.get("protected-retention-fixture")).toBeDefined();
+    await value.service.cancel("protected-retention-fixture", "Fixture complete.");
+    expect(await value.service.pruneTerminalProtectedWork([])).toEqual(["protected-retention-fixture"]);
+    expect(await value.store.get("protected-retention-fixture")).toBeUndefined();
+    expect(await value.store.audit("protected-retention-fixture")).toEqual([]);
   });
   it("rejects forged durable checkpoints and audit chains on reopen", async () => {
     const value = await fixture(); const executor = value.executor as DeferredExecutor; await value.service.request({ owner: "codex-sol", objective: "Check", trigger: "signal", signal: "AGENT_DECISION", evidenceRefs: value.evidence }); await eventually(() => executor.inputs.length === 1); await executor.inputs[0].progress("WAITING_TOOL", "tool", { summary: "checkpoint", opaqueState: "safe" }); const file = path.join(value.stateDirectory, "investigations.json"); const state = JSON.parse(await readFile(file, "utf8")); state.jobs[Object.keys(state.jobs)[0]].checkpoint.opaqueState = "forged"; await writeFile(file, JSON.stringify(state)); await expect(InvestigationStore.open(value.stateDirectory)).rejects.toThrow(/checkpoint|investigation/i);

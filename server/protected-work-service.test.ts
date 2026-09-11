@@ -176,6 +176,17 @@ describe("protected participation", () => {
     expect((await restored.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Inspect bounded evidence", requestId: "request-archived" }, "human:fixture")).workId).toBe(first.workId);
     await expect(restored.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Substituted archived objective", requestId: "request-archived" }, "human:fixture")).rejects.toThrow(/different/);
   });
+  it("retires terminal backing investigations when archive detail is checkpointed", async () => {
+    const f = await fixture("json", { maxTerminalRecords: 1, maxArchiveBytes: 512 });
+    const retired = await f.start("request-retired"); await expect.poll(() => f.inputs.length).toBe(1); await f.finish(); await f.service.tick();
+    await f.start("request-current"); await expect.poll(() => f.inputs.length).toBe(2); await f.finish(); await f.service.tick();
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.investigations.list()).map((job) => job.investigationId)).not.toContain(retired.workId);
+    expect(await f.investigations.audit(retired.workId)).toEqual([]);
+    const reused = await f.start("request-retired");
+    expect(reused.workId).toBe(retired.workId);
+    await expect.poll(() => f.inputs.length).toBe(3);
+  });
   it("waits for confirmed termination, preserves a checkpoint, discards late results, and isolates replacement work", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
     await f.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Partial finding", opaqueState: "private-checkpoint" });

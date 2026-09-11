@@ -25,5 +25,24 @@ export class InvestigationStore {
   async compareAndSet(expectedRevision: number, record: InvestigationRecord, event: InvestigationEvent) { return this.mutate((state) => { const before = state.jobs[record.investigationId]; if (!before || before.revision !== expectedRevision) return { result: false }; if (investigationIsNonterminal(record) && Object.values(state.jobs).some((job) => job.investigationId !== record.investigationId && job.owner === record.owner && investigationIsNonterminal(job))) return { result: false }; return { state: { ...state, jobs: { ...state.jobs, [record.investigationId]: record }, events: [...state.events, event] }, result: true }; }); }
   async complete(expectedRevision: number, record: InvestigationRecord, entry: InvestigationInboxEntry, event: InvestigationEvent, maxEntries: number) { return this.mutate((state) => { const before = state.jobs[record.investigationId]; if (!before || before.revision !== expectedRevision || state.inbox[entry.inboxEntryId]) return { result: "conflict" as const }; if (record.providerSessionId && Object.values(state.jobs).some((job) => job.investigationId !== record.investigationId && job.providerSessionId === record.providerSessionId)) return { result: "provider_session_conflict" as const }; const inbox = { ...state.inbox, [entry.inboxEntryId]: entry }; const active = Object.values(inbox).filter((item) => item.owner === entry.owner && (item.status === "UNREAD" || item.status === "ACKNOWLEDGED")).sort((a, b) => a.createdAt.localeCompare(b.createdAt)); for (const stale of active.slice(0, Math.max(0, active.length - maxEntries))) inbox[stale.inboxEntryId] = { ...stale, revision: stale.revision + 1, status: "ARCHIVED", updatedAt: entry.createdAt }; return { state: { ...state, jobs: { ...state.jobs, [record.investigationId]: record }, inbox, events: [...state.events, event] }, result: "completed" as const }; }); }
   async updateInbox(expectedRevision: number, entry: InvestigationInboxEntry) { return this.mutate((state) => { const before = state.inbox[entry.inboxEntryId]; if (!before || before.revision !== expectedRevision) return { result: false }; return { state: { ...state, inbox: { ...state.inbox, [entry.inboxEntryId]: entry } }, result: true }; }); }
+  async pruneTerminalProtectedWork(retainedIds: readonly string[]) {
+    const retained = new Set(retainedIds);
+    return this.mutate((state) => {
+      const removed = new Set(Object.values(state.jobs)
+        .filter((job) => job.investigationId.startsWith("protected-") && job.admission?.participantEpoch
+          && !retained.has(job.investigationId) && !investigationIsNonterminal(job))
+        .map((job) => job.investigationId));
+      if (!removed.size) return { result: [] as string[] };
+      return {
+        state: {
+          ...state,
+          jobs: Object.fromEntries(Object.entries(state.jobs).filter(([id]) => !removed.has(id))),
+          inbox: Object.fromEntries(Object.entries(state.inbox).filter(([, entry]) => !removed.has(entry.investigationId))),
+          events: state.events.filter((event) => !removed.has(event.investigationId)),
+        },
+        result: [...removed],
+      };
+    });
+  }
   private mutate<T>(operation: (state: InvestigationState) => { state?: InvestigationState; result: T }): Promise<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const result = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); this.queue = this.queue.then(async () => { try { const next = operation(structuredClone(this.state)); if (next.state) { const validated = normalizeInvestigationState(next.state); const temporary = `${this.path}.${process.pid}.tmp`; await writeFile(temporary, `${JSON.stringify(validated, null, 2)}\n`, { mode: 0o600 }); await chmod(temporary, 0o600); await rename(temporary, this.path); this.state = validated; } resolve(next.result); } catch (error) { reject(error); } }); this.queue.catch(() => undefined); return result; }
 }
