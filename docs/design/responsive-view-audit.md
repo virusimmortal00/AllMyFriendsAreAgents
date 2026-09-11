@@ -1447,7 +1447,10 @@ sanitized evidence; this local record is not a production deployment claim.
 
 Remaining coverage at that earlier digest: 45 other registered views, additional roster states such
 as authentication/empty/conflict/model selection, real-device browser chrome,
-on-screen keyboards, larger text, and landscape. No production-device or
+on-screen keyboards, larger text, and landscape. The existing nested roster status
+control now stops its keyboard activation from reaching the configurable row; its
+focused interaction regression confirms it opens status without also opening
+Manage Agents. No production-device or
 app-wide visual certification is implied by this matrix.
 
 ### Application and chat

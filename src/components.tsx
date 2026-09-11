@@ -193,7 +193,7 @@ export function RoomRoster({
                 {onConfigureAgent && (!available || health || protectedJob) && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
                   event.stopPropagation();
                   onConfigureAgent(agent);
-                }}>⚙</button> : null}
+                }} onKeyDown={(event) => event.stopPropagation()}>⚙</button> : null}
               </span>
             </div>
             </Fragment>

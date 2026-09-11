@@ -153,4 +153,27 @@ describe("presence roster rows", () => {
     expect(screen.getByLabelText("Scout: Scout via OpenRouter: The server cannot find the configured OpenCode executable.").className).toContain("presence-status--offline");
     expect(screen.getByRole("button", { name: "Open status for Scout" })).toBeTruthy();
   });
+
+  it("opens agent status from its keyboard control without also opening roster management", () => {
+    const onConfigureAgent = vi.fn();
+    const onManageRoster = vi.fn();
+    const agentId = "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    render(<RoomRoster
+      roster={{ schemaVersion: 3, revision: 9, entries: [{ agentId, conversationalName: "Scout", providerId: "openrouter", modelId: "example/scout", enabled: true }] }}
+      agents={[agentId]}
+      availability={{ [agentId]: false }}
+      openCodeRuntime={{ state: "unavailable", reason: "command_not_found", checkedAt: "2026-09-11T00:00:00.000Z" }}
+      humans={[]}
+      currentHumanId="alice-id"
+      onConfigureAgent={onConfigureAgent}
+      onManageRoster={onManageRoster}
+    />);
+
+    const status = screen.getByRole("button", { name: "Open status for Scout" });
+    fireEvent.keyDown(status, { key: "Enter" });
+    fireEvent.click(status);
+
+    expect(onConfigureAgent).toHaveBeenCalledWith(agentId);
+    expect(onManageRoster).not.toHaveBeenCalled();
+  });
 });
