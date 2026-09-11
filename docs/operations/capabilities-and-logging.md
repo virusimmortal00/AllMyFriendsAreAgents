@@ -58,7 +58,10 @@ curl -fsS http://127.0.0.1:53147/api/ready >/dev/null && print ready
 ```
 
 The server runs a bounded OpenCode `--version` preflight at startup and schedules
-a coalesced background refresh from readiness/state requests. It returns only a safe state: ready version or one of
+a coalesced background refresh from readiness/state requests. The preflight has an
+independent aborting deadline, so an executable that ignores termination cannot
+block server readiness indefinitely. A changed refresh is broadcast to connected
+room clients. It returns only a safe state: ready version or one of
 `command_not_found`, `not_executable`, `timed_out`, `unsupported_version`, or
 `command_failed`. It does not return the executable path, process environment,
 or raw command output. `pnpm service:start` sources the root `.env`; direct

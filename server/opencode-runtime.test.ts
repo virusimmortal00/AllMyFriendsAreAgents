@@ -8,7 +8,7 @@ describe("OpenCode runtime preflight", () => {
     const status = await inspectOpenCodeRuntime(execute, () => 0);
 
     expect(status).toEqual({ state: "ready", version: "1.18.25", checkedAt: "1970-01-01T00:00:00.000Z" });
-    expect(execute).toHaveBeenCalledWith(expect.any(String), ["--version"]);
+    expect(execute).toHaveBeenCalledWith(expect.any(String), ["--version"], expect.any(AbortSignal));
     expect(runtimeAvailability(["codex-sol", "claude-opus"], status)).toEqual({ "codex-sol": true, "claude-opus": true });
   });
 
@@ -31,6 +31,17 @@ describe("OpenCode runtime preflight", () => {
     expect(status).toEqual({ state: "unavailable", reason, checkedAt: "1970-01-01T00:00:00.000Z" });
     expect(JSON.stringify(status)).not.toContain("super-secret-value");
     expect(runtimeAvailability(["codex-sol"], status)).toEqual({ "codex-sol": false });
+  });
+
+  it("settles at the hard preflight deadline when the executable ignores cancellation", async () => {
+    vi.useFakeTimers();
+    const execute = vi.fn<DiscoveryExecutor>(() => new Promise(() => {}));
+    const status = inspectOpenCodeRuntime(execute, () => 0, 100);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(status).resolves.toEqual({ state: "unavailable", reason: "timed_out", checkedAt: "1970-01-01T00:00:00.000Z" });
+    expect(execute).toHaveBeenCalledWith(expect.any(String), ["--version"], expect.objectContaining({ aborted: true }));
+    vi.useRealTimers();
   });
 
   it("coalesces stale refreshes and serves the latest bounded result from cache", async () => {

@@ -1,6 +1,6 @@
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { OpenCodeRuntimeStatus, OpenCodeRuntimeUnavailableReason } from "../shared/opencode-runtime.js";
-import { executeDiscoveryCommand, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
+import { DISCOVERY_TIMEOUT_MS, executeDiscoveryCommand, parseOpenCodeRuntimeVersion, type DiscoveryExecutor } from "./model-discovery.js";
 
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 export const OPEN_CODE_RUNTIME_REFRESH_TTL_MS = 30_000;
@@ -26,14 +26,28 @@ function failureReason(error: unknown): OpenCodeRuntimeUnavailableReason {
 export async function inspectOpenCodeRuntime(
   execute: DiscoveryExecutor = executeDiscoveryCommand,
   now: () => number = Date.now,
+  timeoutMs = DISCOVERY_TIMEOUT_MS,
 ): Promise<OpenCodeRuntimeStatus> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { stdout } = await execute(OPENCODE_COMMAND, ["--version"]);
+    const controller = new AbortController();
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(Object.assign(new Error("OpenCode runtime preflight timed out."), { code: "ETIMEDOUT" }));
+      }, timeoutMs);
+    });
+    const { stdout } = await Promise.race([
+      Promise.resolve().then(() => execute(OPENCODE_COMMAND, ["--version"], controller.signal)),
+      deadline,
+    ]);
     const runtime = parseOpenCodeRuntimeVersion(stdout);
     if (!runtime?.compatible) return unavailable("unsupported_version", now);
     return { state: "ready", version: runtime.version, checkedAt: new Date(now()).toISOString() };
   } catch (error) {
     return unavailable(failureReason(error), now);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

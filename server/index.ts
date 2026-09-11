@@ -456,9 +456,12 @@ async function refreshOpenCodeRuntime() {
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
     || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason);
   openCodeRuntime = next;
-  if (changed) await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
-    ? { state: next.state, version: next.version }
-    : { state: next.state, reason: next.reason });
+  if (changed) {
+    await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
+      ? { state: next.state, version: next.version }
+      : { state: next.state, reason: next.reason });
+    broadcast();
+  }
   return next;
 }
 
