@@ -67,7 +67,7 @@ import { GovernedContributionExecutor, UnavailableContributionExecutor } from ".
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
-import { inspectOpenCodeRuntime, runtimeAvailability } from "./opencode-runtime.js";
+import { inspectOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
@@ -167,6 +167,7 @@ let openCodeRuntime = await inspectOpenCodeRuntime();
 await structuredLogger.log(openCodeRuntime.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", openCodeRuntime.state === "ready"
   ? { state: openCodeRuntime.state, version: openCodeRuntime.version }
   : { state: openCodeRuntime.state, reason: openCodeRuntime.reason });
+const openCodeRuntimeMonitor = new OpenCodeRuntimeMonitor(openCodeRuntime);
 const legacyProjectId = storageConfiguration.backend === "json"
   ? await (await import("./storage/json-project-identity.js")).openJsonProjectIdentity(storageConfiguration.stateDirectory,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot)
@@ -450,7 +451,7 @@ function currentEnabledAgents() {
 }
 
 async function refreshOpenCodeRuntime() {
-  const next = await inspectOpenCodeRuntime();
+  const next = await openCodeRuntimeMonitor.refresh();
   const changed = next.state !== openCodeRuntime.state
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
     || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason);
@@ -459,6 +460,10 @@ async function refreshOpenCodeRuntime() {
     ? { state: next.state, version: next.version }
     : { state: next.state, reason: next.reason });
   return next;
+}
+
+function refreshOpenCodeRuntimeInBackground() {
+  void refreshOpenCodeRuntime().catch((error) => structuredLogger.log("error", "opencode.runtime.preflight.failed", { error }));
 }
 
 function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId, protectedWorkId?: string) {
@@ -1194,7 +1199,8 @@ const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresen
 
 app.get("/api/state", async (request, response) => {
   const viewerHumanId = sessionHuman(request, humans, humanSessions)?.id;
-  const runtime = await refreshOpenCodeRuntime();
+  const runtime = openCodeRuntime;
+  refreshOpenCodeRuntimeInBackground();
   response.json({
     ...(await roomStateWithAvailability(roomSnapshot, () => Promise.resolve(runtimeAvailability(currentEnabledAgents(), runtime)), async () => {
       await refreshImplementationCapabilities();
@@ -1219,8 +1225,10 @@ app.post("/api/provider-health/:providerId/recover", async (request, response) =
 });
 
 registerRepositoryReadiness(app, projectRepositoryConnectionStore, (projectId) => projectRepositoryRegistry.forProject(projectId).connection);
-app.get("/api/ready", async (_request, response) => {
-  response.set("Cache-Control", "no-store").json({ ready: true, openCodeRuntime: await refreshOpenCodeRuntime(), ...serverIdentity });
+app.get("/api/ready", (_request, response) => {
+  const runtime = openCodeRuntime;
+  refreshOpenCodeRuntimeInBackground();
+  response.set("Cache-Control", "no-store").json({ ready: true, openCodeRuntime: runtime, ...serverIdentity });
 });
 
 // Room-facing workshop routes are intentionally read-only and project away
