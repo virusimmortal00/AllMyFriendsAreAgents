@@ -1,0 +1,110 @@
+{
+  "source": "https://openrouter.ai/api/v1/models",
+  "capturedAt": "2026-09-11T02:29:13.184Z",
+  "models": [
+    {
+      "providerId": "openrouter",
+      "modelId": "google/gemini-3.8-flash",
+      "displayName": "Gemini 3.8 Flash",
+      "authorId": "google",
+      "authorDisplayName": "Google",
+      "accessProviderDisplayName": "OpenRouter",
+      "provenance": "opencode-catalog",
+      "alias": "Gemini",
+      "limits": {
+        "context": 1048576
+      },
+      "pricing": {
+        "inputPerMillion": 0.75,
+        "outputPerMillion": 3.75
+      },
+      "capabilities": {
+        "reasoning": true,
+        "toolCall": true,
+        "inputModalities": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ]
+      }
+    },
+    {
+      "providerId": "openrouter",
+      "modelId": "deepseek/deepseek-v4-flash-0731",
+      "displayName": "DeepSeek V4 Flash 0731",
+      "authorId": "deepseek",
+      "authorDisplayName": "DeepSeek",
+      "accessProviderDisplayName": "OpenRouter",
+      "provenance": "opencode-catalog",
+      "alias": "DeepSeek",
+      "limits": {
+        "context": 1310720
+      },
+      "pricing": {
+        "inputPerMillion": 0.065,
+        "outputPerMillion": 0.18
+      },
+      "capabilities": {
+        "reasoning": true,
+        "toolCall": true,
+        "inputModalities": [
+          "text"
+        ]
+      }
+    },
+    {
+      "providerId": "openrouter",
+      "modelId": "openai/gpt-5.6-luna",
+      "displayName": "GPT-5.6 Luna",
+      "authorId": "openai",
+      "authorDisplayName": "OpenAI",
+      "accessProviderDisplayName": "OpenRouter",
+      "provenance": "opencode-catalog",
+      "alias": "GPT-5.6 Luna",
+      "limits": {
+        "context": 1050000
+      },
+      "pricing": {
+        "inputPerMillion": 0.19999999999999998,
+        "outputPerMillion": 1.2
+      },
+      "capabilities": {
+        "reasoning": true,
+        "toolCall": true,
+        "inputModalities": [
+          "file",
+          "image",
+          "text"
+        ]
+      }
+    },
+    {
+      "providerId": "openrouter",
+      "modelId": "minimax/minimax-m3",
+      "displayName": "MiniMax M3",
+      "authorId": "minimax",
+      "authorDisplayName": "MiniMax",
+      "accessProviderDisplayName": "OpenRouter",
+      "provenance": "opencode-catalog",
+      "alias": "MiniMax M3",
+      "limits": {
+        "context": 1048576
+      },
+      "pricing": {
+        "inputPerMillion": 0.3,
+        "outputPerMillion": 1.2
+      },
+      "capabilities": {
+        "reasoning": true,
+        "toolCall": true,
+        "inputModalities": [
+          "text",
+          "image",
+          "video"
+        ]
+      }
+    }
+  ]
+}
