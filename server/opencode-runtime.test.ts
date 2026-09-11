@@ -65,4 +65,34 @@ describe("OpenCode runtime preflight", () => {
     await expect(monitor.refresh()).resolves.toEqual(monitor.snapshot());
     expect(inspect).toHaveBeenCalledOnce();
   });
+
+  it("keeps a timed-out child as the active refresh until it settles", async () => {
+    vi.useFakeTimers();
+    let now = 30_001;
+    const releases: Array<(value: { stdout: string; stderr: string }) => void> = [];
+    const execute = vi.fn<DiscoveryExecutor>(() => new Promise((resolve) => { releases.push(resolve); }));
+    const inspect = vi.fn(() => inspectOpenCodeRuntime(execute, () => now, 100));
+    const monitor = new OpenCodeRuntimeMonitor(
+      { state: "unavailable", reason: "command_failed", checkedAt: new Date(0).toISOString() },
+      inspect,
+      () => now,
+      30_000,
+    );
+
+    const first = monitor.refresh();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(first).resolves.toMatchObject({ state: "unavailable", reason: "timed_out" });
+    now = 60_002;
+    await expect(monitor.refresh()).resolves.toMatchObject({ state: "unavailable", reason: "timed_out" });
+    expect(inspect).toHaveBeenCalledOnce();
+
+    releases.shift()?.({ stdout: "1.18.25\n", stderr: "" });
+    await vi.advanceTimersByTimeAsync(0);
+    const second = monitor.refresh();
+    expect(inspect).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(0);
+    releases.shift()?.({ stdout: "1.18.25\n", stderr: "" });
+    await expect(second).resolves.toMatchObject({ state: "ready", version: "1.18.25" });
+    vi.useRealTimers();
+  });
 });

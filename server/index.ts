@@ -303,10 +303,11 @@ let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object
 }));
 async function refreshAgentCapabilities(runtimeOverride?: typeof openCodeRuntime, refreshCatalog = false) {
   const roster = normalizeRoomAgentRoster(store.snapshot().roster);
-  const [catalog, runtime] = await Promise.all([
-    modelDiscovery.discover(refreshCatalog),
-    runtimeOverride ? Promise.resolve(runtimeOverride) : refreshOpenCodeRuntime(),
-  ]);
+  // Resolve a runtime transition before reading the catalog. A transition
+  // performs a forced catalog refresh; reading both in parallel could let this
+  // outer call install the stale catalog that preceded the recovery.
+  const runtime = runtimeOverride || await refreshOpenCodeRuntime();
+  const catalog = await modelDiscovery.discover(refreshCatalog);
   const availability = runtimeAvailability(enabledRoomAgentIds(roster), runtime);
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {

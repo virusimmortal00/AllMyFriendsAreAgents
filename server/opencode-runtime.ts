@@ -4,6 +4,7 @@ import { DISCOVERY_TIMEOUT_MS, executeDiscoveryCommand, parseOpenCodeRuntimeVers
 
 const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 export const OPEN_CODE_RUNTIME_REFRESH_TTL_MS = 30_000;
+const inspectionSettlements = new WeakMap<Promise<OpenCodeRuntimeStatus>, Promise<void>>();
 
 function unavailable(reason: OpenCodeRuntimeUnavailableReason, now: () => number): OpenCodeRuntimeStatus {
   return { state: "unavailable", reason, checkedAt: new Date(now()).toISOString() };
@@ -23,32 +24,36 @@ function failureReason(error: unknown): OpenCodeRuntimeUnavailableReason {
  * Runs one bounded, sanitized OpenCode preflight. It deliberately never returns
  * the configured path, subprocess output, or raw error to a room client.
  */
-export async function inspectOpenCodeRuntime(
+export function inspectOpenCodeRuntime(
   execute: DiscoveryExecutor = executeDiscoveryCommand,
   now: () => number = Date.now,
   timeoutMs = DISCOVERY_TIMEOUT_MS,
 ): Promise<OpenCodeRuntimeStatus> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const controller = new AbortController();
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        controller.abort();
-        reject(Object.assign(new Error("OpenCode runtime preflight timed out."), { code: "ETIMEDOUT" }));
-      }, timeoutMs);
+  const controller = new AbortController();
+  const execution = Promise.resolve().then(() => execute(OPENCODE_COMMAND, ["--version"], controller.signal));
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(Object.assign(new Error("OpenCode runtime preflight timed out."), { code: "ETIMEDOUT" }));
+    }, timeoutMs);
+  });
+  const result = Promise.race([execution, deadline])
+    .then(({ stdout }) => {
+      const runtime = parseOpenCodeRuntimeVersion(stdout);
+      return runtime?.compatible
+        ? { state: "ready", version: runtime.version, checkedAt: new Date(now()).toISOString() } as OpenCodeRuntimeStatus
+        : unavailable("unsupported_version", now);
+    })
+    .catch((error) => unavailable(failureReason(error), now))
+    .finally(() => {
+      if (timeout) clearTimeout(timeout);
     });
-    const { stdout } = await Promise.race([
-      Promise.resolve().then(() => execute(OPENCODE_COMMAND, ["--version"], controller.signal)),
-      deadline,
-    ]);
-    const runtime = parseOpenCodeRuntimeVersion(stdout);
-    if (!runtime?.compatible) return unavailable("unsupported_version", now);
-    return { state: "ready", version: runtime.version, checkedAt: new Date(now()).toISOString() };
-  } catch (error) {
-    return unavailable(failureReason(error), now);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
+  // A deadline makes the result safe to serve, but an ignored abort can leave
+  // the child alive. Keep that underlying execution observable to the monitor
+  // so it cannot launch another child until this one has actually settled.
+  inspectionSettlements.set(result, execution.then(() => undefined, () => undefined));
+  return result;
 }
 
 /**
@@ -58,6 +63,7 @@ export async function inspectOpenCodeRuntime(
  */
 export class OpenCodeRuntimeMonitor {
   #refresh: Promise<OpenCodeRuntimeStatus> | undefined;
+  #draining: Promise<void> | undefined;
 
   constructor(
     private current: OpenCodeRuntimeStatus,
@@ -72,10 +78,18 @@ export class OpenCodeRuntimeMonitor {
 
   refresh() {
     if (this.#refresh) return this.#refresh;
+    if (this.#draining) return Promise.resolve(this.current);
     const checkedAt = Date.parse(this.current.checkedAt);
     if (Number.isFinite(checkedAt) && this.now() - checkedAt < this.ttlMs) return Promise.resolve(this.current);
     let flight: Promise<OpenCodeRuntimeStatus>;
-    flight = this.inspect().then((next) => {
+    const inspection = this.inspect();
+    const settlement = inspectionSettlements.get(inspection) || inspection.then(() => undefined, () => undefined);
+    let draining: Promise<void>;
+    draining = settlement.finally(() => {
+      if (this.#draining === draining) this.#draining = undefined;
+    });
+    this.#draining = draining;
+    flight = inspection.then((next) => {
       this.current = next;
       return next;
     }).finally(() => {
