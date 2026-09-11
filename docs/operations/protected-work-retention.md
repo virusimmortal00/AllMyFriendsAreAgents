@@ -37,7 +37,10 @@ server also removes that terminal job, inbox entry, and audit events from the
 backing investigation ledger. Nonterminal investigations are never selected.
 Cleanup follows the protected-ledger write and is retried during service ticks,
 so an interrupted cleanup is completed after restart without weakening active
-recovery. The server never silently evicts receipts from active work.
+recovery. Reusing an identity beyond this boundary requires its backing cleanup
+to succeed before a new protected record is admitted, so a transient cleanup
+failure cannot persist a rejected replacement. The server never silently evicts
+receipts from active work.
 
 On first open, a version 1 file is validated, wrapped in the version 2 structure,
 and atomically replaced. Migration itself retains every record and event. Later

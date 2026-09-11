@@ -83,6 +83,7 @@ export class ProtectedWorkService {
     this.admissions.add(workId);
     let saved = false;
     try {
+      await this.pruneRetiredInvestigations(true);
       saved = await this.store.put(record, 0);
       if (!saved) throw new Error("Protected work changed concurrently.");
       this.retentionMutation += 1;
@@ -252,14 +253,17 @@ export class ProtectedWorkService {
     this.options.changed?.();
     return next;
   }
-  private async pruneRetiredInvestigations() {
+  private async pruneRetiredInvestigations(required = false) {
     const target = this.retentionMutation;
     if (this.retentionCleaned >= target) return;
     try {
       await this.investigations.pruneTerminalProtectedWork(await this.store.retainedWorkIds());
       this.retentionCleaned = Math.max(this.retentionCleaned, target);
     }
-    catch (error) { this.options.onError?.(error); }
+    catch (error) {
+      this.options.onError?.(error);
+      if (required) throw error;
+    }
   }
   async shutdown() { this.closed = true; if (this.timer) clearInterval(this.timer); for (const controller of this.returns.values()) controller.abort(); }
 }

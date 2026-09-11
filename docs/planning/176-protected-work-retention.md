@@ -49,6 +49,7 @@ boundary, and persisted byte accounting.
 When an identity leaves the detailed protected archive, its terminal backing
 investigation job, inbox entry, and audit events are pruned as the same lifecycle
 boundary. Cleanup is restart-safe and never selects nonterminal investigations.
+A retired request identity is not recreated until that cleanup succeeds.
 
 # Next action
 

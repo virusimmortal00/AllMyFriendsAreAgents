@@ -187,6 +187,23 @@ describe("protected participation", () => {
     expect(reused.workId).toBe(retired.workId);
     await expect.poll(() => f.inputs.length).toBe(3);
   });
+  it("does not poison a reused admission when backing cleanup is temporarily unavailable", async () => {
+    const f = await fixture("json", { maxTerminalRecords: 1, maxArchiveBytes: 512 });
+    const retired = await f.start("request-cleanup-retry"); await expect.poll(() => f.inputs.length).toBe(1); await f.finish(); await f.service.tick();
+    const prune = f.investigations.pruneTerminalProtectedWork.bind(f.investigations);
+    let failures = 2;
+    vi.spyOn(f.investigations, "pruneTerminalProtectedWork").mockImplementation(async (retainedIds) => {
+      if (!retainedIds.includes(retired.workId) && failures > 0) { failures -= 1; throw new Error("Fixture cleanup unavailable."); }
+      return prune(retainedIds);
+    });
+    await f.start("request-newer"); await expect.poll(() => f.inputs.length).toBe(2); await f.finish(); await f.service.tick();
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.investigations.list()).map((job) => job.investigationId)).toContain(retired.workId);
+    await expect(f.start("request-cleanup-retry")).rejects.toThrow(/cleanup unavailable/);
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.start("request-cleanup-retry")).workId).toBe(retired.workId);
+    await expect.poll(() => f.inputs.length).toBe(3);
+  });
   it("waits for confirmed termination, preserves a checkpoint, discards late results, and isolates replacement work", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
     await f.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Partial finding", opaqueState: "private-checkpoint" });
