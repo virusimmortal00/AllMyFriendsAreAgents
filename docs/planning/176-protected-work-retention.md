@@ -1,8 +1,8 @@
 ---
 id: protected-work-retention
-status: active
+status: done
 issue: 176
-updated: 2026-09-10
+updated: 2026-09-11
 ---
 
 # Outcome
@@ -39,15 +39,21 @@ Maintenance is transactional with the next protected-work mutation. Active
 records are never selected for archival. A full admission budget rejects only a
 new record; existing records can use the recovery reserve. Retry receipts stop
 before the two recovery slots, and existing version 1 receipt arrays are
-grandfathered instead of being truncated during migration. Full archive
-verification occurs at startup; subsequent writes verify only their new audit
-event, archive entries, checkpoint boundary, and persisted byte accounting.
+grandfathered instead of being truncated during migration. Oversized active
+arrays receive a persisted cap for one stop and one terminal recovery receipt,
+without reopening retry admission. A migrated hot ledger above its hard ceiling
+can shrink but cannot grow further. Full archive verification occurs at startup;
+subsequent writes verify only their new audit event, archive entries, checkpoint
+boundary, and persisted byte accounting.
+
+When an identity leaves the detailed protected archive, its terminal backing
+investigation job, inbox entry, and audit events are pruned as the same lifecycle
+boundary. Cleanup is restart-safe and never selects nonterminal investigations.
 
 # Next action
 
-Run focused protected-work tests and the repository quality gate. Keep the
-experimental investigation lane disabled by default until its separate executor
-requirements are satisfied.
+Completed by PR #181. Keep the experimental investigation lane disabled by
+default until its separate executor requirements are satisfied.
 
 # Evidence
 
@@ -55,6 +61,7 @@ requirements are satisfied.
 - `server/protected-work-store.test.ts`
 - `server/protected-work-service.test.ts`
 - `docs/operations/protected-work-retention.md`
+- PR #181
 
 # Open questions
 

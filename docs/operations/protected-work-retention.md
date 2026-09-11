@@ -6,7 +6,7 @@ directory. Schema version 2 applies the following fixed budgets:
 | Data | Budget | Behavior at the boundary |
 | --- | ---: | --- |
 | Hot terminal records | 30 days and 256 records | Oldest or expired complete records move to the archive. |
-| Action receipts | 64 per work record | New return retries stop at 62, leaving two slots for stop and terminal recovery. Existing larger version 1 arrays are retained. |
+| Action receipts | 64 per work record | New return retries stop at 62, leaving two slots for stop and terminal recovery. Existing larger version 1 arrays are retained with a record-specific cap for the same two recovery operations. |
 | Live audit detail | 32 events per work record | The preceding hashed event becomes the audit anchor; subsequent hashes continue from it. |
 | New-admission ledger | 6 MiB | New protected work fails closed with a capacity error. |
 | Active-recovery reserve | 2 MiB beyond admission | Existing work can still stop, acknowledge delivery, or reach a terminal disposition up to the 8 MiB hot-ledger ceiling. |
@@ -32,8 +32,12 @@ When detailed archive entries exceed 16 MiB, the oldest entries are folded into
 a checkpoint containing their count and last chain hash. The first remaining
 entry must name that hash as its predecessor. The checkpoint retains audit-chain
 continuity but intentionally ends exact request replay for the compacted entries.
-This is the defined deletion boundary; the server never silently evicts receipts
-from active work.
+This is the defined deletion boundary. Once a protected identity crosses it, the
+server also removes that terminal job, inbox entry, and audit events from the
+backing investigation ledger. Nonterminal investigations are never selected.
+Cleanup follows the protected-ledger write and is retried during service ticks,
+so an interrupted cleanup is completed after restart without weakening active
+recovery. The server never silently evicts receipts from active work.
 
 On first open, a version 1 file is validated, wrapped in the version 2 structure,
 and atomically replaced. Migration itself retains every record and event. Later
@@ -48,5 +52,6 @@ Operators should allow active work to finish or explicitly stop/dismiss it; they
 must not delete or hand-edit the ledger. Terminal transitions can use the 2 MiB
 reserve, and the next successful mutation archives eligible terminal history.
 If the hard hot-ledger ceiling is exhausted, preserve the file and investigate
-the oversized active records before restarting. Manual truncation breaks audit
-verification and is unsupported.
+the oversized active records before restarting. A migrated ledger that already
+exceeds the ceiling may only accept mutations that do not increase its normalized
+size. Manual truncation breaks audit verification and is unsupported.

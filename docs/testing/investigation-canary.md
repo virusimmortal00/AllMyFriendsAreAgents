@@ -93,7 +93,10 @@ inbox. Durable history retention and archival are defined in
 [`docs/operations/protected-work-retention.md`](../operations/protected-work-retention.md)
 and tracked in [#176](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/176).
 Do not truncate active receipts or audit chains to enforce an ad hoc storage
-limit; new admission fails before the recovery reserve is consumed.
+limit; new admission fails before the recovery reserve is consumed. Regression
+coverage also verifies that crossing the detailed archive deletion boundary
+removes only terminal backing investigation state and permits the retired request
+identity to be admitted again.
 
 ### Protected browser smoke evidence
 
