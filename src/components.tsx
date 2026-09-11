@@ -23,6 +23,7 @@ import { reconcileMessageMentionsAfterEdit, type MentionCandidate, type MessageM
 import { useDismissibleLayer } from "./overlay";
 import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import type { RoomAgentRoster } from "../shared/roster";
+import { openCodeRuntimeStatusMessage, type OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { ProviderMark } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
@@ -87,6 +88,7 @@ export function ConfirmationDialog({
 export function RoomRoster({
   protectedWork = [],
   availability,
+  openCodeRuntime,
   agentHealth,
   providerHealth,
   activeAgents,
@@ -101,6 +103,7 @@ export function RoomRoster({
   onConfigureHumanAvatar,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
+  openCodeRuntime?: OpenCodeRuntimeStatus;
   agentHealth?: Partial<Record<ActiveAgentId, AgentHealth>>;
   providerHealth?: Record<string, ProviderHealth>;
   activeAgents?: ReadonlySet<AgentId>;
@@ -124,13 +127,13 @@ export function RoomRoster({
       ? `${health.message.replace(/\.$/, "")} · ${health.retrySource === "provider" ? "provider retry" : "automatic retry"} at ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(new Date(health.retryAt))}`
       : "Cooling down"
     : "Unavailable";
-  const presentAgents = sortAgentListItems(agents.filter((agent) => availability?.[agent] !== false).map((agent) => {
+  const presentAgents = sortAgentListItems(agents.map((agent) => {
     const rosterEntry = roster?.entries.find((entry) => entry.agentId === agent);
     const profile = AGENT_PROFILES[agent];
     const alias = rosterEntry?.conversationalName || profile?.conversationalName || participantScreenName(agent);
     const providerId = rosterEntry?.providerId || profile?.provider;
     const modelId = rosterEntry?.modelId || profile?.modelId || "configured";
-    return { agentId: agent, alias, providerId, modelId, authorId: modelAuthorId(providerId, modelId) };
+    return { agentId: agent, alias, providerId, modelId, authorId: modelAuthorId(providerId, modelId), available: availability?.[agent] !== false };
   }), agentListSort);
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
@@ -139,11 +142,13 @@ export function RoomRoster({
           const agent = item.agentId;
           const active = activeAgents?.has(agent) ?? false;
           const protectedJob = protectedWork.find((work) => work.owner === agent && work.phase !== "available");
-          const { alias, providerId, modelId, authorId } = item;
+          const { alias, providerId, modelId, authorId, available } = item;
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
           const health = providerHealth?.[providerId] || agentHealth?.[agent];
           const availableLabel = `${alias}: ${modelName} via ${routeName}`;
+          const connectionLabel = !available ? openCodeRuntimeStatusMessage(openCodeRuntime) : health?.message || "available";
+          const connectionState = !available ? "offline" : health?.status;
           const configurable = Boolean(onManageRoster);
           const groupLabel = agentListGroupLabel(item, agentListSort);
           const previousGroupLabel = index > 0 ? agentListGroupLabel(presentAgents[index - 1], agentListSort) : undefined;
@@ -166,16 +171,16 @@ export function RoomRoster({
               } : undefined}
             >
               <span
-                className={`presence-status${health ? ` presence-status--${health.status}` : ""}`}
-                aria-label={health ? `${availableLabel}: ${health.message}` : `${availableLabel}: available`}
-                title={health?.message || "Available"}
+                className={`presence-status${connectionState ? ` presence-status--${connectionState}` : ""}`}
+                aria-label={`${availableLabel}: ${connectionLabel}`}
+                title={connectionLabel}
               />
               <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
               <span className="presence-identity">
                 <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
                 <span className="presence-meta">
                   <small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small>
-                  {health && !active ? <small className={`presence-health${health.status === "action_required" ? " presence-health--action-required" : ""}`} title={healthText(health)}>{healthText(health)}</small> : null}
+                  {!available && !active ? <small className="presence-health" title={connectionLabel}>CLI unavailable</small> : health && !active ? <small className={`presence-health${health.status === "action_required" ? " presence-health--action-required" : ""}`} title={healthText(health)}>{healthText(health)}</small> : null}
                 </span>
                 {protectedJob ? <small className="presence-protected-work"><ProtectedWorkStatus work={protectedJob} /></small> : null}
               </span>
@@ -185,7 +190,7 @@ export function RoomRoster({
                     <i /><i /><i />
                   </span>
                 ) : null}
-                {onConfigureAgent && (health || protectedJob) && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
+                {onConfigureAgent && (!available || health || protectedJob) && !active ? <button type="button" className="agent-settings-button presence-agent-settings-button" aria-label={`Open status for ${alias}`} title={`Status for ${alias}`} onClick={(event) => {
                   event.stopPropagation();
                   onConfigureAgent(agent);
                 }}>⚙</button> : null}
@@ -215,6 +220,7 @@ export function AgentSettingsDialog({
   protectedWork, onProtectedWorkChanged,
   agent,
   available,
+  openCodeRuntime,
   health,
   providerHealth,
   providerId,
@@ -228,6 +234,7 @@ export function AgentSettingsDialog({
   onProtectedWorkChanged?: () => Promise<void>;
   agent: ActiveAgentId;
   available: boolean;
+  openCodeRuntime?: OpenCodeRuntimeStatus;
   health?: AgentHealth;
   providerHealth?: ProviderHealth;
   providerId?: string;
@@ -251,7 +258,7 @@ export function AgentSettingsDialog({
           <strong className={`agent-settings-name speaker speaker--${agent}`}>{agentScreenName(agent)}</strong>
           <div className="agent-connection-status">
             <span className={`agent-connection-light agent-connection-light--${connectionState}`} aria-hidden="true" />
-            {!available ? "CLI unavailable" : effectiveHealth ? `${effectiveHealth.message}${retryDescription}` : "Connected to the room"}
+            {!available ? openCodeRuntimeStatusMessage(openCodeRuntime) : effectiveHealth ? `${effectiveHealth.message}${retryDescription}` : "Connected to the room"}
           </div>
           {providerHealth?.status === "action_required" && providerId && onRequestProviderRecovery ? <div className="provider-recovery">
             <button type="button" className="classic-button" disabled={recoveryPending} onClick={() => onRequestProviderRecovery(providerId)}>{recoveryPending ? "Recovery attempt enabled" : "Allow one retry"}</button>

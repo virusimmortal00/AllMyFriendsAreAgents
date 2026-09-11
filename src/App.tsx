@@ -402,7 +402,7 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus }));
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus, openCodeRuntime: next.openCodeRuntime || current.openCodeRuntime }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
@@ -758,7 +758,7 @@ export default function App() {
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
-  const peopleHere = (room.humans?.length || 0) + enabledAgents.filter((agent) => room.availability?.[agent] !== false).length;
+  const peopleHere = (room.humans?.length || 0) + enabledAgents.length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
   const openRoster = useCallback((trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => {
     setRosterTrigger(trigger);
@@ -893,7 +893,7 @@ export default function App() {
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
+            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} openCodeRuntime={room.openCodeRuntime} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -927,6 +927,7 @@ export default function App() {
             protectedWork={protectedWork.work.find((work) => work.owner === configuredAgent && work.phase !== "available")}
             onProtectedWorkChanged={protectedWork.refresh}
             available={room.availability?.[configuredAgent] !== false}
+            openCodeRuntime={room.openCodeRuntime}
             health={room.agentHealth?.[configuredAgent]}
             providerHealth={configuredProviderId ? room.providerHealth?.[configuredProviderId] : undefined}
             providerId={configuredProviderId}

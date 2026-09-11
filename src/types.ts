@@ -9,6 +9,7 @@ import type { ImprovementStatusContract } from "../shared/improvement-status";
 import type { MessageMention } from "../shared/mentions";
 import type { RoomAgentRoster } from "../shared/roster";
 import type { PreflightEvidence } from "../shared/preflight";
+import type { OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 
 export type { AgentId, SpeakerId } from "../shared/participants";
 
@@ -102,6 +103,7 @@ export interface RoomState {
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
   githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
+  openCodeRuntime?: OpenCodeRuntimeStatus;
 }
 export interface WorkshopResponse extends GovernedImprovementDetail {
   kind: "found";
