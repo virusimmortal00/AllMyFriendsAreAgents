@@ -106,11 +106,15 @@ export class ProtectedWorkService {
     const receipt = key ? record.actions?.find((entry) => entry.key === key) : undefined;
     if (receipt && receipt.action !== action) throw new Error("Request ID already belongs to a different operation.");
     if (receipt || record.phase === "available") return protectedWorkView(record);
-    const acknowledgement = key ? { actions: [...(record.actions || []), { key, action }] } : {};
     if (this.options.hasDelivered(workId)) {
+      const acknowledgement = key && this.store.actionReceiptAvailable(record, action) ? { actions: [...(record.actions || []), { key, action }] } : {};
       await this.finish(record, "delivered", acknowledgement);
       return protectedWorkView((await this.store.get(workId))!);
     }
+    if (key && !this.store.actionReceiptAvailable(record, action)) throw new Error(action === "retry-return"
+      ? "Protected-work retry receipt budget is exhausted; stop and terminal recovery remain available."
+      : "Protected-work action receipt budget is exhausted.");
+    const acknowledgement = key ? { actions: [...(record.actions || []), { key, action }] } : {};
     if (action === "dismiss") {
       if (!record.stoppedAt) throw new Error("Worker termination must be confirmed before returning without an update.");
       this.returns.get(workId)?.abort();
