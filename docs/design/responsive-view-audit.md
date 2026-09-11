@@ -1447,7 +1447,10 @@ sanitized evidence; this local record is not a production deployment claim.
 
 Remaining coverage at that earlier digest: 45 other registered views, additional roster states such
 as authentication/empty/conflict/model selection, real-device browser chrome,
-on-screen keyboards, larger text, and landscape. No production-device or
+on-screen keyboards, larger text, and landscape. The existing nested roster status
+control now stops its keyboard activation from reaching the configurable row; its
+focused interaction regression confirms it opens status without also opening
+Manage Agents. No production-device or
 app-wide visual certification is implied by this matrix.
 
 ### Application and chat
@@ -1468,6 +1471,19 @@ app-wide visual certification is implied by this matrix.
 | CHAT-09 | Poll Cards | Active room poll and voting states | Unverified |
 | CHAT-10 | Pending Send Recovery | Ambiguous-send recovery bar | Unverified |
 | CHAT-11 | Connection and Action Notices | Reconnect, pending action, and dismissible error strips | Unverified |
+
+2026-09-11 source-change note: `CHAT-01` now keeps every enabled roster
+participant in the desktop rail when the server OpenCode preflight is unavailable.
+The row uses the existing offline indicator, exposes `CLI unavailable` with a
+safe specific cause in its accessible status, and keeps a reachable status action
+instead of disappearing. The room count likewise includes every saved enabled
+participant. Focused rendered-room and presence-row regressions cover the saved
+dynamic-participant state. A local rendered-room pass at Phone (390×660), Tablet
+(768×1024), Short laptop (1366×600), and Desktop (1440×900) found content at
+every checkpoint, no horizontal overflow, and no framework error overlay; Phone
+correctly omits the desktop rail. The inventory row remains `Unverified`: no
+captured-image review or independent visual review was run for this compact
+status treatment.
 
 ### Full workspaces
 

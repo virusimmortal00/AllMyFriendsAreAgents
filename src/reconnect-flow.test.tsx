@@ -161,6 +161,25 @@ afterEach(() => {
 });
 
 describe("rendered reconnect recovery", () => {
+  it("keeps a saved roster participant in the room rail when the CLI is unavailable", async () => {
+    await renderConnected();
+    const agentId = "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+      roster: {
+        schemaVersion: 3,
+        revision: 2,
+        entries: [{ agentId, conversationalName: "Scout", providerId: "openrouter", modelId: "example/scout", enabled: true }],
+      },
+      availability: { [agentId]: false },
+      openCodeRuntime: { state: "unavailable", reason: "command_not_found", checkedAt: "2026-09-11T00:00:00.000Z" },
+    })));
+
+    expect(await screen.findByRole("button", { name: "Configure Scout: Scout via OpenRouter" })).toBeTruthy();
+    expect(screen.getByText("CLI unavailable")).toBeTruthy();
+    expect(screen.getByLabelText("Scout: Scout via OpenRouter: The server cannot find the configured OpenCode executable.")).toBeTruthy();
+  });
+
   it("applies contiguous state and message deltas, deduplicates delivery, and resyncs a version gap", async () => {
     const user = userEvent.setup();
     const composer = await renderConnected([{ id: "before", speaker: "you", text: "Before", timestamp: "2026-08-24T12:00:00.000Z" }]);
