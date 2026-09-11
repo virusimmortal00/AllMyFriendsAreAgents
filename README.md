@@ -115,6 +115,23 @@ for provider configuration details; retain this project's supported version rang
 For Docker, use the [container setup and provider authentication instructions](docs/operations/container-deployment.md#local-build-and-fresh-installation)
 so credentials are available inside the container's provider-state volume.
 
+### Pin the server's OpenCode executable
+
+The server preflights its OpenCode executable at startup and reports a safe
+reason when it cannot run it. For a GUI-, service-, or supervisor-launched
+server, set an absolute path so it does not depend on the launcher's `PATH`:
+
+```bash
+export ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND=/absolute/path/to/opencode
+```
+
+Keep this setting in the server process environment, never in browser
+configuration. `pnpm service:start` reads root `.env`; `pnpm run dev` does not,
+so export it first or source the ignored `.env` in the same shell. The roster
+keeps enabled agents visible when this preflight fails, and their status explains
+the server-side condition without exposing the configured path or raw command
+output.
+
 ### 2. Start the room
 
 ```bash

@@ -10,6 +10,7 @@ import type { RoomAgentRoster } from "../shared/roster.js";
 import type { DeploymentProvenance } from "./deployment-provenance.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
 import type { RoomConfiguration, RoomConfigurationAuditEvent } from "./room-configuration.js";
+import type { OpenCodeRuntimeStatus } from "../shared/opencode-runtime.js";
 
 export type { AgentId, SpeakerId, WritableAgent } from "../shared/participants.js";
 
@@ -84,4 +85,5 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   server?: ServerIdentity;
   preflightEvidence?: PreflightEvidence;
   githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
+  openCodeRuntime?: OpenCodeRuntimeStatus;
 }

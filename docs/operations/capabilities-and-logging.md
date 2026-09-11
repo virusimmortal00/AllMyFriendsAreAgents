@@ -34,6 +34,7 @@ Set these only in the repository root `.env`, which `pnpm service:start` sources
 - `ALL_MY_FRIENDS_ARE_AGENTS_LOG_<STREAM>_RETENTION`: per-stream retained-file count.
 - `ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BUFFERED_BYTES`: maximum application buffer for each independently drained stream.
 - `ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS=true`: include redacted bounded stacks only on a loopback-bound server; stacks are absent by default.
+- `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND`: absolute path to the OpenCode executable for the server process. Set this for GUI, service, or supervisor launches whose `PATH` may differ from an interactive terminal.
 
 Create a fine-grained token bound to exactly the configured repository with read-only Metadata, Actions, Checks, Contents, Issues, and Pull requests permissions. Grant no write or administration permission, and never reuse the contribution/mutation token (`ALL_MY_FRIENDS_ARE_AGENTS_GITHUB_TOKEN`). Keep root `.env` mode `0600`. Presence-check configuration without printing values:
 
@@ -55,6 +56,16 @@ Production supervisors should invoke `pnpm service:start`. The repository-owned 
 ```zsh
 curl -fsS http://127.0.0.1:53147/api/ready >/dev/null && print ready
 ```
+
+The server runs a bounded OpenCode `--version` preflight at startup and during
+readiness/state refresh. It returns only a safe state: ready version or one of
+`command_not_found`, `not_executable`, `timed_out`, `unsupported_version`, or
+`command_failed`. It does not return the executable path, process environment,
+or raw command output. `pnpm service:start` sources the root `.env`; direct
+`pnpm run dev` does not, so export the executable setting or source `.env` in
+the launching shell before starting development services. When the preflight is
+unavailable, enabled roster participants remain visible and show the shared
+server reason rather than disappearing.
 
 Join the room, open Manage Agents, explicitly check the requested `/gh` grant, and save. Joined human members can manage the canonical-room roster without an owner credential; mutations require the member's room-session CSRF token. Server-only GitHub configuration and the owner Diagnostics inspector retain their existing administrator checks. Successful roster mutations emit an operator-visible `room.roster.audit.changed` event with the server-resolved actor kind/ID, room ID, and previous/next revisions, including before owner bootstrap; no names, prompts, model credentials, or CSRF tokens are included. The UI shows requested and effective state separately. Start a fresh agent turn so the server issues a fresh `room_command` lease, use `/help` to confirm `/gh` is listed, then run `/gh recent` against the real repository. The owner Diagnostics inspector should show no exclusion; otherwise use its stable code (`missing-server-config`, `permission-not-granted`, `agent-disabled`, `catalog-revision-stale`, `provider-session-stale`, or `lease-expired`) rather than inspecting credentials.
 

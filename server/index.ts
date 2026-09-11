@@ -10,7 +10,7 @@ import type { PreflightEvidence } from "../shared/preflight.js";
 import type { ConversationJobSource } from "../shared/conversation-observability.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
-import { AgentProcessSupervisor, cliAvailability, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
+import { AgentProcessSupervisor, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
 import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
@@ -67,6 +67,7 @@ import { GovernedContributionExecutor, UnavailableContributionExecutor } from ".
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
+import { inspectOpenCodeRuntime, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
@@ -162,6 +163,10 @@ app.use(traceMiddleware(structuredLogger));
 await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
+let openCodeRuntime = await inspectOpenCodeRuntime();
+await structuredLogger.log(openCodeRuntime.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", openCodeRuntime.state === "ready"
+  ? { state: openCodeRuntime.state, version: openCodeRuntime.version }
+  : { state: openCodeRuntime.state, reason: openCodeRuntime.reason });
 const legacyProjectId = storageConfiguration.backend === "json"
   ? await (await import("./storage/json-project-identity.js")).openJsonProjectIdentity(storageConfiguration.stateDirectory,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot)
@@ -297,11 +302,12 @@ let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object
 }));
 async function refreshAgentCapabilities() {
   const roster = normalizeRoomAgentRoster(store.snapshot().roster);
-  const [catalog, runtime] = await Promise.all([modelDiscovery.discover(), cliAvailability(enabledRoomAgentIds(roster))]);
+  const [catalog, runtime] = await Promise.all([modelDiscovery.discover(), refreshOpenCodeRuntime()]);
+  const availability = runtimeAvailability(enabledRoomAgentIds(roster), runtime);
   const previous = capabilityStatuses;
   const next = Object.fromEntries(roster.entries.map((entry) => {
     const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed; const toolLease = roomCommandToolBroker.snapshot(entry.agentId); const auditedRejection = capabilityAudit.list(200).findLast((event) => event.agentId === entry.agentId && event.outcome === "denied"); const rejection = toolLease.lastRejection || (auditedRejection?.reason ? { at: auditedRejection.timestamp, reason: auditedRejection.reason } : null); const stableRejection = rejection && ["missing-server-config", "permission-not-granted", "agent-disabled", "catalog-revision-stale", "provider-session-stale", "lease-expired"].includes(rejection.reason) ? { at: rejection.at, reason: rejection.reason as import("../shared/capabilities.js").CapabilityExclusion } : null;
-    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: runtime[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
+    const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: availability[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
   capabilityStatuses = next;
@@ -443,6 +449,18 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
+async function refreshOpenCodeRuntime() {
+  const next = await inspectOpenCodeRuntime();
+  const changed = next.state !== openCodeRuntime.state
+    || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
+    || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason);
+  openCodeRuntime = next;
+  if (changed) await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
+    ? { state: next.state, version: next.version }
+    : { state: next.state, reason: next.reason });
+  return next;
+}
+
 function reserveCanonicalGeneration(agent: import("../shared/participants.js").ActiveAgentId, protectedWorkId?: string) {
   if (!protectedReservations.allows(agent, protectedWorkId)) return undefined;
   const entry = roomAgentEntry(normalizeRoomAgentRoster(store.snapshot().roster), agent);
@@ -458,7 +476,7 @@ function reserveCanonicalGeneration(agent: import("../shared/participants.js").A
 }
 
 function publicRoomSnapshot(viewerHumanId?: string) {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), availability: runtimeAvailability(currentEnabledAgents(), openCodeRuntime), openCodeRuntime, activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -1176,11 +1194,13 @@ const presenceAnnouncements = new HumanPresenceAnnouncements(announceHumanPresen
 
 app.get("/api/state", async (request, response) => {
   const viewerHumanId = sessionHuman(request, humans, humanSessions)?.id;
+  const runtime = await refreshOpenCodeRuntime();
   response.json({
-    ...(await roomStateWithAvailability(roomSnapshot, () => cliAvailability(currentEnabledAgents()), async () => {
+    ...(await roomStateWithAvailability(roomSnapshot, () => Promise.resolve(runtimeAvailability(currentEnabledAgents(), runtime)), async () => {
       await refreshImplementationCapabilities();
       return implementationCapabilities;
     }, viewerHumanId)),
+    openCodeRuntime: runtime,
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
     providerHealth: providerHealth.snapshot(),
@@ -1199,8 +1219,8 @@ app.post("/api/provider-health/:providerId/recover", async (request, response) =
 });
 
 registerRepositoryReadiness(app, projectRepositoryConnectionStore, (projectId) => projectRepositoryRegistry.forProject(projectId).connection);
-app.get("/api/ready", (_request, response) => {
-  response.set("Cache-Control", "no-store").json({ ready: true, ...serverIdentity });
+app.get("/api/ready", async (_request, response) => {
+  response.set("Cache-Control", "no-store").json({ ready: true, openCodeRuntime: await refreshOpenCodeRuntime(), ...serverIdentity });
 });
 
 // Room-facing workshop routes are intentionally read-only and project away

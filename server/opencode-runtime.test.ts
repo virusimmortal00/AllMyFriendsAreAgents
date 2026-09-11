@@ -1,0 +1,34 @@
+import { describe, expect, it, vi } from "vitest";
+import type { DiscoveryExecutor } from "./model-discovery.js";
+import { inspectOpenCodeRuntime, runtimeAvailability } from "./opencode-runtime.js";
+
+describe("OpenCode runtime preflight", () => {
+  it("accepts an approved runtime and projects its availability to configured agents", async () => {
+    const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.25\n", stderr: "" }));
+    const status = await inspectOpenCodeRuntime(execute, () => 0);
+
+    expect(status).toEqual({ state: "ready", version: "1.18.25", checkedAt: "1970-01-01T00:00:00.000Z" });
+    expect(execute).toHaveBeenCalledWith(expect.any(String), ["--version"]);
+    expect(runtimeAvailability(["codex-sol", "claude-opus"], status)).toEqual({ "codex-sol": true, "claude-opus": true });
+  });
+
+  it("fails closed for unsupported or malformed runtime identities", async () => {
+    const execute = vi.fn<DiscoveryExecutor>(async () => ({ stdout: "1.18.26\n", stderr: "" }));
+
+    await expect(inspectOpenCodeRuntime(execute, () => 0)).resolves.toEqual({ state: "unavailable", reason: "unsupported_version", checkedAt: "1970-01-01T00:00:00.000Z" });
+  });
+
+  it.each([
+    [Object.assign(new Error("the binary name is private"), { code: "ENOENT" }), "command_not_found"],
+    [Object.assign(new Error("permission denied"), { code: "EACCES" }), "not_executable"],
+    [new Error("command timed out after 10 seconds"), "timed_out"],
+    [new Error("token=super-secret-value"), "command_failed"],
+  ] as const)("returns only a safe reason for a failed command", async (error, reason) => {
+    const execute = vi.fn<DiscoveryExecutor>(async () => { throw error; });
+    const status = await inspectOpenCodeRuntime(execute, () => 0);
+
+    expect(status).toEqual({ state: "unavailable", reason, checkedAt: "1970-01-01T00:00:00.000Z" });
+    expect(JSON.stringify(status)).not.toContain("super-secret-value");
+    expect(runtimeAvailability(["codex-sol"], status)).toEqual({ "codex-sol": false });
+  });
+});
