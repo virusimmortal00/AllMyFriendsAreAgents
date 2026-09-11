@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -203,6 +204,21 @@ describe("protected participation", () => {
     expect(await f.work.get(retired.workId)).toBeUndefined();
     expect((await f.start("request-cleanup-retry")).workId).toBe(retired.workId);
     await expect.poll(() => f.inputs.length).toBe(3);
+  });
+  it("forces pre-admission cleanup even when the retention generation appears current", async () => {
+    const f = await fixture();
+    const requestId = "request-stale-cleanup-generation";
+    const workId = `protected-${createHash("sha256").update(JSON.stringify([f.rooms.roomId, "human:fixture", requestId])).digest("hex")}`;
+    const orphan = await f.investigations.request({ investigationId: workId, owner: "codex-sol", objective: "Stale backing job",
+      trigger: "Protected retention fixture", signal: "AUTHENTICATED_HUMAN" });
+    expect(orphan.kind).toBe("ok"); await expect.poll(() => f.inputs.length).toBe(1);
+    await f.investigations.cancel(workId, "Terminal orphan fixture.");
+    f.complete();
+    await expect.poll(() => f.investigations.activeCount()).toBe(0);
+    expect(await f.work.get(workId)).toBeUndefined();
+    expect((await f.start(requestId)).workId).toBe(workId);
+    await expect.poll(() => f.inputs.length).toBe(2);
+    expect((await f.investigations.list()).filter((job) => job.investigationId === workId)).toHaveLength(1);
   });
   it("waits for confirmed termination, preserves a checkpoint, discards late results, and isolates replacement work", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);

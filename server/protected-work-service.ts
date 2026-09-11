@@ -255,7 +255,7 @@ export class ProtectedWorkService {
   }
   private async pruneRetiredInvestigations(required = false) {
     const target = this.retentionMutation;
-    if (this.retentionCleaned >= target) return;
+    if (!required && this.retentionCleaned >= target) return;
     try {
       await this.investigations.pruneTerminalProtectedWork(await this.store.retainedWorkIds());
       this.retentionCleaned = Math.max(this.retentionCleaned, target);
