@@ -33,6 +33,7 @@ function filteredEnvironment() {
 export const executeDiscoveryCommand: DiscoveryExecutor = async (command, args, signal) => {
   const result = await execFileAsync(command, [...args], {
     timeout: DISCOVERY_TIMEOUT_MS,
+    killSignal: "SIGKILL",
     maxBuffer: DISCOVERY_OUTPUT_LIMIT,
     windowsHide: true,
     signal,

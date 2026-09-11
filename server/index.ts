@@ -315,11 +315,11 @@ async function refreshAgentCapabilities(runtimeOverride?: typeof openCodeRuntime
     const status = resolveAgentCapabilities({ entry, model: selectedModelAvailability(roomAgentModelReference(entry), catalog), runtimeAvailable: availability[entry.agentId] === true, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt, lease: { status: toolLease.status === "active" ? "active" : toolLease.status === "expired" ? "expired" : "missing", issuedAt: toolLease.issuedAt, expiresAt: toolLease.expiresAt }, lastManifestIssuance: toolLease.lastManifestIssuance, lastRejection: stableRejection });
     return [entry.agentId, status];
   }));
-  capabilityStatuses = next;
   for (const status of Object.values(next)) for (const [name, resolved] of Object.entries(status.capabilities)) {
     const prior = previous[status.agentId]?.capabilities[name as import("../shared/capabilities.js").AgentCapabilityName];
     if (!prior || prior.effective !== resolved.effective || prior.reason !== resolved.reason) await capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
   }
+  capabilityStatuses = next;
 }
 for (const status of Object.values(capabilityStatuses)) for (const [name, resolved] of Object.entries(status.capabilities)) void capabilityAudit.append({ agentId: status.agentId, capability: name as import("../shared/capabilities.js").AgentCapabilityName, outcome: "configured", reason: resolved.reason });
 // Durable repair blockers remain relevant even when publishing credentials are absent.
@@ -459,14 +459,17 @@ async function refreshOpenCodeRuntime() {
   const changed = next.state !== openCodeRuntime.state
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
     || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason);
-  openCodeRuntime = next;
   if (changed) {
     await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
       ? { state: next.state, version: next.version }
       : { state: next.state, reason: next.reason });
     await refreshAgentCapabilities(next, true);
-    broadcast();
   }
+  // Publish a transition only after its matching capability projection is
+  // durable. A failed refresh leaves the prior runtime visible so the next
+  // monitor result retries both side effects rather than losing the broadcast.
+  openCodeRuntime = next;
+  if (changed) broadcast();
   return next;
 }
 

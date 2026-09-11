@@ -59,10 +59,11 @@ curl -fsS http://127.0.0.1:53147/api/ready >/dev/null && print ready
 
 The server runs a bounded OpenCode `--version` preflight at startup and schedules
 a coalesced background refresh from readiness/state requests. The preflight has an
-independent aborting deadline, so an executable that ignores termination cannot
-block server readiness indefinitely; its monitor retains that interrupted child as
-the active refresh until it actually settles, preventing another child from being
-started. Before a changed refresh is broadcast to connected room clients, the
+independent aborting deadline, and every discovery subprocess is hard-stopped on
+cancellation, so an executable cannot ignore termination or block server
+readiness indefinitely. Its monitor retains an interrupted child as the active
+refresh until it actually settles, preventing another child from being started.
+Before a changed refresh is broadcast to connected room clients, the
 server recomputes its authoritative capability policy against a fresh model catalog.
 Runtime transitions resolve before ordinary catalog reads so a caller cannot
 overwrite recovered capability state with an earlier cached failure. State
