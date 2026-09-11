@@ -301,10 +301,10 @@ let capabilityStatuses: Readonly<Record<string, AgentCapabilityStatus>> = Object
   const permissions = normalizeCommandPermissions(entry.commandPermissions); const ceiling = githubReadService ? ROOM_COMMANDS : LEGACY_ROOM_COMMANDS; const requested = permissions.allowAll && permissions.catalogRevision === COMMAND_CATALOG_REVISION ? ROOM_COMMANDS : permissions.allowed;
   return [entry.agentId, resolveAgentCapabilities({ entry, model: { available: false, reason: "runtime_unavailable", diagnostic: "Runtime discovery is pending." }, runtimeAvailable: false, diagnosticsConfigured: true, githubReadConfigured: Boolean(githubReadService), githubReadGranted: requested.includes("gh"), exclusiveWritableAgent: store.snapshot().settings.writableAgent, serverCeiling: ceiling, requestedGrants: requested, catalogRevisionCurrent: permissions.catalogRevision === COMMAND_CATALOG_REVISION, providerSessionFresh: !store.snapshot().sessions[entry.agentId]?.invalidatedAt })];
 }));
-async function refreshAgentCapabilities(runtimeOverride?: typeof openCodeRuntime) {
+async function refreshAgentCapabilities(runtimeOverride?: typeof openCodeRuntime, refreshCatalog = false) {
   const roster = normalizeRoomAgentRoster(store.snapshot().roster);
   const [catalog, runtime] = await Promise.all([
-    modelDiscovery.discover(),
+    modelDiscovery.discover(refreshCatalog),
     runtimeOverride ? Promise.resolve(runtimeOverride) : refreshOpenCodeRuntime(),
   ]);
   const availability = runtimeAvailability(enabledRoomAgentIds(roster), runtime);
@@ -463,7 +463,7 @@ async function refreshOpenCodeRuntime() {
     await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
       ? { state: next.state, version: next.version }
       : { state: next.state, reason: next.reason });
-    await refreshAgentCapabilities(next);
+    await refreshAgentCapabilities(next, true);
     broadcast();
   }
   return next;

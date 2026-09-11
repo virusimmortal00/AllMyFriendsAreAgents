@@ -61,7 +61,8 @@ The server runs a bounded OpenCode `--version` preflight at startup and schedule
 a coalesced background refresh from readiness/state requests. The preflight has an
 independent aborting deadline, so an executable that ignores termination cannot
 block server readiness indefinitely. Before a changed refresh is broadcast to
-connected room clients, the server recomputes its authoritative capability policy;
+connected room clients, the server recomputes its authoritative capability policy
+against a fresh model catalog;
 state responses read the current status after asynchronous capability work. It
 returns only a safe state: ready version or one of
 `command_not_found`, `not_executable`, `timed_out`, `unsupported_version`, or
