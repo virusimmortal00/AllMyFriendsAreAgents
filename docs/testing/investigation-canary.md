@@ -89,9 +89,14 @@ rejected admission, inbox closure before reservation release, serialization of
 dismissal against delivery, and preservation of an already delivered disposition
 after acknowledgement failure. The browser tests retain action identities after
 lost responses and exclude unassessed protected findings from the autonomous
-inbox. Durable history retention and archival are tracked separately in
-[#176](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/176); do not
-truncate active receipts or audit chains to enforce an ad hoc storage limit.
+inbox. Durable history retention and archival are defined in
+[`docs/operations/protected-work-retention.md`](../operations/protected-work-retention.md)
+and tracked in [#176](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/176).
+Do not truncate active receipts or audit chains to enforce an ad hoc storage
+limit; new admission fails before the recovery reserve is consumed. Regression
+coverage also verifies that crossing the detailed archive deletion boundary
+removes only terminal backing investigation state and permits the retired request
+identity to be admitted again.
 
 ### Protected browser smoke evidence
 

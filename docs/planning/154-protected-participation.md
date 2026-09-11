@@ -51,6 +51,12 @@ authenticated `room:tool work` CLI. Who’s Here and participant status show the
 objective, phase, and elapsed execution time. Queued time is not execution time.
 The existing investigation API remains the autonomous concurrent lane.
 
+Protected-work retention, recovery reserve, audit compaction, and version 1
+migration are defined in
+[`docs/operations/protected-work-retention.md`](../operations/protected-work-retention.md)
+and tracked by issue #176. Active records are never archived, and terminal
+history uses a bounded, hash-chained archive.
+
 # Next action
 
 Validate the integrated flow and review its rendered states before promotion.

@@ -86,6 +86,7 @@ export class InvestigationService {
   }
   async returnBlocker(id: string) { const job = await this.store.get(id); return job ? this.revalidate(job) : "Investigation is missing."; }
   async policy() { return this.store.policy(); } async list(owner?: AgentId) { return this.store.list(owner); } async audit(id: string) { return this.store.audit(id); }
+  async pruneTerminalProtectedWork(retainedIds: readonly string[]) { return this.store.pruneTerminalProtectedWork(retainedIds); }
   activeCount() { return this.active.size; }
   async updatePolicy(expectedRevision: number, enabled: boolean, actor: string) { const current = await this.store.policy(); if (!current) return { kind: "not_found" } as const; const next = { ...current, revision: current.revision + 1, enabled, updatedAt: this.now(), updatedBy: actor }; if (!await this.store.setPolicy(expectedRevision, next)) return { kind: "conflict", reason: "Investigation policy changed concurrently." } as const; await this.cancelAll("Investigation policy revision changed."); this.changed(); return { kind: "ok", value: next } as const; }
   async request(input: { investigationId?: string; owner: AgentId; objective: string; trigger: string; signal: InvestigationSignal; evidenceRefs?: readonly InvestigationEvidenceRef[]; contextSnapshot?: string; budget?: Partial<InvestigationBudget> }): Promise<InvestigationResult<InvestigationRecord>> {

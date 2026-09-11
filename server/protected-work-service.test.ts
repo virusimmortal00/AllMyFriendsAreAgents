@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -7,13 +8,13 @@ import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { InvestigationService, type InvestigationExecutorInput, type InvestigationExecutorResult } from "./investigation-service.js";
-import { ParticipantReservations, ProtectedWorkStore, type ProtectedReturnReport } from "./protected-work-store.js";
+import { ParticipantReservations, ProtectedWorkStore, type ProtectedReturnReport, type ProtectedWorkRetention } from "./protected-work-store.js";
 import { ProtectedReturnCapacityError, ProtectedWorkService } from "./protected-work-service.js";
 import { protectedReturnCursor } from "./protected-return.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-async function fixture(backend: "json" | "sqlite" = "json") {
+async function fixture(backend: "json" | "sqlite" = "json", retention: Partial<ProtectedWorkRetention> = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-protected-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const rooms = backend === "json" ? await RoomStore.open(root, path.join(root, "room")) : await SqliteRoomRepository.open(root, path.join(root, "room.sqlite"));
@@ -31,7 +32,7 @@ async function fixture(backend: "json" | "sqlite" = "json") {
     { configuredEnabled: true, ownerAllowed: (owner, workId) => reservations.allows(owner, workId) });
   await investigations.initialize();
   cleanup.push(async () => { await investigations.shutdown(); reject?.(new Error("cleanup")); await expect.poll(() => investigations.activeCount()).toBe(0); });
-  const work = await ProtectedWorkStore.open(path.join(root, "protected"));
+  const work = await ProtectedWorkStore.open(path.join(root, "protected"), retention);
   const runReturn = vi.fn(async (): Promise<ProtectedReturnReport> => ({ text: "Here are the relevant findings.", relevance: "relevant" as const, cursor: protectedReturnCursor(rooms.snapshot()) }));
   const options = { roomId: rooms.roomId, canStart: () => true, departureCursor: () => rooms.snapshot().messages.at(-1)?.id ?? null,
     cursor: () => protectedReturnCursor(rooms.snapshot()), hasDelivered: (workId: string) => rooms.snapshot().messages.some((message) => message.id === `command-delivery:${workId}:0`),
@@ -41,7 +42,11 @@ async function fixture(backend: "json" | "sqlite" = "json") {
   const service = new ProtectedWorkService(work, investigations, reservations, options);
   await service.initialize(); cleanup.push(() => service.shutdown());
   const start = (requestId = "request-0001") => service.start({ roomId: rooms.roomId, owner: "codex-sol", objective: "Inspect bounded evidence", requestId }, "human:fixture");
-  const finish = async () => { complete({ providerSessionId: "worker-private", summary: "Durable finding", evidenceRefs: [], usage: { tokens: 1, toolCalls: 1 } }); await expect.poll(async () => (await investigations.list())[0].status).toBe("COMPLETED"); };
+  const finish = async () => {
+    const investigationId = inputs.at(-1)!.investigationId;
+    complete({ providerSessionId: `worker-private-${inputs.length}`, summary: "Durable finding", evidenceRefs: [], usage: { tokens: 1, toolCalls: 1 } });
+    await expect.poll(async () => (await investigations.list()).find((job) => job.investigationId === investigationId)?.status).toBe("COMPLETED");
+  };
   return { root, rooms, work, service, investigations, inputs, reservations, start, finish, options, runReturn, executor,
     foreground: (value: boolean) => { foreground = value; }, confirmed: (value: boolean) => { confirmed = value; },
     complete: () => complete({ providerSessionId: "late-private", summary: "Late output must be discarded", usage: { tokens: 1, toolCalls: 0 } }) };
@@ -160,6 +165,61 @@ describe("protected participation", () => {
     expect((await f.start()).workId).toBe(job.workId);
     await expect(f.service.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Substitution", requestId: "request-0001" }, "human:fixture")).rejects.toThrow(/different/);
   });
+  it("replays archived admission after restart and rejects objective substitution", async () => {
+    const f = await fixture("json", { maxTerminalRecords: 1 });
+    const first = await f.start("request-archived"); await expect.poll(() => f.inputs.length).toBe(1); await f.finish(); await f.service.tick();
+    await f.start("request-current"); await expect.poll(() => f.inputs.length).toBe(2); await f.finish(); await f.service.tick();
+    expect((await f.work.list()).map((record) => record.workId)).not.toContain(first.workId);
+    await f.service.shutdown();
+    const reopened = await ProtectedWorkStore.open(path.join(f.root, "protected"), { maxTerminalRecords: 1 });
+    const restored = new ProtectedWorkService(reopened, f.investigations, new ParticipantReservations(() => false), f.options);
+    await restored.initialize(); cleanup.push(() => restored.shutdown());
+    expect((await restored.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Inspect bounded evidence", requestId: "request-archived" }, "human:fixture")).workId).toBe(first.workId);
+    await expect(restored.start({ roomId: f.rooms.roomId, owner: "codex-sol", objective: "Substituted archived objective", requestId: "request-archived" }, "human:fixture")).rejects.toThrow(/different/);
+  });
+  it("retires terminal backing investigations when archive detail is checkpointed", async () => {
+    const f = await fixture("json", { maxTerminalRecords: 1, maxArchiveBytes: 512 });
+    const retired = await f.start("request-retired"); await expect.poll(() => f.inputs.length).toBe(1); await f.finish(); await f.service.tick();
+    await f.start("request-current"); await expect.poll(() => f.inputs.length).toBe(2); await f.finish(); await f.service.tick();
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.investigations.list()).map((job) => job.investigationId)).not.toContain(retired.workId);
+    expect(await f.investigations.audit(retired.workId)).toEqual([]);
+    const reused = await f.start("request-retired");
+    expect(reused.workId).toBe(retired.workId);
+    await expect.poll(() => f.inputs.length).toBe(3);
+  });
+  it("does not poison a reused admission when backing cleanup is temporarily unavailable", async () => {
+    const f = await fixture("json", { maxTerminalRecords: 1, maxArchiveBytes: 512 });
+    const retired = await f.start("request-cleanup-retry"); await expect.poll(() => f.inputs.length).toBe(1); await f.finish(); await f.service.tick();
+    const prune = f.investigations.pruneTerminalProtectedWork.bind(f.investigations);
+    let failures = 2;
+    vi.spyOn(f.investigations, "pruneTerminalProtectedWork").mockImplementation(async (retainedIds) => {
+      if (!retainedIds.includes(retired.workId) && failures > 0) { failures -= 1; throw new Error("Fixture cleanup unavailable."); }
+      return prune(retainedIds);
+    });
+    await f.start("request-newer"); await expect.poll(() => f.inputs.length).toBe(2); await f.finish(); await f.service.tick();
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.investigations.list()).map((job) => job.investigationId)).toContain(retired.workId);
+    await expect(f.start("request-cleanup-retry")).rejects.toThrow(/cleanup unavailable/);
+    expect(await f.work.get(retired.workId)).toBeUndefined();
+    expect((await f.start("request-cleanup-retry")).workId).toBe(retired.workId);
+    await expect.poll(() => f.inputs.length).toBe(3);
+  });
+  it("forces pre-admission cleanup even when the retention generation appears current", async () => {
+    const f = await fixture();
+    const requestId = "request-stale-cleanup-generation";
+    const workId = `protected-${createHash("sha256").update(JSON.stringify([f.rooms.roomId, "human:fixture", requestId])).digest("hex")}`;
+    const orphan = await f.investigations.request({ investigationId: workId, owner: "codex-sol", objective: "Stale backing job",
+      trigger: "Protected retention fixture", signal: "AUTHENTICATED_HUMAN" });
+    expect(orphan.kind).toBe("ok"); await expect.poll(() => f.inputs.length).toBe(1);
+    await f.investigations.cancel(workId, "Terminal orphan fixture.");
+    f.complete();
+    await expect.poll(() => f.investigations.activeCount()).toBe(0);
+    expect(await f.work.get(workId)).toBeUndefined();
+    expect((await f.start(requestId)).workId).toBe(workId);
+    await expect.poll(() => f.inputs.length).toBe(2);
+    expect((await f.investigations.list()).filter((job) => job.investigationId === workId)).toHaveLength(1);
+  });
   it("waits for confirmed termination, preserves a checkpoint, discards late results, and isolates replacement work", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
     await f.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Partial finding", opaqueState: "private-checkpoint" });
@@ -209,6 +269,20 @@ describe("protected participation", () => {
     expect(f.runReturn).toHaveBeenCalledTimes(6);
     expect((await f.service.list())[0].phase).toBe("blocked");
     await expect(f.service.action(job.workId, "dismiss", request)).rejects.toThrow(/different operation/);
+  });
+  it("bounds unique retry receipts while reserving durable terminal recovery", async () => {
+    const f = await fixture("json", { maxActionReceipts: 4, actionRecoveryReserve: 2 });
+    const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
+    f.runReturn.mockRejectedValue(new Error("Fixture provider unavailable"));
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) await f.service.tick();
+      await f.service.action(job.workId, "retry-return", { actor: "human:fixture", id: `retry-${cycle}` });
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) await f.service.tick();
+    await expect(f.service.action(job.workId, "retry-return", { actor: "human:fixture", id: "retry-overflow" })).rejects.toThrow(/receipt budget/);
+    expect((await f.work.get(job.workId))?.actions).toHaveLength(2);
+    await f.service.action(job.workId, "dismiss", { actor: "human:fixture", id: "dismiss-after-capacity" });
+    expect(await f.work.get(job.workId)).toMatchObject({ phase: "available", disposition: "no-update", actions: expect.arrayContaining([expect.objectContaining({ action: "dismiss" })]) });
   });
   it("stops a running worker when its participant configuration is revoked", async () => {
     const f = await fixture(); await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
