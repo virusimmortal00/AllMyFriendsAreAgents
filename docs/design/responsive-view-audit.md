@@ -1487,14 +1487,15 @@ status treatment.
 
 2026-09-12 source-change note: `ROOM-05` and `ROOM-06` now attach the shared
 native scroll-edge treatment directly to the roster collection and detail pane,
-including content that mounts after the dialog opens. The roster's list-view and
-variant selects now use the shared square `classic-select` treatment; its
-height can expand to the shared touch target at narrow checkpoints. Focused
-browser capture exercised roster top and bottom positions at Phone, Tablet,
-Short laptop, and Desktop in Chromium and WebKit, with the persistent roster
-actions and both directional overflow boundaries reachable. The inventory rows
-remain `Unverified` until the current full capture receives independent image
-review.
+including content that mounts after the dialog opens, and opt those regions into
+the visible classic native scrollbar track when WebKit would otherwise conceal
+the affordance. The roster's list-view and variant selects now use the shared
+square `classic-select` treatment; its height can expand to the shared touch
+target at narrow checkpoints. Focused browser capture exercised roster top and
+bottom positions at Phone, Tablet, Short laptop, and Desktop in Chromium and
+WebKit, with the persistent roster actions and both directional overflow
+boundaries reachable. The inventory rows remain `Unverified` until the current
+full capture receives independent image review.
 
 ### Full workspaces
 
