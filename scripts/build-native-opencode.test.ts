@@ -79,6 +79,7 @@ describe("native OpenCode artifact build", () => {
   it("preserves the pinned downstream lockfile bytes across build hosts", () => {
     expect(buildSource.indexOf('config", "core.autocrlf", "false"')).toBeGreaterThan(-1);
     expect(buildSource.indexOf('config", "core.autocrlf", "false"')).toBeLessThan(buildSource.indexOf('checkout", "--detach", "FETCH_HEAD"'));
+    expect(buildSource).toContain("process.env.RUNNER_TEMP || os.tmpdir()");
     expect(buildSource).toContain('"install", "--frozen-lockfile"');
     expect(buildSource).toContain('INIT_CWD: checkout');
     expect(buildSource).toContain('["install", "--no-save", "--ignore-scripts"]');

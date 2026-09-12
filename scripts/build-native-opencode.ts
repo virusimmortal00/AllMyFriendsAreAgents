@@ -209,7 +209,12 @@ export function buildNativeTarget(input: { targetId: string; outputDirectory: st
   const downstream = contractDownstream(context);
   const bunVersion = run("bun", ["--version"]).trim();
   if (bunVersion !== BUILD_BUN_VERSION) throw new Error(`Native builds require Bun ${BUILD_BUN_VERSION}; received ${bunVersion || "unknown"}.`);
-  const checkout = mkdtempSync(path.join(os.tmpdir(), "amfaa-opencode-source-"));
+  // GitHub's Windows workspace and OS temp directory can live on different
+  // drives. Bun 1.3.14 cannot link workspaces across that boundary, so prefer
+  // the runner-owned temp directory, which shares the job workspace volume.
+  const checkoutRoot = process.env.RUNNER_TEMP || os.tmpdir();
+  mkdirSync(checkoutRoot, { recursive: true });
+  const checkout = mkdtempSync(path.join(checkoutRoot, "amfaa-opencode-source-"));
   try {
     run("git", ["init", checkout]);
     run("git", ["-C", checkout, "config", "core.autocrlf", "false"]);
