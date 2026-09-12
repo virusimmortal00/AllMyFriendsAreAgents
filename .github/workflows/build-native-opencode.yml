@@ -1,0 +1,103 @@
+name: Build verified native OpenCode runtimes
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/build-native-opencode.yml
+      - Dockerfile
+      - integration-contracts/opencode.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - release/native-target-policy.json
+      - scripts/build-native-opencode.ts
+      - scripts/check-opencode-binary-contract.ts
+      - scripts/native-release-contract.ts
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-native-opencode.yml
+      - Dockerfile
+      - integration-contracts/opencode.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - release/native-target-policy.json
+      - scripts/build-native-opencode.ts
+      - scripts/check-opencode-binary-contract.ts
+      - scripts/native-release-contract.ts
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Verify ${{ matrix.target }} runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: windows-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch, build, verify, and retain the manifest-pinned runtime
+        run: pnpm exec tsx scripts/build-native-opencode.ts build --target ${{ matrix.target }} --output native-artifacts
+      - name: Upload this run's verified target archive and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-opencode-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-set:
+    name: Verify complete native artifact set
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-opencode-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-artifacts
+          merge-multiple: true
+      - name: Reject incomplete, duplicate, mismatched, or mutated artifacts
+        run: pnpm exec tsx scripts/build-native-opencode.ts verify-set --directory native-artifacts
