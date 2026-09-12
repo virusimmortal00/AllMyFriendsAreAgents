@@ -78,7 +78,7 @@ unavailable, enabled roster participants remain visible and show the shared
 server reason rather than disappearing.
 
 While one or more room event-stream clients are connected, the server also
-rechecks the runtime at the same bounded refresh interval. A repaired runtime
+rechecks the runtime immediately after each bounded refresh interval expires. A repaired runtime
 therefore updates the authoritative capability projection and broadcasts it to
 an idle connected client without requiring a page reload or another mutation.
 
