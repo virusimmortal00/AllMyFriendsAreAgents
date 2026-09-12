@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, verifyNativeReleaseEvidence } from "./native-release-evidence.js";
+import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, verifyNativeReleaseEvidence, verifyNativeReleasePromotion } from "./native-release-evidence.js";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { setupNativeOpenCode } from "./setup-native-opencode.js";
 
@@ -117,6 +117,19 @@ describe("native release evidence retention", () => {
     if (failure === "mutated") writeFileSync(archive, Buffer.concat([readFileSync(archive), Buffer.from("mutated")]));
     if (failure === "manifest-drift") { release.targets[0].artifact.sha256 = "0".repeat(64); writeFileSync(releasePath, `${JSON.stringify(release, null, 2)}\n`); evidence.releaseProjection.size = statSize(releasePath); evidence.releaseProjection.sha256 = digest(releasePath); writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); }
     expect(() => verifyNativeReleaseEvidence(output, commit)).toThrow();
+  });
+
+  it("promotes only evidence from the selected successful canonical main run", () => {
+    const { output, commit } = assemble();
+    const runMetadata = { id: 123, run_attempt: 1, status: "completed", conclusion: "success", event: "push", head_branch: "main", head_sha: commit, path: ".github/workflows/build-native-opencode.yml", repository: { full_name: "virusimmortal00/AllMyFriendsAreAgents" }, head_repository: { full_name: "virusimmortal00/AllMyFriendsAreAgents" } };
+    const identity = { repository: "virusimmortal00/AllMyFriendsAreAgents", workflowPath: ".github/workflows/build-native-opencode.yml", branch: "main" };
+    expect(verifyNativeReleasePromotion({ directory: output, version: "0.1.0", runMetadata, identity }).source.commit).toBe(commit);
+    for (const mutation of [
+      { conclusion: "failure" }, { event: "pull_request" }, { head_branch: "feature" },
+      { head_sha: "c".repeat(40) }, { path: ".github/workflows/other.yml" }, { id: 124 },
+      { repository: { full_name: "someone/fork" } }, { head_repository: { full_name: "someone/fork" } },
+    ]) expect(() => verifyNativeReleasePromotion({ directory: output, version: "0.1.0", runMetadata: { ...runMetadata, ...mutation }, identity })).toThrow();
+    expect(() => verifyNativeReleasePromotion({ directory: output, version: "0.1.1", runMetadata, identity })).toThrow(/version or commit/);
   });
 });
 

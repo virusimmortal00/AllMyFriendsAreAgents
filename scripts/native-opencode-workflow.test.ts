@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = readFileSync(path.join(root, ".github/workflows/build-native-opencode.yml"), "utf8");
+const promotion = readFileSync(path.join(root, ".github/workflows/publish-native-release.yml"), "utf8");
 const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
 
 describe("self-contained native application build workflow", () => {
@@ -64,5 +65,18 @@ describe("self-contained native application build workflow", () => {
     expect(dockerfile.match(/^ARG OPENCODE_COMMIT=6883ca5bd35a5494fb2759018373308911c79e01$/gm)).toHaveLength(2);
     expect(dockerfile.match(/^ARG OPENCODE_VERSION=1\.18\.25-amfaa\.2$/gm)).toHaveLength(2);
     expect(dockerfile).toContain("test \"$(/out/opencode --version)\" = \"$OPENCODE_VERSION\"");
+  });
+
+  it("publishes only an explicitly selected, already accepted native candidate", () => {
+    expect(promotion).toContain("workflow_dispatch:");
+    expect(promotion).toMatch(/^permissions:\n  contents: write\n  actions: read$/m);
+    expect(promotion).toContain("github.repository == 'virusimmortal00/AllMyFriendsAreAgents'");
+    expect(promotion).toContain("native-release-evidence-${{ inputs.candidate_run_id }}-*");
+    expect(promotion).toContain("verify-promotion");
+    expect(promotion).toContain("gh release create");
+    expect(promotion).toContain("--target \"$candidate_sha\"");
+    expect(promotion).not.toMatch(/build-native-opencode\.ts build|build:native-application|package:native-application/);
+    expect(promotion).toContain("env -u GH_TOKEN -u GITHUB_TOKEN curl");
+    for (const reference of promotion.matchAll(/uses: [^\s]+@([^\s]+)/g)) expect(reference[1]).toMatch(/^[0-9a-f]{40}$/);
   });
 });

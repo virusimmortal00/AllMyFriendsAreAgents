@@ -39,6 +39,12 @@ export interface NativeEvidenceManifest {
   artifacts: ArtifactEntry[];
 }
 
+export interface NativePromotionIdentity {
+  repository: string;
+  workflowPath: string;
+  branch: string;
+}
+
 function sha256Buffer(value: Buffer | string): string { return createHash("sha256").update(value).digest("hex"); }
 function sha256File(file: string): string { return sha256Buffer(readFileSync(file)); }
 function reference(root: string, relativePath: string): FileReference {
@@ -276,6 +282,31 @@ export function verifyNativeReleaseEvidence(directory: string, expectedCommit?: 
   return manifest as unknown as NativeEvidenceManifest;
 }
 
+export function verifyNativeReleasePromotion(input: {
+  directory: string; version: string; runMetadata: unknown; identity: NativePromotionIdentity;
+}): NativeEvidenceManifest {
+  const run = object(input.runMetadata, "workflow run metadata");
+  const repository = object(run.repository, "workflow run repository");
+  const headRepository = object(run.head_repository, "workflow run head repository");
+  const commit = String(run.head_sha || "");
+  const expectedWorkflow = `${input.identity.repository}/${input.identity.workflowPath}@refs/heads/${input.identity.branch}`;
+  if (
+    String(run.id) === "" || String(run.run_attempt) === "" || run.status !== "completed" || run.conclusion !== "success"
+    || !["push", "workflow_dispatch"].includes(String(run.event)) || run.head_branch !== input.identity.branch
+    || !COMMIT.test(commit) || run.path !== input.identity.workflowPath
+    || repository.full_name !== input.identity.repository || headRepository.full_name !== input.identity.repository
+  ) throw new Error("Workflow run is not an accepted canonical release candidate.");
+  const manifest = verifyNativeReleaseEvidence(input.directory, commit);
+  if (
+    manifest.workflow.repository !== input.identity.repository || manifest.workflow.workflow !== expectedWorkflow
+    || manifest.workflow.ref !== `refs/heads/${input.identity.branch}` || manifest.workflow.runId !== String(run.id)
+    || manifest.workflow.runAttempt !== String(run.run_attempt)
+  ) throw new Error("Retained evidence does not belong to the selected workflow run.");
+  const release = validateNativeReleaseManifest(JSON.parse(readFileSync(path.join(input.directory, "release-projection/native-release-manifest.json"), "utf8")));
+  if (release.application.version !== input.version || release.application.commit !== commit) throw new Error("Release version or commit does not match the promotion request.");
+  return manifest;
+}
+
 function option(name: string): string | undefined { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];
@@ -294,5 +325,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   } else if (command === "verify") {
     const directory = option("--directory"); if (!directory) throw new Error("Usage: native-release-evidence.ts verify --directory <directory> [--commit <sha>]");
     const result = verifyNativeReleaseEvidence(directory, option("--commit")); process.stdout.write(`Verified ${result.artifacts.length} retained native release candidates.\n`);
+  } else if (command === "verify-promotion") {
+    const directory = option("--directory"); const version = option("--version"); const metadata = option("--run-metadata");
+    if (!directory || !version || !metadata) throw new Error("Usage: native-release-evidence.ts verify-promotion --directory <directory> --version <version> --run-metadata <workflow-run.json>");
+    const result = verifyNativeReleasePromotion({ directory, version, runMetadata: JSON.parse(readFileSync(path.resolve(metadata), "utf8")), identity: { repository: "virusimmortal00/AllMyFriendsAreAgents", workflowPath: ".github/workflows/build-native-opencode.yml", branch: "main" } });
+    process.stdout.write(`Verified native release promotion for ${result.source.commit}.\n`);
   } else throw new Error("Usage: native-release-evidence.ts assemble|subjects|bind-attestation|verify ...");
 }
