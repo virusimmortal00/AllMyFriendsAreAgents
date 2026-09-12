@@ -23,6 +23,8 @@ describe("roster manager", () => {
     render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={onSaved} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
     expect(screen.queryByRole("textbox", { name: "Username" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Agent list view" }).classList.contains("classic-select")).toBe(true);
+    expect(screen.getByRole("combobox", { name: "Variant / reasoning effort" }).classList.contains("classic-select")).toBe(true);
     await user.click(screen.getByRole("switch"));
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 5 })));
