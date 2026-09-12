@@ -21,7 +21,7 @@ async function fixture() {
     copyFile(path.join(repositoryRoot, "package.json"), path.join(root, "package.json")),
   ]);
   const target = "linux-x64"; const archiveName = "all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz";
-  const staged = path.join(root, "archive", "all-my-friends-are-agents", "runtime", "opencode", "bin");
+  const staged = path.join(root, "archive", "all-my-friends-are-agents", "versions", `0.1.0-${"b".repeat(12)}`, "app", "runtime", "opencode", "bin");
   await mkdir(staged, { recursive: true }); await writeFile(path.join(staged, "opencode"), "#!/bin/sh\necho 1.18.25-amfaa.2\n"); await chmod(path.join(staged, "opencode"), 0o755);
   const archive = path.join(root, archiveName); execFileSync("tar", ["-czf", archive, "-C", path.join(root, "archive"), "all-my-friends-are-agents"]);
   const artifact = await readFile(archive); const provenance = Buffer.from("verified provenance evidence\n");

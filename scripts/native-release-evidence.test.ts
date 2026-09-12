@@ -3,11 +3,14 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, verifyNativeReleaseEvidence } from "./native-release-evidence.js";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
+import { setupNativeOpenCode } from "./setup-native-opencode.js";
 
 const context = loadNativeReleaseContext();
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporary: string[] = [];
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-evidence-test-")); temporary.push(value); return value; }
 function digest(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
@@ -38,7 +41,7 @@ function assemble() {
   const root = fixture(); const inputs = acceptedInputs(root); const output = path.join(root, "output"); const commit = "b".repeat(40);
   const assembled = assembleNativeReleaseEvidence({ ...inputs, runtimeDirectory: inputs.runtime, applicationDirectory: inputs.application, outputDirectory: output, sourceCommit: commit, workflow: { repository: "virusimmortal00/AllMyFriendsAreAgents", workflow: "virusimmortal00/AllMyFriendsAreAgents/.github/workflows/build-native-opencode.yml@refs/heads/main", ref: "refs/heads/main", sha: commit, runId: "123", runAttempt: "1" } });
   const bundle = path.join(root, "sigstore.json");
-  const payload = { _type: "https://in-toto.io/Statement/v1", subject: assembled.artifacts.map((entry) => ({ name: entry.path, digest: { sha256: entry.sha256 } })), predicateType: "https://slsa.dev/provenance/v1", predicate: {} };
+  const payload = { _type: "https://in-toto.io/Statement/v1", subject: assembled.artifacts.flatMap((entry) => [{ name: entry.path, digest: { sha256: entry.sha256 } }, ...(entry.kind === "application" ? [{ name: path.basename(entry.path), digest: { sha256: entry.sha256 } }] : [])]), predicateType: "https://slsa.dev/provenance/v1", predicate: {} };
   writeFileSync(bundle, JSON.stringify({ mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json", verificationMaterial: { tlogEntries: [{}] }, dsseEnvelope: { payloadType: "application/vnd.in-toto+json", payload: Buffer.from(JSON.stringify(payload)).toString("base64"), signatures: [{ sig: "fixture" }] } }));
   bindNativeWorkflowAttestation(output, bundle);
   return { output, commit };
@@ -62,6 +65,16 @@ describe("native release evidence retention", () => {
       expect(JSON.parse(readFileSync(path.join(output, entry.sbom.path), "utf8"))).toMatchObject({ spdxVersion: "SPDX-2.3" });
       expect(JSON.parse(readFileSync(path.join(output, entry.provenance.path), "utf8"))).toMatchObject({ _type: "https://in-toto.io/Statement/v1", predicateType: "https://slsa.dev/provenance/v1" });
     }
+    const projection = path.join(output, "release-projection");
+    const releaseManifest = JSON.parse(readFileSync(path.join(projection, "native-release-manifest.json"), "utf8"));
+    expect(releaseManifest.targets).toHaveLength(context.policy.targets.length);
+    for (const target of releaseManifest.targets) {
+      expect(digest(path.join(projection, target.artifact.name))).toBe(target.artifact.sha256);
+      expect(digest(path.join(projection, target.sbom.name))).toBe(target.sbom.sha256);
+      expect(digest(path.join(projection, target.provenance.name))).toBe(target.provenance.sha256);
+    }
+    expect(readFileSync(path.join(projection, "install-native.sh"))).toEqual(readFileSync(path.join(output, "installers/install-native.sh")));
+    expect(readFileSync(path.join(projection, "install-windows.ps1"))).toEqual(readFileSync(path.join(output, "installers/install-windows.ps1")));
   });
 
   it.each(["missing", "extra", "renamed", "mutated", "bad-provenance", "bad-attestation"])("rejects a %s retained set", (failure) => {
@@ -83,6 +96,27 @@ describe("native release evidence retention", () => {
 
   it("rejects evidence replayed under another source commit", () => {
     const { output } = assemble(); expect(() => verifyNativeReleaseEvidence(output, "c".repeat(40))).toThrow(/source commit/);
+  });
+
+  it("projects one manifest and application archive consumable by source setup", async () => {
+    const { output } = assemble(); const projection = path.join(output, "release-projection"); const setupRoot = fixture();
+    mkdirSync(path.join(setupRoot, "release")); mkdirSync(path.join(setupRoot, "integration-contracts"));
+    for (const [source, destination] of [["release/native-target-policy.json", "release/native-target-policy.json"], ["integration-contracts/opencode.json", "integration-contracts/opencode.json"], ["Dockerfile", "Dockerfile"], ["package.json", "package.json"]]) copyFileSync(path.join(repositoryRoot, source), path.join(setupRoot, destination));
+    const manifestPath = path.join(projection, "native-release-manifest.json"); const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const fetch = async (url: string | URL) => { const name = path.basename(new URL(String(url)).pathname); return new Response(readFileSync(path.join(projection, name))); };
+    await expect(setupNativeOpenCode({ root: setupRoot, manifestPath, platform: "linux", architecture: "x64", fetch, verify: async () => undefined })).resolves.toEqual({ reused: false, target: "linux-x64" });
+    expect(readFileSync(path.join(setupRoot, ".runtime/opencode/bin/opencode"), "utf8")).toBe("opencode\n");
+    expect(manifest.targets.find((target: { id: string }) => target.id === "linux-x64").artifact.name).toBe("all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz");
+  });
+
+  it.each(["missing", "extra", "mutated", "manifest-drift"])("rejects a %s publication projection", (failure) => {
+    const { output, commit } = assemble(); const evidencePath = path.join(output, "native-evidence-manifest.json"); const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
+    const projection = path.join(output, "release-projection"); const releasePath = path.join(projection, "native-release-manifest.json"); const release = JSON.parse(readFileSync(releasePath, "utf8")); const archive = path.join(projection, release.targets[0].artifact.name);
+    if (failure === "missing") rmSync(archive);
+    if (failure === "extra") writeFileSync(path.join(projection, "unexpected"), "extra");
+    if (failure === "mutated") writeFileSync(archive, Buffer.concat([readFileSync(archive), Buffer.from("mutated")]));
+    if (failure === "manifest-drift") { release.targets[0].artifact.sha256 = "0".repeat(64); writeFileSync(releasePath, `${JSON.stringify(release, null, 2)}\n`); evidence.releaseProjection.size = statSize(releasePath); evidence.releaseProjection.sha256 = digest(releasePath); writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); }
+    expect(() => verifyNativeReleaseEvidence(output, commit)).toThrow();
   });
 });
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import os from "node:os";
@@ -93,18 +93,19 @@ export async function setupNativeOpenCode(options: SetupNativeOpenCodeOptions): 
     await download(target.sbom, sbom, options.fetch || globalThis.fetch);
     await download(target.provenance, provenance, options.fetch || globalThis.fetch);
     if (options.interruptAfterDownload) throw new Error("Setup interrupted before runtime activation.");
-    const staging = path.join(temporary, "runtime");
-    await mkdir(staging);
+    const staging = path.join(temporary, "runtime"); await mkdir(staging);
     const executableName = targetId.startsWith("windows-") ? "opencode.exe" : "opencode";
-    const expected = `all-my-friends-are-agents/runtime/opencode/bin/${executableName}`;
+    const legacy = `all-my-friends-are-agents/runtime/opencode/bin/${executableName}`;
+    const applicationPattern = new RegExp(`^all-my-friends-are-agents/versions/[A-Za-z0-9][A-Za-z0-9._-]+/app/runtime/opencode/bin/${executableName.replace(".", "\\.")}$`);
     const entries = (await run("tar", ["-tf", archive], root)).split(/\r?\n/).map((entry) => entry.replace(/^\.\//, "").replace(/\\/g, "/")).filter(Boolean);
-    const allowed = new Set(["all-my-friends-are-agents/", "all-my-friends-are-agents/runtime/", "all-my-friends-are-agents/runtime/opencode/", "all-my-friends-are-agents/runtime/opencode/bin/", expected]);
-    if (entries.filter((entry) => entry === expected).length !== 1 || new Set(entries).size !== entries.length || entries.some((entry) => !allowed.has(entry))) throw new Error("Native archive has an unsafe application runtime layout.");
-    await run("tar", ["-xf", archive, "-C", staging], root).catch(async () => { await run("tar", ["-xzf", archive, "-C", staging], root); });
-    const extracted = path.join(staging, "all-my-friends-are-agents", "runtime", "opencode", "bin", targetId.startsWith("windows-") ? "opencode.exe" : "opencode");
-    await stat(extracted);
-    if (!targetId.startsWith("windows-")) await chmod(extracted, 0o755);
-    await verify(extracted);
+    const candidates = entries.filter((entry) => entry === legacy || applicationPattern.test(entry));
+    if (candidates.length !== 1 || new Set(entries).size !== entries.length || entries.some((entry) => entry !== "all-my-friends-are-agents/" && !entry.startsWith("all-my-friends-are-agents/") || /(?:^|\/)\.\.(?:\/|$)/.test(entry))) throw new Error("Native archive has an unsafe application runtime layout.");
+    await run("tar", ["-xf", archive, "-C", staging, candidates[0]], root).catch(async () => { await run("tar", ["-xzf", archive, "-C", staging, candidates[0]], root); });
+    const selected = path.join(staging, ...candidates[0].split("/")); const selectedMetadata = await lstat(selected);
+    if (!selectedMetadata.isFile() || selectedMetadata.isSymbolicLink()) throw new Error("Native archive OpenCode runtime is not a regular file.");
+    const extracted = path.join(staging, "all-my-friends-are-agents", "runtime", "opencode", "bin", executableName);
+    if (selected !== extracted) { await mkdir(path.dirname(extracted), { recursive: true }); await copyFile(selected, extracted); }
+    await stat(extracted); if (!targetId.startsWith("windows-")) await chmod(extracted, 0o755); await verify(extracted);
     await writeFile(path.join(staging, "all-my-friends-are-agents", "runtime", "opencode", "receipt.json"), `${JSON.stringify({ target: target.id, artifact: target.artifact, sbom: target.sbom, provenance: target.provenance })}\n`, { mode: 0o600 });
     const stagedDestination = path.join(staging, "all-my-friends-are-agents", "runtime", "opencode");
     const previous = `${destination}.previous`;

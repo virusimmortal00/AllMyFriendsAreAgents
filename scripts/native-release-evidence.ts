@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyNativeArtifactSet } from "./build-native-opencode.js";
 import { verifyNativeApplicationSet } from "./package-native-application.js";
-import { loadNativeReleaseContext } from "./native-release-contract.js";
+import { loadNativeReleaseContext, serializeNativeReleaseManifest, validateNativeReleaseManifest } from "./native-release-contract.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -35,6 +35,7 @@ export interface NativeEvidenceManifest {
   source: { repository: string; commit: string };
   workflow: WorkflowIdentity;
   workflowAttestation: FileReference | null;
+  releaseProjection: FileReference | null;
   artifacts: ArtifactEntry[];
 }
 
@@ -131,7 +132,7 @@ export function assembleNativeReleaseEvidence(input: {
       writeFileSync(path.join(output, provenancePath), provenance(candidate, copied.sha256, source, input.workflow), { flag: "wx" });
       artifacts.push({ ...copied, kind: candidate.kind, target: candidate.target, checksum: reference(output, checksumPath), sbom: reference(output, sbomPath), provenance: reference(output, provenancePath) });
     }
-    const manifest: NativeEvidenceManifest = { schemaVersion: 1, source, workflow: input.workflow, workflowAttestation: null, artifacts };
+    const manifest: NativeEvidenceManifest = { schemaVersion: 1, source, workflow: input.workflow, workflowAttestation: null, releaseProjection: null, artifacts };
     writeFileSync(path.join(output, "native-evidence-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     verifyNativeReleaseEvidence(output, input.sourceCommit, true);
     return manifest;
@@ -172,19 +173,50 @@ export function bindNativeWorkflowAttestation(directory: string, bundle: string)
   if (existsSync(destination)) throw new Error("Refusing to replace retained workflow attestation.");
   copyFileSync(path.resolve(bundle), destination, 0);
   manifest.workflowAttestation = reference(root, "workflow-provenance.sigstore.json");
+  createReleaseProjection(root, manifest);
+  manifest.releaseProjection = reference(root, "release-projection/native-release-manifest.json");
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   return verifyNativeReleaseEvidence(root, manifest.source.commit);
 }
 
 export function writeNativeEvidenceSubjectChecksums(directory: string, output: string): void {
   const manifest = verifyNativeReleaseEvidence(directory, undefined, true);
-  writeFileSync(path.resolve(output), `${manifest.artifacts.map((entry) => `${entry.sha256}  ${entry.path}`).join("\n")}\n`, { flag: "wx" });
+  const subjects = manifest.artifacts.flatMap((entry) => [
+    `${entry.sha256}  ${entry.path}`,
+    ...(entry.kind === "application" ? [`${entry.sha256}  ${path.basename(entry.path)}`] : []),
+  ]);
+  writeFileSync(path.resolve(output), `${subjects.join("\n")}\n`, { flag: "wx" });
+}
+
+function createReleaseProjection(root: string, manifest: NativeEvidenceManifest): void {
+  if (!manifest.workflowAttestation) throw new Error("Cannot project a release without trusted workflow provenance.");
+  const context = loadNativeReleaseContext(ROOT); const output = path.join(root, "release-projection"); mkdirSync(output);
+  const application = new Map(manifest.artifacts.filter((entry) => entry.kind === "application").map((entry) => [entry.target, entry]));
+  const targets = context.policy.targets.map((target) => {
+    const entry = application.get(target.id); if (!entry) throw new Error(`Missing accepted application archive for ${target.id}.`);
+    const name = path.basename(entry.path); const archive = path.join(output, name); const sbomName = `${name}.spdx.json`; const provenanceName = `${name}.intoto.jsonl`;
+    copyFileSync(path.join(root, entry.path), archive, 0);
+    copyFileSync(path.join(root, entry.sbom.path), path.join(output, sbomName), 0);
+    copyFileSync(path.join(root, manifest.workflowAttestation!.path), path.join(output, provenanceName), 0);
+    const base = `${context.policy.immutableReleaseBase}/v${String(context.packageJson.version)}`;
+    const releaseFile = (fileName: string) => ({ name: fileName, url: `${base}/${fileName}`, size: statSync(path.join(output, fileName)).size, sha256: sha256File(path.join(output, fileName)) });
+    return { id: target.id, artifact: releaseFile(name), sbom: releaseFile(sbomName), provenance: releaseFile(provenanceName) };
+  });
+  for (const installer of manifest.artifacts.filter((entry) => entry.kind === "installer")) copyFileSync(path.join(root, installer.path), path.join(output, path.basename(installer.path)), 0);
+  const downstream = context.integrationContract.downstream as Record<string, unknown>;
+  const releaseManifest = {
+    schemaVersion: 1,
+    application: { version: context.packageJson.version, commit: manifest.source.commit, repository: context.policy.applicationRepository },
+    downstream: { repository: downstream.repository, commit: downstream.headCommit, version: downstream.version, sdkVersion: (context.packageJson.dependencies as Record<string, unknown>)["@opencode-ai/sdk"], pluginVersion: (context.packageJson.devDependencies as Record<string, unknown>)["@opencode-ai/plugin"] },
+    targets,
+  };
+  writeFileSync(path.join(output, "native-release-manifest.json"), serializeNativeReleaseManifest(releaseManifest, context), { flag: "wx" });
 }
 
 export function verifyNativeReleaseEvidence(directory: string, expectedCommit?: string, allowUnsigned = false): NativeEvidenceManifest {
   const root = path.resolve(directory);
   const manifest = object(JSON.parse(readFileSync(path.join(root, "native-evidence-manifest.json"), "utf8")), "manifest");
-  exactKeys(manifest, ["schemaVersion", "source", "workflow", "workflowAttestation", "artifacts"], "manifest");
+  exactKeys(manifest, ["schemaVersion", "source", "workflow", "workflowAttestation", "releaseProjection", "artifacts"], "manifest");
   if (manifest.schemaVersion !== 1) throw new Error("Unknown native evidence manifest schema version.");
   const source = object(manifest.source, "manifest.source"); exactKeys(source, ["repository", "commit"], "manifest.source");
   const workflow = object(manifest.workflow, "manifest.workflow"); exactKeys(workflow, ["repository", "workflow", "ref", "sha", "runId", "runAttempt"], "manifest.workflow");
@@ -213,12 +245,31 @@ export function verifyNativeReleaseEvidence(directory: string, expectedCommit?: 
   }
   if (manifest.workflowAttestation === null) {
     if (!allowUnsigned) throw new Error("Trusted workflow attestation is missing.");
+    if (manifest.releaseProjection !== null) throw new Error("Unsigned native evidence cannot contain a release projection.");
   } else {
     const attestation = assertReference(root, manifest.workflowAttestation, "workflow-provenance.sigstore.json", "manifest.workflowAttestation"); expectedFiles.add(attestation.path);
     const bundle = JSON.parse(readFileSync(path.join(root, attestation.path), "utf8")); const subjects = attestedSubjects(bundle);
     for (const entry of manifest.artifacts as unknown as ArtifactEntry[]) if (subjects.get(entry.path) !== entry.sha256) throw new Error(`${entry.path} is missing from the trusted workflow attestation.`);
     const serialized = JSON.stringify(bundle);
     if (!serialized.includes("verificationMaterial") || !serialized.includes("tlogEntries")) throw new Error("Workflow attestation lacks Sigstore verification material.");
+    const projection = assertReference(root, manifest.releaseProjection, "release-projection/native-release-manifest.json", "manifest.releaseProjection"); expectedFiles.add(projection.path);
+    const release = validateNativeReleaseManifest(JSON.parse(readFileSync(path.join(root, projection.path), "utf8")));
+    const application = new Map((manifest.artifacts as unknown as ArtifactEntry[]).filter((entry) => entry.kind === "application").map((entry) => [entry.target, entry]));
+    for (const target of release.targets) {
+      const entry = application.get(target.id); if (!entry) throw new Error(`Release projection contains an unaccepted target: ${target.id}.`);
+      for (const [kind, releaseFile] of [["artifact", target.artifact], ["sbom", target.sbom], ["provenance", target.provenance]] as const) {
+        const relative = `release-projection/${releaseFile.name}`; expectedFiles.add(relative);
+        const actual = reference(root, relative);
+        if (actual.size !== releaseFile.size || actual.sha256 !== releaseFile.sha256) throw new Error(`Release projection ${kind} bytes do not match its native release manifest entry.`);
+      }
+      if (sha256File(path.join(root, entry.path)) !== target.artifact.sha256 || sha256File(path.join(root, entry.sbom.path)) !== target.sbom.sha256) throw new Error(`${target.id} release projection is not byte-identical to accepted application evidence.`);
+      const projectedBundle = JSON.parse(readFileSync(path.join(root, `release-projection/${target.provenance.name}`), "utf8"));
+      if (attestedSubjects(projectedBundle).get(target.artifact.name) !== target.artifact.sha256) throw new Error(`${target.id} projected provenance does not contain its trusted canonical-name attestation.`);
+    }
+    for (const installer of (manifest.artifacts as unknown as ArtifactEntry[]).filter((entry) => entry.kind === "installer")) {
+      const relative = `release-projection/${path.basename(installer.path)}`; expectedFiles.add(relative);
+      if (sha256File(path.join(root, relative)) !== installer.sha256) throw new Error(`${relative} is not byte-identical to accepted installer evidence.`);
+    }
   }
   const actualFiles = walk(root);
   if (actualFiles.length !== expectedFiles.size || actualFiles.some((item) => !expectedFiles.has(item))) throw new Error("Native evidence set contains a missing, extra, or renamed file.");
