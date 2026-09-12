@@ -221,10 +221,11 @@ export function buildNativeTarget(input: { targetId: string; outputDirectory: st
     const env = { ...process.env, HUSKY: "0" };
     const lockfile = path.join(checkout, "bun.lock"); const lockedBytes = readFileSync(lockfile);
     // Bun 1.3.14 can falsely reject its platform-normalized text lock on native
-    // Windows (oven-sh/bun#20913). --no-save still consumes the existing lock;
-    // byte comparison prevents the workaround from accepting a rewritten one.
+    // Windows (oven-sh/bun#20913). --no-save still consumes the existing lock,
+    // while copyfile avoids workspace symlinks that hosted Windows runners cannot
+    // create. Byte comparison prevents the workaround from accepting a rewrite.
     const installArguments = target.os === "windows"
-      ? ["install", "--no-save", "--ignore-scripts"]
+      ? ["install", "--no-save", "--ignore-scripts", "--backend=copyfile"]
       : ["install", "--frozen-lockfile"];
     run("bun", installArguments, { cwd: checkout, env });
     if (!readFileSync(lockfile).equals(lockedBytes)) throw new Error("Pinned downstream lockfile changed during dependency installation.");
