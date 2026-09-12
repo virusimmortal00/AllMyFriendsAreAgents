@@ -308,8 +308,9 @@ export function verifyNativeReleasePromotion(input: {
 }
 
 function option(name: string): string | undefined { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; }
+export function nativeReleaseCommand(args: readonly string[]): string | undefined { return args.filter((arg) => arg !== "--")[0]; }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const command = process.argv[2];
+  const command = nativeReleaseCommand(process.argv.slice(2));
   if (command === "assemble") {
     const names = ["runtime", "application", "output", "commit", "repository", "workflow", "ref", "run-id", "run-attempt"] as const;
     const values = Object.fromEntries(names.map((name) => [name, option(`--${name}`)]));

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, verifyNativeReleaseEvidence, verifyNativeReleasePromotion } from "./native-release-evidence.js";
+import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, nativeReleaseCommand, verifyNativeReleaseEvidence, verifyNativeReleasePromotion } from "./native-release-evidence.js";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { setupNativeOpenCode } from "./setup-native-opencode.js";
 
@@ -59,6 +59,10 @@ function assemble() {
 afterEach(() => { for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("native release evidence retention", () => {
+  it("accepts pnpm's argument separator before a subcommand", () => {
+    expect(nativeReleaseCommand(["--", "assemble", "--runtime", "artifacts"])).toBe("assemble");
+  });
+
   it("does not treat locally assembled predicates as trusted workflow signatures", () => {
     const root = fixture(); const inputs = acceptedInputs(root); const output = path.join(root, "unsigned"); const commit = "d".repeat(40);
     assembleNativeReleaseEvidence({ runtimeDirectory: inputs.runtime, applicationDirectory: inputs.application, outputDirectory: output, sourceCommit: commit, workflow: { repository: "virusimmortal00/AllMyFriendsAreAgents", workflow: "workflow", ref: "refs/heads/main", sha: commit, runId: "1", runAttempt: "1" } });
