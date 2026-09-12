@@ -5,14 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
-import { packageNativeApplication, tarArguments } from "./package-native-application.js";
+import { packageNativeApplication, tarInvocation } from "./package-native-application.js";
 
 const context = loadNativeReleaseContext();
 const temporary: string[] = [];
 
-it("forces Windows tar to treat drive-qualified archive paths as local", () => {
-  expect(tarArguments(["-xf", "D:\\artifact.zip"], "win32")).toEqual(["--force-local", "-xf", "D:\\artifact.zip"]);
-  expect(tarArguments(["-xf", "/tmp/artifact.zip"], "linux")).toEqual(["-xf", "/tmp/artifact.zip"]);
+it("uses Windows bsdtar for ZIP support even when invoked from Git Bash", () => {
+  expect(tarInvocation(["-xf", "D:\\artifact.zip"], "win32", "C:\\Windows")).toEqual({
+    command: "C:\\Windows\\System32\\tar.exe",
+    args: ["-xf", "D:\\artifact.zip"],
+  });
+  expect(tarInvocation(["-xf", "/tmp/artifact.zip"], "linux")).toEqual({ command: "tar", args: ["-xf", "/tmp/artifact.zip"] });
 });
 
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-application-test-")); temporary.push(value); return value; }

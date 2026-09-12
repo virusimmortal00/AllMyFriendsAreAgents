@@ -13,10 +13,16 @@ const APP_ENTRIES = ["dist", "node_modules", "package.json", "server", "shared"]
 
 function sha256(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
 function run(command: string, args: string[]) { return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
-export function tarArguments(args: readonly string[], platform: NodeJS.Platform = process.platform): string[] {
-  return platform === "win32" ? ["--force-local", ...args] : [...args];
+export function tarInvocation(
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  systemRoot = process.env.SystemRoot,
+): { command: string; args: string[] } {
+  return platform === "win32"
+    ? { command: path.win32.join(systemRoot || "C:\\Windows", "System32", "tar.exe"), args: [...args] }
+    : { command: "tar", args: [...args] };
 }
-function runTar(args: string[]) { return run("tar", tarArguments(args)); }
+function runTar(args: string[]) { const invocation = tarInvocation(args); return run(invocation.command, invocation.args); }
 type InventoryItem = { path: string; type: "file" } | { path: string; type: "symlink"; target: string };
 function files(root: string, relative = ""): InventoryItem[] {
   return readdirSync(path.join(root, relative)).sort().flatMap((name) => {
