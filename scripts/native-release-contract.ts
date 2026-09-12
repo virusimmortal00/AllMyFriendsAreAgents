@@ -15,6 +15,7 @@ export interface NativeTargetPolicy {
   readonly schemaVersion: 1;
   readonly applicationRepository: string;
   readonly immutableReleaseBase: string;
+  readonly nodeRuntime: { readonly version: string };
   readonly downstreamEvidence: {
     readonly integrationContract: string;
     readonly containerBuild: string;
@@ -106,6 +107,7 @@ export function loadNativeReleaseContext(root = ROOT): NativeReleaseContext {
 export function assertNativeReleaseContext(context: NativeReleaseContext): void {
   const { policy, integrationContract, packageJson, dockerfile } = context;
   if (policy.schemaVersion !== 1) throw new Error("Unknown native target policy schema version.");
+  if (policy.nodeRuntime.version !== "24.5.0") throw new Error("Native target policy must pin the reviewed Node.js runtime version.");
   if (!REPOSITORY.test(policy.applicationRepository)) throw new Error("Target policy application repository is malformed.");
   if (policy.immutableReleaseBase !== policy.applicationRepository.slice(0, -4) + "/releases/download") throw new Error("Target policy release base must belong to the application repository.");
   const targetIds = policy.targets.map((target) => target.id);

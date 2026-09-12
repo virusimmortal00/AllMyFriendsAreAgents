@@ -2,6 +2,9 @@
   "schemaVersion": 1,
   "applicationRepository": "https://github.com/virusimmortal00/AllMyFriendsAreAgents.git",
   "immutableReleaseBase": "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download",
+  "nodeRuntime": {
+    "version": "24.5.0"
+  },
   "downstreamEvidence": {
     "integrationContract": "integration-contracts/opencode.json",
     "containerBuild": "Dockerfile",

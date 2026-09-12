@@ -13,6 +13,8 @@
     "dev:web": "vite",
     "github:app:registration-url": "tsx scripts/github-app-registration.ts",
     "build": "tsc -b --force && vite build",
+    "build:native-application": "tsx scripts/prepare-native-application.ts .runtime/native-production-app",
+    "package:native-application": "tsx scripts/package-native-application.ts",
     "check:quality": "pnpm run check:integration-contracts && pnpm run check:ui-standards && pnpm run check:visual-types && pnpm run build && pnpm test",
     "check:integration-contracts": "tsx scripts/check-integration-contracts.ts --run-tests",
     "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",

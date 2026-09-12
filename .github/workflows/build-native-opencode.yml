@@ -1,4 +1,4 @@
-name: Build verified native OpenCode runtimes
+name: Build self-contained native applications
 
 on:
   workflow_dispatch:
@@ -12,8 +12,12 @@ on:
       - pnpm-workspace.yaml
       - release/native-target-policy.json
       - scripts/build-native-opencode.ts
+      - scripts/package-native-application.ts
+      - scripts/prepare-native-application.ts
       - scripts/check-opencode-binary-contract.ts
       - scripts/native-release-contract.ts
+      - release/native-cli.mjs
+      - tsconfig.native.json
   push:
     branches: [main]
     paths:
@@ -25,15 +29,19 @@ on:
       - pnpm-workspace.yaml
       - release/native-target-policy.json
       - scripts/build-native-opencode.ts
+      - scripts/package-native-application.ts
+      - scripts/prepare-native-application.ts
       - scripts/check-opencode-binary-contract.ts
       - scripts/native-release-contract.ts
+      - release/native-cli.mjs
+      - tsconfig.native.json
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Verify ${{ matrix.target }} runtime
+    name: Package ${{ matrix.target }} application
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +67,7 @@ jobs:
           version: 10.22.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24
+          node-version: 24.5.0
           cache: pnpm
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -67,11 +75,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Fetch, build, verify, and retain the manifest-pinned runtime
         run: pnpm exec tsx scripts/build-native-opencode.ts build --target ${{ matrix.target }} --output native-artifacts
-      - name: Upload this run's verified target archive and checksum
+      - name: Build the closed production application tree
+        run: pnpm run build:native-application
+      - name: Package the application with pinned private runtimes
+        shell: bash
+        run: |
+          opencode_archive="$(find native-artifacts -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print)"
+          opencode_evidence="$(find native-artifacts -maxdepth 1 -type f -name '*.verification.json' -print)"
+          pnpm run package:native-application -- \
+            --target "${{ matrix.target }}" \
+            --application .runtime/native-production-app \
+            --commit "${{ github.sha }}" \
+            --node "$(node -p 'process.execPath')" \
+            --opencode-archive "$opencode_archive" \
+            --opencode-evidence "$opencode_evidence" \
+            --output native-application-artifacts
+      - name: Upload this run's self-contained application archive
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: native-opencode-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: native-artifacts/
+          name: native-application-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-application-artifacts/
           if-no-files-found: error
           retention-days: 7
 
@@ -91,13 +114,13 @@ jobs:
           version: 10.22.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24
+          node-version: 24.5.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          pattern: native-opencode-*-${{ github.run_id }}-${{ github.run_attempt }}
-          path: native-artifacts
+          pattern: native-application-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-application-artifacts
           merge-multiple: true
-      - name: Reject incomplete, duplicate, mismatched, or mutated artifacts
-        run: pnpm exec tsx scripts/build-native-opencode.ts verify-set --directory native-artifacts
+      - name: Reject incomplete, unexpected, or mutated application archives
+        run: pnpm run package:native-application -- verify-set --directory native-application-artifacts

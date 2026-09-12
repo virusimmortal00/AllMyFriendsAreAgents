@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = readFileSync(path.join(root, ".github/workflows/build-native-opencode.yml"), "utf8");
 const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
 
-describe("native OpenCode build workflow", () => {
+describe("self-contained native application build workflow", () => {
   it("runs the complete supported native matrix on matching hosted architectures", () => {
     for (const pair of [
       "darwin-arm64\\n            runner: macos-15",
@@ -23,15 +23,17 @@ describe("native OpenCode build workflow", () => {
     expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
     expect(workflow).not.toMatch(/packages:\s*write|contents:\s*write|id-token:\s*write|attestations:\s*write/);
     expect(workflow).not.toMatch(/gh release|npm publish|pnpm publish|docker push|create-release|release-action/i);
-    expect(workflow).toContain("native-opencode-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}");
-    expect(workflow).toContain("pattern: native-opencode-*-${{ github.run_id }}-${{ github.run_attempt }}");
+    expect(workflow).toContain("native-application-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}");
+    expect(workflow).toContain("pattern: native-application-*-${{ github.run_id }}-${{ github.run_attempt }}");
   });
 
   it("pins build tools and uses the contract-aware verifier before upload and after download", () => {
     expect(workflow).toContain("bun-version: 1.3.14");
+    expect(workflow.match(/node-version: 24\.5\.0/g)).toHaveLength(2);
     expect(workflow).toContain("build-native-opencode.ts build --target ${{ matrix.target }}");
     expect(workflow.indexOf("build-native-opencode.ts build")).toBeLessThan(workflow.indexOf("actions/upload-artifact@"));
-    expect(workflow).toContain("build-native-opencode.ts verify-set --directory native-artifacts");
+    expect(workflow).toContain("package:native-application -- verify-set --directory native-application-artifacts");
+    expect(workflow).toContain("--opencode-evidence \"$opencode_evidence\"");
     for (const reference of workflow.matchAll(/uses: [^\s]+@([^\s]+)/g)) expect(reference[1]).toMatch(/^[0-9a-f]{40}$/);
   });
 

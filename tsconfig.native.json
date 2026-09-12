@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "composite": false,
+    "declaration": false,
+    "noEmit": false,
+    "outDir": ".runtime/native-application",
+    "rootDir": ".",
+    "sourceMap": false
+  },
+  "include": ["server/**/*.ts", "shared/**/*.ts"],
+  "exclude": ["**/*.test.ts", "server/fixtures/**"]
+}
