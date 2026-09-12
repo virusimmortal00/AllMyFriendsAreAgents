@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
-import { archiveListInvocation, nativePackageCommand, packageNativeApplication, tarInvocation } from "./package-native-application.js";
+import { archiveListInvocation, isForbiddenApplicationArchiveEntry, nativePackageCommand, packageNativeApplication, tarInvocation } from "./package-native-application.js";
 
 const context = loadNativeReleaseContext();
 const temporary: string[] = [];
@@ -22,6 +22,12 @@ it("uses Windows bsdtar for ZIP support even when invoked from Git Bash", () => 
 it("accepts pnpm's argument separator before the verify-set command", () => {
   expect(nativePackageCommand(["--", "verify-set", "--directory", "artifacts"])).toBe("verify-set");
   expect(nativePackageCommand(["--", "--target", "linux-x64"])).toBe("--target");
+});
+
+it("rejects app-owned tests without rejecting dependency source fixtures", () => {
+  expect(isForbiddenApplicationArchiveEntry("product/versions/v/app/server/room.test.js")).toBe(true);
+  expect(isForbiddenApplicationArchiveEntry("product/versions/v/app/node_modules/.pnpm/zod/node_modules/zod/src/value.test.ts")).toBe(false);
+  expect(isForbiddenApplicationArchiveEntry("product/versions/v/app/node_modules/.bin/tsx")).toBe(true);
 });
 
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-application-test-")); temporary.push(value); return value; }

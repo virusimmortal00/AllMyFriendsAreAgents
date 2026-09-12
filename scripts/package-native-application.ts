@@ -12,7 +12,9 @@ const PRODUCT = "all-my-friends-are-agents";
 const APP_ENTRIES = ["dist", "node_modules", "package.json", "server", "shared"];
 
 function sha256(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
-function run(command: string, args: string[]) { return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+function run(command: string, args: string[]) {
+  return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 8 * 1024 * 1024 });
+}
 export function tarInvocation(
   args: readonly string[],
   platform: NodeJS.Platform = process.platform,
@@ -29,6 +31,10 @@ export function archiveListInvocation(archive: string, platform: NodeJS.Platform
     : tarInvocation(["-tf", archive], platform);
 }
 export function nativePackageCommand(args: readonly string[]): string | undefined { return args.filter((arg) => arg !== "--")[0]; }
+export function isForbiddenApplicationArchiveEntry(entry: string): boolean {
+  return /(?:^|\/)(?:pnpm|node_modules\/\.bin\/tsx)(?:$|\/)/.test(entry)
+    || /\/app\/(?:dist|server|shared)\/.*\.test\.[cm]?[jt]sx?$/.test(entry);
+}
 type InventoryItem = { path: string; type: "file" } | { path: string; type: "symlink"; target: string };
 function files(root: string, relative = ""): InventoryItem[] {
   return readdirSync(path.join(root, relative)).sort().flatMap((name) => {
@@ -112,7 +118,7 @@ export function verifyNativeApplicationSet(directory: string, context = loadNati
     const prefix = `${PRODUCT}/versions/`; const node = `/app/runtime/node/bin/${executable(target, "node")}`; const opencode = `/app/runtime/opencode/bin/${executable(target, "opencode")}`;
     if (!listing.includes(`${PRODUCT}/${target.os === "windows" ? "amfaa.cmd" : "amfaa"}`) || !listing.includes(`${PRODUCT}/active-version`)
       || listing.filter((item) => item.startsWith(prefix) && item.endsWith(node)).length !== 1 || listing.filter((item) => item.startsWith(prefix) && item.endsWith(opencode)).length !== 1
-      || listing.some((item) => /(?:^|\/)(?:pnpm|node_modules\/\.bin\/tsx)(?:$|\/)|\.test\.[cm]?[jt]sx?$/.test(item))) throw new Error(`Native application archive layout is invalid for ${target.id}.`);
+      || listing.some(isForbiddenApplicationArchiveEntry)) throw new Error(`Native application archive layout is invalid for ${target.id}.`);
     return { target: target.id, archive, sha256: digest };
   });
 }
