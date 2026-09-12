@@ -42,6 +42,19 @@ esac
   return binary;
 }
 
+function createArchive(stage: string, destination: string, extension: string): void {
+  if (extension === ".zip") {
+    if (process.platform === "win32") {
+      const tar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+      execFileSync(tar, ["-a", "-cf", destination, "-C", stage, "all-my-friends-are-agents"]);
+    } else {
+      execFileSync("zip", ["-qr", destination, "all-my-friends-are-agents"], { cwd: stage });
+    }
+    return;
+  }
+  execFileSync("tar", ["-czf", destination, "-C", stage, "all-my-friends-are-agents"]);
+}
+
 function synthesizeSet(directory: string): void {
   const downstream = context.integrationContract.downstream as { headCommit: string; version: string };
   for (const target of context.policy.targets) {
@@ -52,10 +65,7 @@ function synthesizeSet(directory: string): void {
     mkdirSync(path.dirname(privateBinary), { recursive: true });
     writeFileSync(privateBinary, `${target.id}\n`);
     const archivePath = path.join(directory, archive);
-    const args = target.archiveExtension === ".zip"
-      ? ["-a", "-cf", archivePath, "-C", stage, "all-my-friends-are-agents"]
-      : ["-czf", archivePath, "-C", stage, "all-my-friends-are-agents"];
-    execFileSync("tar", args);
+    createArchive(stage, archivePath, target.archiveExtension);
     const sha256 = digest(archivePath);
     writeFileSync(`${archivePath}.sha256`, `${sha256}  ${archive}\n`);
     writeFileSync(`${archivePath}.verification.json`, `${JSON.stringify({

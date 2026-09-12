@@ -15,7 +15,16 @@ const temporary: string[] = [];
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-evidence-test-")); temporary.push(value); return value; }
 function digest(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
 function archive(stage: string, destination: string, extension: string) {
-  execFileSync("tar", extension === ".zip" ? ["-a", "-cf", destination, "-C", stage, "all-my-friends-are-agents"] : ["-czf", destination, "-C", stage, "all-my-friends-are-agents"]);
+  if (extension === ".zip") {
+    if (process.platform === "win32") {
+      const tar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+      execFileSync(tar, ["-a", "-cf", destination, "-C", stage, "all-my-friends-are-agents"]);
+    } else {
+      execFileSync("zip", ["-qr", destination, "all-my-friends-are-agents"], { cwd: stage });
+    }
+    return;
+  }
+  execFileSync("tar", ["-czf", destination, "-C", stage, "all-my-friends-are-agents"]);
 }
 function acceptedInputs(root: string) {
   const runtime = path.join(root, "runtime"); const application = path.join(root, "application"); mkdirSync(runtime); mkdirSync(application);
