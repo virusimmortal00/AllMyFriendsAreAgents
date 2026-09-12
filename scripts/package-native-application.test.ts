@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
-import { packageNativeApplication, tarInvocation } from "./package-native-application.js";
+import { archiveListInvocation, nativePackageCommand, packageNativeApplication, tarInvocation } from "./package-native-application.js";
 
 const context = loadNativeReleaseContext();
 const temporary: string[] = [];
@@ -16,6 +16,12 @@ it("uses Windows bsdtar for ZIP support even when invoked from Git Bash", () => 
     args: ["-xf", "D:\\artifact.zip"],
   });
   expect(tarInvocation(["-xf", "/tmp/artifact.zip"], "linux")).toEqual({ command: "tar", args: ["-xf", "/tmp/artifact.zip"] });
+  expect(archiveListInvocation("/tmp/windows.zip", "linux")).toEqual({ command: "unzip", args: ["-Z1", "/tmp/windows.zip"] });
+});
+
+it("accepts pnpm's argument separator before the verify-set command", () => {
+  expect(nativePackageCommand(["--", "verify-set", "--directory", "artifacts"])).toBe("verify-set");
+  expect(nativePackageCommand(["--", "--target", "linux-x64"])).toBe("--target");
 });
 
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-application-test-")); temporary.push(value); return value; }

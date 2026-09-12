@@ -117,7 +117,10 @@ export function verifyExecutable(binary: string, expectedVersion: string, verify
 }
 
 function archiveEntries(archive: string): string[] {
-  return run("tar", ["-tf", archive]).split(/\r?\n/).map((entry) => entry.replaceAll("\\", "/").replace(/^\.\//, "")).filter(Boolean);
+  const output = archive.endsWith(".zip") && process.platform !== "win32"
+    ? run("unzip", ["-Z1", archive])
+    : run("tar", ["-tf", archive]);
+  return output.split(/\r?\n/).map((entry) => entry.replaceAll("\\", "/").replace(/^\.\//, "")).filter(Boolean);
 }
 
 function assertArchiveLayout(archive: string, executable: string): void {

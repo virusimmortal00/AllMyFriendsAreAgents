@@ -23,6 +23,12 @@ export function tarInvocation(
     : { command: "tar", args: [...args] };
 }
 function runTar(args: string[]) { const invocation = tarInvocation(args); return run(invocation.command, invocation.args); }
+export function archiveListInvocation(archive: string, platform: NodeJS.Platform = process.platform) {
+  return archive.endsWith(".zip") && platform !== "win32"
+    ? { command: "unzip", args: ["-Z1", archive] }
+    : tarInvocation(["-tf", archive], platform);
+}
+export function nativePackageCommand(args: readonly string[]): string | undefined { return args.filter((arg) => arg !== "--")[0]; }
 type InventoryItem = { path: string; type: "file" } | { path: string; type: "symlink"; target: string };
 function files(root: string, relative = ""): InventoryItem[] {
   return readdirSync(path.join(root, relative)).sort().flatMap((name) => {
@@ -102,7 +108,7 @@ export function verifyNativeApplicationSet(directory: string, context = loadNati
     const archive = `all-my-friends-are-agents-v${String(context.packageJson.version)}-${target.id}${target.archiveExtension}`;
     const archivePath = path.join(root, archive); const digest = sha256(archivePath);
     if (readFileSync(`${archivePath}.sha256`, "utf8") !== `${digest}  ${archive}\n`) throw new Error(`Native application checksum mismatch for ${target.id}.`);
-    const listing = runTar(["-tf", archivePath]).split(/\r?\n/).map((item) => item.replaceAll("\\", "/")).filter(Boolean);
+    const list = archiveListInvocation(archivePath); const listing = run(list.command, list.args).split(/\r?\n/).map((item) => item.replaceAll("\\", "/")).filter(Boolean);
     const prefix = `${PRODUCT}/versions/`; const node = `/app/runtime/node/bin/${executable(target, "node")}`; const opencode = `/app/runtime/opencode/bin/${executable(target, "opencode")}`;
     if (!listing.includes(`${PRODUCT}/${target.os === "windows" ? "amfaa.cmd" : "amfaa"}`) || !listing.includes(`${PRODUCT}/active-version`)
       || listing.filter((item) => item.startsWith(prefix) && item.endsWith(node)).length !== 1 || listing.filter((item) => item.startsWith(prefix) && item.endsWith(opencode)).length !== 1
@@ -113,7 +119,7 @@ export function verifyNativeApplicationSet(directory: string, context = loadNati
 
 function option(name: string) { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === "verify-set") {
+  if (nativePackageCommand(process.argv.slice(2)) === "verify-set") {
     const directory = option("--directory");
     if (!directory) throw new Error("Usage: package-native-application.ts verify-set --directory <directory>");
     process.stdout.write(`Verified ${verifyNativeApplicationSet(directory).length} native application archives.\n`);
