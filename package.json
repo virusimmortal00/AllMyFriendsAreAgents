@@ -21,6 +21,7 @@
     "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",
     "setup": "tsx scripts/setup-native-opencode.ts",
     "setup:opencode": "pnpm run setup",
+    "auth": "tsx scripts/auth-native-opencode.ts",
     "check:ui-standards": "vitest run src/ui-standards.test.tsx src/layout-structure.test.tsx src/responsive-view-audit.test.ts src/reconnect-flow.test.tsx src/overlay.test.tsx src/chrome-safety.test.tsx src/mobile-layout.test.ts",
     "capture:visual": "tsx scripts/capture-visual.ts",
     "review:visual": "tsx scripts/review-visual.ts",
