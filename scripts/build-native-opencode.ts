@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   chmodSync,
   copyFileSync,
@@ -22,6 +23,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PRIVATE_ROOT = "all-my-friends-are-agents";
 const PRIVATE_RUNTIME = `${PRIVATE_ROOT}/runtime`;
 const BUILD_BUN_VERSION = "1.3.14";
+const require = createRequire(import.meta.url);
+const TSX_CLI = require.resolve("tsx/cli");
 
 export interface NativeBuildEvidence {
   readonly schemaVersion: 1;
@@ -99,8 +102,7 @@ function ensureUnretained(paths: ReturnType<typeof outputPaths>): void {
 }
 
 function defaultContractVerifier(binary: string): void {
-  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  run(pnpm, ["run", "check:opencode-binary", "--", "--command", binary], { cwd: ROOT });
+  run(process.execPath, [TSX_CLI, path.join(ROOT, "scripts/check-opencode-binary-contract.ts"), "--command", binary], { cwd: ROOT });
 }
 
 export function verifyExecutable(binary: string, expectedVersion: string, verifyContract: CommandVerifier = defaultContractVerifier): string {
