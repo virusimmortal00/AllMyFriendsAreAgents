@@ -5,10 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
-import { packageNativeApplication } from "./package-native-application.js";
+import { packageNativeApplication, tarArguments } from "./package-native-application.js";
 
 const context = loadNativeReleaseContext();
 const temporary: string[] = [];
+
+it("forces Windows tar to treat drive-qualified archive paths as local", () => {
+  expect(tarArguments(["-xf", "D:\\artifact.zip"], "win32")).toEqual(["--force-local", "-xf", "D:\\artifact.zip"]);
+  expect(tarArguments(["-xf", "/tmp/artifact.zip"], "linux")).toEqual(["-xf", "/tmp/artifact.zip"]);
+});
+
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-application-test-")); temporary.push(value); return value; }
 function digest(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
 function hostTarget() { const osName = process.platform === "win32" ? "windows" : process.platform; return context.policy.targets.find((target) => target.os === osName && target.architecture === process.arch); }

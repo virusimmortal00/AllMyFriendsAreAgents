@@ -13,6 +13,10 @@ const APP_ENTRIES = ["dist", "node_modules", "package.json", "server", "shared"]
 
 function sha256(file: string) { return createHash("sha256").update(readFileSync(file)).digest("hex"); }
 function run(command: string, args: string[]) { return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+export function tarArguments(args: readonly string[], platform: NodeJS.Platform = process.platform): string[] {
+  return platform === "win32" ? ["--force-local", ...args] : [...args];
+}
+function runTar(args: string[]) { return run("tar", tarArguments(args)); }
 type InventoryItem = { path: string; type: "file" } | { path: string; type: "symlink"; target: string };
 function files(root: string, relative = ""): InventoryItem[] {
   return readdirSync(path.join(root, relative)).sort().flatMap((name) => {
@@ -64,7 +68,7 @@ export function packageNativeApplication(input: { context?: NativeReleaseContext
     });
     mkdirSync(path.join(app, "runtime/node/bin"), { recursive: true });
     const nodeDestination = path.join(app, "runtime/node/bin", executable(target, "node")); cpSync(path.resolve(input.nodeBinary), nodeDestination); if (target.os !== "windows") chmodSync(nodeDestination, 0o755);
-    const extraction = path.join(work, "opencode"); mkdirSync(extraction); run("tar", ["-xf", path.resolve(input.openCodeArchive), "-C", extraction]);
+    const extraction = path.join(work, "opencode"); mkdirSync(extraction); runTar(["-xf", path.resolve(input.openCodeArchive), "-C", extraction]);
     const sourceBinary = path.join(extraction, proof.executablePath); if (!statSync(sourceBinary).isFile()) throw new Error("Verified OpenCode archive is missing its executable.");
     const opencodeDestination = path.join(app, "runtime/opencode/bin", executable(target, "opencode")); mkdirSync(path.dirname(opencodeDestination), { recursive: true }); cpSync(sourceBinary, opencodeDestination); if (target.os !== "windows") chmodSync(opencodeDestination, 0o755);
     cpSync(path.join(ROOT, "release/native-cli.mjs"), path.join(app, "native-cli.mjs"));
@@ -74,7 +78,7 @@ export function packageNativeApplication(input: { context?: NativeReleaseContext
     writeFileSync(path.join(install, "active-version"), `${versionDirectory}\n`);
     if (target.os === "windows") writeFileSync(path.join(install, "amfaa.cmd"), `@echo off\r\nset "ROOT=%~dp0"\r\nset /p VERSION=<"%ROOT%active-version"\r\n"%ROOT%versions\\%VERSION%\\app\\runtime\\node\\bin\\node.exe" "%ROOT%versions\\%VERSION%\\app\\native-cli.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`);
     else { writeFileSync(path.join(install, "amfaa"), `#!/bin/sh\nset -eu\ncase "$0" in */*) ROOT=\${0%/*} ;; *) exit 65 ;; esac\nIFS= read -r VERSION < "$ROOT/active-version"\ncase "$VERSION" in *[!A-Za-z0-9._-]*|'') exit 65 ;; esac\nexec "$ROOT/versions/$VERSION/app/runtime/node/bin/node" "$ROOT/versions/$VERSION/app/native-cli.mjs" "$@"\n`); chmodSync(path.join(install, "amfaa"), 0o755); }
-    run("tar", target.archiveExtension === ".zip" ? ["-a", "-cf", archivePath, "-C", work, PRODUCT] : ["-czf", archivePath, "-C", work, PRODUCT]);
+    runTar(target.archiveExtension === ".zip" ? ["-a", "-cf", archivePath, "-C", work, PRODUCT] : ["-czf", archivePath, "-C", work, PRODUCT]);
     const digest = sha256(archivePath); writeFileSync(`${archivePath}.sha256`, `${digest}  ${archiveName}\n`);
     return { archive: archiveName, sha256: digest, versionDirectory };
   } finally { rmSync(work, { recursive: true, force: true }); }
@@ -92,7 +96,7 @@ export function verifyNativeApplicationSet(directory: string, context = loadNati
     const archive = `all-my-friends-are-agents-v${String(context.packageJson.version)}-${target.id}${target.archiveExtension}`;
     const archivePath = path.join(root, archive); const digest = sha256(archivePath);
     if (readFileSync(`${archivePath}.sha256`, "utf8") !== `${digest}  ${archive}\n`) throw new Error(`Native application checksum mismatch for ${target.id}.`);
-    const listing = run("tar", ["-tf", archivePath]).split(/\r?\n/).map((item) => item.replaceAll("\\", "/")).filter(Boolean);
+    const listing = runTar(["-tf", archivePath]).split(/\r?\n/).map((item) => item.replaceAll("\\", "/")).filter(Boolean);
     const prefix = `${PRODUCT}/versions/`; const node = `/app/runtime/node/bin/${executable(target, "node")}`; const opencode = `/app/runtime/opencode/bin/${executable(target, "opencode")}`;
     if (!listing.includes(`${PRODUCT}/${target.os === "windows" ? "amfaa.cmd" : "amfaa"}`) || !listing.includes(`${PRODUCT}/active-version`)
       || listing.filter((item) => item.startsWith(prefix) && item.endsWith(node)).length !== 1 || listing.filter((item) => item.startsWith(prefix) && item.endsWith(opencode)).length !== 1
