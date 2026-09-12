@@ -454,7 +454,9 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-async function refreshOpenCodeRuntime() {
+let openCodeRuntimeRefresh: Promise<ReturnType<OpenCodeRuntimeMonitor["refresh"]> extends Promise<infer Runtime> ? Runtime : never> | undefined;
+
+async function performOpenCodeRuntimeRefresh() {
   const next = await openCodeRuntimeMonitor.refresh();
   const changed = next.state !== openCodeRuntime.state
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
@@ -471,6 +473,14 @@ async function refreshOpenCodeRuntime() {
   openCodeRuntime = next;
   if (changed) broadcast();
   return next;
+}
+
+function refreshOpenCodeRuntime() {
+  if (openCodeRuntimeRefresh) return openCodeRuntimeRefresh;
+  openCodeRuntimeRefresh = performOpenCodeRuntimeRefresh().finally(() => {
+    openCodeRuntimeRefresh = undefined;
+  });
+  return openCodeRuntimeRefresh;
 }
 
 function refreshOpenCodeRuntimeInBackground() {
@@ -590,7 +600,7 @@ function broadcast() {
 const runtimeRecoveryTimer = setInterval(() => {
   if (![...roomEvents.values()].some((stream) => stream.clientCount > 0)) return;
   refreshOpenCodeRuntimeInBackground();
-}, OPEN_CODE_RUNTIME_REFRESH_TTL_MS);
+}, OPEN_CODE_RUNTIME_REFRESH_TTL_MS + 1);
 runtimeRecoveryTimer.unref();
 
 function roomEventStream(humanId: string) {
