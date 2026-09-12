@@ -95,6 +95,12 @@ build `1.18.25-amfaa.2` is also supported; see the
 [runtime compatibility guide](docs/integrations/opencode.md) for runtime selection,
 source evidence, and structured-output behavior.
 
+This source-checkout path remains the public installation path until the first
+self-contained native release is published. The release pipeline and standalone
+installers are implemented, but documenting an unpublished `latest/download` URL
+would make a fresh setup fail. See the [native release runbook](docs/operations/native-releases.md)
+for the guarded publication and README cutover sequence.
+
 ### 1. Connect a model provider
 
 For OpenRouter, create an API key in your
@@ -104,6 +110,7 @@ same host and under the same operating-system user that will run the room server
 ```bash
 opencode --version
 opencode auth login
+export ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND="$(command -v opencode)"
 ```
 
 Choose OpenRouter and supply your key in OpenCode's interactive prompt. Credentials
@@ -111,15 +118,20 @@ remain with OpenCode; the room's browser UI does not collect model API keys. If
 you already have another provider configured in OpenCode, you can use it instead.
 See [OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
 for provider configuration details; retain this project's supported version range.
+Keep the export in the same shell used to start the server. In PowerShell, use
+`$env:ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND = (Get-Command opencode).Source`.
 
 For Docker, use the [container setup and provider authentication instructions](docs/operations/container-deployment.md#local-build-and-fresh-installation)
 so credentials are available inside the container's provider-state volume.
 
-### Pin the server's OpenCode executable
+### Why the executable is pinned explicitly
 
 The server preflights its OpenCode executable at startup and reports a safe
-reason when it cannot run it. For a GUI-, service-, or supervisor-launched
-server, set an absolute path so it does not depend on the launcher's `PATH`:
+reason when it cannot run it. It deliberately does not select a binary from
+`PATH`, because an unrelated OpenCode upgrade must not silently change application
+behavior. The command above records the exact executable for this shell. For a
+GUI-, service-, or supervisor-launched server, set the same absolute path in its
+process environment:
 
 ```bash
 export ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND=/absolute/path/to/opencode

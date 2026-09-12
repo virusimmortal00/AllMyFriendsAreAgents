@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "applicationRepository": "https://github.com/virusimmortal00/AllMyFriendsAreAgents.git",
+  "immutableReleaseBase": "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download",
+  "nodeRuntime": {
+    "version": "24.5.0"
+  },
+  "downstreamEvidence": {
+    "integrationContract": "integration-contracts/opencode.json",
+    "containerBuild": "Dockerfile",
+    "publicIssue": "https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/183",
+    "branch": "codex/structured-output-1.18.25",
+    "verifiedBranchHead": "6883ca5bd35a5494fb2759018373308911c79e01"
+  },
+  "targets": [
+    {
+      "id": "darwin-arm64",
+      "os": "darwin",
+      "architecture": "arm64",
+      "archiveExtension": ".tar.gz"
+    },
+    {
+      "id": "darwin-x64",
+      "os": "darwin",
+      "architecture": "x64",
+      "archiveExtension": ".tar.gz"
+    },
+    {
+      "id": "linux-arm64",
+      "os": "linux",
+      "architecture": "arm64",
+      "archiveExtension": ".tar.gz"
+    },
+    {
+      "id": "linux-x64",
+      "os": "linux",
+      "architecture": "x64",
+      "archiveExtension": ".tar.gz"
+    },
+    {
+      "id": "windows-x64",
+      "os": "windows",
+      "architecture": "x64",
+      "archiveExtension": ".zip"
+    }
+  ],
+  "deferredTargets": [
+    {
+      "id": "windows-arm64",
+      "reason": "Deferred until dedicated Windows ARM64 process, path, cancellation, confinement, and clean-install acceptance is available."
+    }
+  ]
+}

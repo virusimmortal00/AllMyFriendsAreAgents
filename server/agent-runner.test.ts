@@ -256,7 +256,7 @@ describe("OpenCode runtime contract", () => {
       input,
     })) };
 
-    const result = await runAgent("codex-sol", state, "Answer once.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { structuredTransport });
+    const result = await runAgent("codex-sol", state, "Answer once.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { runtimeCommand: () => "/app/runtime/opencode/bin/opencode", structuredTransport });
 
     expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" } });
     const invocation = structuredTransport.run.mock.calls[0][0];
@@ -277,7 +277,7 @@ describe("OpenCode runtime contract", () => {
     const evidence: { generationId?: string; attemptOrdinal?: number } = {};
     await expect(runAgent(participant.agentId, state, "Fixture start cancellation", false,
       journal as unknown as import("./generation-journal.js").GenerationJournal,
-      undefined, undefined, lifecycle, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, lifecycle, undefined, undefined, undefined, undefined, undefined, { runtimeCommand: () => "/app/runtime/opencode/bin/opencode" },
       { onGenerationStart: async () => false, evidence },
     )).rejects.toMatchObject({ name: "AgentGenerationCancelledError" });
     expect(lifecycle.start).not.toHaveBeenCalled();
@@ -665,6 +665,7 @@ let refreshCount = 0;
 let invalidations = 0;
 const attempts = [];
 const context = {
+  runtimeCommand: () => ${JSON.stringify(openCodePath)},
   historyTool: { configDirectory: ${JSON.stringify(directory)}, url: "http://127.0.0.1/history", token: "history-placeholder" },
   refreshScopedTools: (attempt) => {
     attempts.push(attempt);

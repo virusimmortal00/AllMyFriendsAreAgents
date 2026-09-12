@@ -14,6 +14,7 @@ export type OpenCodeRuntimeUnavailableReason =
   | "not_executable"
   | "timed_out"
   | "unsupported_version"
+  | "binary_contract_failed"
   | "command_failed";
 
 export function openCodeRuntimeStatusMessage(status: OpenCodeRuntimeStatus | undefined) {
@@ -23,5 +24,6 @@ export function openCodeRuntimeStatusMessage(status: OpenCodeRuntimeStatus | und
   if (status.reason === "not_executable") return "The configured OpenCode executable cannot be run by the server.";
   if (status.reason === "timed_out") return "The server's OpenCode version check timed out.";
   if (status.reason === "unsupported_version") return "The installed OpenCode version is not supported by this server.";
+  if (status.reason === "binary_contract_failed") return "The configured OpenCode executable does not match the required runtime contract.";
   return "The server could not run the OpenCode version check.";
 }

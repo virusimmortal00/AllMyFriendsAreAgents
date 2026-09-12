@@ -22,7 +22,7 @@ export function registerRosterRoutes(input: {
   processes: AgentProcessSupervisor;
   generations: ActiveGenerationTracker;
   broadcast: () => void | Promise<void>;
-  discovery?: ModelDiscoveryService;
+  discovery: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
   control?: ControlPlaneStore;
   humanIsMember?: (humanId: string) => boolean;
@@ -30,7 +30,7 @@ export function registerRosterRoutes(input: {
   capabilityStatuses?: () => Readonly<Record<string, AgentCapabilityStatus>> | Promise<Readonly<Record<string, AgentCapabilityStatus>>>;
 }) {
   const { app, store, humans, sessions, processes, generations, broadcast } = input;
-  const discovery = input.discovery || new ModelDiscoveryService();
+  const discovery = input.discovery;
   const intelligence = input.intelligence;
   const control = input.control;
   const authorize = (request: express.Request, response: express.Response, capability: "PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE" | readonly ("PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE")[], csrf = false) => {

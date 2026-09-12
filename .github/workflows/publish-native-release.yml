@@ -1,0 +1,95 @@
+name: Publish accepted native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Build self-contained native applications run ID from canonical main
+        required: true
+        type: string
+      version:
+        description: Exact application version to publish without a leading v
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: native-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'virusimmortal00/AllMyFriendsAreAgents' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Read the selected candidate run identity
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          case "$CANDIDATE_RUN_ID" in *[!0-9]*|'') exit 1;; esac
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CANDIDATE_RUN_ID}" > "$RUNNER_TEMP/candidate-run.json"
+          candidate_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/candidate-run.json")"
+          case "$candidate_sha" in *[!0-9a-f]*|'') exit 1;; esac
+          test "${#candidate_sha}" -eq 40
+          printf 'sha=%s\n' "$candidate_sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download the exact retained candidate without executing its contents
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-release-evidence-${{ inputs.candidate_run_id }}-*
+          path: ${{ runner.temp }}/native-release-candidate
+          merge-multiple: true
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+      - name: Re-verify candidate origin, version, provenance, and exact bytes
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: >-
+          pnpm run evidence:native-release -- verify-promotion
+          --directory "$RUNNER_TEMP/native-release-candidate"
+          --version "$RELEASE_VERSION"
+          --run-metadata "$RUNNER_TEMP/candidate-run.json"
+      - name: Publish the verified projection from a draft transaction
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          candidate_sha: ${{ steps.candidate.outputs.sha }}
+        run: |
+          tag="v$RELEASE_VERSION"
+          test "$(jq -r '.application.version' "$RUNNER_TEMP/native-release-candidate/release-projection/native-release-manifest.json")" = "$RELEASE_VERSION"
+          gh release create "$tag" "$RUNNER_TEMP/native-release-candidate/release-projection/"* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$candidate_sha" \
+            --title "All My Friends Are Agents $tag" \
+            --generate-notes \
+            --latest
+      - name: Verify every published asset is downloadable without credentials
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          mkdir "$RUNNER_TEMP/public-release"
+          for source in "$RUNNER_TEMP/native-release-candidate/release-projection/"*; do
+            name="${source##*/}"
+            env -u GH_TOKEN -u GITHUB_TOKEN curl --fail --location --proto '=https' --tlsv1.2 \
+              --retry 4 --retry-all-errors \
+              -o "$RUNNER_TEMP/public-release/$name" \
+              "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v$RELEASE_VERSION/$name"
+            cmp "$source" "$RUNNER_TEMP/public-release/$name"
+          done

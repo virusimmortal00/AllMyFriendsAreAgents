@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/virusimmortal00/AllMyFriendsAreAgents/blob/main/release/native-release-manifest.schema.json",
+  "title": "All My Friends Are Agents native release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "application", "downstream", "targets"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "commit", "repository"],
+      "properties": {
+        "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$" },
+        "commit": { "$ref": "#/$defs/commit" },
+        "repository": { "$ref": "#/$defs/repository" }
+      }
+    },
+    "downstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "version", "sdkVersion", "pluginVersion"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/repository" },
+        "commit": { "$ref": "#/$defs/commit" },
+        "version": { "type": "string", "minLength": 1 },
+        "sdkVersion": { "type": "string", "minLength": 1 },
+        "pluginVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "artifact", "sbom", "provenance"],
+        "properties": {
+          "id": { "enum": ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "windows-x64"] },
+          "artifact": { "$ref": "#/$defs/file" },
+          "sbom": { "$ref": "#/$defs/file" },
+          "provenance": { "$ref": "#/$defs/file" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repository": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$" },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url", "size", "sha256"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]+$" },
+        "url": { "type": "string", "pattern": "^https://github\\.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v[^/?#]+/[^/?#]+$" },
+        "size": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

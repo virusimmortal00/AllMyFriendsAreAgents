@@ -7,6 +7,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 if (process.argv.includes('--version')) {
   process.stdout.write('1.18.25\n');
+} else if (process.argv.includes('--help') && process.argv.includes('run')) {
+  process.stdout.write('--format json --dir --agent --model --variant --session --auto\n');
+} else if (process.argv.includes('--help') && process.argv.includes('models')) {
+  process.stdout.write('models [provider] --verbose --refresh\n');
 } else if (process.argv.includes('models')) {
   process.stdout.write('openai/fixture-model\n');
 } else if (process.argv.includes('run')) {

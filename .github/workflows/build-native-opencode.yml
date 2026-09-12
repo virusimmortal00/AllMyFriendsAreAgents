@@ -1,0 +1,292 @@
+name: Build self-contained native applications
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/build-native-opencode.yml
+      - Dockerfile
+      - integration-contracts/opencode.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - release/native-target-policy.json
+      - scripts/install-windows.ps1
+      - scripts/install-windows.test.ps1
+      - scripts/install-windows-contract.test.ts
+      - scripts/build-native-opencode.ts
+      - scripts/package-native-application.ts
+      - scripts/prepare-native-application.ts
+      - scripts/check-opencode-binary-contract.ts
+      - scripts/native-release-contract.ts
+      - scripts/native-release-evidence.ts
+      - scripts/native-release-evidence.test.ts
+      - scripts/install-native.sh
+      - scripts/install-native.test.sh
+      - release/native-cli.mjs
+      - tsconfig.native.json
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-native-opencode.yml
+      - Dockerfile
+      - integration-contracts/opencode.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - release/native-target-policy.json
+      - scripts/build-native-opencode.ts
+      - scripts/package-native-application.ts
+      - scripts/prepare-native-application.ts
+      - scripts/check-opencode-binary-contract.ts
+      - scripts/native-release-contract.ts
+      - scripts/native-release-evidence.ts
+      - scripts/native-release-evidence.test.ts
+      - scripts/install-native.sh
+      - scripts/install-native.test.sh
+      - scripts/install-windows.ps1
+      - scripts/install-windows.test.ps1
+      - release/native-cli.mjs
+      - tsconfig.native.json
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package ${{ matrix.target }} application
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: windows-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch, build, verify, and retain the manifest-pinned runtime
+        run: pnpm exec tsx scripts/build-native-opencode.ts build --target ${{ matrix.target }} --output native-artifacts
+      - name: Upload this run's verified private runtime archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-runtime-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Build the closed production application tree
+        run: pnpm run build:native-application
+      - name: Package the application with pinned private runtimes
+        shell: bash
+        run: |
+          opencode_archive="$(find native-artifacts -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print)"
+          opencode_evidence="$(find native-artifacts -maxdepth 1 -type f -name '*.verification.json' -print)"
+          pnpm run package:native-application -- \
+            --target "${{ matrix.target }}" \
+            --application .runtime/native-production-app \
+            --commit "${{ github.sha }}" \
+            --node "$(node -p 'process.execPath')" \
+            --opencode-archive "$opencode_archive" \
+            --opencode-evidence "$opencode_evidence" \
+            --output native-application-artifacts
+      - name: Upload this run's self-contained application archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-application-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-application-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-runtime-set:
+    name: Verify complete native runtime artifact set
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-runtime-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-runtime-artifacts
+          merge-multiple: true
+      - name: Reject incomplete, unexpected, renamed, or mutated runtime archives
+        run: pnpm exec tsx scripts/build-native-opencode.ts verify-set --directory native-runtime-artifacts
+
+  verify-set:
+    name: Verify complete native artifact set
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-application-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: native-application-artifacts
+          merge-multiple: true
+      - name: Reject incomplete, unexpected, or mutated application archives
+        run: pnpm run package:native-application -- verify-set --directory native-application-artifacts
+
+  verify-windows-installer:
+    name: Verify Windows installer behavior
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Run Windows installer acceptance checks
+        shell: pwsh
+        run: ./scripts/install-windows.test.ps1
+
+  verify-posix-installer:
+    name: Verify ${{ matrix.target }} installer behavior without external runtimes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin
+            runner: macos-15
+          - target: linux
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Run installer acceptance checks with no Node.js, pnpm, or OpenCode dependency
+        run: ./scripts/install-native.test.sh
+
+  verify-provider-free-lanes:
+    name: Verify provider-free structured and writable lane contracts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Exercise selection, validation, correction, cancellation, cleanup, and CLI preservation
+        run: pnpm exec vitest run server/agent-runner.test.ts server/opencode-structured-transport.test.ts server/opencode-runtime.test.ts scripts/setup-native-opencode.test.ts scripts/package-native-application.test.ts
+
+  retain-evidence:
+    name: Assemble exact native release evidence without publishing
+    needs: [verify-runtime-set, verify-set, verify-windows-installer, verify-posix-installer, verify-provider-free-lanes]
+    if: github.repository == 'virusimmortal00/AllMyFriendsAreAgents' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-runtime-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: accepted-runtime-artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-application-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: accepted-application-artifacts
+          merge-multiple: true
+      - name: Assemble checksums, SPDX SBOMs, and installer-consumable provenance predicates from accepted bytes
+        run: >-
+          pnpm run evidence:native-release -- assemble
+          --runtime accepted-runtime-artifacts
+          --application accepted-application-artifacts
+          --output retained-native-release
+          --commit "${{ github.sha }}"
+          --repository "${{ github.repository }}"
+          --workflow "${{ github.workflow_ref }}"
+          --ref "${{ github.ref }}"
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+      - name: Declare only manifest-selected archives and installers as attestation subjects
+        run: pnpm run evidence:native-release -- subjects --directory retained-native-release --output "$RUNNER_TEMP/native-evidence-subjects.sha256"
+      - name: Sign source- and workflow-bound build provenance without publishing a release artifact
+        id: provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-checksums: ${{ runner.temp }}/native-evidence-subjects.sha256
+          push-to-registry: false
+          show-summary: false
+      - name: Bind the trusted Sigstore bundle to the closed evidence manifest
+        run: pnpm run evidence:native-release -- bind-attestation --directory retained-native-release --bundle "${{ steps.provenance.outputs.bundle-path }}"
+      - name: Verify manifest-to-artifact byte identity immediately before retention
+        run: pnpm run evidence:native-release -- verify --directory retained-native-release --commit "${{ github.sha }}"
+      - name: Retain the gated candidate only as this run's workflow output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: retained-native-release/
+          if-no-files-found: error
+          retention-days: 7

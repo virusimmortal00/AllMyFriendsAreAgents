@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 if (process.argv.includes("--version")) process.stdout.write("1.18.25\n");
+else if (process.argv.includes("--help") && process.argv.includes("run")) process.stdout.write("--format json --dir --agent --model --variant --session --auto\n");
+else if (process.argv.includes("--help") && process.argv.includes("models")) process.stdout.write("models [provider] --verbose --refresh\n");
 else if (process.argv.includes("models")) process.stdout.write("openai/fixture-model\n");
 else if (process.argv.includes("run")) {
   const { probe } = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "protected.json"), "utf8"));

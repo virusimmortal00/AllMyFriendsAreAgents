@@ -9,7 +9,6 @@ import { classifyProviderScopedFailure, type ProviderHealthRegistry } from "./pr
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 64 * 1024;
-const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 type SummarizerExecutor = (command: string, args: readonly string[], options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr: string }>;
 
 interface SummarizerHealthIntegration {
@@ -49,7 +48,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
   private readonly routeCooldowns = new Map<string, number>();
 
   constructor(
-    private readonly command = OPENCODE_COMMAND,
+    private readonly command: string | (() => string | undefined),
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
     private readonly execute: SummarizerExecutor = (command, args, options) => execFileAsync(command, [...args], options),
     private readonly health?: SummarizerHealthIntegration,
@@ -80,6 +79,8 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
   }
 
   private async summarizeUncached(input: Parameters<AgentContextSummarizer["summarize"]>[0]) {
+    const command = typeof this.command === "function" ? this.command() : this.command;
+    if (!command) throw new Error("Context summarization unavailable (verified OpenCode runtime unavailable).");
     const prompt = input.promptTemplate
       .replaceAll("{{tokenTarget}}", String(input.tokenTarget))
       .replaceAll("{{transcript}}", input.transcript);
@@ -98,7 +99,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         continue;
       }
       try {
-        const { stdout } = await this.execute(this.command, [
+        const { stdout } = await this.execute(command, [
           "run", "--format", "json", "--dir", input.projectPath, "--agent", "plan",
           "--model", selection,
           ...(model.variant ? ["--variant", model.variant] : []),
