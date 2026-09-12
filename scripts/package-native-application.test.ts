@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,7 +89,7 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     mkdirSync(path.join(app, "node_modules/.store/pkg"), { recursive: true }); writeFileSync(path.join(app, "node_modules/.store/pkg/index.js"), "export {};\n");
     symlinkSync(".store/pkg", path.join(app, "node_modules/pkg"));
     expect(() => packageNativeApplication({ targetId: target.id, applicationDirectory: app, applicationCommit: "1".repeat(40), nodeBinary: nodeFixture(root), openCodeArchive: runtime.archive, openCodeEvidence: runtime.proof, outputDirectory: path.join(root, "safe") })).not.toThrow();
-    rmSync(path.join(app, "node_modules/pkg")); symlinkSync(path.join(root, "node"), path.join(app, "node_modules/pkg"));
+    unlinkSync(path.join(app, "node_modules/pkg")); symlinkSync(path.join(root, "node"), path.join(app, "node_modules/pkg"));
     expect(() => packageNativeApplication({ targetId: target.id, applicationDirectory: app, applicationCommit: "2".repeat(40), nodeBinary: nodeFixture(root), openCodeArchive: runtime.archive, openCodeEvidence: runtime.proof, outputDirectory: path.join(root, "unsafe") })).toThrow(/unsafe symbolic link/);
   });
 
