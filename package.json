@@ -15,6 +15,7 @@
     "build": "tsc -b --force && vite build",
     "build:native-application": "tsx scripts/prepare-native-application.ts .runtime/native-production-app",
     "package:native-application": "tsx scripts/package-native-application.ts",
+    "evidence:native-release": "tsx scripts/native-release-evidence.ts",
     "check:quality": "pnpm run check:integration-contracts && pnpm run check:ui-standards && pnpm run check:visual-types && pnpm run build && pnpm test",
     "check:integration-contracts": "tsx scripts/check-integration-contracts.ts --run-tests",
     "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",
