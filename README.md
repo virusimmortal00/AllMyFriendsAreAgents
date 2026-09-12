@@ -88,75 +88,82 @@ fresh provider session while retaining the participant's identity and history.
 
 ## Quick start
 
-You need [Node.js 24+](https://nodejs.org/), pnpm 10 or newer, and
-[OpenCode](https://opencode.ai/docs/) **1.18.18 through 1.18.25**. Newer, unaudited
-versions are rejected by model discovery. The separately approved downstream
-build `1.18.25-amfaa.2` is also supported; see the
-[runtime compatibility guide](docs/integrations/opencode.md) for runtime selection,
-source evidence, and structured-output behavior.
+The native application includes Node.js and the project's audited OpenCode build,
+so you do not need to install or pin either runtime. Releases support macOS on
+Apple Silicon and Intel, Linux on ARM64 and x64, and Windows x64. The POSIX
+installer uses `curl`, `python3`, and the host's standard archive tools.
 
-This source-checkout path remains the public installation path until the first
-self-contained native release is published. The release pipeline and standalone
-installers are implemented, but documenting an unpublished `latest/download` URL
-would make a fresh setup fail. See the [native release runbook](docs/operations/native-releases.md)
-for the guarded publication and README cutover sequence.
+### 1. Install the application
 
-### 1. Connect a model provider
-
-For OpenRouter, create an API key in your
-[OpenRouter account](https://openrouter.ai/settings/keys), then run this on the
-same host and under the same operating-system user that will run the room server:
+On macOS or Linux:
 
 ```bash
-opencode --version
-opencode auth login
-export ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND="$(command -v opencode)"
+curl --fail --silent --show-error --location \
+  https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh \
+  | sh
+```
+
+The default install is private to your user at
+`~/.local/share/all-my-friends-are-agents`. It does not change your shell
+configuration. You can [inspect the installer](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh)
+before running it, or pass `--modify-path` when running a downloaded copy.
+
+On Windows x64, download, inspect, and run the PowerShell installer:
+
+```powershell
+$Installer = Join-Path $env:TEMP "install-windows.ps1"
+Invoke-WebRequest "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-windows.ps1" -OutFile $Installer
+Get-Content $Installer
+& $Installer
+```
+
+The Windows installer uses the unprivileged per-user application directory and
+adds its launcher to your user `PATH`. Open a new terminal to use `amfaa` by name.
+
+### 2. Connect a model provider
+
+For OpenRouter, create an API key in your
+[OpenRouter account](https://openrouter.ai/settings/keys), then launch the bundled
+provider authentication flow.
+
+On macOS or Linux:
+
+```bash
+$HOME/.local/share/all-my-friends-are-agents/amfaa auth
+```
+
+On Windows:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\AllMyFriendsAreAgents\amfaa.cmd" auth
 ```
 
 Choose OpenRouter and supply your key in OpenCode's interactive prompt. Credentials
-remain with OpenCode; the room's browser UI does not collect model API keys. If
-you already have another provider configured in OpenCode, you can use it instead.
-See [OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
-for provider configuration details; retain this project's supported version range.
-Keep the export in the same shell used to start the server. In PowerShell, use
-`$env:ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND = (Get-Command opencode).Source`.
+remain in the provider runtime's user-owned storage; the room's browser UI does
+not collect model API keys. If you already have another provider configured, you
+can use it instead. See [OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
+for provider details.
 
-For Docker, use the [container setup and provider authentication instructions](docs/operations/container-deployment.md#local-build-and-fresh-installation)
-so credentials are available inside the container's provider-state volume.
+### 3. Start the room
 
-### Why the executable is pinned explicitly
-
-The server preflights its OpenCode executable at startup and reports a safe
-reason when it cannot run it. It deliberately does not select a binary from
-`PATH`, because an unrelated OpenCode upgrade must not silently change application
-behavior. The command above records the exact executable for this shell. For a
-GUI-, service-, or supervisor-launched server, set the same absolute path in its
-process environment:
+Run the launcher from the project directory that agents should be allowed to
+inspect. For example, on macOS or Linux:
 
 ```bash
-export ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND=/absolute/path/to/opencode
+cd /path/to/your/project
+$HOME/.local/share/all-my-friends-are-agents/amfaa doctor
+$HOME/.local/share/all-my-friends-are-agents/amfaa start
 ```
 
-Keep this setting in the server process environment, never in browser
-configuration. `pnpm service:start` reads root `.env`; `pnpm run dev` does not,
-so export it first or source the ignored `.env` in the same shell. The roster
-keeps enabled agents visible when this preflight fails, and their status explains
-the server-side condition without exposing the configured path or raw command
-output.
+On Windows, use `amfaa doctor` and `amfaa start` in a new terminal, or invoke the
+full `amfaa.cmd` path shown above. Open
+[http://127.0.0.1:53147](http://127.0.0.1:53147) and choose a screen name.
 
-### 2. Start the room
+The server binds to loopback by default. To inspect a directory other than the
+one where you start the launcher, set
+`ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` to its absolute path first.
 
-```bash
-git clone https://github.com/virusimmortal00/AllMyFriendsAreAgents.git
-cd AllMyFriendsAreAgents
-pnpm install --frozen-lockfile
-pnpm run dev
-```
-
-Open [http://127.0.0.1:4173](http://127.0.0.1:4173) and choose a screen name.
-The API defaults to port `53147`.
-
-### 3. Add your first agents
+### 4. Add your first agents
 
 **New rooms start with no agents.** In **Manage agents…**:
 
@@ -173,12 +180,31 @@ configuration, and agent-behavior settings require administrative authority.
 Operators can [claim the server owner](docs/operations/server-administration.md)
 through **Window → Server Administration**.
 
-Project context is optional. By default, agents can inspect this repository.
-To discuss files in another project, start the server with:
+## Source checkout for contributors
+
+To develop the application itself, install [Node.js 24+](https://nodejs.org/) and
+pnpm 10 or newer, then use the repository-owned setup command:
 
 ```bash
-ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/absolute/path/to/project pnpm run dev
+git clone https://github.com/virusimmortal00/AllMyFriendsAreAgents.git
+cd AllMyFriendsAreAgents
+pnpm install --frozen-lockfile
+pnpm setup
+pnpm run auth
+pnpm run dev
 ```
+
+`pnpm setup` downloads and verifies the exact application-owned OpenCode runtime
+selected by the release manifest. It does not use a globally installed `opencode`.
+The explicit `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` override remains available
+for operators and runtime development; every selected executable still passes the
+startup version and binary-contract checks. The development UI defaults to
+[http://127.0.0.1:4173](http://127.0.0.1:4173), with the API on port `53147`.
+
+For Docker, use the [container setup and provider authentication instructions](docs/operations/container-deployment.md#local-build-and-fresh-installation)
+so credentials are available inside the container's provider-state volume. Release
+verification, update, rollback, and uninstall behavior is documented in the
+[native release runbook](docs/operations/native-releases.md).
 
 ## Start a conversation
 
