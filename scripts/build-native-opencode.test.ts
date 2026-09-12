@@ -3,12 +3,14 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { assertNativeHost, packageVerifiedExecutable, verifyExecutable, verifyNativeArtifactSet } from "./build-native-opencode.js";
 
 const temporary: string[] = [];
 const context = loadNativeReleaseContext();
+const buildSource = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "build-native-opencode.ts"), "utf8");
 
 function fixture(): string {
   const directory = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-build-test-"));
@@ -74,6 +76,12 @@ afterEach(() => {
 });
 
 describe("native OpenCode artifact build", () => {
+  it("preserves the pinned downstream lockfile bytes across build hosts", () => {
+    expect(buildSource.indexOf('config", "core.autocrlf", "false"')).toBeGreaterThan(-1);
+    expect(buildSource.indexOf('config", "core.autocrlf", "false"')).toBeLessThan(buildSource.indexOf('checkout", "--detach", "FETCH_HEAD"'));
+    expect(buildSource).toContain('"install", "--frozen-lockfile"');
+  });
+
   it("rejects a target that does not match the native verification host", () => {
     const wrong = context.policy.targets.find((target) => target.os !== (process.platform === "win32" ? "windows" : process.platform) || target.architecture !== process.arch)!;
     expect(() => assertNativeHost(wrong)).toThrow(/must be built and verified/);

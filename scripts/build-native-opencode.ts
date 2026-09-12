@@ -212,6 +212,7 @@ export function buildNativeTarget(input: { targetId: string; outputDirectory: st
   const checkout = mkdtempSync(path.join(os.tmpdir(), "amfaa-opencode-source-"));
   try {
     run("git", ["init", checkout]);
+    run("git", ["-C", checkout, "config", "core.autocrlf", "false"]);
     run("git", ["-C", checkout, "remote", "add", "origin", downstream.repository]);
     run("git", ["-C", checkout, "fetch", "--depth", "1", "origin", downstream.headCommit]);
     run("git", ["-C", checkout, "checkout", "--detach", "FETCH_HEAD"]);
