@@ -36,7 +36,7 @@
     ]
   },
   "review": {
-    "revision": 25,
+    "revision": 26,
     "reviewedOn": "2026-09-12",
     "result": "Re-inspected every structured SDK/server, CLI JSONL, model-discovery, permission, and custom-tool upstream path at OpenCode v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f, then inspected the complete four-commit downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01. The serve command still resolves its hostname and port before listening and uses password-backed server authentication. The run and models commands retain the flags consumed by the application binary contract; completed text events, session/model identities, verbose catalog output, inline permissions, plugin tool schemas, provider transformations, and generated SDK health/session methods and types retain their recorded shapes. The downstream changes remain limited to persisted structured-output formats, bounded schema validation and retry, forced structured finalization, and plugin-version compatibility. The application now resolves only an explicit operator override or a private packaged/source-setup path and validates the selected executable's exact version and CLI help surfaces before publishing it. Its monitor coalesces refreshes, waits for aborted children to settle, recomputes capability policy against a forced current catalog before publishing a transition, and refreshes connected clients in the background. That selection and refresh behavior is a local fail-closed startup and dispatch boundary; it does not alter upstream transport, provider credential ownership, structured-result validation, permissions, tool visibility, or writable-lane confinement.",
     "paths": [
