@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setupNativeOpenCode } from "./setup-native-opencode.js";
+import { setupCurrentNativeOpenCode, setupNativeOpenCode } from "./setup-native-opencode.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const roots: string[] = [];
@@ -48,6 +48,22 @@ describe("source OpenCode setup", () => {
     expect(value.fetch).toHaveBeenCalledWith(expect.any(String), { redirect: "follow" });
     await expect(setupNativeOpenCode({ root: value.root, manifestPath: value.manifestPath, platform: "linux", architecture: "x64", fetch: value.fetch, verify })).resolves.toEqual({ reused: true, target: "linux-x64" });
     expect(value.fetch).toHaveBeenCalledTimes(3); expect(verify).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the moving current manifest only to select immutable release files", async () => {
+    const value = await fixture(); const manifest = await readFile(value.manifestPath);
+    const latest = "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/native-release-manifest.json";
+    const fetch = vi.fn(async (url: string | URL) => String(url) === latest ? new Response(manifest) : value.fetch(url));
+    await expect(setupCurrentNativeOpenCode({ root: value.root, platform: "linux", architecture: "x64", fetch, verify: async () => undefined })).resolves.toEqual({ reused: false, target: "linux-x64" });
+    expect(fetch).toHaveBeenNthCalledWith(1, latest, { redirect: "follow" });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    await expect(readFile(path.join(value.root, ".runtime", "opencode", "receipt.json"), "utf8")).resolves.toContain("releases/download/v0.1.0");
+  });
+
+  it("rejects unavailable or oversized current manifests before setup", async () => {
+    const value = await fixture();
+    await expect(setupCurrentNativeOpenCode({ root: value.root, fetch: async () => new Response("missing", { status: 404 }) })).rejects.toThrow(/current native release manifest/);
+    await expect(setupCurrentNativeOpenCode({ root: value.root, fetch: async () => new Response("{}", { headers: { "content-length": "1048577" } }) })).rejects.toThrow(/size limit/);
   });
 
   it("fails closed for unsupported hosts, bad hashes, and unavailable provenance", async () => {

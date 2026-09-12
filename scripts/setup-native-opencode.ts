@@ -20,6 +20,8 @@ export type SetupNativeOpenCodeOptions = {
   readonly interruptAfterDownload?: boolean;
 };
 
+export type SetupCurrentNativeOpenCodeOptions = Omit<SetupNativeOpenCodeOptions, "manifestPath">;
+
 function hostTarget(platform: NodeJS.Platform, architecture: string, root: string): string {
   const osName = platform === "win32" ? "windows" : platform;
   if (!(["darwin", "linux", "windows"] as const).includes(osName as "darwin")) throw new Error(`Unsupported native runtime host: ${platform}/${architecture}.`);
@@ -117,9 +119,31 @@ export async function setupNativeOpenCode(options: SetupNativeOpenCodeOptions): 
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
+export async function setupCurrentNativeOpenCode(options: SetupCurrentNativeOpenCodeOptions = {}): Promise<{ reused: boolean; target: string }> {
+  const root = path.resolve(options.root || ROOT);
+  const context = loadNativeReleaseContext(root);
+  const repository = context.policy.applicationRepository.slice(0, -4);
+  const manifestUrl = `${repository}/releases/latest/download/native-release-manifest.json`;
+  const response = await (options.fetch || globalThis.fetch)(manifestUrl, { redirect: "follow" });
+  if (!response.ok || !response.body) throw new Error("Could not download the current native release manifest.");
+  const declaredSize = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredSize) && declaredSize > 1_048_576) throw new Error("Native release manifest exceeds the size limit.");
+  const contents = Buffer.from(await response.arrayBuffer());
+  if (contents.length > 1_048_576) throw new Error("Native release manifest exceeds the size limit.");
+  await mkdir(path.join(root, ".runtime"), { recursive: true, mode: 0o700 });
+  const temporary = await mkdtemp(path.join(root, ".runtime", ".native-manifest-"));
+  const manifestPath = path.join(temporary, "native-release-manifest.json");
+  try {
+    await writeFile(manifestPath, contents, { flag: "wx", mode: 0o600 });
+    return await setupNativeOpenCode({ ...options, root, manifestPath });
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const index = process.argv.indexOf("--manifest"); const manifestPath = index < 0 ? undefined : process.argv[index + 1];
-  if (!manifestPath || process.argv.length !== 4) throw new Error("Usage: setup-native-opencode.ts --manifest <native-release-manifest.json>");
-  const result = await setupNativeOpenCode({ manifestPath });
+  if ((index >= 0 && (!manifestPath || process.argv.length !== 4)) || (index < 0 && process.argv.length !== 2)) throw new Error("Usage: setup-native-opencode.ts [--manifest <native-release-manifest.json>]");
+  const result = manifestPath ? await setupNativeOpenCode({ manifestPath }) : await setupCurrentNativeOpenCode();
   process.stdout.write(`${result.reused ? "Reused" : "Installed"} verified OpenCode runtime for ${result.target}.\n`);
 }
