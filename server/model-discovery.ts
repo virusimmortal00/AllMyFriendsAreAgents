@@ -20,7 +20,7 @@ export const APPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2";
 const OPENCODE_PROTOCOL = "opencode-cli-jsonl-v1" as const;
 const OPENCODE_CAPABILITIES = ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const;
 
-const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
+export const OPENCODE_BINARY_CONTRACT_VERSIONS = [MAXIMUM_AUDITED_OPENCODE_VERSION, APPROVED_DOWNSTREAM_OPENCODE_VERSION] as const;
 
 export interface DiscoveryCommandResult { stdout: string; stderr: string; }
 export type DiscoveryExecutor = (command: string, args: readonly string[], signal?: AbortSignal) => Promise<DiscoveryCommandResult>;
@@ -57,7 +57,7 @@ function diagnostic(value: unknown) {
 function classifyError(error: unknown): Pick<ModelDiscoveryResult, "status" | "diagnostic"> {
   const message = diagnostic(error);
   const code = (error as NodeJS.ErrnoException)?.code;
-  if (code === "ENOENT") return { status: "cli_missing", diagnostic: "OpenCode is not installed or is not on PATH." };
+  if (code === "ENOENT") return { status: "cli_missing", diagnostic: "The verified application OpenCode runtime is unavailable." };
   if (/not logged in|not authenticated|authentication|oauth|login required|unauthorized/i.test(message)) {
     return { status: "authentication_required", diagnostic: "OpenCode requires authentication." };
   }
@@ -101,6 +101,21 @@ export function parseOpenCodeRuntimeVersion(stdout: string) {
     protocol: OPENCODE_PROTOCOL,
     capabilities: compatible ? OPENCODE_CAPABILITIES : [],
   };
+}
+
+export function validateOpenCodeBinaryContract(versionOutput: string, runHelp: string, modelsHelp: string) {
+  const runtime = parseOpenCodeRuntimeVersion(versionOutput);
+  if (!runtime?.compatible || !OPENCODE_BINARY_CONTRACT_VERSIONS.includes(runtime.version as typeof OPENCODE_BINARY_CONTRACT_VERSIONS[number])) {
+    throw Object.assign(new Error("OpenCode does not match an audited binary contract identity."), { code: "EBINARYCONTRACT" });
+  }
+  const requireText = (value: string, expected: readonly string[]) => {
+    if (expected.some((item) => !value.includes(item))) {
+      throw Object.assign(new Error("OpenCode is missing a required binary contract surface."), { code: "EBINARYCONTRACT" });
+    }
+  };
+  requireText(runHelp, ["--format", "json", "--dir", "--agent", "--model", "--variant", "--session", "--auto"]);
+  requireText(modelsHelp, ["models [provider]", "--verbose", "--refresh"]);
+  return runtime;
 }
 
 export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredModel[] {
@@ -218,12 +233,18 @@ function configuredModel(reference: ModelReference): DiscoveredModel {
 
 export class ModelDiscoveryService {
   private cache?: { expiresAt: number; promise: Promise<ModelDiscoveryResult> };
+  private readonly command: string | (() => string | undefined);
 
   constructor(
     private readonly execute: DiscoveryExecutor = executeDiscoveryCommand,
     private readonly now: () => number = Date.now,
     private readonly ttlMs = DISCOVERY_CACHE_TTL_MS,
-  ) {}
+    command?: string | (() => string | undefined),
+  ) {
+    // Injected executors are test/adapter boundaries and retain an explicit
+    // fixture name. The production executor never receives an implicit PATH name.
+    this.command = command ?? (execute === executeDiscoveryCommand ? () => undefined : "opencode");
+  }
 
   async discover(refresh = false, signal?: AbortSignal) {
     const resolve = () => this.discoverUncached(signal).catch((error): ModelDiscoveryResult => ({
@@ -240,7 +261,9 @@ export class ModelDiscoveryService {
   private async discoverUncached(signal?: AbortSignal): Promise<ModelDiscoveryResult> {
     const discoveredAt = new Date(this.now()).toISOString();
     const configuredDefault = configuredReference();
-    const versionOutput = await this.execute(OPENCODE_COMMAND, ["--version"], signal);
+    const command = typeof this.command === "function" ? this.command() : this.command;
+    if (!command) return { status: "cli_missing", models: [], diagnostic: "The verified application OpenCode runtime is unavailable.", discoveredAt };
+    const versionOutput = await this.execute(command, ["--version"], signal);
     const runtime = parseOpenCodeRuntimeVersion(versionOutput.stdout);
     if (!runtime?.compatible) {
       return {
@@ -254,7 +277,7 @@ export class ModelDiscoveryService {
       };
     }
     try {
-      const output = await this.execute(OPENCODE_COMMAND, ["models", "--verbose"], signal);
+      const output = await this.execute(command, ["models", "--verbose"], signal);
       const models = parseOpenCodeModelCatalog(output.stdout);
       if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
       return { status: "available", models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models), runtime, configuredDefault, discoveredAt };

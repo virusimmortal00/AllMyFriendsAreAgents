@@ -76,6 +76,25 @@ The repository pins `@opencode-ai/plugin` to the audited version and type-checks
 `server/agent-tools/` as part of the normal build. This ensures that custom tools
 cannot silently drift outside the quality gate.
 
+## Deterministic executable resolution
+
+The server resolves one OpenCode executable for every application lane. An
+explicit `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` operator override has
+first priority. Otherwise it checks the packaged private executable at
+`runtime/opencode/bin/opencode` (`opencode.exe` on Windows), then the source
+setup executable at `.runtime/opencode/bin/opencode`. It never falls back to an
+unrelated `opencode` found on `PATH`.
+
+Before a candidate becomes available, the bounded startup preflight verifies
+its exact version and the required `run --help` and `models --help` binary
+surfaces. Packaged and source-setup candidates must identify as the approved
+downstream runtime; an explicit operator override may select the maximum audited
+stock runtime for the compatibility CLI lane. A present but invalid
+higher-priority candidate fails closed instead of falling through. Discovery,
+summarization, structured read-only turns, isolated CLI turns, and the
+server-local provider authentication handoff all consume the same verified
+selection. OpenCode continues to own provider credential storage.
+
 ## CLI text-part assembly
 
 The 2026-08-30 review re-inspected v1.18.25 at the recorded commit. The CLI run

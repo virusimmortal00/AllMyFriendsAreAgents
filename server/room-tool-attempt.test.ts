@@ -32,6 +32,7 @@ function fixture() {
   const use = async (lease = issued.at(-1)!) => [await command.execute(lease.command, commandInput), await diagnostics.execute(lease.diagnostics, diagnosticsInput)];
   const invalidations = vi.fn(async (agent: string) => { delete state.sessions[agent]; });
   const run = (execute: () => Promise<void>, accepted = true, failPreparation = false) => runAgent("codex-sol", state, "Answer once.", false, undefined, controller.signal, undefined, undefined, { invalidate: invalidations }, undefined, undefined, undefined, discovery, {
+    runtimeCommand: () => "/app/runtime/opencode/bin/opencode",
     operationLog: (_level, event, fields) => { logs.push({ ...currentLogContext(), ...fields, event }); },
     refreshScopedTools: (attempt) => {
       const commandToken = command.issue({ agentId: "codex-sol", displayName: "Sol", attempt, allowedCommands: ["help"], roomId: "room-one" });

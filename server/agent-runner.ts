@@ -28,7 +28,6 @@ const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
 const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
-const OPENCODE_COMMAND = process.env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND?.trim() || "opencode";
 
 interface RunResult {
   text: string;
@@ -43,6 +42,7 @@ interface RunResult {
 }
 
 export interface AgentContextRuntime {
+  readonly runtimeCommand?: () => string | undefined;
   readonly summaryStore?: AgentContextSummaryStore;
   readonly summarizer?: AgentContextSummarizer;
   readonly activeAssignment?: string;
@@ -550,7 +550,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
 
 function friendlyProcessError(command: string, code: number | null, output: string) {
   if (/OAuth session expired|Failed to authenticate|Not logged in|Not authenticated/i.test(output)) {
-    return `OpenCode authentication expired. Run \`${OPENCODE_COMMAND} auth login\` in a terminal, then try again.`;
+    return `OpenCode authentication expired. Run \`${command} auth login\` in a terminal, then try again.`;
   }
   const conciseOutput = output.length > 1_200 ? `${output.slice(0, 1_200)}…` : output;
   return `${command} exited with ${code}: ${conciseOutput || "No diagnostic output."}`;
@@ -773,6 +773,8 @@ export async function runAgent(
       const availability = selectedModelAvailability({ ...(participant.providerId ? { providerId: participant.providerId } : {}), modelId: participant.modelId!, ...(participant.variant ? { variant: participant.variant } : {}) }, discovery);
       if (!availability.available) throw new Error(availability.reason === "model_removed" || availability.reason === "provider_removed" || availability.reason === "variant_removed" ? "The participant's selected OpenCode model is no longer available. Choose a replacement in the roster." : availability.diagnostic || "OpenCode or the selected model is unavailable.");
     }
+    const runtimeCommand = context?.runtimeCommand?.();
+    if (!runtimeCommand) throw new Error("The verified application OpenCode runtime is unavailable.");
     const structuredOutput = permission === "read-only"
       && Boolean(participant.providerId)
       && discovery?.runtime?.compatible === true
@@ -861,7 +863,7 @@ export async function runAgent(
             { roomCommand: Boolean(activeContext?.commandTool), roomHistory: Boolean(activeContext?.historyTool), roomDiagnostics: Boolean(activeContext?.diagnosticsTool) },
           );
           return transport.run({
-            command: OPENCODE_COMMAND,
+            command: runtimeCommand,
             projectPath,
             providerId: participant.providerId!,
             modelId: profile.modelId,
@@ -912,7 +914,7 @@ export async function runAgent(
       const invoke = async (sessionId?: string) => withLogContext({ attemptOrdinal }, async () => {
         if (commandControl?.evidence) commandControl.evidence.attemptOrdinal = attemptOrdinal;
         const selection = participant.providerId ? `${participant.providerId}/${profile.modelId}` : profile.modelId;
-        const invocation = await execution(OPENCODE_COMMAND, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
+        const invocation = await execution(runtimeCommand, opencodeArgs(permission, projectPath, sessionId, selection, participant.variant));
         const environment = {
           ...invocation.env,
           ...(activeContext?.historyTool ? {
@@ -1015,7 +1017,7 @@ export async function runAgent(
   }).finally(() => { toolsActive = false; });
 }
 
-export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_IDS): Promise<Partial<Record<ActiveAgentId, boolean>>> {
+export async function cliAvailability(command: string | undefined, agents: readonly ActiveAgentId[] = AGENT_IDS): Promise<Partial<Record<ActiveAgentId, boolean>>> {
   const check = async (command: string) => {
     try {
       await runProcess(command, ["--version"], process.cwd(), { timeoutMs: VERSION_CHECK_TIMEOUT_MS });
@@ -1024,7 +1026,7 @@ export async function cliAvailability(agents: readonly ActiveAgentId[] = AGENT_I
       return false;
     }
   };
-  const opencode = await check(OPENCODE_COMMAND);
+  const opencode = command ? await check(command) : false;
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 

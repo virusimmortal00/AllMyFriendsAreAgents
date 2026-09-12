@@ -67,7 +67,7 @@ import { GovernedContributionExecutor, UnavailableContributionExecutor } from ".
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
-import { inspectOpenCodeRuntime, OPEN_CODE_RUNTIME_REFRESH_TTL_MS, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
+import { OPEN_CODE_RUNTIME_REFRESH_TTL_MS, publicOpenCodeRuntimeStatus, resolveOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
@@ -163,11 +163,13 @@ app.use(traceMiddleware(structuredLogger));
 await structuredLogger.log("info", "server.startup.started", { phase: "configuration" });
 await structuredLogger.log("info", "storage.configuration.resolved", { backend: storageConfiguration.backend });
 await structuredLogger.log("info", "storage.migration.checked", { backend: storageConfiguration.backend, migration: "repository-open" });
-let openCodeRuntime = await inspectOpenCodeRuntime();
+let resolvedOpenCodeRuntime = await resolveOpenCodeRuntime({ root: projectRoot });
+let openCodeRuntime = publicOpenCodeRuntimeStatus(resolvedOpenCodeRuntime);
 await structuredLogger.log(openCodeRuntime.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", openCodeRuntime.state === "ready"
   ? { state: openCodeRuntime.state, version: openCodeRuntime.version }
   : { state: openCodeRuntime.state, reason: openCodeRuntime.reason });
-const openCodeRuntimeMonitor = new OpenCodeRuntimeMonitor(openCodeRuntime);
+const openCodeRuntimeMonitor = new OpenCodeRuntimeMonitor(resolvedOpenCodeRuntime, () => resolveOpenCodeRuntime({ root: projectRoot }));
+const runtimeCommand = () => resolvedOpenCodeRuntime.state === "ready" ? resolvedOpenCodeRuntime.command : undefined;
 const legacyProjectId = storageConfiguration.backend === "json"
   ? await (await import("./storage/json-project-identity.js")).openJsonProjectIdentity(storageConfiguration.stateDirectory,
     process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.env.AGENTWIRE_PROJECT_PATH || projectRoot)
@@ -199,9 +201,9 @@ let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
 let healthRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 const providerHealth = await ProviderHealthRegistry.open(storageConfiguration.dataDirectory);
 await Promise.all([agentHealth.expire(), providerHealth.expire()]);
-const modelDiscovery = new ModelDiscoveryService();
+const modelDiscovery = new ModelDiscoveryService(undefined, undefined, undefined, runtimeCommand);
 const openRouterCatalog = new OpenRouterCatalogService();
-const contextSummarizer = new OpenCodeContextSummarizer(undefined, undefined, undefined, {
+const contextSummarizer = new OpenCodeContextSummarizer(runtimeCommand, undefined, undefined, {
   providers: providerHealth,
   onChange: () => { scheduleHealthRefresh(); broadcast(); },
 });
@@ -454,18 +456,30 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-let openCodeRuntimeRefresh: Promise<ReturnType<OpenCodeRuntimeMonitor["refresh"]> extends Promise<infer Runtime> ? Runtime : never> | undefined;
+let openCodeRuntimeRefresh: Promise<typeof openCodeRuntime> | undefined;
 
 async function performOpenCodeRuntimeRefresh() {
-  const next = await openCodeRuntimeMonitor.refresh();
+  const nextResolution = await openCodeRuntimeMonitor.refresh();
+  const next = publicOpenCodeRuntimeStatus(nextResolution);
   const changed = next.state !== openCodeRuntime.state
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
-    || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason);
+    || (next.state === "unavailable" && openCodeRuntime.state === "unavailable" && next.reason !== openCodeRuntime.reason)
+    || (nextResolution.state === "ready" && resolvedOpenCodeRuntime.state === "ready"
+      && (nextResolution.command !== resolvedOpenCodeRuntime.command || nextResolution.source !== resolvedOpenCodeRuntime.source));
   if (changed) {
-    await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
-      ? { state: next.state, version: next.version }
-      : { state: next.state, reason: next.reason });
-    await refreshAgentCapabilities(next, true);
+    const previousResolution = resolvedOpenCodeRuntime;
+    resolvedOpenCodeRuntime = nextResolution;
+    try {
+      await structuredLogger.log(next.state === "ready" ? "info" : "warn", "opencode.runtime.preflight", next.state === "ready"
+        ? { state: next.state, version: next.version }
+        : { state: next.state, reason: next.reason });
+      await refreshAgentCapabilities(next, true);
+    } catch (error) {
+      resolvedOpenCodeRuntime = previousResolution;
+      throw error;
+    }
+  } else {
+    resolvedOpenCodeRuntime = nextResolution;
   }
   // Publish a transition only after its matching capability projection is
   // durable. A failed refresh leaves the prior runtime visible so the next
@@ -784,6 +798,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       undefined,
       modelDiscovery,
       {
+        runtimeCommand,
         summaryStore: store,
         summarizer: contextSummarizer,
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
@@ -1041,6 +1056,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       { invalidate: async (staleAgent) => store.clearSession(staleAgent) }, agentProcesses,
       undefined, undefined, modelDiscovery,
       {
+        runtimeCommand,
         historyTool: roomHistoryTool,
         refreshScopedTools: (attempt) => ({ commandTool: commandToolContext(agent, before, attempt), diagnosticsTool: diagnosticsToolContext(agent, attempt) }),
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
@@ -1388,7 +1404,7 @@ const protectedWorkService = new ProtectedWorkService(protectedWorkStore, invest
       const result = await runAgent(agent, { ...before, sessions: {}, settings: { ...before.settings, writableAgent: "nobody" } },
         protectedReturnInstruction(record), false, generationJournal, AbortSignal.any([signal, activity.signal]),
         undefined, activeGenerations, { invalidate: async (owner) => store.clearSession(owner) }, agentProcesses,
-        undefined, undefined, modelDiscovery, { summaryStore: store, summarizer: contextSummarizer, historyTool: roomHistoryTool,
+        undefined, undefined, modelDiscovery, { runtimeCommand, summaryStore: store, summarizer: contextSummarizer, historyTool: roomHistoryTool,
           operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
         { onGenerationStart: async (id) => reservation.activate(id) });
       const parsed = result.structuredTurn
@@ -1413,7 +1429,7 @@ const protectedWorkService = new ProtectedWorkService(protectedWorkStore, invest
 registerProtectedWorkRoutes({ app, roomId: CANONICAL_ROOM_ID, service: protectedWorkService, humans, sessions: humanSessions,
   developers: developerTeam, member: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined });
 
-registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery });
+registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery, runtimeCommand });
 if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
   authorizations: githubIntegrationRuntime.authorizations, catalogs: githubIntegrationRuntime.catalogs, configuration: githubIntegrationRuntime.configuration });
 if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: controlPlane, bindings: projectGitHubBindings,

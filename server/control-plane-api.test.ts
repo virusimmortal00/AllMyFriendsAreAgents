@@ -16,7 +16,8 @@ describe("control-plane API authorization", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-control-api-"));
     const control = await ControlPlaneStore.open(directory, "local-bootstrap-secret-with-32-characters");
     const discovery = new ModelDiscoveryService(async (_command, args) => ({ stdout: args[0] === "models" ? "provider/model\n" : args[0] === "--list-models" ? "model - Model\n" : "1.18.18", stderr: "" }));
-    const app = express(); app.use(express.json()); registerControlPlaneRoutes({ app, control, discovery });
+    const runtimeCommand = "/app/runtime/opencode/bin/opencode";
+    const app = express(); app.use(express.json()); registerControlPlaneRoutes({ app, control, discovery, runtimeCommand: () => runtimeCommand });
     const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
     cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -36,9 +37,9 @@ describe("control-plane API authorization", () => {
     expect(await me.json()).toMatchObject({ expiresAt: ownerBody.expiresAt, principal: { username: "owner", role: "OWNER" } });
     expect((await call("/api/provider-setup/initiate", { method: "POST", body: "{}" }, ownerCookie)).status).toBe(403);
     const initiated = await call("/api/provider-setup/initiate", { method: "POST", body: "{}" }, ownerCookie, ownerBody.csrfToken);
-    expect(await initiated.json()).toMatchObject({ mode: "server-local-handoff", command: ["opencode", "auth", "login"] });
+    expect(await initiated.json()).toMatchObject({ mode: "server-local-handoff", command: [runtimeCommand, "auth", "login"] });
     const setup = await (await call("/api/provider-setup", {}, ownerCookie)).json() as { provider: { setup: Record<string, unknown> } };
-    expect(setup.provider.setup).toMatchObject({ mode: "server-local-handoff", command: ["opencode", "auth", "login"], browserHostIsServerHost: false });
+    expect(setup.provider.setup).toMatchObject({ mode: "server-local-handoff", command: [runtimeCommand, "auth", "login"], browserHostIsServerHost: false });
     expect(setup.provider.setup).not.toHaveProperty("terminal");
 
     const createdResponse = await call("/api/control/principals", { method: "POST", body: JSON.stringify({ username: "operator", password: "operator password long", role: "MEMBER", capabilities: ["PROVIDER_VIEW"] }) }, ownerCookie, ownerBody.csrfToken);

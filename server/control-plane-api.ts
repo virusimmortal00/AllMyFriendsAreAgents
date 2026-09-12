@@ -3,10 +3,12 @@ import type { ControlSessionResponse } from "../shared/control-session.js";
 import { clearControlSession, controlRoute, setControlSession, type ControlPlaneStore } from "./control-plane.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
 
-const LOCAL_HANDOFF = ["opencode", "auth", "login"] as const;
-
-export function registerControlPlaneRoutes(input: { app: express.Express; control: ControlPlaneStore; discovery: ModelDiscoveryService }) {
-  const { app, control, discovery } = input;
+export function registerControlPlaneRoutes(input: { app: express.Express; control: ControlPlaneStore; discovery: ModelDiscoveryService; runtimeCommand: () => string | undefined }) {
+  const { app, control, discovery, runtimeCommand } = input;
+  const localHandoff = () => {
+    const command = runtimeCommand();
+    return command ? [command, "auth", "login"] as const : undefined;
+  };
 
   app.get("/api/control/status", (_request, response) => {
     const status = control.status();
@@ -35,14 +37,17 @@ export function registerControlPlaneRoutes(input: { app: express.Express; contro
   app.get("/api/provider-setup", controlRoute(async (request, response) => {
     control.require(request, "PROVIDER_VIEW");
     const modelDiscovery = await discovery.discover();
+    const command = localHandoff();
     response.set("Cache-Control", "no-store").json({
-      provider: { discovery: modelDiscovery, setup: { mode: "server-local-handoff", command: LOCAL_HANDOFF, browserHostIsServerHost: false } },
+      provider: { discovery: modelDiscovery, setup: { mode: "server-local-handoff", ...(command ? { command } : {}), browserHostIsServerHost: false } },
     });
   }));
   app.post("/api/provider-setup/initiate", controlRoute(async (request, response) => {
     const actor = control.require(request, "PROVIDER_CONFIGURE", true).principal;
+    const command = localHandoff();
+    if (!command) return response.status(503).json({ error: "The verified application OpenCode runtime is unavailable." });
     await control.recordAudit(actor.id, "PROVIDER_SETUP_INITIATED", "opencode", { mode: "server-local-handoff" });
-    response.status(202).json({ mode: "server-local-handoff", command: LOCAL_HANDOFF, instruction: "Run this exact command in a terminal on the server host. Credentials remain in OpenCode or the operating-system keychain. Return here and refresh readiness." });
+    response.status(202).json({ mode: "server-local-handoff", command, instruction: "Run this exact command in a terminal on the server host. Credentials remain in OpenCode or the operating-system keychain. Return here and refresh readiness." });
   }));
   app.post("/api/provider-setup/refresh", controlRoute(async (request, response) => {
     const actor = control.require(request, "PROVIDER_CONFIGURE", true).principal;
