@@ -69,11 +69,11 @@
    Apply before first layout so WebKit creates a native gutter. */
 @media (forced-colors: none) {
   @supports selector(::-webkit-scrollbar) {
-    .classic-scrollbars, .classic-scrollbars * { scrollbar-color: auto; }
-    .classic-scrollbars ::-webkit-scrollbar { width: 14px; height: 14px; }
-    .classic-scrollbars ::-webkit-scrollbar-track { background: #dfdfdf; border: 1px solid #808080; }
-    .classic-scrollbars ::-webkit-scrollbar-thumb { background: var(--chrome); border: 2px outset white; min-height: 24px; }
-    .classic-scrollbars ::-webkit-scrollbar-corner { background: var(--chrome); }
+    .classic-scrollbars, .classic-scrollbars *, .classic-scroll-region { scrollbar-color: auto; }
+    .classic-scrollbars::-webkit-scrollbar, .classic-scrollbars ::-webkit-scrollbar, .classic-scroll-region::-webkit-scrollbar { width: 14px; height: 14px; }
+    .classic-scrollbars::-webkit-scrollbar-track, .classic-scrollbars ::-webkit-scrollbar-track, .classic-scroll-region::-webkit-scrollbar-track { background: #dfdfdf; border: 1px solid #808080; }
+    .classic-scrollbars::-webkit-scrollbar-thumb, .classic-scrollbars ::-webkit-scrollbar-thumb, .classic-scroll-region::-webkit-scrollbar-thumb { background: var(--chrome); border: 2px outset white; min-height: 24px; }
+    .classic-scrollbars::-webkit-scrollbar-corner, .classic-scrollbars ::-webkit-scrollbar-corner, .classic-scroll-region::-webkit-scrollbar-corner { background: var(--chrome); }
   }
 }
 /* Layout declarations must not paint inactive pages or expose their controls. */
@@ -604,7 +604,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .roster-create-panel input[aria-invalid="true"] { border-color: #a53333; outline: 2px solid rgba(165, 51, 51, .16); }
 .roster-draft-notice { margin: 0; padding: 10px 12px; border: 2px outset white; border-radius: 0; background: #eaf8ed; color: #265b31; }
 .roster-draft-notice strong { display: block; color: #174c23; }
-.roster-danger-zone { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: auto; padding: 6px; border: 1px solid #c9baba; background: #fff7f7; }
+.roster-danger-zone { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 1px; padding: 6px; border: 1px solid #c9baba; background: #fff7f7; }
 .roster-danger-zone > span { display: grid; }
 .roster-danger-zone strong { color: #7b1515; }
 .roster-danger-zone small { color: #6f5555; }
@@ -1218,6 +1218,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .roster-selected-model { grid-template-columns: 38px minmax(0, 1fr); }
   .roster-selected-model dl { grid-column: 1 / -1; }
   .roster-config-workspace input:not([type="checkbox"]):not([type="radio"]), .roster-config-workspace select, .roster-discovery input, .roster-discovery select, .roster-control-login input { min-height: 40px; }
+  .roster-config-workspace select.classic-select, .roster-discovery select.classic-select { height: auto; }
   .roster-command-permissions .classic-check { min-height: 40px; }
   .roster-danger-zone button { justify-self: start; }
   .status-bar { grid-template-columns: 1fr 1fr; padding-bottom: max(2px, env(safe-area-inset-bottom)); }

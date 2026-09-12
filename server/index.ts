@@ -67,7 +67,7 @@ import { GovernedContributionExecutor, UnavailableContributionExecutor } from ".
 import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
-import { inspectOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
+import { inspectOpenCodeRuntime, OPEN_CODE_RUNTIME_REFRESH_TTL_MS, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
@@ -454,7 +454,9 @@ function currentEnabledAgents() {
   return enabledRoomAgentIds(normalizeRoomAgentRoster(store.snapshot().roster));
 }
 
-async function refreshOpenCodeRuntime() {
+let openCodeRuntimeRefresh: Promise<ReturnType<OpenCodeRuntimeMonitor["refresh"]> extends Promise<infer Runtime> ? Runtime : never> | undefined;
+
+async function performOpenCodeRuntimeRefresh() {
   const next = await openCodeRuntimeMonitor.refresh();
   const changed = next.state !== openCodeRuntime.state
     || (next.state === "ready" && openCodeRuntime.state === "ready" && next.version !== openCodeRuntime.version)
@@ -471,6 +473,14 @@ async function refreshOpenCodeRuntime() {
   openCodeRuntime = next;
   if (changed) broadcast();
   return next;
+}
+
+function refreshOpenCodeRuntime() {
+  if (openCodeRuntimeRefresh) return openCodeRuntimeRefresh;
+  openCodeRuntimeRefresh = performOpenCodeRuntimeRefresh().finally(() => {
+    openCodeRuntimeRefresh = undefined;
+  });
+  return openCodeRuntimeRefresh;
 }
 
 function refreshOpenCodeRuntimeInBackground() {
@@ -586,6 +596,12 @@ async function refreshImplementationCapabilitiesAndBroadcast() {
 function broadcast() {
   for (const [viewerHumanId, stream] of roomEvents) stream.broadcast(publicRoomSnapshot(viewerHumanId));
 }
+
+const runtimeRecoveryTimer = setInterval(() => {
+  if (![...roomEvents.values()].some((stream) => stream.clientCount > 0)) return;
+  refreshOpenCodeRuntimeInBackground();
+}, OPEN_CODE_RUNTIME_REFRESH_TTL_MS + 1);
+runtimeRecoveryTimer.unref();
 
 function roomEventStream(humanId: string) {
   let stream = roomEvents.get(humanId);
@@ -1324,6 +1340,7 @@ app.get("/api/events", async (request, response) => {
   const connection = humans.connect(human.id);
   if (!connection) return response.status(401).json({ error: "Join the room before connecting." });
   await refreshImplementationCapabilities();
+  refreshOpenCodeRuntimeInBackground();
   roomEventStream(human.id).connect(request, response, publicRoomSnapshot(human.id), () => {
     const departure = humans.disconnect(human.id);
     broadcast();
@@ -1708,6 +1725,7 @@ async function shutdown(signal: string) {
   const investigationShutdown = investigationService.shutdown();
   coordinatorHeartbeat.close();
   if (dormantRoomTimer) clearInterval(dormantRoomTimer);
+  clearInterval(runtimeRecoveryTimer);
   await roomCommandDispatcher?.close();
   roomRuntimes?.close();
   roomLifecycle?.close();

@@ -44,9 +44,9 @@ async function capture(page: Page, info: TestInfo, scenario: (typeof VISUAL_SCEN
         if (Math.abs(rail.getBoundingClientRect().bottom - detail.getBoundingClientRect().bottom) > 2) issues.push("The roster and detail panes do not end together.");
         if (getComputedStyle(dialog.querySelector<HTMLElement>(".roster-body")!).backgroundColor !== getComputedStyle(detail).backgroundColor) issues.push("The property sheet exposes a contrasting canvas around its form.");
         if (detail.scrollHeight <= detail.clientHeight + 1) {
+          const permissions = detail.querySelector<HTMLElement>(".roster-command-permissions")!.getBoundingClientRect();
           const danger = detail.querySelector<HTMLElement>(".roster-danger-zone")!.getBoundingClientRect();
-          const style = getComputedStyle(detail);
-          if (detail.getBoundingClientRect().bottom - parseFloat(style.paddingBottom) - danger.bottom > 2) issues.push("The taller detail pane leaves unused space below its destructive section.");
+          if (danger.top - permissions.bottom > 12) issues.push("The destructive section is separated from the final settings group by unused space.");
         }
       }
       for (const checkbox of detail.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
