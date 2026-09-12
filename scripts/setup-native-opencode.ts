@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { loadNativeReleaseContext, validateNativeReleaseManifest, type NativeReleaseFile, type NativeReleaseManifest } from "./native-release-contract.js";
+import { pnpmInvocation } from "./package-manager-command.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -57,7 +58,8 @@ async function defaultVerify(command: string, root: string): Promise<void> {
   const version = (await run(command, ["--version"], root)).trim();
   const expected = String((loadNativeReleaseContext(root).integrationContract.downstream as { version: string }).version);
   if (version !== expected) throw new Error(`Installed OpenCode version mismatch: expected ${expected}, received ${version || "empty output"}.`);
-  await run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["run", "check:opencode-binary", "--", "--command", command], root);
+  const invocation = pnpmInvocation(["run", "check:opencode-binary", "--", "--command", command]);
+  await run(invocation.command, invocation.args, root);
 }
 
 async function isVerifiedInstallation(destination: string, target: NativeReleaseManifest["targets"][number], root: string, verify: (command: string) => Promise<void>): Promise<boolean> {

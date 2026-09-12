@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pnpmInvocation } from "./package-manager-command.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -9,6 +10,11 @@ function run(command: string, args: string[]) {
   const result = spawnSync(command, args, { cwd: ROOT, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} failed with exit code ${result.status}.`);
+}
+
+function runPnpm(args: string[]) {
+  const invocation = pnpmInvocation(args);
+  run(invocation.command, [...invocation.args]);
 }
 
 /** Produce the closed production tree consumed by the native packager. */
@@ -19,10 +25,10 @@ export function prepareNativeApplication(outputDirectory: string): void {
   rmSync(output, { recursive: true, force: true });
   rmSync(emitted, { recursive: true, force: true });
   rmSync(deployed, { recursive: true, force: true });
-  run("pnpm", ["run", "build"]);
-  run("pnpm", ["exec", "tsc", "--project", "tsconfig.native.json"]);
+  runPnpm(["run", "build"]);
+  runPnpm(["exec", "tsc", "--project", "tsconfig.native.json"]);
   try {
-    run("pnpm", ["--filter", "all-my-friends-are-agents", "deploy", "--prod", "--legacy", deployed]);
+    runPnpm(["--filter", "all-my-friends-are-agents", "deploy", "--prod", "--legacy", deployed]);
     mkdirSync(output, { recursive: true });
     for (const source of ["dist", "server", "shared"]) {
       const location = source === "dist" ? path.join(ROOT, source) : path.join(emitted, source);
@@ -38,7 +44,7 @@ export function prepareNativeApplication(outputDirectory: string): void {
   } finally {
     // Legacy deploy prunes the source install while constructing its exact
     // production graph. Restore the frozen development install for later jobs.
-    try { run("pnpm", ["install", "--frozen-lockfile"]); }
+    try { runPnpm(["install", "--frozen-lockfile"]); }
     finally {
       rmSync(deployed, { recursive: true, force: true });
       rmSync(emitted, { recursive: true, force: true });
