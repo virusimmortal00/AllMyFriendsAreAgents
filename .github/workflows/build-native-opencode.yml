@@ -11,6 +11,9 @@ on:
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
       - release/native-target-policy.json
+      - scripts/install-windows.ps1
+      - scripts/install-windows.test.ps1
+      - scripts/install-windows-contract.test.ts
       - scripts/build-native-opencode.ts
       - scripts/package-native-application.ts
       - scripts/prepare-native-application.ts
@@ -124,3 +127,16 @@ jobs:
           merge-multiple: true
       - name: Reject incomplete, unexpected, or mutated application archives
         run: pnpm run package:native-application -- verify-set --directory native-application-artifacts
+
+  verify-windows-installer:
+    name: Verify Windows installer behavior
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Run Windows installer acceptance checks
+        shell: pwsh
+        run: ./scripts/install-windows.test.ps1

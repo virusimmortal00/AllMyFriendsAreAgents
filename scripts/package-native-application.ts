@@ -53,7 +53,15 @@ export function packageNativeApplication(input: { context?: NativeReleaseContext
     const install = path.join(work, PRODUCT); const versionDirectory = `${String(context.packageJson.version)}-${input.applicationCommit.slice(0, 12)}`;
     const versionRoot = path.join(install, "versions", versionDirectory); const app = path.join(versionRoot, "app");
     mkdirSync(app, { recursive: true });
-    for (const entry of APP_ENTRIES) cpSync(path.join(appInput, entry), path.join(app, entry), { recursive: true, verbatimSymlinks: true, errorOnExist: true });
+    // Validate links before Windows packaging materializes them. Otherwise an
+    // escaping source link could become an apparently ordinary archived file.
+    files(appInput);
+    for (const entry of APP_ENTRIES) cpSync(path.join(appInput, entry), path.join(app, entry), {
+      recursive: true,
+      verbatimSymlinks: target.os !== "windows",
+      dereference: target.os === "windows",
+      errorOnExist: true,
+    });
     mkdirSync(path.join(app, "runtime/node/bin"), { recursive: true });
     const nodeDestination = path.join(app, "runtime/node/bin", executable(target, "node")); cpSync(path.resolve(input.nodeBinary), nodeDestination); if (target.os !== "windows") chmodSync(nodeDestination, 0o755);
     const extraction = path.join(work, "opencode"); mkdirSync(extraction); run("tar", ["-xf", path.resolve(input.openCodeArchive), "-C", extraction]);
