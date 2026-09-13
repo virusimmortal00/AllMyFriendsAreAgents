@@ -81,6 +81,8 @@ function New-TestManifest([string] $Version, [string] $Commit, [object] $Release
 }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ("amfaa-windows-installer-test-" + [Guid]::NewGuid().ToString("N"))
+$originalDataRoot = $env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR
+$env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR = Join-Path $root "service-state"
 $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 [IO.Directory]::CreateDirectory($root) | Out-Null
 try {
@@ -93,10 +95,40 @@ try {
 
     $first = New-TestRelease $root "0.1.0" ("b" * 40)
     $firstManifest = New-TestManifest "0.1.0" ("b" * 40) $first
-    $downloadFirst = { param($file, $destination) Copy-Item -LiteralPath $first.resources[[string]$file.name] -Destination $destination }.GetNewClosure()
+    $downloadFirst = { param($file, $destination) Assert-True (Test-Path -LiteralPath (Join-Path ($env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR + ".lifecycle-lock") "owner.json")) "installer holds lifecycle ownership during download"; Copy-Item -LiteralPath $first.resources[[string]$file.name] -Destination $destination }.GetNewClosure()
     $install = Join-Path $root "Install location with spaces & punctuation"
     $result = Install-AmfaaFromManifest $firstManifest $install "0.1.0" $false $downloadFirst
     Assert-True (-not $result.reused) "a clean install is activated"
+    $serviceRoot = $env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR
+    [IO.Directory]::CreateDirectory($serviceRoot) | Out-Null
+    $serviceRecord = Join-Path $serviceRoot ".amfaa-service.json"
+    [IO.File]::WriteAllText($serviceRecord, '{"version":1,"mode":"foreground"}')
+    $activeBefore = Get-ActiveVersion $install
+    $mutations = @(
+        { Install-AmfaaFromManifest $firstManifest $install "0.1.0" $false $downloadFirst },
+        { Invoke-AmfaaRollback $install },
+        { Invoke-AmfaaUninstall $install }
+    )
+    foreach ($mutation in $mutations) {
+        try { & $mutation; throw "live service mutation was accepted" }
+        catch { Assert-True ($_.Exception.Message -match "Stop AMFAA") "live service blocks every installer mutation" }
+        Assert-True ((Get-ActiveVersion $install) -ceq $activeBefore) "live service preserves activation"
+        Assert-True (Test-Path -LiteralPath $serviceRecord) "service record is retained"
+        Assert-True (-not (Test-Path -LiteralPath ($serviceRoot + ".lifecycle-lock"))) "refusal releases only its own lock"
+    }
+    Remove-Item -LiteralPath $serviceRecord
+    $competingLock = $serviceRoot + ".lifecycle-lock"
+    [IO.Directory]::CreateDirectory($competingLock) | Out-Null
+    $competingOwner = Join-Path $competingLock "owner.json"
+    [IO.File]::WriteAllText($competingOwner, '{"pid":1,"token":"fixture-owner"}')
+    foreach ($mutation in $mutations) {
+        try { & $mutation; throw "competing lock was ignored" }
+        catch { Assert-True ($_.Exception.Message -notmatch "competing lock was ignored") "competing lifecycle lock blocks mutation" }
+        Assert-True ((Get-ActiveVersion $install) -ceq $activeBefore) "competing lock preserves activation"
+        Assert-True ((Get-Content -LiteralPath $competingOwner -Raw) -match "fixture-owner") "another owner is retained"
+    }
+    Remove-Item -LiteralPath $competingOwner
+    Remove-Item -LiteralPath $competingLock
     Assert-True ([Environment]::GetEnvironmentVariable("Path", "User") -ceq $originalUserPath) "the no-PATH option leaves user PATH unchanged"
     Assert-True ((Get-Content -LiteralPath (Join-Path $install "active-version") -Raw).Trim() -ceq $first.versionName) "the first version is active"
     $again = Install-AmfaaFromManifest $firstManifest $install "0.1.0" $false $downloadFirst
@@ -169,6 +201,7 @@ try {
 
     Write-Output "Windows installer acceptance checks passed."
 } finally {
+    $env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR = $originalDataRoot
     [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 }

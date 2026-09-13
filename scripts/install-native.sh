@@ -180,6 +180,50 @@ if set(listed)!=set(actual) or any(x.get('sha256')!=actual[name] or x.get('type'
 PY
 }
 
+# Share the native CLI's directory lock across install, update, rollback, and
+# uninstall. Any service record fails closed; `amfaa stop` clears stale records.
+service_lock=
+service_lock_token=
+stage=
+release_service_lock() {
+  [ -n "$service_lock_token" ] || return 0
+  python3 - "$service_lock" "$service_lock_token" <<'PYLOCK'
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1]); owner=root/'owner.json'
+if json.loads(owner.read_text()).get('token') == sys.argv[2]:
+ owner.unlink(); root.rmdir()
+PYLOCK
+}
+installer_cleanup() {
+  [ -z "$stage" ] || rm -rf "$stage"
+  release_service_lock
+}
+trap installer_cleanup EXIT
+trap 'exit 130' HUP INT TERM
+need python3
+service_root=${ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR:-"$HOME/.all-my-friends-are-agents"}
+service_lock=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1])+".lifecycle-lock")' "$service_root")
+service_lock_token=$(python3 - "$service_lock" "$service_root" "$$" <<'PYLOCK'
+import json,os,pathlib,secrets,sys
+root=pathlib.Path(sys.argv[1]); owner=root/'owner.json'; token=secrets.token_hex(32)
+root.parent.mkdir(parents=True,exist_ok=True)
+try: root.mkdir(mode=0o700)
+except FileExistsError: raise SystemExit('Another lifecycle operation or foreground session holds the lock.')
+try:
+ with os.fdopen(os.open(owner,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as output:
+  json.dump({'pid':int(sys.argv[3]),'token':token},output)
+ try: os.lstat(pathlib.Path(sys.argv[2])/'.amfaa-service.json')
+ except FileNotFoundError: pass
+ else: raise RuntimeError('Stop AMFAA before running the installer; use amfaa stop or Ctrl+C in the foreground terminal.')
+except Exception as error:
+ if owner.exists() and json.loads(owner.read_text()).get('token') == token: owner.unlink()
+ try: root.rmdir()
+ except OSError: pass
+ raise SystemExit(str(error))
+print(token)
+PYLOCK
+) || die "service lifecycle is busy or needs cleanup; stop AMFAA before changing the installation"
+
 if [ "$COMMAND" = rollback ]; then
   need python3; assert_owned_root
   current=$(sed -n '1p' "$INSTALL_DIR/active-version" 2>/dev/null || true)
@@ -298,7 +342,6 @@ case $MANIFEST_URL in https://github.com/virusimmortal00/AllMyFriendsAreAgents/r
 # Staging beneath the installation root keeps final moves on one filesystem.
 stage="$INSTALL_DIR/.installer-stage-$$"
 rm -rf "$stage"; mkdir "$stage"
-trap 'rm -rf "$stage"' EXIT HUP INT TERM
 fetch() { case $1 in file://*) cp "${1#file://}" "$2";; *) curl --fail --location --proto '=https' --tlsv1.2 -o "$2" "$1";; esac; }
 fetch "$MANIFEST_URL" "$stage/manifest.json"
 metadata=$(python3 - "$stage/manifest.json" "$TARGET" "$VERSION" "$LOCAL_FIXTURES" <<'PY'

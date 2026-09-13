@@ -310,7 +310,7 @@ function Get-ActiveVersion([string] $InstallRoot) {
     return $value
 }
 
-function Install-AmfaaFromManifest([object] $Manifest, [string] $InstallRoot, [string] $RequestedVersion, [bool] $ModifyUserPath, [scriptblock] $DownloadFile = ${function:Invoke-VerifiedDownload}, [switch] $InterruptAfterDownload) {
+function Install-AmfaaFromManifestUnlocked([object] $Manifest, [string] $InstallRoot, [string] $RequestedVersion, [bool] $ModifyUserPath, [scriptblock] $DownloadFile = ${function:Invoke-VerifiedDownload}, [switch] $InterruptAfterDownload) {
     $target = Assert-NativeManifest $Manifest $RequestedVersion
     $InstallRoot = Get-SafeInstallRoot $InstallRoot $false
     [IO.Directory]::CreateDirectory($InstallRoot) | Out-Null
@@ -386,7 +386,7 @@ function Install-AmfaaFromManifest([object] $Manifest, [string] $InstallRoot, [s
     } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue } }
 }
 
-function Invoke-AmfaaRollback([string] $InstallRoot) {
+function Invoke-AmfaaRollbackUnlocked([string] $InstallRoot) {
     $InstallRoot = Get-SafeInstallRoot $InstallRoot $true
     $previousPath = Join-Path $InstallRoot "previous.json"
     $previous = Get-Content -LiteralPath $previousPath -Raw | ConvertFrom-Json
@@ -401,7 +401,7 @@ function Invoke-AmfaaRollback([string] $InstallRoot) {
     return $previous.versionDirectory
 }
 
-function Invoke-AmfaaUninstall([string] $InstallRoot) {
+function Invoke-AmfaaUninstallUnlocked([string] $InstallRoot) {
     if (-not (Test-Path -LiteralPath $InstallRoot -PathType Container)) { return }
     $InstallRoot = Get-SafeInstallRoot $InstallRoot $true
     $receiptPath = Join-Path $InstallRoot $script:ReceiptName
@@ -412,6 +412,56 @@ function Invoke-AmfaaUninstall([string] $InstallRoot) {
     }
     if (@(Get-ChildItem -LiteralPath $InstallRoot -Force).Count -eq 0) { Remove-Item -LiteralPath $InstallRoot -Force }
     if ($removePath) { Update-UserPath $InstallRoot $false }
+}
+
+# Match release/lifecycle-lock.mjs: exclusive directory plus owner.json token.
+# Hold ownership through the entire mutation, including activation and deletion.
+function Invoke-WithServiceLock([scriptblock] $Action) {
+    $dataRoot = $env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR
+    if ([string]::IsNullOrEmpty($dataRoot)) {
+        $homeRoot = $env:USERPROFILE
+        if ([string]::IsNullOrEmpty($homeRoot)) { $homeRoot = [Environment]::GetFolderPath("UserProfile") }
+        $dataRoot = Join-Path $homeRoot ".all-my-friends-are-agents"
+    }
+    if (-not [IO.Path]::IsPathRooted($dataRoot)) { $dataRoot = Join-Path (Get-Location).Path $dataRoot }
+    $dataRoot = [IO.Path]::GetFullPath($dataRoot)
+    if ($dataRoot.Length -gt [IO.Path]::GetPathRoot($dataRoot).Length) { $dataRoot = $dataRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) }
+    $lock = $dataRoot + ".lifecycle-lock"
+    $owner = Join-Path $lock "owner.json"
+    $token = [Guid]::NewGuid().ToString("N") + [Guid]::NewGuid().ToString("N")
+    $owned = $false
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $lock)) | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+        $stream = [IO.File]::Open($owner, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes((@{ pid = $PID; token = $token } | ConvertTo-Json -Compress))
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush()
+            $owned = $true
+        } finally { $stream.Dispose() }
+        try { $service = Get-Item -LiteralPath (Join-Path $dataRoot ".amfaa-service.json") -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { $service = $null }
+        if ($null -ne $service) {
+            throw "Stop AMFAA before running the installer; use amfaa stop or Ctrl+C in the foreground terminal."
+        }
+        & $Action
+    } finally {
+        if ($owned -and ((Get-Content -LiteralPath $owner -Raw | ConvertFrom-Json).token -ceq $token)) {
+            Remove-Item -LiteralPath $owner -Force
+            Remove-Item -LiteralPath $lock -Force
+        }
+    }
+}
+
+function Install-AmfaaFromManifest([object] $Manifest, [string] $InstallRoot, [string] $RequestedVersion, [bool] $ModifyUserPath, [scriptblock] $DownloadFile = ${function:Invoke-VerifiedDownload}, [switch] $InterruptAfterDownload) {
+    Invoke-WithServiceLock { Install-AmfaaFromManifestUnlocked $Manifest $InstallRoot $RequestedVersion $ModifyUserPath $DownloadFile -InterruptAfterDownload:$InterruptAfterDownload }
+}
+function Invoke-AmfaaRollback([string] $InstallRoot) {
+    Invoke-WithServiceLock { Invoke-AmfaaRollbackUnlocked $InstallRoot }
+}
+function Invoke-AmfaaUninstall([string] $InstallRoot) {
+    Invoke-WithServiceLock { Invoke-AmfaaUninstallUnlocked $InstallRoot }
 }
 
 function Invoke-AmfaaInstaller([string] $RequestedVersion, [string] $InstallRoot, [bool] $ModifyUserPath) {

@@ -13,6 +13,7 @@ file_mode() {
 test_home=$root/home
 command_bin=$root/command-bin
 mkdir -p "$test_home"
+export ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR="$test_home/.all-my-friends-are-agents"
 case "$os:${SHELL:-}" in
   darwin:*/zsh) profile=$test_home/.zprofile;;
   darwin:*/bash) profile=$test_home/.bash_profile;;
@@ -81,6 +82,28 @@ if AMFAA_INTERRUPT_AFTER_DOWNLOAD=1 run 1.2.3; then exit 1; fi
 unset AMFAA_INTERRUPT_AFTER_DOWNLOAD
 [ ! -e "$root/install/active-version" ]
 run 1.2.3
+# Every public mutation fails closed for a service record and a competing lock.
+service_state=$ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR
+mkdir -p "$service_state"
+printf '%s\n' '{"version":1,"mode":"foreground"}' > "$service_state/.amfaa-service.json"
+saved_active=$(cat "$root/install/active-version")
+for action in install update rollback uninstall; do
+  if run 1.2.3 "$action"; then echo "live service mutation was accepted" >&2; exit 1; fi
+  [ "$(cat "$root/install/active-version")" = "$saved_active" ]
+  [ -x "$command_bin/amfaa" ]
+  [ -f "$service_state/.amfaa-service.json" ]
+  [ ! -e "$service_state.lifecycle-lock" ]
+done
+rm "$service_state/.amfaa-service.json"
+mkdir "$service_state.lifecycle-lock"
+printf '%s\n' '{"pid":1,"token":"fixture-owner"}' > "$service_state.lifecycle-lock/owner.json"
+for action in install update rollback uninstall; do
+  if run 1.2.3 "$action"; then echo "competing lock was ignored" >&2; exit 1; fi
+  [ "$(cat "$root/install/active-version")" = "$saved_active" ]
+  grep -F fixture-owner "$service_state.lifecycle-lock/owner.json" >/dev/null
+done
+rm "$service_state.lifecycle-lock/owner.json"
+rmdir "$service_state.lifecycle-lock"
 [ -x "$root/install/amfaa" ]
 [ -x "$command_bin/amfaa" ] && [ ! -L "$command_bin/amfaa" ]
 grep -F "# AMFAA installer-managed launcher" "$command_bin/amfaa" >/dev/null

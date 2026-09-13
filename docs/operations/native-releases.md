@@ -236,12 +236,15 @@ instead of claiming readiness. Unreachable control endpoints report an unknown
 state and preserve their credentials. Stale metadata is removed only when its
 recorded process is confirmed absent; elapsed time alone never proves shutdown.
 
-Start, stop, update, uninstall, and service metadata replacement share a lifecycle
-lock beside the data directory (`<data-directory>.lifecycle-lock`). If a CLI
+Start, stop, update, uninstall, service metadata replacement, and both public
+installers (including rollback) share a lifecycle lock beside the data directory (`<data-directory>.lifecycle-lock`). If a CLI
 process crashes while holding this lock, commands fail closed. Before manually
 removing that lock directory, verify the owner PID in `owner.json` has exited
 and no lifecycle command is still running. Do not delete the service metadata
-or provider credentials to recover a lock.
+or provider credentials to recover a lock. The public installers refuse any
+remaining service record; run `amfaa stop` to clear confirmed stale state before
+retrying. Use the same `ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR` setting for service
+and installer commands when using a custom data directory.
 
 In the disposable Docker sandbox, background startup returns to `sandbox>`.
 Use the same status/stop/start commands there. Keep the container terminal open:
