@@ -98,15 +98,15 @@ installer uses `curl`, `python3`, and the host's standard archive tools.
 On macOS or Linux:
 
 ```bash
-curl --fail --silent --show-error --location \
-  https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh \
-  | sh
+curl -fsSL https://amfaa.sayers.io/install.sh | sh
 ```
 
 The default install is private to your user at
 `~/.local/share/all-my-friends-are-agents`. It does not change your shell
-configuration. You can [inspect the installer](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh)
-before running it, or pass `--modify-path` when running a downloaded copy.
+configuration. The branded URL redirects to the installer attached to the
+[latest GitHub release](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh),
+where you can inspect it before running it. Pass `--modify-path` when running a
+downloaded copy if you want the installer to update your shell configuration.
 
 On Windows x64, download, inspect, and run the PowerShell installer:
 
