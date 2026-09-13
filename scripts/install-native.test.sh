@@ -8,6 +8,18 @@ case $(uname -s) in Darwin) os=darwin;; Linux) os=linux;; *) exit 0;; esac
 case $(uname -m) in arm64|aarch64) arch=arm64;; x86_64|amd64) arch=x64;; *) exit 0;; esac
 target=$os-$arch
 
+preview_root=$root/preview-install
+preview=$(AMFAA_MANIFEST_URL=https://invalid.example/manifest.json "$installer" --dry-run --version 1.2.3 --dir "$preview_root" --modify-path)
+[ ! -e "$preview_root" ]
+printf '%s\n' "$preview" | grep -F "Installer preview" >/dev/null
+printf '%s\n' "$preview" | grep -F "Release:      Version 1.2.3" >/dev/null
+printf '%s\n' "$preview" | grep -F "Platform:     $target" >/dev/null
+printf '%s\n' "$preview" | grep -F "Destination:  $preview_root" >/dev/null
+printf '%s\n' "$preview" | grep -F "No downloads or changes were made." >/dev/null
+help=$($installer --help)
+printf '%s\n' "$help" | grep -F -- "--dry-run" >/dev/null
+if printf '%s\n' "$help" | grep -F "Staging beneath" >/dev/null; then exit 1; fi
+
 make_release() {
   version=$1; commit=$2; version_dir=$version-$(printf '%s' "$commit" | cut -c1-12)
   bundle=$root/stage-$version/all-my-friends-are-agents

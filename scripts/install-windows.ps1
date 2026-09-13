@@ -33,6 +33,9 @@ param(
     [Parameter(ParameterSetName = "Install")]
     [switch] $NoPath,
 
+    [Parameter(ParameterSetName = "Install")]
+    [switch] $DryRun,
+
     [Parameter(Mandatory = $true, ParameterSetName = "Rollback")]
     [switch] $Rollback,
 
@@ -423,9 +426,37 @@ function Invoke-AmfaaInstaller([string] $RequestedVersion, [string] $InstallRoot
     } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
 }
 
+function Show-AmfaaPreview([string] $Action, [string] $RequestedVersion, [string] $InstallRoot, [bool] $ModifyUserPath) {
+    $release = if ($RequestedVersion -eq "current") { "Latest release" } else { "Version $RequestedVersion" }
+    $pathChange = if ($ModifyUserPath) { "Add $InstallRoot to the user PATH" } else { "None" }
+    @(
+        "",
+        "All My Friends Are Agents",
+        "Installer preview",
+        "",
+        "  Action:       $Action",
+        "  Release:      $release",
+        "  Platform:     $($script:Target)",
+        "  Destination:  $InstallRoot",
+        "  PATH changes: $pathChange",
+        "",
+        "Planned steps:",
+        "  1. Read the release manifest from GitHub",
+        "  2. Download the application bundle, SBOM, and provenance",
+        "  3. Verify file sizes, SHA-256 hashes, provenance, and bundle inventory",
+        "  4. Activate the verified launcher in $InstallRoot",
+        "",
+        "Run again without -DryRun to continue.",
+        "No downloads or changes were made."
+    ) | Write-Output
+}
+
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        if ($Rollback) { Assert-WindowsX64Host; $value = Invoke-AmfaaRollback $InstallDirectory; Write-Output "Rolled back All My Friends Are Agents to $value." }
+        if ($DryRun) {
+            Show-AmfaaPreview "Install" $Version $InstallDirectory (-not $NoPath)
+        }
+        elseif ($Rollback) { Assert-WindowsX64Host; $value = Invoke-AmfaaRollback $InstallDirectory; Write-Output "Rolled back All My Friends Are Agents to $value." }
         elseif ($Uninstall) { Assert-WindowsX64Host; Invoke-AmfaaUninstall $InstallDirectory; Write-Output "Uninstalled All My Friends Are Agents; user state was retained." }
         else { $result = Invoke-AmfaaInstaller $Version $InstallDirectory (-not $NoPath); Write-Output "Installed All My Friends Are Agents $($result.version) in $($result.installDirectory)." }
     } catch {

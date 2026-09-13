@@ -9,17 +9,23 @@ INSTALL_DIR=${AMFAA_INSTALL_DIR:-"$HOME/.local/share/$PROGRAM"}
 VERSION=
 MODIFY_PATH=0
 LOCAL_FIXTURES=0
+DRY_RUN=0
 COMMAND=install
 MARKER=.amfaa-installer-root.json
 RECEIPT=installer-receipt.json
 
-usage() { sed -n 's/^# //p' "$0"; }
-# Usage: install-native.sh [install|update|rollback|uninstall] [options]
-#   --version VERSION       install an immutable application version
-#   --dir DIRECTORY         installation root (default: ~/.local/share/all-my-friends-are-agents)
-#   --modify-path           add the installation root to ~/.profile
-#   --no-modify-path        do not change shell configuration (default)
-#   --allow-local-fixtures  permit file: URLs; tests only
+usage() { cat <<'EOF'
+All My Friends Are Agents installer
+
+Usage: install-native.sh [install|update|rollback|uninstall] [options]
+  --version VERSION       install an immutable application version
+  --dir DIRECTORY         installation root (default: ~/.local/share/all-my-friends-are-agents)
+  --modify-path           add the installation root to ~/.profile
+  --no-modify-path        do not change shell configuration (default)
+  --dry-run               preview the operation without downloads or changes
+  -h, --help              show this help
+EOF
+}
 die() { printf '%s\n' "install-native: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "requires $1"; }
 
@@ -30,6 +36,7 @@ while [ $# -gt 0 ]; do
     --dir) shift; [ $# -gt 0 ] || die "--dir requires a value"; INSTALL_DIR=$1 ;;
     --modify-path) MODIFY_PATH=1 ;;
     --no-modify-path|--no-path-modification) MODIFY_PATH=0 ;;
+    --dry-run) DRY_RUN=1 ;;
     --allow-local-fixtures) LOCAL_FIXTURES=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -40,6 +47,40 @@ done
 case $(uname -s) in Darwin) OS=darwin;; Linux) OS=linux;; *) die "unsupported platform: $(uname -s)";; esac
 case $(uname -m) in arm64|aarch64) ARCH=arm64;; x86_64|amd64) ARCH=x64;; *) die "unsupported architecture: $(uname -m)";; esac
 TARGET=$OS-$ARCH
+
+preview() {
+  case $COMMAND in
+    install) action=Install;;
+    update) action=Update;;
+    rollback) action=Rollback;;
+    uninstall) action=Uninstall;;
+  esac
+  if [ -n "$VERSION" ]; then release="Version $VERSION"; else release="Latest release"; fi
+  if [ "$MODIFY_PATH" = 1 ]; then path_change="Add $INSTALL_DIR to ~/.profile"; else path_change="None (use --modify-path to enable)"; fi
+  printf '%s\n' \
+    "" \
+    "All My Friends Are Agents" \
+    "Installer preview" \
+    "" \
+    "  Action:       $action" \
+    "  Release:      $release" \
+    "  Platform:     $TARGET" \
+    "  Destination:  $INSTALL_DIR" \
+    "  PATH changes: $path_change" \
+    "" \
+    "Planned steps:" \
+    "  1. Read the release manifest from GitHub" \
+    "  2. Download the application bundle, SBOM, and provenance" \
+    "  3. Verify file sizes, SHA-256 hashes, provenance, and bundle inventory" \
+    "  4. Activate the verified launcher at $INSTALL_DIR/amfaa" \
+    "" \
+    "Run again without --dry-run to continue." \
+    "No downloads or changes were made."
+}
+
+if [ "$DRY_RUN" = 1 ]; then
+  case $COMMAND in install|update) preview; exit 0;; *) die "--dry-run supports install and update";; esac
+fi
 
 assert_safe_root() {
   [ -n "$INSTALL_DIR" ] || die "installation directory is empty"
