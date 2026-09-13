@@ -6,8 +6,10 @@ set -eu
 PROGRAM=all-my-friends-are-agents
 REPOSITORY=https://github.com/virusimmortal00/AllMyFriendsAreAgents
 INSTALL_DIR=${AMFAA_INSTALL_DIR:-"$HOME/.local/share/$PROGRAM"}
+BIN_DIR=${AMFAA_BIN_DIR:-"$HOME/.local/bin"}
+BIN_PATH=$BIN_DIR/amfaa
 VERSION=
-MODIFY_PATH=0
+MODIFY_PATH=1
 LOCAL_FIXTURES=0
 DRY_RUN=0
 COMMAND=install
@@ -20,8 +22,8 @@ All My Friends Are Agents installer
 Usage: install-native.sh [install|update|rollback|uninstall] [options]
   --version VERSION       install an immutable application version
   --dir DIRECTORY         installation root (default: ~/.local/share/all-my-friends-are-agents)
-  --modify-path           add the installation root to ~/.profile
-  --no-modify-path        do not change shell configuration (default)
+  --modify-path           add the command directory to your shell profile (default)
+  --no-modify-path        do not change shell configuration
   --dry-run               preview the operation without downloads or changes
   -h, --help              show this help
 EOF
@@ -48,6 +50,16 @@ case $(uname -s) in Darwin) OS=darwin;; Linux) OS=linux;; *) die "unsupported pl
 case $(uname -m) in arm64|aarch64) ARCH=arm64;; x86_64|amd64) ARCH=x64;; *) die "unsupported architecture: $(uname -m)";; esac
 TARGET=$OS-$ARCH
 
+pick_profile() {
+  case "$OS:${SHELL:-}" in
+    darwin:*/zsh) printf '%s\n' "$HOME/.zprofile";;
+    darwin:*/bash) printf '%s\n' "$HOME/.bash_profile";;
+    linux:*/zsh) printf '%s\n' "$HOME/.zshrc";;
+    linux:*/bash) printf '%s\n' "$HOME/.bashrc";;
+    *) printf '%s\n' "$HOME/.profile";;
+  esac
+}
+
 preview() {
   case $COMMAND in
     install) action=Install;;
@@ -56,7 +68,9 @@ preview() {
     uninstall) action=Uninstall;;
   esac
   if [ -n "$VERSION" ]; then release="Version $VERSION"; else release="Latest release"; fi
-  if [ "$MODIFY_PATH" = 1 ]; then path_change="Add $INSTALL_DIR to ~/.profile"; else path_change="None (use --modify-path to enable)"; fi
+  if [ "$MODIFY_PATH" = 1 ]; then
+    case :$PATH: in *:"$BIN_DIR":*) path_change="None ($BIN_DIR is already on PATH)";; *) path_change="Add $BIN_DIR to $(pick_profile)";; esac
+  else path_change="None (--no-modify-path)"; fi
   printf '%s\n' \
     "" \
     "All My Friends Are Agents" \
@@ -72,7 +86,7 @@ preview() {
     "  1. Read the release manifest from GitHub" \
     "  2. Download the application bundle, SBOM, and provenance" \
     "  3. Verify file sizes, SHA-256 hashes, provenance, and bundle inventory" \
-    "  4. Activate the verified launcher at $INSTALL_DIR/amfaa" \
+    "  4. Activate the verified launcher at $BIN_PATH" \
     "" \
     "Run again without --dry-run to continue." \
     "No downloads or changes were made."
@@ -87,6 +101,35 @@ assert_safe_root() {
   case $INSTALL_DIR in /|"$HOME"|"$HOME/.local"|"$HOME/.local/share") die "installation directory is too broad";; esac
   [ ! -L "$INSTALL_DIR" ] || die "installation directory must not be a symbolic link"
   if [ -e "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then die "installation directory is not a directory"; fi
+}
+assert_safe_bin() {
+  [ -n "$BIN_DIR" ] || die "command directory is empty"
+  case $BIN_DIR in /|"$HOME"|"$HOME/.local") die "command directory is too broad";; esac
+  [ ! -L "$BIN_DIR" ] || die "command directory must not be a symbolic link"
+  if [ -e "$BIN_DIR" ] && [ ! -d "$BIN_DIR" ]; then die "command directory is not a directory"; fi
+  if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then
+    owned_visible_launcher || die "$BIN_PATH exists and is not owned by this installer"
+  fi
+}
+owned_visible_launcher() {
+  [ -f "$BIN_PATH" ] && [ ! -L "$BIN_PATH" ] || return 1
+  python3 - "$BIN_PATH" "$INSTALL_DIR/amfaa" <<'PY'
+import pathlib,shlex,sys
+actual=pathlib.Path(sys.argv[1]).read_bytes()
+expected=('#!/bin/sh\n# AMFAA installer-managed launcher\nexec '+shlex.quote(sys.argv[2])+' "$@"\n').encode()
+raise SystemExit(0 if actual == expected else 1)
+PY
+}
+write_visible_launcher() {
+  mkdir -p "$BIN_DIR"
+  temporary="$BIN_DIR/.amfaa.$$"
+  python3 - "$temporary" "$INSTALL_DIR/amfaa" <<'PY'
+import pathlib,shlex,sys
+pathlib.Path(sys.argv[1]).write_text('#!/bin/sh\n# AMFAA installer-managed launcher\nexec '+shlex.quote(sys.argv[2])+' "$@"\n')
+PY
+  chmod 755 "$temporary"
+  if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then owned_visible_launcher || { rm -f "$temporary"; die "$BIN_PATH changed during installation"; }; fi
+  mv -f "$temporary" "$BIN_PATH"
 }
 assert_owned_root() {
   assert_safe_root
@@ -137,17 +180,44 @@ PY
   exit 0
 fi
 
-remove_path_block() {
-  rc=$HOME/.profile
-  [ -f "$rc" ] || return 0
-  python3 - "$rc" "$INSTALL_DIR" <<'PY'
+remove_path_blocks() {
+  mode=${1:-all}
+  for rc in "$HOME/.zprofile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$rc" ] || continue
+    python3 - "$rc" "$INSTALL_DIR" "$mode" <<'PY'
 import pathlib,sys
-p=pathlib.Path(sys.argv[1]); root=sys.argv[2]
-begin=f'# >>> all-my-friends-are-agents:{root} >>>\n'; end=f'# <<< all-my-friends-are-agents:{root} <<<\n'
-text=p.read_text(); start=text.find(begin)
+p=pathlib.Path(sys.argv[1]); root,mode=sys.argv[2:]; original=p.read_text(); text=original
+blocks=[(f'# >>> all-my-friends-are-agents:{root} >>>\n',f'# <<< all-my-friends-are-agents:{root} <<<\n')]
+if mode == 'all': blocks.append(('# >>> AMFAA installer >>>\n','# <<< AMFAA installer <<<\n'))
+for begin,end in blocks:
+ start=text.find(begin)
+ if start >= 0:
+  finish=text.find(end,start)
+  if finish >= 0: text=text[:start]+text[finish+len(end):]
+if text != original: p.write_text(text)
+PY
+  done
+}
+managed_path_block_exists() {
+  for rc in "$HOME/.zprofile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$rc" ] && grep -F "# >>> AMFAA installer >>>" "$rc" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+add_to_path() {
+  case :$PATH: in *:"$BIN_DIR":*) return 0;; esac
+  rc=$(pick_profile); begin="# >>> AMFAA installer >>>"; end="# <<< AMFAA installer <<<"
+  touch "$rc"
+  python3 - "$rc" "$BIN_DIR" "$begin" "$end" <<'PY' || die "could not update shell profile"
+import pathlib,shlex,sys
+p=pathlib.Path(sys.argv[1]); directory,begin,end=sys.argv[2:]; text=p.read_text()
+start=text.find(begin+'\n')
 if start >= 0:
- finish=text.find(end,start)
- if finish >= 0: p.write_text(text[:start]+text[finish+len(end):])
+ finish=text.find(end+'\n',start)
+ if finish < 0: raise SystemExit(1)
+ text=text[:start]+text[finish+len(end)+1:]
+line=f'export PATH={shlex.quote(directory)}:"$PATH"'
+p.write_text(text+('' if not text or text.endswith('\n') else '\n')+f'\n{begin}\n{line}\n{end}\n')
 PY
 }
 if [ "$COMMAND" = uninstall ]; then
@@ -161,7 +231,8 @@ try: print(1 if json.load(open(sys.argv[1])).get('pathModified') is True else 0)
 except Exception: raise SystemExit(1)
 PY
 )
-  [ "$path_modified" != 1 ] || remove_path_block
+  if owned_visible_launcher; then rm -f "$BIN_PATH"; fi
+  [ "$path_modified" != 1 ] || remove_path_blocks
   # A marker authorizes this root, not arbitrary additions inside it. Remove
   # only retained directories that still prove they were installer artifacts.
   if [ -d "$INSTALL_DIR/versions" ]; then
@@ -181,7 +252,7 @@ PY
 fi
 
 need python3; need tar; need curl
-assert_safe_root
+assert_safe_root; assert_safe_bin
 if [ -f "$INSTALL_DIR/$MARKER" ]; then assert_owned_root
 elif [ -d "$INSTALL_DIR" ] && [ "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then die "installation directory is not empty and is not owned by this installer"
 fi
@@ -275,6 +346,7 @@ if [ -e "$destination" ]; then mv "$destination" "$backup"; fi
 if ! mv "$candidate_root" "$destination"; then [ ! -e "$backup" ] || mv "$backup" "$destination"; die "could not install verified application version"; fi
 [ ! -e "$backup" ] || rm -rf "$backup"
 cp "$bundle/amfaa" "$INSTALL_DIR/.amfaa.new.$$"; chmod 755 "$INSTALL_DIR/.amfaa.new.$$"; mv -f "$INSTALL_DIR/.amfaa.new.$$" "$INSTALL_DIR/amfaa"
+write_visible_launcher
 old=$(sed -n '1p' "$INSTALL_DIR/active-version" 2>/dev/null || true)
 if [ -n "$old" ] && [ "$old" != "$candidate" ]; then identifier "$old" || die "existing active metadata is invalid"; atomic_text "$INSTALL_DIR/previous.json" "{\"schemaVersion\":1,\"versionDirectory\":\"$old\"}"; fi
 atomic_text "$INSTALL_DIR/active-version" "$candidate"
@@ -285,16 +357,24 @@ try: print('true' if json.load(open(sys.argv[1])).get('pathModified') is True el
 except Exception: print('false')
 PY
 ); fi
+if [ "$path_modified" = true ]; then
+  remove_path_blocks legacy
+  managed_path_block_exists || path_modified=false
+fi
 if [ "$MODIFY_PATH" = 1 ]; then
-  rc=$HOME/.profile; begin="# >>> all-my-friends-are-agents:$INSTALL_DIR >>>"; end="# <<< all-my-friends-are-agents:$INSTALL_DIR <<<"
-  touch "$rc"
-  grep -F "$begin" "$rc" >/dev/null 2>&1 || python3 - "$rc" "$INSTALL_DIR" <<'PY'
-import pathlib,shlex,sys
-pathlib.Path(sys.argv[1]).open('a').write(f'\n# >>> all-my-friends-are-agents:{sys.argv[2]} >>>\nexport PATH={shlex.quote(sys.argv[2])}:"$PATH"\n# <<< all-my-friends-are-agents:{sys.argv[2]} <<<\n')
-PY
-  path_modified=true
+  case :$PATH: in *:"$BIN_DIR":*) ;; *) add_to_path; path_modified=true;; esac
 fi
 version=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["application"]["version"])' "$stage/manifest.json")
 commit=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["application"]["commit"])' "$stage/manifest.json")
 atomic_text "$INSTALL_DIR/$RECEIPT" "{\"schemaVersion\":1,\"version\":\"$version\",\"commit\":\"$commit\",\"target\":\"$TARGET\",\"artifactSha256\":\"$artifact_sha\",\"pathModified\":$path_modified}"
 printf '%s\n' "Installed verified $TARGET application version $version in $INSTALL_DIR."
+case :$PATH: in
+  *:"$BIN_DIR":*) printf '%s\n' "Run: amfaa";;
+  *)
+    if [ "$path_modified" = true ]; then
+      printf '%s\n' "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && amfaa" "Future terminals: open a new terminal and run: amfaa"
+    else
+      printf '%s\n' "Run: $BIN_PATH" "PATH was not changed (--no-modify-path)."
+    fi
+    ;;
+esac
