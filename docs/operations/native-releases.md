@@ -70,7 +70,7 @@ quick start:
 
 ```bash
 curl -fsSL https://amfaa.sayers.io/install.sh | sh
-amfaa
+"$HOME/.local/bin/amfaa"
 ```
 
 The installer places an installer-owned launcher in `~/.local/bin` and adds that
@@ -96,7 +96,8 @@ interactive terminal fails with instructions instead of waiting for input.
 On Windows x64, download `install-windows.ps1` from the same release URL, inspect
 it, and run it in PowerShell. The Windows installer adds its per-user installation
 directory to the user `PATH` by default; `-NoPath` disables that change. The POSIX
-installer does not edit shell configuration unless passed `--modify-path`.
+installer also updates the appropriate user shell profile by default;
+`--no-modify-path` disables that change.
 
 Keep source setup as a contributor alternative after cutover:
 

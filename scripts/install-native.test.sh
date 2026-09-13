@@ -111,8 +111,11 @@ if AMFAA_MANIFEST_URL="file://$root/1.2.5.json" "$installer" --allow-local-fixtu
 mkdir "$root/unowned"; printf keep > "$root/unowned/personal"
 if "$installer" uninstall --dir "$root/unowned"; then exit 1; fi
 [ -f "$root/unowned/personal" ]
+touch "$profile"; chmod 640 "$profile"
 run 1.2.4
 run 1.2.4
+[ "$(stat -f '%Lp' "$profile" 2>/dev/null || stat -c '%a' "$profile")" = 640 ]
+[ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
 [ "$(grep -Fc '# >>> AMFAA installer >>>' "$profile")" = 1 ]
 grep -F "export PATH=$command_bin:\"\$PATH\"" "$profile" >/dev/null
 printf '\n# >>> all-my-friends-are-agents:%s >>>\nexport PATH=%s:"$PATH"\n# <<< all-my-friends-are-agents:%s <<<\n' "$root/install" "$root/install" "$root/install" >> "$test_home/.profile"
@@ -123,6 +126,8 @@ PATH="$command_bin:$PATH" run 1.2.4 update
 printf keep > "$root/install/personal"
 mkdir "$root/install/versions/foreign"; printf keep > "$root/install/versions/foreign/personal"
 run 1.2.4 uninstall
+[ "$(stat -f '%Lp' "$profile" 2>/dev/null || stat -c '%a' "$profile")" = 640 ]
+[ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
 [ -f "$root/install/personal" ]
 [ -f "$root/install/versions/foreign/personal" ]
 [ ! -e "$command_bin/amfaa" ]

@@ -49,6 +49,20 @@ describe("native first-time setup wizard", () => {
     expect(failed.options.persist).not.toHaveBeenCalled();
   });
 
+  it("treats terminal EOF as cancellation at either prompt", async () => {
+    const beforeProvider = fixture([]);
+    beforeProvider.options.ask.mockResolvedValueOnce(undefined);
+    await expect(runSetupWizard(beforeProvider.options)).resolves.toEqual({ code: 0, completed: false, start: false });
+    expect(beforeProvider.options.authenticate).not.toHaveBeenCalled();
+    expect(beforeProvider.options.persist).not.toHaveBeenCalled();
+
+    const beforeLaunch = fixture([""]);
+    beforeLaunch.options.ask.mockResolvedValueOnce("").mockResolvedValueOnce(undefined);
+    await expect(runSetupWizard(beforeLaunch.options)).resolves.toEqual({ code: 0, completed: false, start: false });
+    expect(beforeLaunch.options.authenticate).toHaveBeenCalledOnce();
+    expect(beforeLaunch.options.persist).not.toHaveBeenCalled();
+  });
+
   it("stops before prompts when the bundled runtime is unavailable", async () => {
     const value = fixture([]);
     value.options.runtimeReady.mockResolvedValueOnce(false);

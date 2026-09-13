@@ -74,7 +74,11 @@ function publicIdentity(value) {
   return { application: { version: value.application.version, commit: value.application.commit }, downstream: { version: value.downstream.version, commit: value.downstream.commit } };
 }
 function defaultDataRoot() { return path.resolve(os.homedir(), ".all-my-friends-are-agents"); }
-function configuredDataRoot() { return path.resolve(process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR || defaultDataRoot()); }
+function configuredDataRoot() {
+  const dataRoot = path.resolve(process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR || defaultDataRoot());
+  process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR = dataRoot;
+  return dataRoot;
+}
 function ownedByCurrentUser(metadata) { return typeof process.getuid !== "function" || metadata.uid === process.getuid(); }
 async function prepareDataRoot(dataRoot) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
@@ -106,6 +110,18 @@ async function persistSetup(dataRoot = configuredDataRoot()) {
   await writeFile(temporary, `${JSON.stringify(SETUP_MARKER_VALUE)}\n`, { flag: "wx", mode: 0o600 });
   try { await rename(temporary, path.join(dataRoot, SETUP_MARKER)); }
   catch (error) { await unlink(temporary).catch(() => undefined); throw error; }
+}
+async function upgradedInstallation() {
+  try {
+    const previous = await json(path.join(installRoot, "previous.json"));
+    return previous?.schemaVersion === 1
+      && typeof previous.versionDirectory === "string"
+      && /^[A-Za-z0-9._-]+$/.test(previous.versionDirectory)
+      && (await lstat(path.join(installRoot, "versions", previous.versionDirectory))).isDirectory();
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) return false;
+    throw error;
+  }
 }
 async function validatedPurgeRoot() {
   const configured = path.resolve(process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR || defaultDataRoot());
@@ -171,6 +187,10 @@ async function commandSetup(args) {
 async function commandStart(args) {
   if (args.length) return EX_USAGE;
   if (await setupComplete()) return startServer([]);
+  if (await upgradedInstallation()) {
+    await persistSetup();
+    return startServer([]);
+  }
   if (!interactiveTerminal()) {
     process.stderr.write("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
     return EX_CONFIG;

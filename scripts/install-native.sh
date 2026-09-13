@@ -185,8 +185,8 @@ remove_path_blocks() {
   for rc in "$HOME/.zprofile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
     [ -f "$rc" ] || continue
     python3 - "$rc" "$INSTALL_DIR" "$mode" <<'PY'
-import pathlib,sys
-p=pathlib.Path(sys.argv[1]); root,mode=sys.argv[2:]; original=p.read_text(); text=original
+import os,pathlib,stat,sys,tempfile
+p=pathlib.Path(sys.argv[1]); target=p.resolve(); root,mode=sys.argv[2:]; original=target.read_text(); text=original
 blocks=[(f'# >>> all-my-friends-are-agents:{root} >>>\n',f'# <<< all-my-friends-are-agents:{root} <<<\n')]
 if mode == 'all': blocks.append(('# >>> AMFAA installer >>>\n','# <<< AMFAA installer <<<\n'))
 for begin,end in blocks:
@@ -194,7 +194,14 @@ for begin,end in blocks:
  if start >= 0:
   finish=text.find(end,start)
   if finish >= 0: text=text[:start]+text[finish+len(end):]
-if text != original: p.write_text(text)
+if text != original:
+ temporary=None
+ try:
+  with tempfile.NamedTemporaryFile('w',dir=target.parent,prefix=f'.{target.name}.amfaa-',delete=False) as output:
+   temporary=pathlib.Path(output.name); os.fchmod(output.fileno(),stat.S_IMODE(target.stat().st_mode)); output.write(text); output.flush(); os.fsync(output.fileno())
+  os.replace(temporary,target); temporary=None
+ finally:
+  if temporary is not None: temporary.unlink(missing_ok=True)
 PY
   done
 }
@@ -209,15 +216,22 @@ add_to_path() {
   rc=$(pick_profile); begin="# >>> AMFAA installer >>>"; end="# <<< AMFAA installer <<<"
   touch "$rc"
   python3 - "$rc" "$BIN_DIR" "$begin" "$end" <<'PY' || die "could not update shell profile"
-import pathlib,shlex,sys
-p=pathlib.Path(sys.argv[1]); directory,begin,end=sys.argv[2:]; text=p.read_text()
+import os,pathlib,shlex,stat,sys,tempfile
+p=pathlib.Path(sys.argv[1]); target=p.resolve(); directory,begin,end=sys.argv[2:]; text=target.read_text()
 start=text.find(begin+'\n')
 if start >= 0:
  finish=text.find(end+'\n',start)
  if finish < 0: raise SystemExit(1)
  text=text[:start]+text[finish+len(end)+1:]
 line=f'export PATH={shlex.quote(directory)}:"$PATH"'
-p.write_text(text+('' if not text or text.endswith('\n') else '\n')+f'\n{begin}\n{line}\n{end}\n')
+updated=text+('' if not text or text.endswith('\n') else '\n')+f'\n{begin}\n{line}\n{end}\n'
+temporary=None
+try:
+ with tempfile.NamedTemporaryFile('w',dir=target.parent,prefix=f'.{target.name}.amfaa-',delete=False) as output:
+  temporary=pathlib.Path(output.name); os.fchmod(output.fileno(),stat.S_IMODE(target.stat().st_mode)); output.write(updated); output.flush(); os.fsync(output.fileno())
+ os.replace(temporary,target); temporary=None
+finally:
+ if temporary is not None: temporary.unlink(missing_ok=True)
 PY
 }
 if [ "$COMMAND" = uninstall ]; then

@@ -39,7 +39,7 @@ function application(root: string) {
   writeFileSync(path.join(root, "dist/index.html"), "<!doctype html><title>fixture</title>");
   writeFileSync(path.join(root, "shared/fixture.js"), "export {};\n");
   writeFileSync(path.join(root, "package.json"), '{"name":"all-my-friends-are-agents","private":true,"type":"module","version":"0.1.0"}\n');
-  writeFileSync(path.join(root, "server/index.js"), 'process.stdout.write(`${process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH}\\n`);\n');
+  writeFileSync(path.join(root, "server/index.js"), 'process.stdout.write(`${JSON.stringify({project:process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH,data:process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR})}\\n`);\n');
   writeFileSync(path.join(root, "server/opencode-runtime.js"), `import path from "node:path"; export async function resolveOpenCodeRuntime({root}) { return {state:"ready",command:path.join(root,"runtime/opencode/bin/opencode"),source:"packaged",version:"1.18.25-amfaa.2",checkedAt:new Date(0).toISOString()}; }\n`);
 }
 function nodeFixture(root: string) {
@@ -85,7 +85,16 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     expect(doctor).not.toMatch(/Users\/|tmp\/|PATH|HOME|credential|token/);
     expect(() => invoke(built.install, ["auth"], built.install, { HOME: home })).not.toThrow();
     expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
-    expect(realpathSync(invoke(built.install, ["start"], project, { HOME: home }).trim())).toBe(realpathSync(project));
+    const started = JSON.parse(invoke(built.install, ["start"], project, { HOME: home }));
+    expect(realpathSync(started.project)).toBe(realpathSync(project));
+    expect(started.data).toBe(path.join(home, ".all-my-friends-are-agents"));
+  });
+
+  it("normalizes a configured data root before setup state and server startup consume it", () => {
+    const built = build("7".repeat(40)); const home = fixture(); const project = fixture(); const relativeDataRoot = "relative-state";
+    invoke(built.install, ["auth"], project, { HOME: home, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: relativeDataRoot });
+    const started = JSON.parse(invoke(built.install, ["start"], project, { HOME: home, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: relativeDataRoot }));
+    expect(realpathSync(started.data)).toBe(realpathSync(path.join(project, relativeDataRoot)));
   });
 
   it("offers a non-mutating setup walkthrough and blocks unattended first launch", () => {
@@ -106,11 +115,13 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
   });
 
   it("activates a completely verified update, retains rollback metadata, and preserves durable state during default uninstall", () => {
-    const first = build("d".repeat(40)); const second = build("e".repeat(40)); const home = fixture();
+    const first = build("d".repeat(40)); const second = build("e".repeat(40)); const home = fixture(); const project = fixture();
     const state = path.join(home, ".all-my-friends-are-agents"); mkdirSync(state); writeFileSync(path.join(state, "room.json"), "durable");
     invoke(first.install, ["update", second.install], first.install, { HOME: home });
     expect(JSON.parse(invoke(first.install, ["version"], first.install, { HOME: home })).application.commit).toBe("e".repeat(40));
     expect(JSON.parse(readFileSync(path.join(first.install, "previous.json"), "utf8")).versionDirectory).toContain("dddddddddddd");
+    expect(realpathSync(JSON.parse(invoke(first.install, ["start"], project, { HOME: home })).project)).toBe(realpathSync(project));
+    expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
     invoke(first.install, ["uninstall"], first.install, { HOME: home });
     expect(readFileSync(path.join(state, "room.json"), "utf8")).toBe("durable");
   });

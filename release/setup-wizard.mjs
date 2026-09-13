@@ -4,7 +4,7 @@ const ENTER_ALTERNATE_SCREEN = "\u001b[?1049h";
 const LEAVE_ALTERNATE_SCREEN = "\u001b[?1049l";
 const CLEAR_SCREEN = "\u001b[2J\u001b[H";
 
-function normalize(answer) { return answer.trim().toLowerCase(); }
+function normalize(answer) { return typeof answer === "string" ? answer.trim().toLowerCase() : "cancel"; }
 function characters(value) { return [...value]; }
 function fit(value, width) {
   const content = characters(value);
@@ -82,7 +82,7 @@ async function executeSetupWizard(options) {
     ? "Press Enter to preview provider setup, or Q to finish later: "
     : "Press Enter to open provider setup, or Q to finish later: "));
   if (!fullscreen) write("\n");
-  if (["n", "no", "q", "quit"].includes(connect)) return { code: 0, completed: false, start: false };
+  if (["cancel", "n", "no", "q", "quit"].includes(connect)) return { code: 0, completed: false, start: false };
   if (!preview) {
     leaveScreen();
     let code;
@@ -105,6 +105,7 @@ async function executeSetupWizard(options) {
   if (!fullscreen) write("\n");
 
   if (preview) return { code: 0, completed: false, start: false };
+  if (["cancel", "q", "quit"].includes(launch)) return { code: 0, completed: false, start: false };
   await persist();
   return { code: 0, completed: true, start: launch !== "n" && launch !== "no" };
 }
@@ -129,7 +130,7 @@ export async function runSetupWizard(options = {}) {
     ask = async (prompt) => {
       process.stdout.write(prompt);
       const answer = await answers.next();
-      return answer.done ? "" : answer.value;
+      return answer.done ? undefined : answer.value;
     };
   }
   const preview = options.preview === true;
