@@ -150,6 +150,8 @@ function Get-SafeInstallRoot([string] $Path, [bool] $RequireReceipt) {
         $receiptPath = Join-Path $resolved $script:ReceiptName
         $markerPath = Join-Path $resolved $script:OwnerMarkerName
         $owned = $false
+    $directoryCreated = $false
+    $ownerCreated = $false
         if (Test-Path -LiteralPath $receiptPath) {
             $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
             if ($receipt.schemaVersion -ne 1 -or $receipt.target -cne $script:Target) { throw "The installation directory has an invalid ownership receipt." }
@@ -430,10 +432,14 @@ function Invoke-WithServiceLock([scriptblock] $Action) {
     $owner = Join-Path $lock "owner.json"
     $token = [Guid]::NewGuid().ToString("N") + [Guid]::NewGuid().ToString("N")
     $owned = $false
+    $directoryCreated = $false
+    $ownerCreated = $false
     [IO.Directory]::CreateDirectory((Split-Path -Parent $lock)) | Out-Null
     try {
         New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+        $directoryCreated = $true
         $stream = [IO.File]::Open($owner, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $ownerCreated = $true
         try {
             $bytes = [Text.Encoding]::UTF8.GetBytes((@{ pid = $PID; token = $token } | ConvertTo-Json -Compress))
             $stream.Write($bytes, 0, $bytes.Length)
@@ -449,7 +455,11 @@ function Invoke-WithServiceLock([scriptblock] $Action) {
     } finally {
         if ($owned -and ((Get-Content -LiteralPath $owner -Raw | ConvertFrom-Json).token -ceq $token)) {
             Remove-Item -LiteralPath $owner -Force
-            Remove-Item -LiteralPath $lock -Force
+            [IO.Directory]::Delete($lock, $false)
+        } elseif (-not $owned -and $directoryCreated) {
+            if ($ownerCreated) { Remove-Item -LiteralPath $owner -Force -ErrorAction SilentlyContinue }
+            # Delete only an empty directory; never recurse into another owner.
+            try { [IO.Directory]::Delete($lock, $false) } catch { }
         }
     }
 }
