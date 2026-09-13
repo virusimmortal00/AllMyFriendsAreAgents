@@ -33,6 +33,7 @@ describe("native first-time setup wizard", () => {
     expect(value.options.persist).not.toHaveBeenCalled();
     expect(value.output()).toContain("First-time setup · PREVIEW");
     expect(value.output()).toContain("no credentials, files, or services were changed");
+    expect(value.output().split("\n").filter((line) => line.startsWith("│"))).toSatisfy((lines) => lines.every((line) => [...line].length === 54));
   });
 
   it("leaves setup resumable when the provider step is declined or fails", async () => {

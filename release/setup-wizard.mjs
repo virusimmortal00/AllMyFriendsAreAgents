@@ -15,7 +15,7 @@ async function executeSetupWizard(options) {
 
   write(`\n╭${line}╮\n`);
   write("│  AMFAA · All My Friends Are Agents                 │\n");
-  write(`│  First-time setup${preview ? " · PREVIEW" : ""}${" ".repeat(preview ? 22 : 32)}│\n`);
+  write(`│  First-time setup${preview ? " · PREVIEW" : ""}${" ".repeat(preview ? 24 : 34)}│\n`);
   write(`╰${line}╯\n\n`);
   write("This takes about a minute. Provider credentials stay with OpenCode.\n\n");
 
