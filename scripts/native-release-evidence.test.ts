@@ -10,6 +10,7 @@ import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { setupNativeOpenCode } from "./setup-native-opencode.js";
 
 const context = loadNativeReleaseContext();
+const applicationVersion = String(context.packageJson.version);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporary: string[] = [];
 function fixture() { const value = mkdtempSync(path.join(os.tmpdir(), "amfaa-native-evidence-test-")); temporary.push(value); return value; }
@@ -38,7 +39,7 @@ function acceptedInputs(root: string) {
     writeFileSync(`${runtimeArchive}.verification.json`, `${JSON.stringify({ schemaVersion: 1, target: target.id, downstreamCommit: downstream.headCommit, downstreamVersion: downstream.version, archive: name, sha256: runtimeDigest, binarySha256: digest(runtimeBinary), executablePath: `all-my-friends-are-agents/runtime/${executable}` }, null, 2)}\n`);
 
     const appStage = path.join(root, `application-${target.id}`); const product = path.join(appStage, "all-my-friends-are-agents");
-    const version = `0.1.0-${"a".repeat(12)}`; const appRoot = path.join(product, "versions", version, "app");
+    const version = `${applicationVersion}-${"a".repeat(12)}`; const appRoot = path.join(product, "versions", version, "app");
     const node = path.join(appRoot, `runtime/node/bin/${target.os === "windows" ? "node.exe" : "node"}`); const opencode = path.join(appRoot, `runtime/opencode/bin/${executable}`);
     mkdirSync(path.dirname(node), { recursive: true }); mkdirSync(path.dirname(opencode), { recursive: true }); writeFileSync(node, "node\n"); writeFileSync(opencode, "opencode\n");
     writeFileSync(path.join(product, "active-version"), `${version}\n`); writeFileSync(path.join(product, target.os === "windows" ? "amfaa.cmd" : "amfaa"), "launcher\n");
@@ -119,7 +120,7 @@ describe("native release evidence retention", () => {
     const fetch = async (url: string | URL) => { const name = path.basename(new URL(String(url)).pathname); return new Response(readFileSync(path.join(projection, name))); };
     await expect(setupNativeOpenCode({ root: setupRoot, manifestPath, platform: "linux", architecture: "x64", fetch, verify: async () => undefined })).resolves.toEqual({ reused: false, target: "linux-x64" });
     expect(readFileSync(path.join(setupRoot, ".runtime/opencode/bin/opencode"), "utf8")).toBe("opencode\n");
-    expect(manifest.targets.find((target: { id: string }) => target.id === "linux-x64").artifact.name).toBe("all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz");
+    expect(manifest.targets.find((target: { id: string }) => target.id === "linux-x64").artifact.name).toBe(`all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz`);
   });
 
   it.each(["missing", "extra", "mutated", "manifest-drift"])("rejects a %s publication projection", (failure) => {
@@ -136,13 +137,13 @@ describe("native release evidence retention", () => {
     const { output, commit } = assemble();
     const runMetadata = { id: 123, run_attempt: 1, status: "completed", conclusion: "success", event: "push", head_branch: "main", head_sha: commit, path: ".github/workflows/build-native-opencode.yml", repository: { full_name: "virusimmortal00/AllMyFriendsAreAgents" }, head_repository: { full_name: "virusimmortal00/AllMyFriendsAreAgents" } };
     const identity = { repository: "virusimmortal00/AllMyFriendsAreAgents", workflowPath: ".github/workflows/build-native-opencode.yml", branch: "main" };
-    expect(verifyNativeReleasePromotion({ directory: output, version: "0.1.0", runMetadata, identity }).source.commit).toBe(commit);
+    expect(verifyNativeReleasePromotion({ directory: output, version: applicationVersion, runMetadata, identity }).source.commit).toBe(commit);
     for (const mutation of [
       { conclusion: "failure" }, { event: "pull_request" }, { head_branch: "feature" },
       { head_sha: "c".repeat(40) }, { path: ".github/workflows/other.yml" }, { id: 124 },
       { repository: { full_name: "someone/fork" } }, { head_repository: { full_name: "someone/fork" } },
-    ]) expect(() => verifyNativeReleasePromotion({ directory: output, version: "0.1.0", runMetadata: { ...runMetadata, ...mutation }, identity })).toThrow();
-    expect(() => verifyNativeReleasePromotion({ directory: output, version: "0.1.1", runMetadata, identity })).toThrow(/version or commit/);
+    ]) expect(() => verifyNativeReleasePromotion({ directory: output, version: applicationVersion, runMetadata: { ...runMetadata, ...mutation }, identity })).toThrow();
+    expect(() => verifyNativeReleasePromotion({ directory: output, version: "9.9.9", runMetadata, identity })).toThrow(/version or commit/);
   });
 });
 

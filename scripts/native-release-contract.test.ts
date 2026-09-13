@@ -13,19 +13,20 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const context = loadNativeReleaseContext(root);
+const applicationVersion = String(context.packageJson.version);
 const digest = "a".repeat(64);
 
 function file(name: string) {
   return {
     name,
-    url: `https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v0.1.0/${name}`,
+    url: `https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v${applicationVersion}/${name}`,
     size: 123,
     sha256: digest,
   };
 }
 
 function target(id: string, extension = id.startsWith("windows-") ? ".zip" : ".tar.gz") {
-  const name = `all-my-friends-are-agents-v0.1.0-${id}${extension}`;
+  const name = `all-my-friends-are-agents-v${applicationVersion}-${id}${extension}`;
   return { id, artifact: file(name), sbom: file(`${name}.spdx.json`), provenance: file(`${name}.intoto.jsonl`) };
 }
 
@@ -33,7 +34,7 @@ function manifest() {
   return {
     schemaVersion: 1,
     application: {
-      version: "0.1.0",
+      version: applicationVersion,
       commit: "b".repeat(40),
       repository: "https://github.com/virusimmortal00/AllMyFriendsAreAgents.git",
     },

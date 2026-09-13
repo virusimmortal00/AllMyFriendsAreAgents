@@ -98,15 +98,16 @@ installer uses `curl`, `python3`, and the host's standard archive tools.
 On macOS or Linux:
 
 ```bash
-curl --fail --silent --show-error --location \
-  https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh \
-  | sh
+curl -fsSL https://amfaa.sayers.io/install.sh | sh
 ```
 
 The default install is private to your user at
-`~/.local/share/all-my-friends-are-agents`. It does not change your shell
-configuration. You can [inspect the installer](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh)
-before running it, or pass `--modify-path` when running a downloaded copy.
+`~/.local/share/all-my-friends-are-agents`. It places the `amfaa` command in
+`~/.local/bin` and adds that directory to the appropriate shell profile when
+needed. The branded URL redirects to the installer attached to the
+[latest GitHub release](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh),
+where you can inspect it before running it. Pass `--no-modify-path` when running
+a downloaded copy to leave your shell configuration unchanged.
 
 On Windows x64, download, inspect, and run the PowerShell installer:
 
@@ -120,50 +121,48 @@ Get-Content $Installer
 The Windows installer uses the unprivileged per-user application directory and
 adds its launcher to your user `PATH`. Open a new terminal to use `amfaa` by name.
 
-### 2. Connect a model provider
+### 2. Run the first-time setup
 
-For OpenRouter, create an API key in your
-[OpenRouter account](https://openrouter.ai/settings/keys), then launch the bundled
-provider authentication flow.
-
-On macOS or Linux:
-
-```bash
-$HOME/.local/share/all-my-friends-are-agents/amfaa auth
-```
-
-On Windows:
-
-```powershell
-& "$env:LOCALAPPDATA\Programs\AllMyFriendsAreAgents\amfaa.cmd" auth
-```
-
-Choose OpenRouter and supply your key in OpenCode's interactive prompt. Credentials
-remain in the provider runtime's user-owned storage; the room's browser UI does
-not collect model API keys. If you already have another provider configured, you
-can use it instead. See [OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
-for provider details.
-
-### 3. Start the room
-
-Run the launcher from the project directory that agents should be allowed to
-inspect. For example, on macOS or Linux:
+Run AMFAA from the project directory that agents should be allowed to inspect.
+The installer cannot refresh the current shell's `PATH`, so use the full command
+path for the first launch on macOS or Linux:
 
 ```bash
 cd /path/to/your/project
-$HOME/.local/share/all-my-friends-are-agents/amfaa doctor
-$HOME/.local/share/all-my-friends-are-agents/amfaa start
+"$HOME/.local/bin/amfaa"
 ```
 
-On Windows, use `amfaa doctor` and `amfaa start` in a new terminal, or invoke the
-full `amfaa.cmd` path shown above. Open
-[http://127.0.0.1:53147](http://127.0.0.1:53147) and choose a screen name.
+On Windows, open a new terminal first:
+
+```powershell
+cd C:\path\to\your\project
+amfaa
+```
+
+The first launch opens a full-screen setup flow, verifies the bundled runtime,
+and hands model-provider authentication to the bundled OpenCode runtime. AMFAA
+does not collect or store provider credentials itself. When setup finishes, the
+room starts for the current directory and opens at
+[http://127.0.0.1:53147](http://127.0.0.1:53147).
+
+Later launches only need:
+
+```bash
+amfaa
+```
+
+Run `amfaa setup` to repeat provider setup, or `amfaa setup --preview` to walk
+through the setup presentation without authentication, filesystem changes, or
+starting the service. If you choose OpenRouter, create an API key in your
+[OpenRouter account](https://openrouter.ai/settings/keys) before setup. See
+[OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
+for provider details.
 
 The server binds to loopback by default. To inspect a directory other than the
 one where you start the launcher, set
 `ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` to its absolute path first.
 
-### 4. Add your first agents
+### 3. Add your first agents
 
 **New rooms start with no agents.** In **Manage agents…**:
 
