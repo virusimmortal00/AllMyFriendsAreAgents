@@ -383,7 +383,7 @@ const SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS = [
 const SCOPED_AGENT_TOOL_ENVIRONMENT_KEY_SET = new Set<string>(SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS);
 const SCOPED_AGENT_TOOL_OUTPUT_REDACTION_KEYS = SCOPED_AGENT_TOOL_ENVIRONMENT_KEYS.filter((name) => name.endsWith("_URL") || name.endsWith("_TOKEN"));
 
-function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
+export function agentProcessEnvironment(environment: NodeJS.ProcessEnv = process.env) {
   return Object.fromEntries(Object.entries(environment).filter(([name]) => {
     const normalizedName = name.toUpperCase();
     return !normalizedName.startsWith("ALL_MY_FRIENDS_ARE_AGENTS_")

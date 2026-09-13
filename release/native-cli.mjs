@@ -169,7 +169,9 @@ async function setup(preview) {
     configured: async () => {
       const { withSetupRuntime } = await import("./setup-auth.mjs");
       const resolved = await runtime();
-      return resolved.state === "ready" && withSetupRuntime(resolved.command, process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd(), client => client.configured());
+      if (resolved.state !== "ready") return false;
+      const { agentProcessEnvironment } = await import(pathToFileURL(path.join(appRoot, "server/agent-runner.js")).href);
+      return withSetupRuntime(resolved.command, process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd(), client => client.configured(), { environment: agentProcessEnvironment() });
     },
     authenticate: async (method, { write }) => {
       const { withSetupRuntime, readSetupSecret, connectOpenRouter } = await import("./setup-auth.mjs");

@@ -200,7 +200,7 @@ export async function selectSetupOption({ items, input = process.stdin, output =
   });
 }
 
-function finalMessage(result, preview, roomUrl) {
+function finalMessage(result, preview) {
   if (preview) return result.code === 0
     ? "Preview complete — no credentials, files, or services were changed.\n"
     : "Setup preview could not complete.\n";
@@ -453,8 +453,6 @@ export async function runSetupWizard(options = {}) {
     interface_?.close();
     leaveScreen();
   }
-  const port = Number(options.port || 53147);
-  const roomUrl = `http://127.0.0.1:${Number.isInteger(port) && port > 0 && port <= 65535 ? port : 53147}`;
-  write(styledText(finalMessage(result, preview, roomUrl), undefined, color));
+  write(styledText(finalMessage(result, preview), undefined, color));
   return result;
 }

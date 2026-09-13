@@ -199,8 +199,10 @@ back into the terminal. Once setup launches the application, open
 
 The container has a fresh home and empty `/workspace`, no host mounts, and no
 persistent volumes. It does not receive the host's environment credentials or
-use the development server's ports. Press Ctrl+P followed by Ctrl+Q to exit and remove the container
-and its saved keys, configuration, and room data. Each run starts fresh. Docker
+use the development server's ports. Run `exit` or press Ctrl+D in the sandbox
+shell to remove the container and its saved keys, configuration, and room data.
+Detaching also triggers this wrapper's cleanup, as described below. Each run
+starts fresh. Docker
 retains the image and build cache; `docker image rm amfaa-setup-sandbox:local`
 removes the named image when it is no longer needed. A key created at OpenRouter
 remains in that account until revoked there.
@@ -240,7 +242,10 @@ or provider credentials to recover a lock.
 
 In the disposable Docker sandbox, background startup returns to `sandbox>`.
 Use the same status/stop/start commands there. Keep the container terminal open:
-`exit` or Ctrl+P followed by Ctrl+Q removes the container, including all its data.
+`exit` or Ctrl+D in the sandbox shell removes the container, including all its
+data. Ctrl+P followed by Ctrl+Q detaches Docker; this test wrapper then exits
+and its cleanup trap forcibly removes its disposable container. It is not a way
+to retain this sandbox in the background.
 This lifetime restriction belongs to the disposable sandbox, not a native install.
 
 Setup ends with Consolio's farewell and a final keypress before saving and

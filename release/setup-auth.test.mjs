@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { agentProcessEnvironment } from "../server/agent-runner.ts";
 import { connectOpenRouter, exchangeOpenRouterCode, readSetupSecret, withSetupRuntime } from "./setup-auth.mjs";
 
 describe("setup credentials", () => {
@@ -62,6 +63,19 @@ describe("setup credentials", () => {
   it("does not leak response bodies or transport errors", async () => {
     await expect(exchangeOpenRouterCode("private", "verifier", { fetchImpl: async () => { throw new Error("private-response"); } })).rejects.toThrow("The connection could not finish");
     await expect(exchangeOpenRouterCode("private", "verifier", { fetchImpl: async () => Response.json({ key: "" }) })).rejects.toThrow("The connection could not finish");
+  });
+  it.each([false, true])("detects reusable configuration with the room environment (persistent=%s)", async persistent => {
+    const script = `const http=require('node:http');const s=http.createServer((q,r)=>{r.setHeader('Content-Type','application/json');r.end(JSON.stringify({connected:(process.env.OPENROUTER_API_KEY || ${persistent})?['openrouter']:[]}));});s.listen(0,'127.0.0.1',()=>console.log('opencode server listening on http://127.0.0.1:'+s.address().port));`;
+    const environment = agentProcessEnvironment({ OPENROUTER_API_KEY: "fictional-key", XDG_CONFIG_HOME: "/fixture/config" });
+    const configured = await withSetupRuntime("fixture", process.cwd(), client => client.configured(), {
+      environment,
+      spawnImpl: (_command, _args, options) => {
+        expect(options.env.OPENROUTER_API_KEY).toBeUndefined();
+        expect(options.env.XDG_CONFIG_HOME).toBe("/fixture/config");
+        return spawn(process.execPath, ["-e", script], options);
+      },
+    });
+    expect(configured).toBe(persistent);
   });
   it("uses an authenticated runtime API and shuts down the child", async () => {
     let child;
