@@ -63,6 +63,16 @@ function HiddenPanelFlow() {
   </section>;
 }
 
+function DefaultActionFlow() {
+  const [submitted, setSubmitted] = useState(false);
+  const { dialogRef, onDialogKeyDown } = useModalOverlay(() => undefined);
+  return <section ref={dialogRef} role="dialog" aria-label="Default action dialog" tabIndex={-1} onKeyDown={onDialogKeyDown}>
+    <label>Alias<input defaultValue="東京" /></label>
+    <button type="button" data-default-button onClick={() => setSubmitted(true)}>Review agent</button>
+    <output>{submitted ? "Submitted" : "Editing"}</output>
+  </section>;
+}
+
 describe("overlay foundation", () => {
   it("focuses, traps, closes, restores focus, and unlocks scrolling for modal dialogs", async () => {
     const user = userEvent.setup();
@@ -102,6 +112,17 @@ describe("overlay foundation", () => {
     await waitFor(() => expect(document.activeElement).toBe(visibleAction));
     await user.tab();
     expect(document.activeElement).toBe(visibleAction);
+  });
+
+  it("does not invoke a dialog default action while an IME composition is active", () => {
+    render(<DefaultActionFlow />);
+    const alias = screen.getByRole("textbox", { name: "Alias" });
+
+    fireEvent.keyDown(alias, { key: "Enter", isComposing: true });
+    expect(screen.getByText("Editing")).toBeTruthy();
+
+    fireEvent.keyDown(alias, { key: "Enter" });
+    expect(screen.getByText("Submitted")).toBeTruthy();
   });
 
   it("dismisses popovers from outside press and Escape and restores the trigger", async () => {

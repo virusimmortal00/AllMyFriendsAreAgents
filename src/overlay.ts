@@ -49,6 +49,7 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
   }, [active, returnFocusTo, resumeFocus]);
 
   function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
