@@ -63,7 +63,8 @@ export async function startService({ root, cliFile, project, environment = proce
     const running = await withLifecycleLock(root, async () => {
       const current = await record(root);
       const existing = await request(current, 'status');
-      if (existing) return existing;
+      if (existing?.state === 'running') return existing;
+      if (existing) throw new Error(`AMFAA is ${existing.state === 'stopping' ? 'stopping' : 'starting'}. Wait for shutdown or startup to finish, then try amfaa start again.`);
       if (current) {
         if (!confirmedDead(current)) throw new Error('AMFAA is starting or unreachable. Its control metadata has been preserved. Try amfaa status shortly.');
         await removeUnlocked(root, current.token);

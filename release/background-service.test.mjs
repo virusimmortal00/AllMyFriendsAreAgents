@@ -8,11 +8,11 @@ import path from 'node:path';
 import { startService, serviceStatus, stopService } from './background-service.mjs';
 const roots=[];
 afterEach(async()=>{for(const root of roots.splice(0)){await stopService(root).catch(()=>{});await rm(root,{recursive:true,force:true});}});
-async function fixture(fail=false){
+async function fixture(fail=false,holdShutdown=false){
  const root=await mkdtemp(path.join(os.tmpdir(),'amfaa-service-test-'));roots.push(root);
  const cliFile=path.join(root,'fixture.mjs');
- await writeFile(cliFile,`import {serveBackground} from ${JSON.stringify(new URL('./background-service.mjs',import.meta.url).href)};import {createServer} from 'node:http';
- await serveBackground({root:process.cwd(),start:async()=>{${fail?"throw new Error('private startup failure');":''}const server=createServer((q,r)=>r.end('fixture'));const ready=new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address())));return Object.freeze({ready,shutdown:()=>new Promise(resolve=>server.close(resolve))});}});`);
+ await writeFile(cliFile,`import {serveBackground} from ${JSON.stringify(new URL('./background-service.mjs',import.meta.url).href)};import {createServer} from 'node:http';import {access} from 'node:fs/promises';
+ await serveBackground({root:process.cwd(),start:async()=>{${fail?"throw new Error('private startup failure');":''}const server=createServer((q,r)=>r.end('fixture'));const ready=new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address())));return Object.freeze({ready,shutdown:async()=>{${holdShutdown?"while(!await access('.allow-stop').then(()=>true,()=>false))await new Promise(resolve=>setTimeout(resolve,25));":''}await new Promise(resolve=>server.close(resolve));}});}});`);
  return {root,cliFile,project:root};
 }
 describe('native background lifecycle',()=>{
@@ -31,6 +31,21 @@ describe('native background lifecycle',()=>{
   expect(await stopService(input.root)).toEqual({state:'stopped'});
   expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
   expect((await startService(input)).state).toBe('running');
+ });
+ it('rejects startup while the existing service is draining',async()=>{
+  const input=await fixture(false,true);await startService(input);
+  const metadata=path.join(input.root,'.amfaa-service.json');
+  const before=await readFile(metadata,'utf8');
+  const stopping=stopService(input.root);
+  try {
+   await expect.poll(async()=>(await serviceStatus(input.root)).state).toBe('stopping');
+   await expect(startService(input)).rejects.toThrow('AMFAA is stopping');
+   expect(await readFile(metadata,'utf8')).toBe(before);
+  } finally {
+   await writeFile(path.join(input.root,'.allow-stop'),'');
+   await stopping;
+  }
+  expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
  });
  it('does not claim success or leave a startup record when the server fails',async()=>{
   const input=await fixture(true);await expect(startService(input)).rejects.toThrow('could not start');
