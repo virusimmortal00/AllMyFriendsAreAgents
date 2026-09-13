@@ -7,6 +7,9 @@ installer=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/scripts/install-native
 case $(uname -s) in Darwin) os=darwin;; Linux) os=linux;; *) exit 0;; esac
 case $(uname -m) in arm64|aarch64) arch=arm64;; x86_64|amd64) arch=x64;; *) exit 0;; esac
 target=$os-$arch
+file_mode() {
+  case $os in darwin) stat -f '%Lp' "$1";; linux) stat -c '%a' "$1";; esac
+}
 test_home=$root/home
 command_bin=$root/command-bin
 mkdir -p "$test_home"
@@ -114,7 +117,7 @@ if "$installer" uninstall --dir "$root/unowned"; then exit 1; fi
 touch "$profile"; chmod 640 "$profile"
 run 1.2.4
 run 1.2.4
-[ "$(stat -f '%Lp' "$profile" 2>/dev/null || stat -c '%a' "$profile")" = 640 ]
+[ "$(file_mode "$profile")" = 640 ]
 [ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
 [ "$(grep -Fc '# >>> AMFAA installer >>>' "$profile")" = 1 ]
 grep -F "export PATH=$command_bin:\"\$PATH\"" "$profile" >/dev/null
@@ -126,7 +129,7 @@ PATH="$command_bin:$PATH" run 1.2.4 update
 printf keep > "$root/install/personal"
 mkdir "$root/install/versions/foreign"; printf keep > "$root/install/versions/foreign/personal"
 run 1.2.4 uninstall
-[ "$(stat -f '%Lp' "$profile" 2>/dev/null || stat -c '%a' "$profile")" = 640 ]
+[ "$(file_mode "$profile")" = 640 ]
 [ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
 [ -f "$root/install/personal" ]
 [ -f "$root/install/versions/foreign/personal" ]
