@@ -69,17 +69,35 @@ the public commands on clean supported hosts before replacing the source-checkou
 quick start:
 
 ```bash
-curl --fail --silent --show-error --location \
-  https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh \
-  | sh
-$HOME/.local/share/all-my-friends-are-agents/amfaa auth
-$HOME/.local/share/all-my-friends-are-agents/amfaa start
+curl -fsSL https://amfaa.sayers.io/install.sh | sh
+"$HOME/.local/bin/amfaa"
 ```
+
+The installer places an installer-owned launcher in `~/.local/bin` and adds that
+directory to the appropriate user shell profile when needed. Pass
+`--no-modify-path` to a downloaded installer to opt out. The first bare `amfaa`
+invocation runs the interactive setup flow, delegates provider authentication to
+the bundled OpenCode runtime, records no credentials itself, and then starts the
+loopback application for the current directory. Later invocations start directly.
+Run `amfaa setup` to repeat provider setup.
+
+Before publishing a candidate, walk through the exact setup presentation without
+authentication, filesystem writes, or service startup:
+
+```bash
+pnpm preview:setup
+```
+
+The packaged equivalent is `amfaa setup --preview`. Preview and real setup share
+the same state machine; preview replaces side effects with labeled descriptions.
+An incomplete or cancelled setup remains resumable. A first launch without an
+interactive terminal fails with instructions instead of waiting for input.
 
 On Windows x64, download `install-windows.ps1` from the same release URL, inspect
 it, and run it in PowerShell. The Windows installer adds its per-user installation
 directory to the user `PATH` by default; `-NoPath` disables that change. The POSIX
-installer does not edit shell configuration unless passed `--modify-path`.
+installer also updates the appropriate user shell profile by default;
+`--no-modify-path` disables that change.
 
 Keep source setup as a contributor alternative after cutover:
 

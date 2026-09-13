@@ -7,6 +7,32 @@ installer=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/scripts/install-native
 case $(uname -s) in Darwin) os=darwin;; Linux) os=linux;; *) exit 0;; esac
 case $(uname -m) in arm64|aarch64) arch=arm64;; x86_64|amd64) arch=x64;; *) exit 0;; esac
 target=$os-$arch
+file_mode() {
+  case $os in darwin) stat -f '%Lp' "$1";; linux) stat -c '%a' "$1";; esac
+}
+test_home=$root/home
+command_bin=$root/command-bin
+mkdir -p "$test_home"
+case "$os:${SHELL:-}" in
+  darwin:*/zsh) profile=$test_home/.zprofile;;
+  darwin:*/bash) profile=$test_home/.bash_profile;;
+  linux:*/zsh) profile=$test_home/.zshrc;;
+  linux:*/bash) profile=$test_home/.bashrc;;
+  *) profile=$test_home/.profile;;
+esac
+
+preview_root=$root/preview-install
+preview=$(HOME="$test_home" AMFAA_BIN_DIR="$command_bin" AMFAA_MANIFEST_URL=https://invalid.example/manifest.json "$installer" --dry-run --version 1.2.3 --dir "$preview_root")
+[ ! -e "$preview_root" ]
+printf '%s\n' "$preview" | grep -F "Installer preview" >/dev/null
+printf '%s\n' "$preview" | grep -F "Release:      Version 1.2.3" >/dev/null
+printf '%s\n' "$preview" | grep -F "Platform:     $target" >/dev/null
+printf '%s\n' "$preview" | grep -F "Destination:  $preview_root" >/dev/null
+printf '%s\n' "$preview" | grep -F "Activate the verified launcher at $command_bin/amfaa" >/dev/null
+printf '%s\n' "$preview" | grep -F "No downloads or changes were made." >/dev/null
+help=$($installer --help)
+printf '%s\n' "$help" | grep -F -- "--dry-run" >/dev/null
+if printf '%s\n' "$help" | grep -F "Staging beneath" >/dev/null; then exit 1; fi
 
 make_release() {
   version=$1; commit=$2; version_dir=$version-$(printf '%s' "$commit" | cut -c1-12)
@@ -48,7 +74,7 @@ manifest={'schemaVersion':1,'application':{'version':version,'commit':commit,'re
 open(f'{root}/{version}.json','w').write(json.dumps(manifest))
 PY
 }
-run() { requested=$1; shift; AMFAA_MANIFEST_URL="file://$root/$requested.json" "$installer" --allow-local-fixtures --dir "$root/install" "$@"; }
+run() { requested=$1; shift; HOME="$test_home" AMFAA_BIN_DIR="$command_bin" AMFAA_MANIFEST_URL="file://$root/$requested.json" "$installer" --allow-local-fixtures --dir "$root/install" "$@"; }
 
 make_release 1.2.3 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 if AMFAA_INTERRUPT_AFTER_DOWNLOAD=1 run 1.2.3; then exit 1; fi
@@ -56,6 +82,9 @@ unset AMFAA_INTERRUPT_AFTER_DOWNLOAD
 [ ! -e "$root/install/active-version" ]
 run 1.2.3
 [ -x "$root/install/amfaa" ]
+[ -x "$command_bin/amfaa" ] && [ ! -L "$command_bin/amfaa" ]
+grep -F "# AMFAA installer-managed launcher" "$command_bin/amfaa" >/dev/null
+"$command_bin/amfaa"
 [ "$(cat "$root/install/active-version")" = 1.2.3-aaaaaaaaaaaa ]
 [ -f "$root/install/versions/1.2.3-aaaaaaaaaaaa/app/release.json" ]
 run 1.2.3 update
@@ -85,17 +114,47 @@ if AMFAA_MANIFEST_URL="file://$root/1.2.5.json" "$installer" --allow-local-fixtu
 mkdir "$root/unowned"; printf keep > "$root/unowned/personal"
 if "$installer" uninstall --dir "$root/unowned"; then exit 1; fi
 [ -f "$root/unowned/personal" ]
-mkdir "$root/home"
-HOME="$root/home" run 1.2.4 --modify-path
-HOME="$root/home" run 1.2.4 --modify-path
-[ "$(grep -Fc '# >>> all-my-friends-are-agents:' "$root/home/.profile")" = 1 ]
+touch "$profile"; chmod 640 "$profile"
+run 1.2.4
+run 1.2.4
+[ "$(file_mode "$profile")" = 640 ]
+[ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
+[ "$(grep -Fc '# >>> AMFAA installer >>>' "$profile")" = 1 ]
+grep -F "export PATH=$command_bin:\"\$PATH\"" "$profile" >/dev/null
+printf '\n# >>> all-my-friends-are-agents:%s >>>\nexport PATH=%s:"$PATH"\n# <<< all-my-friends-are-agents:%s <<<\n' "$root/install" "$root/install" "$root/install" >> "$test_home/.profile"
+run 1.2.4 update
+[ "$(grep -Fc '# >>> all-my-friends-are-agents:' "$test_home/.profile" || true)" = 0 ]
+PATH="$command_bin:$PATH" run 1.2.4 update
+[ "$(grep -Fc '# >>> AMFAA installer >>>' "$profile")" = 1 ]
 printf keep > "$root/install/personal"
 mkdir "$root/install/versions/foreign"; printf keep > "$root/install/versions/foreign/personal"
-HOME="$root/home" run 1.2.4 uninstall
+run 1.2.4 uninstall
+[ "$(file_mode "$profile")" = 640 ]
+[ -z "$(find "$(dirname "$profile")" -maxdepth 1 -name ".$(basename "$profile").amfaa-*" -print -quit)" ]
 [ -f "$root/install/personal" ]
 [ -f "$root/install/versions/foreign/personal" ]
-[ "$(grep -Fc '# >>> all-my-friends-are-agents:' "$root/home/.profile" || true)" = 0 ]
+[ ! -e "$command_bin/amfaa" ]
+[ "$(grep -Fc '# >>> AMFAA installer >>>' "$profile" || true)" = 0 ]
 
-mkdir "$root/bin"; printf '#!/bin/sh\necho FreeBSD\n' > "$root/bin/uname"; chmod +x "$root/bin/uname"
-if PATH="$root/bin:$PATH" "$installer" --dir "$root/unsupported"; then exit 1; fi
+no_path_home=$root/no-path-home; no_path_bin=$root/no-path-bin; mkdir "$no_path_home"
+no_path_output=$(HOME="$no_path_home" AMFAA_BIN_DIR="$no_path_bin" AMFAA_MANIFEST_URL="file://$root/1.2.4.json" "$installer" --allow-local-fixtures --no-modify-path --dir "$root/no-path-install")
+[ -x "$no_path_bin/amfaa" ]
+[ -z "$(find "$no_path_home" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]
+printf '%s\n' "$no_path_output" | grep -F "Run: $no_path_bin/amfaa" >/dev/null
+printf '%s\n' "$no_path_output" | grep -F "PATH was not changed (--no-modify-path)." >/dev/null
+HOME="$no_path_home" AMFAA_BIN_DIR="$no_path_bin" "$installer" uninstall --dir "$root/no-path-install"
+
+conflict_bin=$root/conflict-bin; mkdir "$conflict_bin"; printf keep > "$conflict_bin/amfaa"
+if HOME="$test_home" AMFAA_BIN_DIR="$conflict_bin" AMFAA_MANIFEST_URL="file://$root/1.2.4.json" "$installer" --allow-local-fixtures --no-modify-path --dir "$root/conflict-install"; then exit 1; fi
+[ "$(cat "$conflict_bin/amfaa")" = keep ]
+[ ! -e "$root/conflict-install" ]
+
+writable_bin=$root/writable-bin; mkdir "$writable_bin"; chmod 777 "$writable_bin"
+if HOME="$test_home" AMFAA_BIN_DIR="$writable_bin" AMFAA_MANIFEST_URL="file://$root/1.2.4.json" "$installer" --allow-local-fixtures --no-modify-path --dir "$root/writable-install"; then exit 1; fi
+[ ! -e "$writable_bin/amfaa" ]
+[ -z "$(find "$writable_bin" -mindepth 1 -maxdepth 1 -name '.amfaa-*' -print -quit)" ]
+[ ! -e "$root/writable-install" ]
+
+fake_bin=$root/fake-bin; mkdir "$fake_bin"; printf '#!/bin/sh\necho FreeBSD\n' > "$fake_bin/uname"; chmod +x "$fake_bin/uname"
+if PATH="$fake_bin:$PATH" "$installer" --dir "$root/unsupported"; then exit 1; fi
 printf '%s\n' "POSIX native installer fixtures passed"

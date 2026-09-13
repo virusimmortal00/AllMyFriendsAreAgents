@@ -15,6 +15,8 @@ describe("PowerShell native installer contract", () => {
     expect(installer).toContain("LocalApplicationData");
     expect(installer).toMatch(/\[string\] \$InstallDirectory/);
     expect(installer).toMatch(/\[switch\] \$NoPath/);
+    expect(installer).toMatch(/\[switch\] \$DryRun/);
+    expect(installer).toContain("No downloads or changes were made.");
     expect(installer).toContain("releases/latest/download");
     expect(installer).toContain("releases/download/v$RequestedVersion");
   });

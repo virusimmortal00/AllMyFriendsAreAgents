@@ -84,6 +84,13 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ("amfaa-windows-installer-test-" + 
 $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 [IO.Directory]::CreateDirectory($root) | Out-Null
 try {
+    $previewDirectory = Join-Path $root "preview"
+    $preview = @(Show-AmfaaPreview "Install" "0.1.0" $previewDirectory $false) -join "`n"
+    Assert-True (-not (Test-Path -LiteralPath $previewDirectory)) "dry-run preview makes no filesystem changes"
+    Assert-True ($preview.Contains("Installer preview")) "dry-run preview identifies itself"
+    Assert-True ($preview.Contains("Release:      Version 0.1.0")) "dry-run preview shows the selected release"
+    Assert-True ($preview.Contains("No downloads or changes were made.")) "dry-run preview confirms that it is non-mutating"
+
     $first = New-TestRelease $root "0.1.0" ("b" * 40)
     $firstManifest = New-TestManifest "0.1.0" ("b" * 40) $first
     $downloadFirst = { param($file, $destination) Copy-Item -LiteralPath $first.resources[[string]$file.name] -Destination $destination }.GetNewClosure()
