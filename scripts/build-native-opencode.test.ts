@@ -10,6 +10,7 @@ import { assertNativeHost, packageVerifiedExecutable, verifyExecutable, verifyNa
 
 const temporary: string[] = [];
 const context = loadNativeReleaseContext();
+const applicationVersion = String(context.packageJson.version);
 const buildSource = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "build-native-opencode.ts"), "utf8");
 
 function fixture(): string {
@@ -137,17 +138,17 @@ describe("native OpenCode artifact build", () => {
   it("rejects missing, duplicate-target, wrong-target, wrong-version, and mutated output", () => {
     const missing = fixture();
     synthesizeSet(missing);
-    rmSync(path.join(missing, `all-my-friends-are-agents-v0.1.0-${context.policy.targets[0].id}${context.policy.targets[0].archiveExtension}.sha256`));
+    rmSync(path.join(missing, `all-my-friends-are-agents-v${applicationVersion}-${context.policy.targets[0].id}${context.policy.targets[0].archiveExtension}.sha256`));
     expect(() => verifyNativeArtifactSet(missing)).toThrow(/missing canonical files/);
 
     const duplicate = fixture();
     synthesizeSet(duplicate);
-    copyFileSync(path.join(duplicate, "all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz.verification.json"), path.join(duplicate, "unexpected.verification.json"));
+    copyFileSync(path.join(duplicate, `all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz.verification.json`), path.join(duplicate, "unexpected.verification.json"));
     expect(() => verifyNativeArtifactSet(duplicate)).toThrow(/unexpected or duplicate-target output/);
 
     const wrongTarget = fixture();
     synthesizeSet(wrongTarget);
-    const evidencePath = path.join(wrongTarget, "all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz.verification.json");
+    const evidencePath = path.join(wrongTarget, `all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz.verification.json`);
     const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
     evidence.target = "windows-arm64";
     writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
@@ -155,7 +156,7 @@ describe("native OpenCode artifact build", () => {
 
     const wrongVersion = fixture();
     synthesizeSet(wrongVersion);
-    const versionPath = path.join(wrongVersion, "all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz.verification.json");
+    const versionPath = path.join(wrongVersion, `all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz.verification.json`);
     const versionEvidence = JSON.parse(readFileSync(versionPath, "utf8"));
     versionEvidence.downstreamVersion = "1.18.25";
     writeFileSync(versionPath, `${JSON.stringify(versionEvidence, null, 2)}\n`);
@@ -163,7 +164,7 @@ describe("native OpenCode artifact build", () => {
 
     const mutated = fixture();
     synthesizeSet(mutated);
-    const archive = path.join(mutated, "all-my-friends-are-agents-v0.1.0-linux-x64.tar.gz");
+    const archive = path.join(mutated, `all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz`);
     writeFileSync(archive, Buffer.concat([readFileSync(archive), Buffer.from("mutated")]));
     expect(() => verifyNativeArtifactSet(mutated)).toThrow(/mutation or checksum mismatch/);
   });

@@ -38,7 +38,7 @@ function application(root: string) {
   for (const directory of ["dist", "node_modules", "server", "shared"]) mkdirSync(path.join(root, directory), { recursive: true });
   writeFileSync(path.join(root, "dist/index.html"), "<!doctype html><title>fixture</title>");
   writeFileSync(path.join(root, "shared/fixture.js"), "export {};\n");
-  writeFileSync(path.join(root, "package.json"), '{"name":"all-my-friends-are-agents","private":true,"type":"module","version":"0.1.0"}\n');
+  writeFileSync(path.join(root, "package.json"), `${JSON.stringify({ name: "all-my-friends-are-agents", private: true, type: "module", version: context.packageJson.version })}\n`);
   writeFileSync(path.join(root, "server/index.js"), 'process.stdout.write(`${JSON.stringify({project:process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH,data:process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR})}\\n`);\n');
   writeFileSync(path.join(root, "server/opencode-runtime.js"), `import path from "node:path"; export async function resolveOpenCodeRuntime({root}) { return {state:"ready",command:path.join(root,"runtime/opencode/bin/opencode"),source:"packaged",version:"1.18.25-amfaa.2",checkedAt:new Date(0).toISOString()}; }\n`);
 }
@@ -76,12 +76,12 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     expect(execFileSync("tar", ["-tf", path.join(built.root, "output", built.result.archive)], { encoding: "utf8" })).not.toMatch(/(?:^|\/)pnpm(?:$|\/)|typescript|\.test\.|opencode-fixture/);
     expect(existsSync(path.join(built.install, "active.json"))).toBe(false);
     const version = JSON.parse(invoke(built.install, ["version"]));
-    expect(version).toEqual({ application: { version: "0.1.0", commit: "b".repeat(40) }, downstream: { version: "1.18.25-amfaa.2", commit: "6883ca5bd35a5494fb2759018373308911c79e01" } });
+    expect(version).toEqual({ application: { version: context.packageJson.version, commit: "b".repeat(40) }, downstream: { version: "1.18.25-amfaa.2", commit: "6883ca5bd35a5494fb2759018373308911c79e01" } });
   });
 
   it("runs doctor, auth, and start without Node.js, pnpm, or OpenCode on PATH and keeps reports sanitized", () => {
     const built = build("c".repeat(40)); const project = fixture(); const home = fixture();
-    const doctor = invoke(built.install, ["doctor"], built.install, { HOME: home }); expect(JSON.parse(doctor)).toMatchObject({ runtime: "ready", application: { version: "0.1.0" }, downstream: { version: "1.18.25-amfaa.2" } });
+    const doctor = invoke(built.install, ["doctor"], built.install, { HOME: home }); expect(JSON.parse(doctor)).toMatchObject({ runtime: "ready", application: { version: context.packageJson.version }, downstream: { version: "1.18.25-amfaa.2" } });
     expect(doctor).not.toMatch(/Users\/|tmp\/|PATH|HOME|credential|token/);
     expect(() => invoke(built.install, ["auth"], built.install, { HOME: home })).not.toThrow();
     expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
