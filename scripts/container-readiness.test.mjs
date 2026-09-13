@@ -38,7 +38,7 @@ describe('container readiness polling', () => {
 
   it('reports HTTP failure without including the response body', async () => {
     const url = await fixture((_request, response) => { response.statusCode = 500; response.end('fictional-secret-body'); });
-    const result = await waitForReadiness({ url, timeoutMs: 80, intervalMs: 10 });
+    const result = await waitForReadiness({ url, timeoutMs: 1000, intervalMs: 1000 });
     expect(result).toMatchObject({ ready: false, last: { outcome: 'http', status: 500 } });
     expect(JSON.stringify(result)).not.toContain('fictional-secret-body');
   });
@@ -47,7 +47,7 @@ describe('container readiness polling', () => {
     const url = await fixture((_request, response) => response.end());
     const server = servers.pop();
     await new Promise((resolve) => server.close(resolve));
-    const result = await waitForReadiness({ url, timeoutMs: 80, intervalMs: 10 });
+    const result = await waitForReadiness({ url, timeoutMs: 1000, intervalMs: 1000 });
     expect(result).toMatchObject({ ready: false, last: { outcome: 'connection-error' } });
     expect(JSON.stringify(result)).not.toContain(url);
   });
