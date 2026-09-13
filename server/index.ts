@@ -1,5 +1,6 @@
 import express from "express";
 import { registerRepositoryReadiness } from "./repository-readiness.js";
+import { registerInstallerRedirects } from "./installer-redirects.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import path from "node:path";
@@ -1704,6 +1705,7 @@ app.post("/api/actions", async (request, response) => {
   return response.status(202).json({ accepted: true });
 });
 
+registerInstallerRedirects(app);
 app.use(express.static(path.join(projectRoot, "dist")));
 app.get("/{*splat}", (_request, response) => response.sendFile(path.join(projectRoot, "dist", "index.html")));
 
