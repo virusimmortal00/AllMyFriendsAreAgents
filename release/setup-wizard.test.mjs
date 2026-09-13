@@ -22,8 +22,9 @@ describe("native first-time setup wizard", () => {
     await expect(runSetupWizard(value.options)).resolves.toEqual({ code: 0, completed: true, start: true });
     expect(value.options.authenticate).toHaveBeenCalledOnce();
     expect(value.options.persist).toHaveBeenCalledOnce();
-    expect(value.output()).toContain("Provider credentials stay with OpenCode");
-    expect(value.output()).toContain("Project for this launch: /projects/example");
+    expect(value.output()).toContain("Connect AI models");
+    expect(value.output()).toContain("AMFAA never receives or saves your API key");
+    expect(value.output()).toContain("AMFAA will open for this project: /projects/example");
   });
 
   it("uses the same walkthrough in preview without authentication, writes, or launch", async () => {
@@ -31,9 +32,9 @@ describe("native first-time setup wizard", () => {
     await expect(runSetupWizard({ ...value.options, preview: true })).resolves.toEqual({ code: 0, completed: false, start: false });
     expect(value.options.authenticate).not.toHaveBeenCalled();
     expect(value.options.persist).not.toHaveBeenCalled();
-    expect(value.output()).toContain("First-time setup · PREVIEW");
+    expect(value.output()).toContain("FIRST-TIME SETUP · PREVIEW");
     expect(value.output()).toContain("no credentials, files, or services were changed");
-    expect(value.output().split("\n").filter((line) => line.startsWith("│"))).toSatisfy((lines) => lines.every((line) => [...line].length === 54));
+    expect(new Set(value.output().split("\n").filter((line) => line.startsWith("│")).map((line) => [...line].length))).toEqual(new Set([72]));
   });
 
   it("leaves setup resumable when the provider step is declined or fails", async () => {
@@ -53,5 +54,15 @@ describe("native first-time setup wizard", () => {
     value.options.runtimeReady.mockResolvedValueOnce(false);
     await expect(runSetupWizard(value.options)).resolves.toEqual({ code: 69, completed: false, start: false });
     expect(value.options.ask).not.toHaveBeenCalled();
+  });
+
+  it("uses one alternate terminal screen and redraws each focused page", async () => {
+    const value = fixture(["", ""]);
+    await runSetupWizard({ ...value.options, preview: true, fullscreen: true, width: 64 });
+    expect(value.output().match(/\u001b\[\?1049h/g)).toHaveLength(1);
+    expect(value.output().match(/\u001b\[2J\u001b\[H/g)).toHaveLength(3);
+    expect(value.output().match(/\u001b\[\?1049l/g)).toHaveLength(1);
+    expect(value.output()).toContain("FIRST-TIME SETUP · PREVIEW");
+    expect(value.output()).toContain("3 / 3");
   });
 });

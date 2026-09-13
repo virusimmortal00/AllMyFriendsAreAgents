@@ -94,7 +94,7 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
       cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" }, input: "\n\n", encoding: "utf8",
     });
     expect(preview.status).toBe(0);
-    expect(preview.stdout).toContain("First-time setup · PREVIEW");
+    expect(preview.stdout).toContain("FIRST-TIME SETUP · PREVIEW");
     expect(preview.stdout).toContain("no credentials, files, or services were changed");
     expect(existsSync(path.join(home, ".all-my-friends-are-agents"))).toBe(false);
 
