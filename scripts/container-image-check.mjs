@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
 
 const mode=process.argv[2];
 const image=process.argv[3];
@@ -20,11 +19,19 @@ const mounts=['/data','/worktrees','/home/node/.allmyfriendsareagents','/home/no
 const volumeArgs=()=>mounts.flatMap((target,index)=>['--mount',`type=volume,src=${volumes[index]},dst=${target}`]);
 const node=(code,running=true)=>docker(running?['exec','-i',container,'node','-']:['run','--rm','--init','--network','none','--platform',platform,...volumeArgs(),'--entrypoint','node','-i',image,'-'],code);
 async function ready(){
-  for(let attempt=0;attempt<120;attempt++) {
-    try {docker(['exec',container,'node','-e',"fetch('http://127.0.0.1:53147/api/ready',{signal:AbortSignal.timeout(1000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]);return;}catch{}
-    await delay(250);
-  }
-  throw new Error('Isolated image did not become ready.');
+  const source=fs.readFileSync(path.join(root,'scripts/container-readiness.mjs'),'utf8');
+  let result;
+  try {
+    result=JSON.parse(docker(['exec','-i',container,'node','--input-type=module','-'],
+      source+'\nconsole.log(JSON.stringify(await waitForReadiness()));'));
+  } catch { result={ready:false,last:{outcome:'probe-process-failed'}}; }
+  if(result.ready)return;
+  let state={outcome:'unavailable'};
+  try {
+    const value=JSON.parse(docker(['inspect','--format','{{json .State}}',container]));
+    state={running:value.Running,exitCode:value.ExitCode,oomKilled:value.OOMKilled};
+  } catch {}
+  throw new Error(`Isolated image did not become ready: ${JSON.stringify({platform,...result,container:state})}`);
 }
 function start(){docker(['run','--detach','--init','--network','none','--platform',platform,'--name',container,...volumeArgs(),'-e','ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite','-e','ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH=/data/amfaa.sqlite','-e','ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR=/data','-e','ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR=/worktrees','-e','ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/workspace',image]);}
 const freshProbe=`
