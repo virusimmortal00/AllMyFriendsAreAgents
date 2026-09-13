@@ -31,6 +31,19 @@ The publisher signs only when the candidate SHA matches the triggering workflow
 SHA; overriding checkout alone cannot change GitHub's signed source claim. It
 also rechecks exact-revision quality immediately before pushing an image.
 
+## Container acceptance readiness
+
+The isolated image check polls `/api/ready` from one Node process inside the
+container, using the built-in HTTP client. Each request has a ten-second limit
+within a 150-second overall deadline. Starting a fresh Node `fetch` client for
+every one-second probe can falsely reject a healthy server under CPU-constrained
+ARM64 emulation; retrying that cold initialization does not resolve the timeout.
+
+Failures report the architecture, last probe outcome or HTTP status, and bounded
+container state (running, exit code, and OOM flag). Response bodies, raw process
+logs, and configuration are excluded. A readiness failure still blocks release;
+these limits do not change application health or authentication requirements.
+
 ## Local build and fresh installation
 
 ```bash

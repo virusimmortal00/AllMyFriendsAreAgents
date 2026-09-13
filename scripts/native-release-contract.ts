@@ -126,7 +126,7 @@ export function assertNativeReleaseContext(context: NativeReleaseContext): void 
   if (!REPOSITORY.test(repository) || !COMMIT.test(commit)) throw new Error("Integration contract downstream provenance is malformed.");
   if (branch !== policy.downstreamEvidence.branch || commit !== policy.downstreamEvidence.verifiedBranchHead) throw new Error("Target policy conflicts with the admitted downstream branch provenance.");
   const sdkVersion = object(packageJson.dependencies, "package dependencies")["@opencode-ai/sdk"];
-  const installedPluginVersion = object(packageJson.devDependencies, "package development dependencies")["@opencode-ai/plugin"];
+  const installedPluginVersion = object(packageJson.dependencies, "package dependencies")["@opencode-ai/plugin"];
   if (sdkVersion !== pluginVersion || installedPluginVersion !== pluginVersion) throw new Error("SDK and plugin compatibility versions conflict with the integration contract.");
   for (const [key, expectedValue] of [["OPENCODE_REPOSITORY", repository], ["OPENCODE_COMMIT", commit], ["OPENCODE_VERSION", version]] as const) {
     const values = [...dockerfile.matchAll(new RegExp(`^ARG ${key}=(.+)$`, "gm"))].map((match) => match[1]);
@@ -158,7 +158,7 @@ export function validateNativeReleaseManifest(value: unknown, context = loadNati
     commit: contractDownstream.headCommit,
     version: contractDownstream.version,
     sdkVersion: object(context.packageJson.dependencies, "package dependencies")["@opencode-ai/sdk"],
-    pluginVersion: object(context.packageJson.devDependencies, "package development dependencies")["@opencode-ai/plugin"],
+    pluginVersion: object(context.packageJson.dependencies, "package dependencies")["@opencode-ai/plugin"],
   };
   for (const [key, expectedValue] of Object.entries(expectedDownstream)) {
     if (downstream[key] !== expectedValue) throw new Error(`Manifest downstream ${key} conflicts with admitted provenance or compatibility.`);

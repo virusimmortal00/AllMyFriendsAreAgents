@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 29,
+    "revision": 36,
     "reviewedOn": "2026-09-13",
-    "result": "Re-inspected all nineteen recorded source paths across the structured-sdk-server, cli-jsonl, model-discovery, permissions-and-tools, and mcp-adapter surfaces at OpenCode v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete four-commit downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01. The serve command still resolves the requested listener address, password-backed Basic authentication remains explicit, and the server reports its resolved host and port. The v2 client retains directory routing plus health, session creation, typed prompt, structured assistant response, and abort operations. CLI JSON events retain session, model, variant, completed text, error, and permission handling; verbose model discovery retains provider metadata. Configuration, MCP merging, plugin tools, registry filtering, provider transformation, LLM dispatch, processor cleanup, and abort handling retain their existing boundaries. The downstream changes remain limited to schema validation, bounded structured-output retry and forced finalization, persisted output-format encoding, and preserving the public plugin compatibility version. This change only advances the application release identity to 0.1.1 and updates release-identity tests and installation documentation; it does not alter the OpenCode runtime selection, transport, authentication, cancellation, schema, or permission boundaries.",
+    "result": "Re-inspected all recorded integration paths, including the six native-setup-auth paths, at OpenCode v1.18.25 commit cb7d8b2f5e44876ef98b661dc10590c915af3a9f and the complete downstream diff through 6883ca5bd35a5494fb2759018373308911c79e01. The authentication findings from revision 30 remain unchanged: the authenticated loopback API persists canonical OpenRouter credentials with mode 0600, and provider listing proves recognition rather than a live connection. OpenCode also still discovers configured JavaScript and TypeScript tool files, dynamically imports them, and requires those files to resolve the public @opencode-ai/plugin contract at runtime; the downstream patches do not alter that boundary. A provider-free reproduction against the packaged downstream runtime confirmed that pruning the plugin from the production dependency graph makes the first structured prompt fail before provider dispatch with a module-resolution error. Keeping the audited plugin as a pinned production dependency restores custom-tool loading without changing server authentication, SDK prompting, structured-output validation, CLI parsing, model discovery, provider transformation, cancellation, or permission behavior. No live OpenRouter authorization or provider generation was used for this verification. Native background-service integration: re-inspected the six native-setup-auth upstream paths at downstream commit 6883ca5bd35a5494fb2759018373308911c79e01. Service lifecycle changes wrap AMFAA startup and do not alter the reviewed OpenCode credential API or authentication behavior. Native setup completion now adds a farewell acknowledgement and opens only the ready AMFAA loopback UI on local desktops. The six previously inspected native-setup-auth source paths at the same exact downstream commit remain the compatibility evidence; OpenCode credential persistence and API requests are unchanged. PR review corrections: re-inspected serve, auth storage, control handlers and routes, provider listing, and authorization middleware at the same exact downstream commit. Browser launching now shares OS-owned absolute executable paths; no OpenCode credential request or persistence contract changes. Manual instructions no longer advertise environment-only credentials, since room subprocesses intentionally filter API_KEY variables. Lifecycle operations now serialize local ownership checks and mutations, preserve unreachable-service credentials, and share shutdown completion. These changes do not change the reviewed upstream surfaces. Reusable-configuration detection now runs with the existing canonical room subprocess environment filter, exported without changing its filtering behavior. The already-reviewed provider-listing endpoint still reports recognized configuration rather than making a live request; applying the room environment excludes environment-only keys that cannot reach later agent invocations. No changes to the previously reviewed OpenCode CLI, SDK, tool, provider, or permission contracts. Foreground diagnostics now retain the same local lifecycle lock until process-idle shutdown completion and expose foreground ownership in local status. The already-inspected native setup authentication source paths and exact downstream commit remain unchanged; this change does not modify an OpenCode invocation, credential request, or provider configuration contract.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
@@ -58,7 +58,12 @@
       "packages/schema/src/v1/session.ts",
       "packages/opencode/src/tool/registry.ts",
       "packages/opencode/src/provider/transform.ts",
-      "packages/opencode/src/session/llm.ts"
+      "packages/opencode/src/session/llm.ts",
+      "packages/opencode/src/auth/index.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/handlers/control.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/groups/control.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/middleware/authorization.ts"
     ]
   },
   "surfaces": [
@@ -177,6 +182,27 @@
       "tests": [
         "server/universal-plugin-package.test.ts",
         "server/consultation-e2e.test.ts"
+      ]
+    },
+    {
+      "id": "native-setup-auth",
+      "description": "Native setup credential persistence and configured-provider detection through the authenticated loopback API.",
+      "local": [
+        "release/setup-auth.mjs",
+        "release/native-cli.mjs"
+      ],
+      "upstream": [
+        "packages/opencode/src/cli/cmd/serve.ts",
+        "packages/opencode/src/auth/index.ts",
+        "packages/opencode/src/server/routes/instance/httpapi/handlers/control.ts",
+        "packages/opencode/src/server/routes/instance/httpapi/groups/control.ts",
+        "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts",
+        "packages/opencode/src/server/routes/instance/httpapi/middleware/authorization.ts"
+      ],
+      "tests": [
+        "release/setup-auth.test.mjs",
+        "release/setup-wizard.test.mjs",
+        "scripts/package-native-application.test.ts"
       ]
     }
   ]

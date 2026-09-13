@@ -14,6 +14,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
+      '@opencode-ai/plugin':
+        specifier: 1.18.25
+        version: 1.18.25
       '@opencode-ai/sdk':
         specifier: 1.18.25
         version: 1.18.25
@@ -45,9 +48,6 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
-      '@opencode-ai/plugin':
-        specifier: 1.18.25
-        version: 1.18.25
       '@playwright/test':
         specifier: 1.62.1
         version: 1.62.1

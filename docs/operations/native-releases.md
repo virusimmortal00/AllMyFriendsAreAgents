@@ -76,8 +76,8 @@ curl -fsSL https://amfaa.sayers.io/install.sh | sh
 The installer places an installer-owned launcher in `~/.local/bin` and adds that
 directory to the appropriate user shell profile when needed. Pass
 `--no-modify-path` to a downloaded installer to opt out. The first bare `amfaa`
-invocation runs the interactive setup flow, delegates provider authentication to
-the bundled OpenCode runtime, records no credentials itself, and then starts the
+invocation runs the interactive setup flow, collects provider authorization through Consolio, saves credentials through
+the bundled OpenCode runtime, and then starts the
 loopback application for the current directory. Later invocations start directly.
 Run `amfaa setup` to repeat provider setup.
 
@@ -124,3 +124,139 @@ Both installers preserve room data, provider state, credentials, logs, and
 assignment worktrees. The native launcher also reports sanitized application and
 downstream identities through `amfaa version` and runtime readiness through
 `amfaa doctor`.
+
+## Native setup presentation
+
+The native wizard starts with a full-screen rainbow ASCII amfaa banner with Consolio, one line
+of welcome, and “Press any key to continue.” Setup explanations follow it. The five letters use an Apple-inspired
+green, yellow, orange, red, and purple palette; `NO_COLOR` retains the artwork
+without color.
+An ordinary key continues; Ctrl-C/Ctrl-D or EOF exits before runtime checks or
+saving setup state. Non-interactive input uses Enter for this first screen.
+Consolio blinks in place while the welcome waits; the
+loop stops on selection, cancellation, or stream failure. The splash redraws
+and recenters on resize; ordinary setup pages retain their reading width. It remains
+static when the face would be outside the viewport, for non-interactive input,
+or when `ALL_MY_FRIENDS_ARE_AGENTS_NO_ANIMATION=1`.
+
+Connection offers browser authorization, masked key entry, and manual configuration.
+Browser authorization uses OpenRouter's S256 PKCE flow with an ephemeral loopback
+callback on a random path. The listener checks the request method, Host, callback
+path, and single-use code; it closes on success, cancellation, or timeout. SSH and
+container users can select the one-time-code flow without a local callback.
+See [OpenRouter's PKCE contract](https://openrouter.ai/docs/guides/overview/auth/oauth).
+
+Consolio saves keys using `PUT /auth/openrouter` on a temporary, password-protected
+loopback OpenCode server. Credentials never enter command arguments or wizard logs.
+Runtime output is not forwarded to the terminal. The server is stopped after use.
+`GET /provider` detects recognized existing configuration; this does not verify a
+live model request. Manual setup records onboarding completion without claiming a
+connection and explains direct global OpenCode configuration. Environment-only
+keys and config environment interpolation are not supported for room conversations.
+Automatic `.env` loading is not part of this launcher. Preview neither checks
+existing configuration nor opens browsers, reads keys, saves state, or starts services.
+
+The borderless presentation uses neutral body text, green guide/selection accents,
+OpenRouter lime (`#c8ff00`), and OpenCode editor blue (`#82aaff`). Arrow keys move a
+visible marker; Enter confirms and Esc exits. Non-interactive preview uses numbered
+choices. Interactive sections reserve room for wrapped questions, choices, and
+keyboard hints before dividing text into pages. Sure, go on and Previous page
+navigate explanations; final actions appear only on the last page. Very short
+terminals omit decorative headings. `NO_COLOR` disables color.
+Full-screen pages keep their question and choices near the bottom of the terminal,
+using empty space between the explanation and actions for a consistent height.
+
+Consolio speaks in first person with conversational phrasing, retro wordplay,
+and occasional playful asides. That voice continues through key help, credential
+handoff, recovery, and completion. Keep action labels direct and billing,
+credential storage, project access, and completion claims precise. The opening
+splash stays minimal; the guide introduces itself on the OpenRouter page.
+
+The explicit `amfaa auth` command retains OpenCode's provider-specific CLI entry
+point; first-time setup uses the API instead. The `native-setup-auth` integration
+contract records exact upstream sources and tests. Provider-free verification
+against upstream OpenCode 1.18.25 confirmed credential round trips, preservation
+of other providers, 0600 file permissions, and recognition after restart. The
+same isolated check recognized an environment key and a global configuration
+key, while an otherwise empty project with only `.env` was not recognized. The
+admitted downstream diff does not modify these auth paths. Live OpenRouter
+browser approval and the packaged downstream binary remain separate manual checks.
+
+### Disposable real setup test
+
+With Docker running, run `pnpm test:setup` from the repository. This builds the
+current working tree (including unpublished edits), packages the native Linux
+application with its pinned Node runtime and audited OpenCode fork, and starts
+an interactive container. The first build can take several minutes; subsequent
+builds reuse Docker's cache. Use `pnpm test:setup --build-only` to build without
+opening setup.
+
+This is real setup, so a key entered or obtained through browser authorization
+is saved inside the container. Select **Use another browser (SSH)** for browser
+sign-in: open the displayed URL on your computer and paste the one-time code
+back into the terminal. Once setup launches the application, open
+`http://127.0.0.1:54147`. Model requests use the connected account normally.
+
+The container has a fresh home and empty `/workspace`, no host mounts, and no
+persistent volumes. It does not receive the host's environment credentials or
+use the development server's ports. Run `exit` or press Ctrl+D in the sandbox
+shell to remove the container and its saved keys, configuration, and room data.
+Detaching also triggers this wrapper's cleanup, as described below. Each run
+starts fresh. Docker
+retains the image and build cache; `docker image rm amfaa-setup-sandbox:local`
+removes the named image when it is no longer needed. A key created at OpenRouter
+remains in that account until revoked there.
+
+This exercises the production bundle, setup, and runtime on Linux. It does not
+exercise the public installer's GitHub download/provenance path or native macOS
+behavior. Bundle metadata records the checkout's base commit; the sandbox image
+also includes any working-tree edits and must not be published as a release.
+
+### Native background service
+
+Completing setup with **Start in the background**, or running `amfaa start`
+from a configured installation, starts one background service per data directory.
+The CLI waits until the application is listening before displaying its URL.
+The native service survives closing the terminal; it does not install an operating
+system login item or restart automatically after a reboot.
+
+- `amfaa status` reports whether the managed service is running and its URL.
+- `amfaa stop` shuts it down while retaining room data and provider configuration.
+- `amfaa start` starts it again from the current project folder; repeated starts
+  report the existing service without creating another one.
+- `amfaa start --foreground` runs in the terminal for diagnostics and holds the
+  data-directory lifecycle lock until shutdown finishes. Stop it with Ctrl+C in
+  that terminal. `amfaa status` identifies the foreground session; background
+  start, update, and uninstall cannot run against its data directory meanwhile.
+
+Stop the managed service before updating or uninstalling. Control uses a random
+per-run token in owner-only metadata and a loopback HTTP endpoint. A stale saved
+PID is never used to stop a process. A failed start reports a diagnostic command
+instead of claiming readiness. Unreachable control endpoints report an unknown
+state and preserve their credentials. Stale metadata is removed only when its
+recorded process is confirmed absent; elapsed time alone never proves shutdown.
+
+Start, stop, update, uninstall, service metadata replacement, and both public
+installers (including rollback) share a lifecycle lock beside the data directory (`<data-directory>.lifecycle-lock`). If a CLI
+process crashes while holding this lock, commands fail closed. Before manually
+removing that lock directory, verify the owner PID in `owner.json` has exited
+and no lifecycle command is still running. Do not delete the service metadata
+or provider credentials to recover a lock. The public installers refuse any
+remaining service record; run `amfaa stop` to clear confirmed stale state before
+retrying. Use the same `ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR` setting for service
+and installer commands when using a custom data directory.
+
+In the disposable Docker sandbox, background startup returns to `sandbox>`.
+Use the same status/stop/start commands there. Keep the container terminal open:
+`exit` or Ctrl+D in the sandbox shell removes the container, including all its
+data. Ctrl+P followed by Ctrl+Q detaches Docker; this test wrapper then exits
+and its cleanup trap forcibly removes its disposable container. It is not a way
+to retain this sandbox in the background.
+This lifetime restriction belongs to the disposable sandbox, not a native install.
+
+Setup ends with Consolio's farewell and a final keypress before saving and
+launching. Local desktop setup attempts to open the ready room in a browser.
+SSH/headless sessions display the URL and an SSH port-forward example instead;
+the sandbox uses the published host URL. No network bind or authentication
+settings are relaxed. Set `ALL_MY_FRIENDS_ARE_AGENTS_NO_BROWSER=1` to opt out.
+Later `amfaa start` commands print the URL without reopening the browser.

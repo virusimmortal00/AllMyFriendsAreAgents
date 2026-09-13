@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import { promisify } from "node:util";
+import { withLifecycleLock } from "../release/lifecycle-lock.mjs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
@@ -50,7 +52,7 @@ function nodeFixture(root: string) {
 function openCodeFixture(root: string, target: NonNullable<ReturnType<typeof hostTarget>>) {
   const stage = path.join(root, "stage/all-my-friends-are-agents/runtime"); mkdirSync(stage, { recursive: true });
   const name = target.os === "windows" ? "opencode.exe" : "opencode"; const binary = path.join(stage, name);
-  writeFileSync(binary, '#!/bin/sh\ncase "${1-}:${2-}" in --version:) echo 1.18.25-amfaa.2;; run:--help) echo "--format json --dir --agent --model --variant --session --auto";; models:--help) echo "models [provider] --verbose --refresh";; auth:login) exit 0;; *) exit 2;; esac\n'); chmodSync(binary, 0o755);
+  writeFileSync(binary, '#!/bin/sh\ncase "${1-}:${2-}" in --version:) echo 1.18.25-amfaa.2;; run:--help) echo "--format json --dir --agent --model --variant --session --auto";; models:--help) echo "models [provider] --verbose --refresh";; auth:login) [ "${3-}:${4-}" = "--provider:openrouter" ] || exit 2; exit 0;; *) exit 2;; esac\n'); chmodSync(binary, 0o755);
   const archive = path.join(root, `opencode-${target.id}${target.archiveExtension}`);
   execFileSync("tar", target.archiveExtension === ".zip" ? ["-a", "-cf", archive, "-C", path.join(root, "stage"), "all-my-friends-are-agents"] : ["-czf", archive, "-C", path.join(root, "stage"), "all-my-friends-are-agents"]);
   const proof = path.join(root, "evidence.json");
@@ -85,7 +87,7 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     expect(doctor).not.toMatch(/Users\/|tmp\/|PATH|HOME|credential|token/);
     expect(() => invoke(built.install, ["auth"], built.install, { HOME: home })).not.toThrow();
     expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
-    const started = JSON.parse(invoke(built.install, ["start"], project, { HOME: home }));
+    const started = JSON.parse(invoke(built.install, ["start", "--foreground"], project, { HOME: home }));
     expect(realpathSync(started.project)).toBe(realpathSync(project));
     expect(started.data).toBe(path.join(home, ".all-my-friends-are-agents"));
   });
@@ -93,17 +95,19 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
   it("normalizes a configured data root before setup state and server startup consume it", () => {
     const built = build("7".repeat(40)); const home = fixture(); const project = fixture(); const relativeDataRoot = "relative-state";
     invoke(built.install, ["auth"], project, { HOME: home, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: relativeDataRoot });
-    const started = JSON.parse(invoke(built.install, ["start"], project, { HOME: home, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: relativeDataRoot }));
+    const started = JSON.parse(invoke(built.install, ["start", "--foreground"], project, { HOME: home, ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: relativeDataRoot }));
     expect(realpathSync(started.data)).toBe(realpathSync(path.join(project, relativeDataRoot)));
   });
 
   it("offers a non-mutating setup walkthrough and blocks unattended first launch", () => {
     const built = build("6".repeat(40)); const home = fixture();
     const preview = spawnSync(path.join(built.install, "amfaa"), ["setup", "--preview"], {
-      cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" }, input: "\n\n", encoding: "utf8",
+      cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" }, input: "\n\n\n\n", encoding: "utf8",
     });
     expect(preview.status).toBe(0);
-    expect(preview.stdout).toContain("FIRST-TIME SETUP · PREVIEW");
+    expect(preview.stdout).toContain("SETUP · PREVIEW");
+    expect(preview.stdout).toContain("Continue preview");
+    expect(preview.stdout).toContain("Ready to meet the gang?");
     expect(preview.stdout).toContain("no credentials, files, or services were changed");
     expect(existsSync(path.join(home, ".all-my-friends-are-agents"))).toBe(false);
 
@@ -114,13 +118,30 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     expect(launch.stderr).toBe("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
   });
 
+  it.each(["update", "uninstall"])("checks service state under the lifecycle lock before %s", async command => {
+    const built = build("8".repeat(40)); const home = fixture();
+    const root = path.join(home, ".all-my-friends-are-agents"); mkdirSync(root);
+    let pending: Promise<unknown>;
+    await withLifecycleLock(root, async () => {
+      pending = promisify(execFile)(path.join(built.install, "amfaa"), command === "update" ? [command, built.install] : [command], {
+        cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" },
+      }).then(() => ({ code: 0 }), error => error);
+      // Publish a live startup while the competing command waits for ownership.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      writeFileSync(path.join(root, ".amfaa-service.json"), JSON.stringify({ version: 1, token: "a".repeat(64), port: 0, created: Date.now(), pid: process.pid }), { mode: 0o600 });
+    });
+    expect(await pending!).toMatchObject({ code: 69, stderr: "Stop AMFAA with amfaa stop before updating or uninstalling.\n" });
+    expect(existsSync(path.join(built.install, "versions"))).toBe(true);
+    expect(existsSync(path.join(built.install, "active-version"))).toBe(true);
+  });
+
   it("activates a completely verified update, retains rollback metadata, and preserves durable state during default uninstall", () => {
     const first = build("d".repeat(40)); const second = build("e".repeat(40)); const home = fixture(); const project = fixture();
     const state = path.join(home, ".all-my-friends-are-agents"); mkdirSync(state); writeFileSync(path.join(state, "room.json"), "durable");
     invoke(first.install, ["update", second.install], first.install, { HOME: home });
     expect(JSON.parse(invoke(first.install, ["version"], first.install, { HOME: home })).application.commit).toBe("e".repeat(40));
     expect(JSON.parse(readFileSync(path.join(first.install, "previous.json"), "utf8")).versionDirectory).toContain("dddddddddddd");
-    expect(realpathSync(JSON.parse(invoke(first.install, ["start"], project, { HOME: home })).project)).toBe(realpathSync(project));
+    expect(realpathSync(JSON.parse(invoke(first.install, ["start", "--foreground"], project, { HOME: home })).project)).toBe(realpathSync(project));
     expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
     invoke(first.install, ["uninstall"], first.install, { HOME: home });
     expect(readFileSync(path.join(state, "room.json"), "utf8")).toBe("durable");
@@ -159,7 +180,7 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
   it("purges only a marked default data root after separate exact confirmation", () => {
     const built = build("5".repeat(40)); const home = fixture(); const project = fixture();
     invoke(built.install, ["auth"], built.install, { HOME: home });
-    invoke(built.install, ["start"], project, { HOME: home });
+    invoke(built.install, ["start", "--foreground"], project, { HOME: home });
     const dataRoot = path.join(home, ".all-my-friends-are-agents"); writeFileSync(path.join(dataRoot, "room.json"), "durable");
     invoke(built.install, ["uninstall", "--purge-state", "CONFIRM"], built.install, { HOME: home });
     expect(existsSync(dataRoot)).toBe(false); expect(existsSync(path.join(built.install, "versions"))).toBe(false);
