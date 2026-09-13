@@ -9,12 +9,15 @@ const EX_USAGE = 64;
 const EX_DATAERR = 65;
 const EX_UNAVAILABLE = 69;
 const EX_SOFTWARE = 70;
+const EX_CONFIG = 78;
 const cliFile = fileURLToPath(import.meta.url);
 const appRoot = path.dirname(cliFile);
 const versionRoot = path.dirname(appRoot);
 const installRoot = path.dirname(path.dirname(versionRoot));
 const DATA_MARKER = ".amfaa-owned-data-root.json";
 const DATA_MARKER_VALUE = { schemaVersion: 1, application: "all-my-friends-are-agents" };
+const SETUP_MARKER = ".amfaa-setup.json";
+const SETUP_MARKER_VALUE = { schemaVersion: 1, application: "all-my-friends-are-agents", completed: true };
 
 async function json(file) { return JSON.parse(await readFile(file, "utf8")); }
 async function digest(file) { return createHash("sha256").update(await readFile(file)).digest("hex"); }
@@ -71,16 +74,38 @@ function publicIdentity(value) {
   return { application: { version: value.application.version, commit: value.application.commit }, downstream: { version: value.downstream.version, commit: value.downstream.commit } };
 }
 function defaultDataRoot() { return path.resolve(os.homedir(), ".all-my-friends-are-agents"); }
+function configuredDataRoot() { return path.resolve(process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR || defaultDataRoot()); }
 function ownedByCurrentUser(metadata) { return typeof process.getuid !== "function" || metadata.uid === process.getuid(); }
-async function markOwnedDefaultDataRoot(dataRoot) {
-  if (path.resolve(dataRoot) !== defaultDataRoot()) return;
+async function prepareDataRoot(dataRoot) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   const metadata = await lstat(dataRoot);
   if (!metadata.isDirectory() || metadata.isSymbolicLink() || !ownedByCurrentUser(metadata)) throw new Error("Unsafe application data root.");
+}
+async function markOwnedDefaultDataRoot(dataRoot) {
+  await prepareDataRoot(dataRoot);
+  if (path.resolve(dataRoot) !== defaultDataRoot()) return;
   const marker = path.join(dataRoot, DATA_MARKER);
   await writeFile(marker, `${JSON.stringify(DATA_MARKER_VALUE)}\n`, { flag: "wx", mode: 0o600 }).catch(async (error) => {
     if (error?.code !== "EEXIST" || JSON.stringify(await json(marker)) !== JSON.stringify(DATA_MARKER_VALUE)) throw error;
   });
+}
+async function setupComplete(dataRoot = configuredDataRoot()) {
+  try {
+    const marker = path.join(dataRoot, SETUP_MARKER);
+    const metadata = await lstat(marker);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || !ownedByCurrentUser(metadata)) return false;
+    return JSON.stringify(await json(marker)) === JSON.stringify(SETUP_MARKER_VALUE);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+async function persistSetup(dataRoot = configuredDataRoot()) {
+  await markOwnedDefaultDataRoot(dataRoot);
+  const temporary = path.join(dataRoot, `.amfaa-setup-${process.pid}`);
+  await writeFile(temporary, `${JSON.stringify(SETUP_MARKER_VALUE)}\n`, { flag: "wx", mode: 0o600 });
+  try { await rename(temporary, path.join(dataRoot, SETUP_MARKER)); }
+  catch (error) { await unlink(temporary).catch(() => undefined); throw error; }
 }
 async function validatedPurgeRoot() {
   const configured = path.resolve(process.env.ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR || defaultDataRoot());
@@ -98,7 +123,7 @@ async function runtime() {
   const { resolveOpenCodeRuntime } = await import("./server/opencode-runtime.js");
   return resolveOpenCodeRuntime({ root: appRoot, override: "" });
 }
-async function commandStart(args) {
+async function startServer(args) {
   if (args.length) return EX_USAGE;
   const project = process.cwd();
   process.env.NODE_ENV = "production";
@@ -114,7 +139,45 @@ async function commandAuth(args) {
   if (args.length) return EX_USAGE;
   const resolved = await runtime();
   if (resolved.state !== "ready") return EX_UNAVAILABLE;
-  return run(resolved.command, ["auth", "login"]);
+  const code = await run(resolved.command, ["auth", "login"]);
+  if (code === 0) await persistSetup();
+  return code;
+}
+async function setup(preview) {
+  const { runSetupWizard } = await import("./setup-wizard.mjs");
+  return runSetupWizard({
+    preview,
+    project: process.cwd(),
+    runtimeReady: async () => (await runtime()).state === "ready",
+    authenticate: async () => {
+      const resolved = await runtime();
+      return resolved.state === "ready" ? run(resolved.command, ["auth", "login"]) : EX_UNAVAILABLE;
+    },
+    persist: persistSetup,
+  });
+}
+function interactiveTerminal() { return process.stdin.isTTY === true && process.stdout.isTTY === true; }
+async function commandSetup(args) {
+  const preview = args.length === 1 && args[0] === "--preview";
+  if (args.length && !preview) return EX_USAGE;
+  if (!preview && !interactiveTerminal()) {
+    process.stderr.write("amfaa: setup needs an interactive terminal; run `amfaa setup --preview` to inspect the flow\n");
+    return EX_CONFIG;
+  }
+  const result = await setup(preview);
+  if (result.code !== 0 || !result.completed || !result.start) return result.code;
+  return startServer([]);
+}
+async function commandStart(args) {
+  if (args.length) return EX_USAGE;
+  if (await setupComplete()) return startServer([]);
+  if (!interactiveTerminal()) {
+    process.stderr.write("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
+    return EX_CONFIG;
+  }
+  const result = await setup(false);
+  if (result.code !== 0 || !result.completed || !result.start) return result.code;
+  return startServer([]);
 }
 async function commandVersion(args) {
   if (args.length) return EX_USAGE;
@@ -165,7 +228,7 @@ async function commandUninstall(args) {
   return 0;
 }
 
-const commands = { start: commandStart, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: commandUpdate, uninstall: commandUninstall };
+const commands = { start: commandStart, setup: commandSetup, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: commandUpdate, uninstall: commandUninstall };
 const [name = "start", ...args] = process.argv.slice(2);
 try {
   const command = commands[name];

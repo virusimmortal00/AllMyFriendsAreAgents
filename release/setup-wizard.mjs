@@ -4,15 +4,9 @@ const line = "─".repeat(52);
 
 function normalize(answer) { return answer.trim().toLowerCase(); }
 
-async function terminalAsk(prompt) {
-  const interface_ = createInterface({ input: process.stdin, output: process.stdout });
-  try { return await interface_.question(prompt); }
-  finally { interface_.close(); }
-}
-
-export async function runSetupWizard(options = {}) {
+async function executeSetupWizard(options) {
   const preview = options.preview === true;
-  const ask = options.ask || terminalAsk;
+  const ask = options.ask;
   const write = options.write || ((value) => process.stdout.write(value));
   const runtimeReady = options.runtimeReady || (async () => true);
   const authenticate = options.authenticate || (async () => 0);
@@ -63,4 +57,17 @@ export async function runSetupWizard(options = {}) {
   await persist();
   write("\n✓ Setup complete. Run `amfaa setup` any time to reconnect a provider.\n");
   return { code: 0, completed: true, start: launch !== "n" && launch !== "no" };
+}
+
+export async function runSetupWizard(options = {}) {
+  if (options.ask) return executeSetupWizard(options);
+  const interface_ = createInterface({ input: process.stdin, output: process.stdout });
+  const answers = interface_[Symbol.asyncIterator]();
+  const ask = async (prompt) => {
+    process.stdout.write(prompt);
+    const answer = await answers.next();
+    return answer.done ? "" : answer.value;
+  };
+  try { return await executeSetupWizard({ ...options, ask }); }
+  finally { interface_.close(); }
 }

@@ -80,11 +80,29 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
   });
 
   it("runs doctor, auth, and start without Node.js, pnpm, or OpenCode on PATH and keeps reports sanitized", () => {
-    const built = build("c".repeat(40)); const project = fixture();
-    const doctor = invoke(built.install, ["doctor"]); expect(JSON.parse(doctor)).toMatchObject({ runtime: "ready", application: { version: "0.1.0" }, downstream: { version: "1.18.25-amfaa.2" } });
+    const built = build("c".repeat(40)); const project = fixture(); const home = fixture();
+    const doctor = invoke(built.install, ["doctor"], built.install, { HOME: home }); expect(JSON.parse(doctor)).toMatchObject({ runtime: "ready", application: { version: "0.1.0" }, downstream: { version: "1.18.25-amfaa.2" } });
     expect(doctor).not.toMatch(/Users\/|tmp\/|PATH|HOME|credential|token/);
-    expect(() => invoke(built.install, ["auth"])).not.toThrow();
-    expect(realpathSync(invoke(built.install, ["start"], project).trim())).toBe(realpathSync(project));
+    expect(() => invoke(built.install, ["auth"], built.install, { HOME: home })).not.toThrow();
+    expect(existsSync(path.join(home, ".all-my-friends-are-agents/.amfaa-setup.json"))).toBe(true);
+    expect(realpathSync(invoke(built.install, ["start"], project, { HOME: home }).trim())).toBe(realpathSync(project));
+  });
+
+  it("offers a non-mutating setup walkthrough and blocks unattended first launch", () => {
+    const built = build("6".repeat(40)); const home = fixture();
+    const preview = spawnSync(path.join(built.install, "amfaa"), ["setup", "--preview"], {
+      cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" }, input: "\n\n", encoding: "utf8",
+    });
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("First-time setup · PREVIEW");
+    expect(preview.stdout).toContain("no credentials, files, or services were changed");
+    expect(existsSync(path.join(home, ".all-my-friends-are-agents"))).toBe(false);
+
+    const launch = spawnSync(path.join(built.install, "amfaa"), [], {
+      cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" }, encoding: "utf8",
+    });
+    expect(launch.status).toBe(78);
+    expect(launch.stderr).toBe("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
   });
 
   it("activates a completely verified update, retains rollback metadata, and preserves durable state during default uninstall", () => {
@@ -129,6 +147,7 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
 
   it("purges only a marked default data root after separate exact confirmation", () => {
     const built = build("5".repeat(40)); const home = fixture(); const project = fixture();
+    invoke(built.install, ["auth"], built.install, { HOME: home });
     invoke(built.install, ["start"], project, { HOME: home });
     const dataRoot = path.join(home, ".all-my-friends-are-agents"); writeFileSync(path.join(dataRoot, "room.json"), "durable");
     invoke(built.install, ["uninstall", "--purge-state", "CONFIRM"], built.install, { HOME: home });
