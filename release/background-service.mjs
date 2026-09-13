@@ -39,9 +39,14 @@ async function request(value, action) {
 }
 export async function serviceStatus(root) {
   const value = await record(root);
-  return await request(value, 'status') || { state: !value || confirmedDead(value) ? 'stopped' : value.port === 0 ? 'starting' : 'unknown' };
+  return await request(value, 'status') || { state: !value || confirmedDead(value) ? 'stopped' : value.mode === 'foreground' ? 'foreground' : value.port === 0 ? 'starting' : 'unknown' };
+}
+async function foregroundActive(root) {
+  const value = await record(root);
+  return value?.mode === 'foreground' && !confirmedDead(value);
 }
 export async function stopService(root) {
+  if (await foregroundActive(root)) throw new Error('AMFAA is running in a foreground terminal. Stop it with Ctrl+C in that terminal.');
   const value = await withLifecycleLock(root, async () => {
     const current = await record(root);
     if (!current) return undefined;
@@ -57,7 +62,30 @@ export async function stopService(root) {
   }
   throw new Error('AMFAA is still stopping. Check amfaa status.');
 }
+// Foreground diagnostics keep the same lifecycle lock for their entire process
+// lifetime. beforeExit occurs only after the application's shutdown has drained.
+export async function serveForeground({ root, start }) {
+  return withLifecycleLock(root, async () => {
+    const current = await record(root);
+    if (current && !confirmedDead(current)) throw new Error('Stop the existing AMFAA service before starting foreground diagnostics.');
+    if (current) await removeUnlocked(root, current.token);
+    const value = { version: 1, token: randomBytes(32).toString('hex'), port: 0, created: Date.now(), pid: process.pid, mode: 'foreground' };
+    await writeFile(file(root), JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+    let onIdle;
+    const idle = new Promise(resolve => { onIdle = resolve; });
+    process.once('beforeExit', onIdle);
+    try {
+      let startupError;
+      try { await start(); } catch (error) { startupError = error; }
+      // A partial startup can still own handles; retain ownership until they drain.
+      await idle;
+      if (startupError) throw startupError;
+    }
+    finally { process.off('beforeExit', onIdle); await removeUnlocked(root, value.token); }
+  });
+}
 export async function startService({ root, cliFile, project, environment = process.env }) {
+  if (await foregroundActive(root)) throw new Error('AMFAA is running in a foreground terminal. Stop it with Ctrl+C in that terminal.');
   let child, value, spawnError;
   try {
     const running = await withLifecycleLock(root, async () => {

@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { withLifecycleLock } from './lifecycle-lock.mjs';
 import path from 'node:path';
-import { startService, serviceStatus, stopService } from './background-service.mjs';
+import { startService, serviceStatus, stopService, serveForeground } from './background-service.mjs';
 const roots=[];
 afterEach(async()=>{for(const root of roots.splice(0)){await stopService(root).catch(()=>{});await rm(root,{recursive:true,force:true});}});
 async function fixture(fail=false,holdShutdown=false){
@@ -45,6 +45,30 @@ describe('native background lifecycle',()=>{
    await writeFile(path.join(input.root,'.allow-stop'),'');
    await stopping;
   }
+  expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
+ });
+ it('rejects foreground startup before opening an already-owned data directory',async()=>{
+  const input=await fixture();await startService(input);let opened=false;
+  await expect(serveForeground({root:input.root,start:async()=>{opened=true;}})).rejects.toThrow('Stop the existing');
+  expect(opened).toBe(false);
+  expect((await serviceStatus(input.root)).state).toBe('running');
+ });
+ it('retains foreground ownership through shutdown and blocks lifecycle mutations',async()=>{
+  const input=await fixture();const foreground=path.join(input.root,'foreground.mjs');
+  await writeFile(foreground,`import {serveForeground} from ${JSON.stringify(new URL('./background-service.mjs',import.meta.url).href)};import {createServer} from 'node:http';
+   await serveForeground({root:process.cwd(),start:async()=>{const s=createServer((q,r)=>r.end('fixture'));await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));process.once('SIGTERM',()=>{s.close();setTimeout(()=>import('node:fs/promises').then(fs=>fs.writeFile('.drained','done')),100);});process.stdout.write('ready\\n');}});`);
+  const child=spawn(process.execPath,[foreground],{cwd:input.root,env:{PATH:process.env.PATH,HOME:input.root},stdio:['ignore','pipe','pipe']});
+  const exited=once(child,'exit');let mutation;
+  try {
+   await once(child.stdout,'data');
+   expect(await serviceStatus(input.root)).toEqual({state:'foreground'});
+   await expect(startService(input)).rejects.toThrow('foreground terminal');
+   await expect(stopService(input.root)).rejects.toThrow('Ctrl+C');
+   let mutated=false;
+   mutation=withLifecycleLock(input.root,async()=>{expect(await readFile(path.join(input.root,'.drained'),'utf8')).toBe('done');mutated=true;});
+   await new Promise(resolve=>setTimeout(resolve,150));
+   expect(mutated).toBe(false);
+  } finally {child.kill('SIGTERM');await exited;await mutation;}
   expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
  });
  it('does not claim success or leave a startup record when the server fails',async()=>{

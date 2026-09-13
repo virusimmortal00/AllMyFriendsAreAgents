@@ -224,7 +224,10 @@ system login item or restart automatically after a reboot.
 - `amfaa stop` shuts it down while retaining room data and provider configuration.
 - `amfaa start` starts it again from the current project folder; repeated starts
   report the existing service without creating another one.
-- `amfaa start --foreground` runs in the terminal for diagnostics.
+- `amfaa start --foreground` runs in the terminal for diagnostics and holds the
+  data-directory lifecycle lock until shutdown finishes. Stop it with Ctrl+C in
+  that terminal. `amfaa status` identifies the foreground session; background
+  start, update, and uninstall cannot run against its data directory meanwhile.
 
 Stop the managed service before updating or uninstalling. Control uses a random
 per-run token in owner-only metadata and a loopback HTTP endpoint. A stale saved

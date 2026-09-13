@@ -206,7 +206,10 @@ async function commandSetup(args) {
 async function commandStart(args) {
   if (args.length === 1 && args[0] === "--foreground") {
     if (!await setupComplete()) { if (await upgradedInstallation()) await persistSetup(); else return EX_CONFIG; }
-    await startServer([]); return 0;
+    const { serveForeground } = await import("./background-service.mjs");
+    await prepareDataRoot(configuredDataRoot());
+    await serveForeground({ root: configuredDataRoot(), start: () => startServer([]) });
+    return 0;
   }
   if (args.length) return EX_USAGE;
   if (await setupComplete()) return launchService();
@@ -247,6 +250,7 @@ async function commandStatus(args) {
   const { serviceStatus } = await import("./background-service.mjs");
   const result = await serviceStatus(configuredDataRoot());
   if (result.state === "running") process.stdout.write(`AMFAA is running: ${result.url}\nStop: amfaa stop\n`);
+  else if (result.state === "foreground") process.stdout.write("AMFAA is using this data directory in a foreground terminal. Stop it with Ctrl+C there.\n");
   else if (result.state === "stopped") process.stdout.write("AMFAA is stopped. Start: amfaa start\n");
   else process.stdout.write(`AMFAA status: ${result.state}. Control metadata is preserved. Try amfaa status shortly.\n`);
   return result.state === "unknown" ? EX_UNAVAILABLE : 0;
