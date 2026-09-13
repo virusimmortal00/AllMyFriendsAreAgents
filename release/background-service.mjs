@@ -1,3 +1,4 @@
+import { withLifecycleLock } from './lifecycle-lock.mjs';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -15,8 +16,14 @@ async function record(root) {
     return value;
   } catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
 }
-async function remove(root, token) {
+async function removeUnlocked(root, token) {
   if ((await record(root))?.token === token) await unlink(file(root));
+}
+async function remove(root, token) { return withLifecycleLock(root, () => removeUnlocked(root, token)); }
+function confirmedDead(value) {
+  if (!Number.isSafeInteger(value?.pid) || value.pid <= 0) return false;
+  try { process.kill(value.pid, 0); return false; }
+  catch (error) { return error.code === 'ESRCH'; }
 }
 async function request(value, action) {
   if (!value?.port) return undefined;
@@ -32,39 +39,50 @@ async function request(value, action) {
 }
 export async function serviceStatus(root) {
   const value = await record(root);
-  return await request(value, 'status') || { state: value && Date.now() - value.created < 90000 ? 'starting' : 'stopped' };
+  return await request(value, 'status') || { state: !value || confirmedDead(value) ? 'stopped' : value.port === 0 ? 'starting' : 'unknown' };
 }
 export async function stopService(root) {
-  const value = await record(root);
+  const value = await withLifecycleLock(root, async () => {
+    const current = await record(root);
+    if (!current) return undefined;
+    if (confirmedDead(current)) { await removeUnlocked(root, current.token); return undefined; }
+    if (!await request(current, 'stop')) throw new Error('AMFAA cannot be reached; its control metadata has been preserved. Try amfaa status shortly.');
+    return current;
+  });
   if (!value) return { state: 'stopped' };
-  const result = await request(value, 'stop');
-  if (!result) {
-    if (Date.now() - value.created < 90000) throw new Error('AMFAA is starting or cannot be reached. Try amfaa status shortly.');
-    await remove(root, value.token); // Never signal an unverified PID.
-    return { state: 'stopped' };
-  }
   for (let i = 0; i < 120; i++) {
-    if (!await request(value, 'status')) return { state: 'stopped' };
+    const current = await record(root);
+    if (!current || current.token !== value.token || confirmedDead(value)) return { state: 'stopped' };
     await delay(250);
   }
   throw new Error('AMFAA is still stopping. Check amfaa status.');
 }
 export async function startService({ root, cliFile, project, environment = process.env }) {
-  const current = await record(root);
-  const running = await request(current, 'status');
-  if (running) return running;
-  if (current) {
-    if (Date.now() - current.created < 90000) throw new Error('AMFAA is already starting. Try amfaa status shortly.');
-    await remove(root, current.token);
-  }
-  const value = { version: 1, token: randomBytes(32).toString('hex'), port: 0, created: Date.now() };
-  await writeFile(file(root), JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-  let child;
+  let child, value, spawnError;
   try {
-    child = spawn(process.execPath, [cliFile, '__serve'], {
-      cwd: project, env: environment, detached: true, windowsHide: true,
-      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    const running = await withLifecycleLock(root, async () => {
+      const current = await record(root);
+      const existing = await request(current, 'status');
+      if (existing) return existing;
+      if (current) {
+        if (!confirmedDead(current)) throw new Error('AMFAA is starting or unreachable. Its control metadata has been preserved. Try amfaa status shortly.');
+        await removeUnlocked(root, current.token);
+      }
+      value = { version: 1, token: randomBytes(32).toString('hex'), port: 0, created: Date.now(), pid: process.pid };
+      await writeFile(file(root), JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+      child = spawn(process.execPath, [cliFile, '__serve'], {
+        cwd: project, env: environment, detached: true, windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      // Attach immediately so asynchronous spawn errors cannot escape.
+      child.on('error', error => { spawnError = error; });
+      value.pid = child.pid || process.pid;
+      const temporary = `${file(root)}.${value.token}`;
+      await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+      await rename(temporary, file(root));
+      return undefined;
     });
+    if (running) return running;
     const ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(new Error('AMFAA did not start within 60 seconds. Run amfaa start --foreground for diagnostics.')), 60000);
       const finish = (error, result) => { clearTimeout(timer); child.removeListener('exit', exited); child.removeListener('error', failed); child.removeListener('message', message); error ? reject(error) : resolve(result); };
@@ -72,8 +90,9 @@ export async function startService({ root, cliFile, project, environment = proce
       const failed = () => exited();
       const message = msg => { if (msg?.ready) finish(undefined, msg.ready); else if (msg?.failed) exited(); };
       child.once('exit', exited); child.once('error', failed); child.on('message', message);
+      if (spawnError || child.exitCode !== null || child.signalCode !== null) queueMicrotask(exited);
     });
-    child.send(value);
+    if (child.connected) child.send(value, error => { if (error) child.emit('error', error); });
     const result = await ready;
     child.disconnect(); child.unref();
     return result;
@@ -87,7 +106,7 @@ export async function startService({ root, cliFile, project, environment = proce
     }
     child?.unref();
     if (child?.connected) child.disconnect();
-    await remove(root, value.token);
+    if (value) await remove(root, value.token);
     throw error;
   }
 }
@@ -122,9 +141,12 @@ export async function serveBackground({ root, start }) {
     url = `http://127.0.0.1:${address.port}`;
     await new Promise((resolve, reject) => { control.once('error', reject); control.listen(0, '127.0.0.1', resolve); });
     value.port = control.address().port;
-    const temporary = `${file(root)}.${value.token}`;
-    await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
-    await rename(temporary, file(root));
+    await withLifecycleLock(root, async () => {
+      if ((await record(root))?.token !== value.token) throw new Error('Service ownership changed.');
+      const temporary = `${file(root)}.${value.token}`;
+      await writeFile(temporary, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+      await rename(temporary, file(root));
+    });
     state = 'running';
     process.send({ ready: { service: 'amfaa', state, url } });
     process.on('SIGTERM', stop); process.on('SIGINT', stop);

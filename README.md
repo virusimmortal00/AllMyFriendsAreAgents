@@ -149,8 +149,9 @@ or **I'll configure it myself later**. Browser sign-in authorizes amfaa without
 copying an API key; SSH/container users can paste a one-time authorization code.
 Consolio also provides hidden API-key entry. Credentials are saved locally through
 the bundled OpenCode runtime. Existing configuration can be reused without re-entry.
-Manual setup accepts `OPENROUTER_API_KEY` in the process environment or OpenCode's
-provider configuration; automatic `.env` loading is not provided by this launcher.
+For manual configuration, put the key directly in OpenCode's global provider
+configuration. Environment-only keys (including config environment interpolation)
+and `.env` files are not supported for room conversations.
 Model usage is billed to your OpenRouter account. Manual setup can finish before
 connection, but agents need provider configuration before they can respond.
 

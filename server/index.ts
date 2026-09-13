@@ -1734,10 +1734,11 @@ function configuredPositiveInteger(name: string) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-let shuttingDown = false;
-export async function shutdown(signal: string) {
-  if (shuttingDown) return;
-  shuttingDown = true;
+let shutdownPromise: Promise<void> | undefined;
+export function shutdown(signal: string): Promise<void> {
+  return shutdownPromise ??= performShutdown(signal);
+}
+async function performShutdown(signal: string) {
   await structuredLogger.log("info", "server.shutdown.started", { signal, phase: "draining" });
   jobs.close();
   await commandRuntime.close();

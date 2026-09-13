@@ -250,7 +250,7 @@ async function executeSetupWizard(options) {
     const finalItems = [...items, { label: "Previous page", value: "previous" }];
     const menuHeight = list => list.reduce((sum, item) => sum + wrap(item.label, Math.max(4, options.width - 6)).length, 0)
       + 1 + wrap("↑/↓ move · Enter selects · Esc exits", Math.max(4, options.width - 2)).length;
-    const title = ({ 2: "Let's get connected.", 3: "Let's give that key a home.", 4: "Let's meet the gang." })[pendingPage.step];
+    const title = pendingPage.heading ?? ({ 2: "Let's get connected.", 3: "Let's give that key a home.", 4: "Let's meet the gang." })[pendingPage.step];
     const minimal = options.rows < 20;
     const budget = Math.max(2, options.rows - 1 - (minimal ? 2 : 3 + wrap(title, options.width - 2).length)
       - Math.max(wrap(question, options.width - 2).length + 1, 2)
@@ -312,10 +312,10 @@ async function executeSetupWizard(options) {
     if (method === "quit") return { code: 0, completed: false, start: false };
     if (method === "existing") { connection = "existing"; break; }
     if (method === "manual") {
-      show({ step: 3, title: "Prefer to do the wiring yourself? Rad.", paragraphs: [
-        "Set OPENROUTER_API_KEY in the environment before starting amfaa.",
-        'Or use your global OpenCode config: ~/.config/opencode/opencode.json. Set provider.openrouter.options.apiKey to your key, or to "{env:OPENROUTER_API_KEY}".',
-        "A .env file alone is not a supported setup shortcut here. Load its values into your environment first. Keep credentials out of Git.",
+      show({ step: 3, heading: "Connect whenever you are ready.", title: "Prefer to do the wiring yourself? Rad.", paragraphs: [
+        "Run amfaa setup later to connect in your browser or save a key.",
+        'Or put your key directly in your global OpenCode config: ~/.config/opencode/opencode.json, under provider.openrouter.options.apiKey.',
+        "Environment-only keys and .env files are not supported for room conversations. Keep credentials out of Git.",
         "We'll finish setup without connecting. Your agents will need that configuration before they can respond. Run amfaa setup whenever you'd like my help again.",
       ] });
       const manual = await choose("Finish setup without connecting?", [
@@ -353,7 +353,7 @@ async function executeSetupWizard(options) {
     catch { code = 1; }
     finally { enterScreen(); }
     if (code === 0) { connection = "saved"; break; }
-    show({ step: 3, title: "Hm. That connection didn't finish.", paragraphs: [
+    show({ step: 3, heading: "Let's try that connection again.", title: "Hm. That connection didn't finish.", paragraphs: [
       "The request may have been cancelled, expired, or failed to save. We can try again or choose another way to connect.",
       "Setup is not marked complete. Any credentials already saved remain on this computer.",
     ] });

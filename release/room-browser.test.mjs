@@ -11,7 +11,7 @@ describe("setup browser handoff", () => {
     expect(roomBrowserMode({}, "linux")).toBe("manual");
     const spawnImpl = vi.fn(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit("exit", 0)); return child; });
     expect(await openRoomBrowser("http://127.0.0.1:54147", { environment: { DISPLAY: ":0" }, platform: "linux", spawnImpl })).toBe(true);
-    expect(spawnImpl).toHaveBeenCalledWith("xdg-open", ["http://127.0.0.1:54147/"], { stdio: "ignore", shell: false });
+    expect(spawnImpl).toHaveBeenCalledWith("/usr/bin/xdg-open", ["http://127.0.0.1:54147/"], { stdio: "ignore", shell: false });
   });
   it("handles a missing browser and rejects external URLs", async () => {
     const spawnImpl = vi.fn(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit("error", new Error("missing"))); return child; });

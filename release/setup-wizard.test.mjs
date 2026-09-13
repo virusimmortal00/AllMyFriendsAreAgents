@@ -53,7 +53,8 @@ describe("native first-time setup wizard", () => {
     await expect(runSetupWizard(value.options)).resolves.toEqual({ code: 0, completed: true, start: false });
     expect(value.options.authenticate).not.toHaveBeenCalled();
     expect(value.options.persist).toHaveBeenCalledOnce();
-    expect(value.output()).toContain("OPENROUTER_API_KEY");
+    expect(value.output()).toContain("provider.openrouter.options.apiKey");
+    expect(value.output()).not.toContain("OPENROUTER_API_KEY");
     expect(value.output()).not.toContain("Key saved!");
   });
   it("recognizes external configuration without opening authentication", async () => {
@@ -102,6 +103,22 @@ describe("native first-time setup wizard", () => {
     value.options.runtimeReady.mockResolvedValue(false);
     await expect(runSetupWizard(value.options)).resolves.toMatchObject({ code: 69 });
     expect(value.options.authenticate).not.toHaveBeenCalled();
+  });
+  it.each(["manual", "failure"])("uses the %s page heading in fullscreen mode", async route => {
+    const value = fixture([]);
+    value.options.authenticate.mockRejectedValue(new Error("connection failed"));
+    let captured = "";
+    await runSetupWizard({ ...value.options, fullscreen: true, width: 160, rows: 50,
+      select: async (items, animation, anyKey) => {
+        if (anyKey) return "continue";
+        captured = value.output().split("\u001b[2J\u001b[H").at(-1);
+        if (captured.includes("Prefer to do the wiring") || captured.includes("Let's try that connection again.")) return "quit";
+        if (items.some(item => item.value === "manual")) return route === "manual" ? "manual" : "key";
+        return items[0].value;
+      },
+    });
+    expect(captured).toContain(route === "manual" ? "Connect whenever you are ready." : "Let's try that connection again.");
+    expect(captured).not.toContain("Let's give that key a home.");
   });
   it("centers the splash across the full terminal", async () => {
     const value = fixture([]);

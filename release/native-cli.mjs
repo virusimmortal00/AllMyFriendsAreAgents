@@ -244,8 +244,10 @@ async function commandStatus(args) {
   if (args.length) return EX_USAGE;
   const { serviceStatus } = await import("./background-service.mjs");
   const result = await serviceStatus(configuredDataRoot());
-  process.stdout.write(result.state === "running" ? `AMFAA is running: ${result.url}\nStop: amfaa stop\n` : `AMFAA is ${result.state}. Start: amfaa start\n`);
-  return 0;
+  if (result.state === "running") process.stdout.write(`AMFAA is running: ${result.url}\nStop: amfaa stop\n`);
+  else if (result.state === "stopped") process.stdout.write("AMFAA is stopped. Start: amfaa start\n");
+  else process.stdout.write(`AMFAA status: ${result.state}. Control metadata is preserved. Try amfaa status shortly.\n`);
+  return result.state === "unknown" ? EX_UNAVAILABLE : 0;
 }
 async function commandStop(args) {
   if (args.length) return EX_USAGE;
@@ -280,7 +282,6 @@ async function serviceMustBeStopped() {
   return true;
 }
 async function commandUpdate(args) {
-  if (!await serviceMustBeStopped()) return EX_UNAVAILABLE;
   if (args.length !== 1) return EX_USAGE;
   const candidateRoot = path.resolve(args[0]);
   const candidate = await active(candidateRoot);
@@ -306,7 +307,6 @@ async function commandUpdate(args) {
   return 0;
 }
 async function commandUninstall(args) {
-  if (!await serviceMustBeStopped()) return EX_UNAVAILABLE;
   const purge = args.length === 2 && args[0] === "--purge-state" && args[1] === "CONFIRM";
   if (args.length && !purge) return EX_USAGE;
   const purgeRoot = purge ? await validatedPurgeRoot() : null;
@@ -318,7 +318,14 @@ async function commandUninstall(args) {
   return 0;
 }
 
-const commands = { status: commandStatus, stop: commandStop, __serve: commandServe, start: commandStart, setup: commandSetup, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: commandUpdate, uninstall: commandUninstall };
+async function stoppedLifecycleAction(args, action) {
+  const { withLifecycleLock } = await import("./lifecycle-lock.mjs");
+  return withLifecycleLock(configuredDataRoot(), async () => {
+    if (!await serviceMustBeStopped()) return EX_UNAVAILABLE;
+    return action(args);
+  });
+}
+const commands = { status: commandStatus, stop: commandStop, __serve: commandServe, start: commandStart, setup: commandSetup, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: args => stoppedLifecycleAction(args, commandUpdate), uninstall: args => stoppedLifecycleAction(args, commandUninstall) };
 const [name = "start", ...args] = process.argv.slice(2);
 try {
   const command = commands[name];

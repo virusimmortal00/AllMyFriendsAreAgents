@@ -151,7 +151,8 @@ loopback OpenCode server. Credentials never enter command arguments or wizard lo
 Runtime output is not forwarded to the terminal. The server is stopped after use.
 `GET /provider` detects recognized existing configuration; this does not verify a
 live model request. Manual setup records onboarding completion without claiming a
-connection and explains environment variables and global OpenCode configuration.
+connection and explains direct global OpenCode configuration. Environment-only
+keys and config environment interpolation are not supported for room conversations.
 Automatic `.env` loading is not part of this launcher. Preview neither checks
 existing configuration nor opens browsers, reads keys, saves state, or starts services.
 
@@ -226,7 +227,16 @@ system login item or restart automatically after a reboot.
 Stop the managed service before updating or uninstalling. Control uses a random
 per-run token in owner-only metadata and a loopback HTTP endpoint. A stale saved
 PID is never used to stop a process. A failed start reports a diagnostic command
-instead of claiming readiness; abandoned startup records expire after 90 seconds.
+instead of claiming readiness. Unreachable control endpoints report an unknown
+state and preserve their credentials. Stale metadata is removed only when its
+recorded process is confirmed absent; elapsed time alone never proves shutdown.
+
+Start, stop, update, uninstall, and service metadata replacement share a lifecycle
+lock beside the data directory (`<data-directory>.lifecycle-lock`). If a CLI
+process crashes while holding this lock, commands fail closed. Before manually
+removing that lock directory, verify the owner PID in `owner.json` has exited
+and no lifecycle command is still running. Do not delete the service metadata
+or provider credentials to recover a lock.
 
 In the disposable Docker sandbox, background startup returns to `sandbox>`.
 Use the same status/stop/start commands there. Keep the container terminal open:

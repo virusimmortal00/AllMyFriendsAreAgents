@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { withLifecycleLock } from './lifecycle-lock.mjs';
 import path from 'node:path';
 import { startService, serviceStatus, stopService } from './background-service.mjs';
 const roots=[];
@@ -33,9 +36,38 @@ describe('native background lifecycle',()=>{
   const input=await fixture(true);await expect(startService(input)).rejects.toThrow('could not start');
   expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
  });
+ it('preserves an old live service record when control becomes unreachable',async()=>{
+  const input=await fixture();await startService(input);
+  const metadata=path.join(input.root,'.amfaa-service.json');
+  const original=await readFile(metadata,'utf8');
+  const unreachable=JSON.stringify({...JSON.parse(original),port:1,created:Date.now()-100000});
+  try {
+   await writeFile(metadata,unreachable,{mode:0o600});
+   expect(await serviceStatus(input.root)).toEqual({state:'unknown'});
+   await expect(startService(input)).rejects.toThrow('preserved');
+   await expect(stopService(input.root)).rejects.toThrow('preserved');
+   expect(await readFile(metadata,'utf8')).toBe(unreachable);
+  } finally {await writeFile(metadata,original,{mode:0o600});}
+  expect((await serviceStatus(input.root)).state).toBe('running');
+ });
+ it('waits for a lifecycle mutation before checking and starting',async()=>{
+  const input=await fixture();let release;let entered;
+  const held=new Promise(resolve=>{entered=resolve;});
+  const mutation=withLifecycleLock(input.root,async()=>{entered();await new Promise(resolve=>{release=resolve;});});
+  await held;let started=false;
+  const pending=startService(input).then(result=>{started=true;return result;});
+  try {
+   await new Promise(resolve=>setTimeout(resolve,150));
+   expect(started).toBe(false);
+   expect(await serviceStatus(input.root)).toEqual({state:'stopped'});
+  } finally {release();await mutation;}
+  expect((await pending).state).toBe('running');
+ });
  it('serializes concurrent starts and recovers stale records without signalling a PID',async()=>{
   const input=await fixture();
-  await writeFile(path.join(input.root,'.amfaa-service.json'),JSON.stringify({version:1,token:'a'.repeat(64),port:0,created:Date.now()-100000,pid:process.pid}),{mode:0o600});
+  const exited=spawn(process.execPath,['-e',''],{stdio:'ignore'});
+  await once(exited,'exit');
+  await writeFile(path.join(input.root,'.amfaa-service.json'),JSON.stringify({version:1,token:'a'.repeat(64),port:0,created:Date.now()-100000,pid:exited.pid}),{mode:0o600});
   expect(await stopService(input.root)).toEqual({state:'stopped'});
   const results=await Promise.allSettled([startService(input),startService(input)]);
   expect(results.some(x=>x.status==='fulfilled')).toBe(true);

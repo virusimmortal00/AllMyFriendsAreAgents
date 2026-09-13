@@ -1,3 +1,4 @@
+import { launchSystemBrowser } from "./browser-launcher.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -52,14 +53,7 @@ export async function exchangeOpenRouterCode(code, verifier, { fetchImpl = fetch
   } catch { throw failure(); }
 }
 
-export function openSetupBrowser(url) {
-  const command = process.platform === "darwin" ? "/usr/bin/open" : process.platform === "win32" ? "rundll32.exe" : "xdg-open";
-  const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
-  return new Promise(resolve => {
-    const child = spawn(command, args, { stdio: "ignore", shell: false });
-    child.once("error", () => resolve(false)); child.once("exit", code => resolve(code === 0));
-  });
-}
+export const openSetupBrowser = launchSystemBrowser;
 
 export async function connectOpenRouter({ write, readSecret = readSetupSecret, openBrowser = openSetupBrowser, headless = false, signal, fetchImpl = fetch, timeoutMs = 600_000 } = {}) {
   const verifier = randomBytes(32).toString("base64url");

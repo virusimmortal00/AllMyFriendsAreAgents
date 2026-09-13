@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import { promisify } from "node:util";
+import { withLifecycleLock } from "../release/lifecycle-lock.mjs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
@@ -114,6 +116,23 @@ describe.skipIf(process.platform === "win32" || !hostTarget())("self-contained n
     });
     expect(launch.status).toBe(78);
     expect(launch.stderr).toBe("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
+  });
+
+  it.each(["update", "uninstall"])("checks service state under the lifecycle lock before %s", async command => {
+    const built = build("8".repeat(40)); const home = fixture();
+    const root = path.join(home, ".all-my-friends-are-agents"); mkdirSync(root);
+    let pending: Promise<unknown>;
+    await withLifecycleLock(root, async () => {
+      pending = promisify(execFile)(path.join(built.install, "amfaa"), command === "update" ? [command, built.install] : [command], {
+        cwd: built.install, env: { HOME: home, PATH: "/path-with-no-node-pnpm-or-opencode" },
+      }).then(() => ({ code: 0 }), error => error);
+      // Publish a live startup while the competing command waits for ownership.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      writeFileSync(path.join(root, ".amfaa-service.json"), JSON.stringify({ version: 1, token: "a".repeat(64), port: 0, created: Date.now(), pid: process.pid }), { mode: 0o600 });
+    });
+    expect(await pending!).toMatchObject({ code: 69, stderr: "Stop AMFAA with amfaa stop before updating or uninstalling.\n" });
+    expect(existsSync(path.join(built.install, "versions"))).toBe(true);
+    expect(existsSync(path.join(built.install, "active-version"))).toBe(true);
   });
 
   it("activates a completely verified update, retains rollback metadata, and preserves durable state during default uninstall", () => {
