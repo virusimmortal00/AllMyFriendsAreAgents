@@ -79,4 +79,11 @@ describe("native first-time setup wizard", () => {
     expect(value.output()).toContain("FIRST-TIME SETUP · PREVIEW");
     expect(value.output()).toContain("3 / 3");
   });
+
+  it("renders project paths without executing embedded terminal controls", async () => {
+    const value = fixture(["", ""]);
+    await runSetupWizard({ ...value.options, preview: true, project: "/projects/demo\u001b[2J\nnext" });
+    expect(value.output()).toContain("/projects/demo\\x1b[2J\\x0anext");
+    expect(value.output()).not.toContain("/projects/demo\u001b[2J");
+  });
 });

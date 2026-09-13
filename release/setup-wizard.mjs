@@ -5,6 +5,12 @@ const LEAVE_ALTERNATE_SCREEN = "\u001b[?1049l";
 const CLEAR_SCREEN = "\u001b[2J\u001b[H";
 
 function normalize(answer) { return typeof answer === "string" ? answer.trim().toLowerCase() : "cancel"; }
+function terminalText(value) {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) => {
+    const code = character.codePointAt(0).toString(16).padStart(2, "0");
+    return `\\x${code}`;
+  });
+}
 function characters(value) { return [...value]; }
 function fit(value, width) {
   const content = characters(value);
@@ -95,7 +101,7 @@ async function executeSetupWizard(options) {
     width, fullscreen, preview, step: 3, title: "Choose what happens next",
     paragraphs: [
       preview ? "◇ Provider setup previewed" : "✓ Model provider connected",
-      `AMFAA will open for this project: ${project}`,
+      `AMFAA will open for this project: ${terminalText(project)}`,
       "This is only the project for this launch. Start AMFAA from a different directory later to work with that project instead.",
     ],
   });

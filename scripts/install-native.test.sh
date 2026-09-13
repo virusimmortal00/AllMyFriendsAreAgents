@@ -146,6 +146,12 @@ if HOME="$test_home" AMFAA_BIN_DIR="$conflict_bin" AMFAA_MANIFEST_URL="file://$r
 [ "$(cat "$conflict_bin/amfaa")" = keep ]
 [ ! -e "$root/conflict-install" ]
 
+writable_bin=$root/writable-bin; mkdir "$writable_bin"; chmod 777 "$writable_bin"
+if HOME="$test_home" AMFAA_BIN_DIR="$writable_bin" AMFAA_MANIFEST_URL="file://$root/1.2.4.json" "$installer" --allow-local-fixtures --no-modify-path --dir "$root/writable-install"; then exit 1; fi
+[ ! -e "$writable_bin/amfaa" ]
+[ -z "$(find "$writable_bin" -mindepth 1 -maxdepth 1 -name '.amfaa-*' -print -quit)" ]
+[ ! -e "$root/writable-install" ]
+
 fake_bin=$root/fake-bin; mkdir "$fake_bin"; printf '#!/bin/sh\necho FreeBSD\n' > "$fake_bin/uname"; chmod +x "$fake_bin/uname"
 if PATH="$fake_bin:$PATH" "$installer" --dir "$root/unsupported"; then exit 1; fi
 printf '%s\n' "POSIX native installer fixtures passed"

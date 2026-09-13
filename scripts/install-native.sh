@@ -107,6 +107,12 @@ assert_safe_bin() {
   case $BIN_DIR in /|"$HOME"|"$HOME/.local") die "command directory is too broad";; esac
   [ ! -L "$BIN_DIR" ] || die "command directory must not be a symbolic link"
   if [ -e "$BIN_DIR" ] && [ ! -d "$BIN_DIR" ]; then die "command directory is not a directory"; fi
+  if [ -d "$BIN_DIR" ]; then
+    python3 - "$BIN_DIR" <<'PY' || die "command directory must not be group- or other-writable"
+import pathlib,sys
+raise SystemExit(1 if pathlib.Path(sys.argv[1]).lstat().st_mode & 0o022 else 0)
+PY
+  fi
   if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then
     owned_visible_launcher || die "$BIN_PATH exists and is not owned by this installer"
   fi
@@ -122,12 +128,25 @@ PY
 }
 write_visible_launcher() {
   mkdir -p "$BIN_DIR"
-  temporary="$BIN_DIR/.amfaa.$$"
-  python3 - "$temporary" "$INSTALL_DIR/amfaa" <<'PY'
-import pathlib,shlex,sys
-pathlib.Path(sys.argv[1]).write_text('#!/bin/sh\n# AMFAA installer-managed launcher\nexec '+shlex.quote(sys.argv[2])+' "$@"\n')
+  temporary=$(python3 - "$BIN_DIR" "$INSTALL_DIR/amfaa" <<'PY'
+import os,pathlib,shlex,stat,sys,tempfile
+directory=pathlib.Path(sys.argv[1])
+metadata=directory.lstat()
+if not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
+ raise SystemExit(1)
+name=None
+try:
+ with tempfile.NamedTemporaryFile('w',prefix='.amfaa-',dir=directory,delete=False) as output:
+  name=output.name
+  os.fchmod(output.fileno(),0o755)
+  output.write('#!/bin/sh\n# AMFAA installer-managed launcher\nexec '+shlex.quote(sys.argv[2])+' "$@"\n')
+  output.flush(); os.fsync(output.fileno())
+ print(name)
+except BaseException:
+ if name is not None: pathlib.Path(name).unlink(missing_ok=True)
+ raise
 PY
-  chmod 755 "$temporary"
+  ) || die "command directory must not be group- or other-writable"
   if [ -e "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then owned_visible_launcher || { rm -f "$temporary"; die "$BIN_PATH changed during installation"; }; fi
   mv -f "$temporary" "$BIN_PATH"
 }
