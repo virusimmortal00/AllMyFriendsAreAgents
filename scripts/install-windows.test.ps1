@@ -95,7 +95,13 @@ try {
 
     $first = New-TestRelease $root "0.1.0" ("b" * 40)
     $firstManifest = New-TestManifest "0.1.0" ("b" * 40) $first
-    $downloadFirst = { param($file, $destination) Assert-True (Test-Path -LiteralPath (Join-Path ($env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR + ".lifecycle-lock") "owner.json")) "installer holds lifecycle ownership during download"; Copy-Item -LiteralPath $first.resources[[string]$file.name] -Destination $destination }.GetNewClosure()
+    $downloadFirst = {
+        param($file, $destination)
+        if (-not (Test-Path -LiteralPath (Join-Path ($env:ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR + ".lifecycle-lock") "owner.json"))) {
+            throw "Installer must hold lifecycle ownership during download."
+        }
+        Copy-Item -LiteralPath $first.resources[[string]$file.name] -Destination $destination
+    }.GetNewClosure()
     $install = Join-Path $root "Install location with spaces & punctuation"
     $result = Install-AmfaaFromManifest $firstManifest $install "0.1.0" $false $downloadFirst
     Assert-True (-not $result.reused) "a clean install is activated"
