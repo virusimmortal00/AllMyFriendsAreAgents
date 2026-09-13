@@ -213,7 +213,7 @@ function createReleaseProjection(root: string, manifest: NativeEvidenceManifest)
   const releaseManifest = {
     schemaVersion: 1,
     application: { version: context.packageJson.version, commit: manifest.source.commit, repository: context.policy.applicationRepository },
-    downstream: { repository: downstream.repository, commit: downstream.headCommit, version: downstream.version, sdkVersion: (context.packageJson.dependencies as Record<string, unknown>)["@opencode-ai/sdk"], pluginVersion: (context.packageJson.devDependencies as Record<string, unknown>)["@opencode-ai/plugin"] },
+    downstream: { repository: downstream.repository, commit: downstream.headCommit, version: downstream.version, sdkVersion: (context.packageJson.dependencies as Record<string, unknown>)["@opencode-ai/sdk"], pluginVersion: (context.packageJson.dependencies as Record<string, unknown>)["@opencode-ai/plugin"] },
     targets,
   };
   writeFileSync(path.join(output, "native-release-manifest.json"), serializeNativeReleaseManifest(releaseManifest, context), { flag: "wx" });

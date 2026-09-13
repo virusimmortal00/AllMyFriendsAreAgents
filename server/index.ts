@@ -1717,6 +1717,12 @@ const httpServer = app.listen(port, host, () => {
   void structuredLogger.log("info", "server.startup.completed", { phase: "listening" });
 });
 
+export const ready = new Promise<{ port: number }>((resolve, reject) => {
+  httpServer.once("error", reject);
+  const listening = () => resolve({ port: (httpServer.address() as import("node:net").AddressInfo).port });
+  if (httpServer.listening) listening(); else httpServer.once("listening", listening);
+});
+
 if (coordinatorHeartbeat.start()) {
   void structuredLogger.log("info", "coordinator.heartbeat.enabled");
 }
@@ -1729,7 +1735,7 @@ function configuredPositiveInteger(name: string) {
 }
 
 let shuttingDown = false;
-async function shutdown(signal: string) {
+export async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   await structuredLogger.log("info", "server.shutdown.started", { signal, phase: "draining" });

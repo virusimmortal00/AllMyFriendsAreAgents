@@ -139,10 +139,28 @@ cd C:\path\to\your\project
 amfaa
 ```
 
-The first launch opens a full-screen setup flow, verifies the bundled runtime,
-and hands model-provider authentication to the bundled OpenCode runtime. AMFAA
-does not collect or store provider credentials itself. When setup finishes, the
-room starts for the current directory and opens at
+The first launch opens a full-screen rainbow ASCII amfaa banner and animated Consolio.
+The splash centers itself across the terminal and recenters when resized. Press any key
+when you are ready to begin (Ctrl-C exits). Set
+`ALL_MY_FRIENDS_ARE_AGENTS_NO_ANIMATION=1` for a still helper.
+Consolio then explains the setup, checks the bundled runtime,
+and helps you connect OpenRouter. Choose **Connect in my browser**, **I have an API key**,
+or **I'll configure it myself later**. Browser sign-in authorizes amfaa without
+copying an API key; SSH/container users can paste a one-time authorization code.
+Consolio also provides hidden API-key entry. Credentials are saved locally through
+the bundled OpenCode runtime. Existing configuration can be reused without re-entry.
+Manual setup accepts `OPENROUTER_API_KEY` in the process environment or OpenCode's
+provider configuration; automatic `.env` loading is not provided by this launcher.
+Model usage is billed to your OpenRouter account. Manual setup can finish before
+connection, but agents need provider configuration before they can respond.
+
+After the welcome, use **↑/↓** to move the green selection marker and **Enter** to confirm it.
+**Esc** finishes later. Explanations use normal terminal text; green accents
+identify the guide and selected action. OpenRouter is lime (`#c8ff00`) and OpenCode is
+editor blue (`#82aaff`); OpenCode details appear in manual configuration help. `NO_COLOR` disables color while keeping
+the selection marker. Terminals without interactive controls use numbered
+choices. Pages that do not fit stay in normal scrollback.
+When setup finishes, start the room for the displayed project folder and open
 [http://127.0.0.1:53147](http://127.0.0.1:53147).
 
 Later launches only need:
@@ -151,9 +169,19 @@ Later launches only need:
 amfaa
 ```
 
+To test unpublished setup changes in a disposable Docker environment, run
+`pnpm test:setup` from the source checkout. See the [sandbox instructions](docs/operations/native-releases.md#disposable-real-setup-test) for isolation and browser sign-in details.
+
+AMFAA runs in the background after setup, so you can close the terminal. Use
+`amfaa status` to check it, `amfaa stop` to stop it, and `amfaa start` from your
+project folder to start again. Room data and your connection stay saved. After
+a computer restart, run `amfaa start` again. Use `amfaa start --foreground` for
+terminal diagnostics. The disposable Docker sandbox instead returns to a shell;
+keep that container open while testing.
+
 Run `amfaa setup` to repeat provider setup, or `amfaa setup --preview` to walk
 through the setup presentation without authentication, filesystem changes, or
-starting the service. If you choose OpenRouter, create an API key in your
+starting the service. You can create an API key in your
 [OpenRouter account](https://openrouter.ai/settings/keys) before setup. See
 [OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
 for provider details.

@@ -150,7 +150,7 @@ export function validatePullRequestEvidence(contract: OpenCodeIntegrationContrac
 export function validateLocalPins(contract: OpenCodeIntegrationContract, input: { packageText: string; tsconfigText: string; workspaceText: string; discoveryText: string }) {
   const errors: string[] = [];
   const packageJson = JSON.parse(input.packageText) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
-  if (packageJson.devDependencies?.["@opencode-ai/plugin"] !== contract.upstream.auditedVersion) errors.push(`pin @opencode-ai/plugin to ${contract.upstream.auditedVersion}`);
+  if (packageJson.dependencies?.["@opencode-ai/plugin"] !== contract.upstream.auditedVersion) errors.push(`keep @opencode-ai/plugin as a production dependency pinned to ${contract.upstream.auditedVersion}`);
   if (packageJson.dependencies?.["@opencode-ai/sdk"] !== contract.upstream.auditedVersion) errors.push(`pin @opencode-ai/sdk to ${contract.upstream.auditedVersion}`);
   const tsconfig = JSON.parse(input.tsconfigText) as { include?: string[]; exclude?: string[] };
   if (!tsconfig.include?.includes("server/**/*.ts") || tsconfig.exclude?.some((path) => path.includes("server/agent-tools"))) errors.push("keep server/agent-tools inside the server TypeScript build");

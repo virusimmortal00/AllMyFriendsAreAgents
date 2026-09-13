@@ -1,5 +1,8 @@
 # Allow only source/build inputs; root scratch files never enter any build stage.
 **
+!Dockerfile
+!release/
+!release/**
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml

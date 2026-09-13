@@ -1,5 +1,40 @@
 # Responsive view audit
 
+## Native CLI setup guide — 2026-09-13
+
+The native setup surface uses a rainbow ASCII banner, animated Consolio guide,
+OpenRouter browser authorization or masked key entry, background-service controls,
+and a final farewell acknowledgement. Preview does not inspect credentials,
+open browsers, save setup state, or launch services. Short terminals paginate
+explanations while retaining visible navigation and actions. The farewell wraps
+its text and offers one any-key finish action.
+
+These terminal surfaces have no DOM view IDs. Browser Phone/Tablet/Short laptop/
+Desktop layouts and their registry are unaffected. Local emulator captures cover
+40×16, 80×20, and 160×40 for completion and background-launch instructions, plus
+40×20 and 80×20 connection paths. Automated geometry checks cover 40/80 columns
+at 16/20/24 rows. Text and actions remain reachable, selection is visible, and
+reading content is vertically balanced above the actions. The restrained green
+accents, neutral body text, and negative space retain the terminal visual style.
+
+Reproduction: `pnpm preview:setup` for the presentation, or `pnpm test:setup` for a
+disposable packaged Linux runtime. Local captures are retained under
+`test-results/setup-goodbye`, `test-results/setup-background`, and the
+`test-results/setup-connect-*` directories. These ignored artifacts are local
+implementation inspection, not independent visual approval or durable public
+screenshot evidence.
+
+Provider-free checks cover credential persistence through the packaged runtime,
+callback validation, cancellation, key masking, service readiness, authenticated
+stop/status, restart, and packaged custom-tool loading. The packaged Linux
+service served the room after restart. Browser opening is tested with injected
+process launchers; remote/headless and container paths do not launch a browser.
+
+Independent account-backed image review and its receipt gate were not run;
+explicit permission is required. Native terminal visual review, real-device
+behavior, macOS/Windows service lifecycle, and an automated live-provider
+conversation remain unverified. No independent visual approval is claimed.
+
 ## Repository recovery and menu containment — 2026-09-09
 
 `GH-08` adds an explicit repository-path repair form and `GH-06` reports fresh

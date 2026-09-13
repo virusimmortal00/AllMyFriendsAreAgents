@@ -91,6 +91,9 @@ export function packageNativeApplication(input: { context?: NativeReleaseContext
     const opencodeDestination = path.join(app, "runtime/opencode/bin", executable(target, "opencode")); mkdirSync(path.dirname(opencodeDestination), { recursive: true }); cpSync(sourceBinary, opencodeDestination); if (target.os !== "windows") chmodSync(opencodeDestination, 0o755);
     cpSync(path.join(ROOT, "release/native-cli.mjs"), path.join(app, "native-cli.mjs"));
     cpSync(path.join(ROOT, "release/setup-wizard.mjs"), path.join(app, "setup-wizard.mjs"));
+    cpSync(path.join(ROOT, "release/setup-auth.mjs"), path.join(app, "setup-auth.mjs"));
+    cpSync(path.join(ROOT, "release/background-service.mjs"), path.join(app, "background-service.mjs"));
+    cpSync(path.join(ROOT, "release/room-browser.mjs"), path.join(app, "room-browser.mjs"));
     writeFileSync(path.join(app, "release.json"), `${JSON.stringify({ schemaVersion: 1, target: target.id, application: { version: context.packageJson.version, commit: input.applicationCommit }, node: { version: context.policy.nodeRuntime.version }, downstream: { version: downstream.version, commit: downstream.headCommit, artifactSha256: proof.sha256 } }, null, 2)}\n`);
     const inventory = files(versionRoot).map((item) => ({ ...item, sha256: item.type === "symlink" ? createHash("sha256").update(`symlink:${item.target}`).digest("hex") : sha256(path.join(versionRoot, item.path)) }));
     writeFileSync(path.join(versionRoot, "inventory.json"), `${JSON.stringify({ schemaVersion: 1, files: inventory }, null, 2)}\n`);

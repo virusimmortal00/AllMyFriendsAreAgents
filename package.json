@@ -15,6 +15,7 @@
     "build": "tsc -b --force && vite build",
     "build:native-application": "tsx scripts/prepare-native-application.ts .runtime/native-production-app",
     "package:native-application": "tsx scripts/package-native-application.ts",
+    "test:setup": "sh scripts/test-setup.sh",
     "preview:setup": "node scripts/preview-native-setup.mjs",
     "evidence:native-release": "tsx scripts/native-release-evidence.ts",
     "check:quality": "pnpm run check:integration-contracts && pnpm run check:ui-standards && pnpm run check:visual-types && pnpm run build && pnpm test",
@@ -43,6 +44,7 @@
   "dependencies": {
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
+    "@opencode-ai/plugin": "1.18.25",
     "@opencode-ai/sdk": "1.18.25",
     "@vitejs/plugin-react": "5.0.4",
     "express": "5.1.0",
@@ -55,7 +57,6 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "@opencode-ai/plugin": "1.18.25",
     "@playwright/test": "1.62.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.5",

@@ -148,14 +148,13 @@ async function startServer(args) {
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH ||= project;
   await markOwnedDefaultDataRoot(dataRoot);
   process.chdir(appRoot);
-  await import(pathToFileURL(path.join(appRoot, "server/index.js")).href);
-  return 0;
+  return import(pathToFileURL(path.join(appRoot, "server/index.js")).href);
 }
 async function commandAuth(args) {
   if (args.length) return EX_USAGE;
   const resolved = await runtime();
   if (resolved.state !== "ready") return EX_UNAVAILABLE;
-  const code = await run(resolved.command, ["auth", "login"]);
+  const code = await run(resolved.command, ["auth", "login", "--provider", "openrouter"]);
   if (code === 0) await persistSetup();
   return code;
 }
@@ -163,11 +162,29 @@ async function setup(preview) {
   const { runSetupWizard } = await import("./setup-wizard.mjs");
   return runSetupWizard({
     preview,
-    project: process.cwd(),
+    sandbox: process.env.ALL_MY_FRIENDS_ARE_AGENTS_SETUP_SANDBOX === "1",
+    port: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PORT || process.env.AGENTWIRE_PORT,
+    project: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd(),
     runtimeReady: async () => (await runtime()).state === "ready",
-    authenticate: async () => {
+    configured: async () => {
+      const { withSetupRuntime } = await import("./setup-auth.mjs");
       const resolved = await runtime();
-      return resolved.state === "ready" ? run(resolved.command, ["auth", "login"]) : EX_UNAVAILABLE;
+      return resolved.state === "ready" && withSetupRuntime(resolved.command, process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd(), client => client.configured());
+    },
+    authenticate: async (method, { write }) => {
+      const { withSetupRuntime, readSetupSecret, connectOpenRouter } = await import("./setup-auth.mjs");
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      process.once("SIGINT", cancel);
+      try {
+        const key = method === "key" ? await readSetupSecret({ signal: controller.signal })
+          : await connectOpenRouter({ write, headless: method === "headless", signal: controller.signal });
+        if (controller.signal.aborted) return 1;
+        const resolved = await runtime();
+        if (resolved.state !== "ready") return EX_UNAVAILABLE;
+        await withSetupRuntime(resolved.command, process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd(), client => client.save(key));
+        return 0;
+      } finally { process.removeListener("SIGINT", cancel); }
     },
     persist: persistSetup,
   });
@@ -182,14 +199,18 @@ async function commandSetup(args) {
   }
   const result = await setup(preview);
   if (result.code !== 0 || !result.completed || !result.start) return result.code;
-  return startServer([]);
+  return launchService(true);
 }
 async function commandStart(args) {
+  if (args.length === 1 && args[0] === "--foreground") {
+    if (!await setupComplete()) { if (await upgradedInstallation()) await persistSetup(); else return EX_CONFIG; }
+    await startServer([]); return 0;
+  }
   if (args.length) return EX_USAGE;
-  if (await setupComplete()) return startServer([]);
+  if (await setupComplete()) return launchService();
   if (await upgradedInstallation()) {
     await persistSetup();
-    return startServer([]);
+    return launchService();
   }
   if (!interactiveTerminal()) {
     process.stderr.write("amfaa: first-time setup is required; run `amfaa` in an interactive terminal\n");
@@ -197,7 +218,46 @@ async function commandStart(args) {
   }
   const result = await setup(false);
   if (result.code !== 0 || !result.completed || !result.start) return result.code;
-  return startServer([]);
+  return launchService(true);
+}
+async function launchService(openBrowser = false) {
+  const { startService } = await import("./background-service.mjs");
+  const root = configuredDataRoot();
+  await markOwnedDefaultDataRoot(root);
+  try {
+    const result = await startService({ root, cliFile, project: process.env.ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH || process.cwd() });
+    process.stdout.write(`\n  [ ^‿^ ] Your room is running!\n\n  Open: ${result.url}\n  ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_SETUP_SANDBOX === "1" ? "Back to the sandbox shell. Keep this container open." : "You can close this terminal."}\n\n  Check on it:  amfaa status\n  Stop it:      amfaa stop\n  Start again:  amfaa start\n\n  Start from your project folder next time.\n  After a computer restart, run amfaa start again.\n\n`);
+    if (openBrowser) {
+      const { openRoomBrowser, roomBrowserMode } = await import("./room-browser.mjs");
+      const mode = roomBrowserMode();
+      if (mode === "remote" || mode === "manual") {
+        const port = new URL(result.url).port;
+        process.stdout.write(`  On another computer? Forward the port over SSH:\n  ssh -N -L ${port}:127.0.0.1:${port} <user>@<host>\n  Then open ${result.url} on your computer.\n\n`);
+      } else if (mode === "local" && !await openRoomBrowser(result.url)) {
+        process.stdout.write("  I couldn't open a browser here. Use the Open link above.\n");
+      }
+    }
+    return 0;
+  } catch (error) { process.stderr.write(`${error.message}\n`); return EX_UNAVAILABLE; }
+}
+async function commandStatus(args) {
+  if (args.length) return EX_USAGE;
+  const { serviceStatus } = await import("./background-service.mjs");
+  const result = await serviceStatus(configuredDataRoot());
+  process.stdout.write(result.state === "running" ? `AMFAA is running: ${result.url}\nStop: amfaa stop\n` : `AMFAA is ${result.state}. Start: amfaa start\n`);
+  return 0;
+}
+async function commandStop(args) {
+  if (args.length) return EX_USAGE;
+  const { stopService } = await import("./background-service.mjs");
+  try { await stopService(configuredDataRoot()); process.stdout.write("AMFAA is stopped. Your room and connection are saved. Start again: amfaa start\n"); return 0; }
+  catch (error) { process.stderr.write(`${error.message}\n`); return EX_UNAVAILABLE; }
+}
+async function commandServe(args) {
+  if (args.length || !process.send) return EX_USAGE;
+  const { serveBackground } = await import("./background-service.mjs");
+  await serveBackground({ root: configuredDataRoot(), start: () => startServer([]) });
+  return 0;
 }
 async function commandVersion(args) {
   if (args.length) return EX_USAGE;
@@ -211,7 +271,16 @@ async function commandDoctor(args) {
   process.stdout.write(`${JSON.stringify({ ...identity, runtime: resolved.state === "ready" ? "ready" : "unavailable", ...(resolved.state === "unavailable" ? { reason: resolved.reason } : {}) })}\n`);
   return resolved.state === "ready" ? 0 : EX_UNAVAILABLE;
 }
+async function serviceMustBeStopped() {
+  const { serviceStatus } = await import("./background-service.mjs");
+  if ((await serviceStatus(configuredDataRoot())).state !== "stopped") {
+    process.stderr.write("Stop AMFAA with amfaa stop before updating or uninstalling.\n");
+    return false;
+  }
+  return true;
+}
 async function commandUpdate(args) {
+  if (!await serviceMustBeStopped()) return EX_UNAVAILABLE;
   if (args.length !== 1) return EX_USAGE;
   const candidateRoot = path.resolve(args[0]);
   const candidate = await active(candidateRoot);
@@ -237,6 +306,7 @@ async function commandUpdate(args) {
   return 0;
 }
 async function commandUninstall(args) {
+  if (!await serviceMustBeStopped()) return EX_UNAVAILABLE;
   const purge = args.length === 2 && args[0] === "--purge-state" && args[1] === "CONFIRM";
   if (args.length && !purge) return EX_USAGE;
   const purgeRoot = purge ? await validatedPurgeRoot() : null;
@@ -248,7 +318,7 @@ async function commandUninstall(args) {
   return 0;
 }
 
-const commands = { start: commandStart, setup: commandSetup, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: commandUpdate, uninstall: commandUninstall };
+const commands = { status: commandStatus, stop: commandStop, __serve: commandServe, start: commandStart, setup: commandSetup, auth: commandAuth, doctor: commandDoctor, version: commandVersion, update: commandUpdate, uninstall: commandUninstall };
 const [name = "start", ...args] = process.argv.slice(2);
 try {
   const command = commands[name];
