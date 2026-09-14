@@ -380,6 +380,19 @@ describe("Transcript message styling", () => {
     expect(html).toContain(">Free<");
   });
 
+  it("keeps price badges in the markup but hides them via a transcript-level class when showMessagePrices is off", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "priced", speaker: "codex-sol", text: "Priced turn.", timestamp: "2026-08-19T12:00:00.000Z", openRouterCostUsd: 0.0042 }]}
+        magnification={100}
+        showMessagePrices={false}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+    expect(html).toContain('class="transcript beveled-inset transcript--prices-hidden"');
+    expect(html).toContain('<span class="message-cost-badge"'); // still rendered; CSS does the hiding
+  });
+
   it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
     const html = renderToStaticMarkup(
       <Transcript

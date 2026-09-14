@@ -461,12 +461,14 @@ export const Transcript = memo(function Transcript({
   messages,
   magnification,
   showTimestamps = true,
+  showMessagePrices = true,
   transcriptRef,
   onOpenImprovement,
 }: {
   messages: RoomMessage[];
   magnification: number;
   showTimestamps?: boolean;
+  showMessagePrices?: boolean;
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -516,7 +518,7 @@ export const Transcript = memo(function Transcript({
     <div className="transcript-shell">
       <div
         ref={transcriptRef}
-        className={`transcript beveled-inset${showTimestamps ? "" : " transcript--timestamps-hidden"}`}
+        className={`transcript beveled-inset${showTimestamps ? "" : " transcript--timestamps-hidden"}${showMessagePrices ? "" : " transcript--prices-hidden"}`}
         role="log"
         aria-live="polite"
         aria-label="Room transcript"

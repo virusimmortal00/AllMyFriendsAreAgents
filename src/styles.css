@@ -767,6 +767,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .message-cost-badge--free { border-color: #5aa56a; background: #e4f7e8; color: #176126; }
 .transcript--timestamps-hidden .message { grid-template-columns: 1fr; }
 .transcript--timestamps-hidden .message time { display: none; }
+.transcript--prices-hidden .message-cost-badge { display: none; }
 .message > div { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .message__bubble { padding: 2px 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .message__text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
