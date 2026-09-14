@@ -625,10 +625,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .roster-current-model small { color: #5b6471; }
 .roster-current-model__identity { overflow-wrap: anywhere; line-height: 1.3; }
 .roster-model-unavailable { margin: 0; padding: 5px; border: 1px solid #c5973d; background: #fff4ca; color: #624500; font-size: 12px; line-height: 1.3; }
-.roster-create-button { justify-self: start; margin-top: 4px; }
+.roster-create-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 4px; padding-top: 9px; border-top: 2px groove white; }
+.roster-create-actions > small { margin-right: auto; color: #596779; }
+.roster-create-button { flex: 0 0 auto; min-width: 110px; }
 .roster-create-panel { display: grid; gap: 7px; padding: 13px; border: 2px groove white; border-radius: 0; background: var(--chrome); }
 .roster-create-panel h4 { margin: 0; color: #153f80; font-size: 15px; }
-.roster-create-panel > small { color: #596779; }
 .roster-create-panel .roster-field-error { color: #8b0000; font-weight: 700; }
 .roster-create-panel input[aria-invalid="true"] { border-color: #a53333; outline: 2px solid rgba(165, 51, 51, .16); }
 .roster-draft-notice { margin: 0; padding: 10px 12px; border: 2px outset white; border-radius: 0; background: #eaf8ed; color: #265b31; }
@@ -1249,6 +1250,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .roster-journey-heading .classic-button { grid-column: 1 / -1; justify-self: start; }
   .roster-selected-model { grid-template-columns: 38px minmax(0, 1fr); }
   .roster-selected-model dl { grid-column: 1 / -1; }
+  .roster-create-actions { align-items: stretch; flex-direction: column; }
+  .roster-create-actions > small { margin-right: 0; }
+  .roster-create-button { width: 100%; }
   .roster-config-workspace input:not([type="checkbox"]):not([type="radio"]), .roster-config-workspace select, .roster-discovery input, .roster-discovery select, .roster-control-login input { min-height: 40px; }
   .roster-config-workspace select.classic-select, .roster-discovery select.classic-select { height: auto; }
   .roster-command-permissions .classic-check { min-height: 40px; }

@@ -1532,6 +1532,14 @@ WebKit, with the persistent roster actions and both directional overflow
 boundaries reachable. The inventory rows remain `Unverified` until the current
 full capture receives independent image review.
 
+2026-09-13 source-change note: the `ROOM-05`/`ROOM-06` new-agent transition now
+ends with a right-aligned default action named **Review agent**. Its adjacent
+helper text describes the remaining review-and-save sequence without exposing
+the implementation term “roster draft.” At narrow checkpoints the helper and
+full-width action stack in reading order. The inventory rows remain `Unverified`
+until current Phone, Tablet, Short laptop, and Desktop captures receive
+independent image review.
+
 ### Full workspaces
 
 | ID | Named view | Distinct state | Status |

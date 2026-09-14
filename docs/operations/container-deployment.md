@@ -134,6 +134,32 @@ An existing deployment should declare its exact volume identities as external,
 so a missing volume fails instead of silently creating empty replacement state.
 A new volume is **not** a migration of settings or conversation history.
 
+## Fresh install versus restored state
+
+A distributable image carries application code and one non-secret exception:
+`config/github-app.json`, baked into every image, holding only the public
+OAuth `clientId` and app name/slug used to start GitHub App installation. This
+is registration metadata for the application itself, not a user's
+authorization — it carries no token, no installation grant, and no repository
+choice, and is safe to display. It is unrelated to anything under `/data`.
+
+Fresh storage (an empty or newly created `/data` volume) starts with none of
+the following: a connected GitHub account, an installation or project
+repository binding, a populated credential vault, configured agents, provider
+authentication, or imported room messages. The image-acceptance workflow
+verifies this by inspecting `github-integrations.json` (saved GitHub
+connections and project bindings) and the credential vault, not just the
+application database, on both a fresh volume and a fresh restart of it.
+
+Reusing an existing volume must preserve that state exactly, including an
+intentionally empty roster. Encountering state the running application version
+cannot understand (for example an unsupported store schema version) must fail
+closed and report the incompatible state; the entrypoint and application must
+never reset or silently discard existing data to recover past it. This is
+exercised in the same acceptance workflow by corrupting a persisted store's
+schema version and confirming the container reports failure rather than
+starting against defaults.
+
 Before replacing an existing instance:
 
 1. Resolve and verify the candidate's immutable digest and source provenance.

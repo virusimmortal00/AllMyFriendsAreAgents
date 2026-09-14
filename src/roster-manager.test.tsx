@@ -294,6 +294,10 @@ describe("roster manager", () => {
     expect(screen.queryByRole("searchbox", { name: "Search models" })).toBeNull();
     const alias = screen.getByRole("textbox", { name: "Agent alias" });
     expect(document.activeElement).toBe(alias);
+    const reviewAgent = screen.getByRole("button", { name: "Review agent" });
+    expect(reviewAgent.hasAttribute("data-default-button")).toBe(true);
+    expect(screen.getByText("Next, review the agent’s settings before saving the roster.")).toBeTruthy();
+    expect(screen.queryByText(/roster draft/i)).toBeNull();
     await user.type(alias, "Scout{enter}");
 
     expect(screen.getByRole("button", { name: "View Scout configuration" })).toBeTruthy();
@@ -307,7 +311,7 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: /Gemini 3.7 Flash/ }));
     const duplicateAlias = screen.getByRole("textbox", { name: "Agent alias" });
     await user.type(duplicateAlias, "Scout");
-    await user.click(screen.getByRole("button", { name: "Add agent to roster draft" }));
+    await user.click(screen.getByRole("button", { name: "Review agent" }));
     expect(screen.getByRole("alert").textContent).toContain("aliases must be unique");
     await user.type(duplicateAlias, " 2");
     expect(screen.queryByRole("alert")).toBeNull();
