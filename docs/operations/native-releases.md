@@ -125,6 +125,35 @@ assignment worktrees. The native launcher also reports sanitized application and
 downstream identities through `amfaa version` and runtime readiness through
 `amfaa doctor`.
 
+## Homebrew
+
+macOS users can also install through Homebrew (issue #200), on top of the
+same signed `darwin-arm64`/`darwin-x64` artifacts described above. There is
+not yet a dedicated `virusimmortal00/homebrew-amfaa` tap repository -- that
+requires repo-creation permissions this project does not currently have -- so
+the formula lives in this repository at
+[`homebrew/Formula/amfaa.rb`](../../homebrew/Formula/amfaa.rb), which is the
+source of truth in the meantime. See
+[`homebrew/README.md`](../../homebrew/README.md) for the exact
+`brew tap`/`brew install` steps and their current limitation, and for how
+`brew upgrade`/`brew uninstall` relate to this section's `update`/`rollback`/
+`uninstall` subcommands (Homebrew replaces the whole install directory on
+upgrade, so the tarball's own rollback bookkeeping is redundant under brew).
+
+The formula's `version`/`url`/`sha256` fields are generated from a published
+release's `native-release-manifest.json` by
+[`scripts/update-homebrew-formula.ts`](../../scripts/update-homebrew-formula.ts),
+run manually today. Remaining follow-up work, out of scope for this change:
+
+- Create the dedicated `virusimmortal00/homebrew-amfaa` tap repository and
+  move the formula there.
+- Wire a formula-bump step into the end of **Publish accepted native
+  release** so each promotion commits an updated formula automatically. This
+  is left as a follow-up rather than done here because that workflow is
+  sensitive, gated, and requires explicit maintainer authorization to change
+  (see above); it should be reviewed on its own once the dedicated tap
+  exists.
+
 ## Native setup presentation
 
 The native wizard starts with a full-screen rainbow ASCII amfaa banner with Consolio, one line
