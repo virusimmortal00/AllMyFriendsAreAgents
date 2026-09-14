@@ -36,7 +36,12 @@ export async function waitForReadiness({
     if (last.outcome === 'http' && last.status === 200) {
       return { ready: true, attempts, elapsedMs: Math.round(performance.now() - started), last };
     }
-    await delay(Math.max(0, Math.min(intervalMs, timeoutMs - (performance.now() - started))));
+    const remainingAfterAttempt = timeoutMs - (performance.now() - started);
+    // Preserve the last observed outcome when there is not enough budget for
+    // the configured retry interval. Starting a near-zero-budget request here
+    // can overwrite a useful HTTP or connection result with a timer artifact.
+    if (remainingAfterAttempt <= intervalMs) break;
+    await delay(intervalMs);
   }
   return { ready: false, attempts, elapsedMs: Math.round(performance.now() - started), last };
 }
