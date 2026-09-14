@@ -59,6 +59,20 @@ describe("Windows-style application menu", () => {
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Room" }));
   });
 
+  it("moves the highlight with the mouse instead of leaving the auto-focused item also highlighted", async () => {
+    const user = userEvent.setup();
+    render(<ClassicMenuBar menus={menus()} />);
+
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    const timestamps = screen.getByRole("menuitemcheckbox", { name: "Timestamps" });
+    expect(document.activeElement).toBe(timestamps); // opening a menu auto-focuses its first item
+
+    const chat = screen.getByRole("menuitemradio", { name: "Chat" });
+    await user.hover(chat);
+    expect(document.activeElement).toBe(chat);
+    expect(document.activeElement).not.toBe(timestamps); // only one item highlighted at a time
+  });
+
   it("restores the menu title after an ordinary command", async () => {
     const user = userEvent.setup();
     render(<ClassicMenuBar menus={menus()} />);

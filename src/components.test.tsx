@@ -358,6 +358,41 @@ describe("Transcript message styling", () => {
     expect(html).not.toContain("speaker--system");
   });
 
+  it("shows an agent message's OpenRouter turn cost as a badge next to its name, but never for humans or system messages", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[
+          { id: "priced", speaker: "codex-sol", text: "Priced turn.", timestamp: "2026-08-19T12:00:00.000Z", openRouterCostUsd: 0.0042 },
+          { id: "free", speaker: "codex-sol", text: "Free turn.", timestamp: "2026-08-19T12:01:00.000Z", openRouterCostUsd: 0 },
+          { id: "unpriced", speaker: "codex-sol", text: "No cost recorded.", timestamp: "2026-08-19T12:02:00.000Z" },
+          { id: "human", speaker: "you", text: "From a human.", timestamp: "2026-08-19T12:03:00.000Z" },
+          { id: "system", speaker: "system", kind: "status", text: "Status line.", timestamp: "2026-08-19T12:04:00.000Z" },
+        ]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<span class="message-cost-badge"');
+    expect(html).toContain('<span class="message-cost-badge message-cost-badge--free"');
+    expect(html.match(/message-cost-badge/g)).toHaveLength(3); // one plain + one free (with its modifier repeating the base class)
+    expect(html).toContain("$0.0042");
+    expect(html).toContain(">Free<");
+  });
+
+  it("keeps price badges in the markup but hides them via a transcript-level class when showMessagePrices is off", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[{ id: "priced", speaker: "codex-sol", text: "Priced turn.", timestamp: "2026-08-19T12:00:00.000Z", openRouterCostUsd: 0.0042 }]}
+        magnification={100}
+        showMessagePrices={false}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+    expect(html).toContain('class="transcript beveled-inset transcript--prices-hidden"');
+    expect(html).toContain('<span class="message-cost-badge"'); // still rendered; CSS does the hiding
+  });
+
   it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
     const html = renderToStaticMarkup(
       <Transcript

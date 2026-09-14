@@ -14,6 +14,7 @@ import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { OpenRouterModelPageResolution } from "../shared/openrouter-model-page";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
+import type { OpenRouterSpendWindow, OpenRouterUsageSummary, OpenRouterUsageWindow } from "../shared/openrouter-usage";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -36,7 +37,7 @@ function roomPath(endpoint:"state"|"messages"|"events"){
 }
 export function roomEventsPath(){return roomPath("events");}
 
-const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","rooms"]);
+const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","openrouter-usage","rooms"]);
 export function scopedRequestPath(path:string){
   const roomId=routedRoomId();
   if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
@@ -153,6 +154,7 @@ export interface RosterResponse {
   readonly modelDiscovery?: ModelDiscoveryResult;
   readonly participantAvailability?: Partial<Record<ActiveAgentId, ModelAvailability>>;
   readonly capabilityStatuses?: Readonly<Record<string, AgentCapabilityStatus>>;
+  readonly usage?: OpenRouterUsageSummary;
 }
 
 export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
@@ -168,6 +170,12 @@ export async function loadModelOfferDetails(providerId: string, modelId: string,
 export async function resolveOpenRouterModelPage(url: string, signal?: AbortSignal): Promise<OpenRouterModelPageResolution> {
   const query = new URLSearchParams({ url });
   return request(`/api/openrouter-model-page?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
+}
+
+export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal, forceRefreshCredits = false): Promise<OpenRouterUsageWindow> {
+  const query = new URLSearchParams({ window, ...(forceRefreshCredits ? { refresh: "1" } : {}) });
+  return request(`/api/openrouter-usage?${query}`, { method: "GET", cache: "no-store", signal })
     .then((response) => response.json());
 }
 

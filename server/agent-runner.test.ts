@@ -251,14 +251,14 @@ describe("OpenCode runtime contract", () => {
       messageId: "msg_structured",
       structured: { schemaVersion: 1 as const, action: "speak" as const, messages: ["A typed answer."], conversationState: "settled" as const },
       finish: "stop",
-      cost: 0,
+      cost: 0.0037,
       tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
       input,
     })) };
 
     const result = await runAgent("codex-sol", state, "Answer once.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { runtimeCommand: () => "/app/runtime/opencode/bin/opencode", structuredTransport });
 
-    expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" } });
+    expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" }, costUsd: 0.0037 });
     const invocation = structuredTransport.run.mock.calls[0][0];
     expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: "plan" });
     expect(invocation.prompt).toContain("Return only the requested structured room-turn object");

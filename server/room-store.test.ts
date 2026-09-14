@@ -255,6 +255,34 @@ describe("room style persistence", () => {
     ]);
   });
 
+  it("persists a message's generation id and OpenRouter turn cost across reopen", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+
+    await store.addMessage("codex-sol", "priced", "chat", undefined, undefined, undefined, { generationId: "gen-1", costUsd: 0.0042 });
+    await store.addMessage("codex-sol", "free", "chat", undefined, undefined, undefined, { generationId: "gen-2", costUsd: 0 });
+    await store.addMessage("codex-sol", "unpriced");
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    const [priced, free, unpriced] = reopened.snapshot().messages.slice(-3);
+    expect(priced).toMatchObject({ text: "priced", generationId: "gen-1", openRouterCostUsd: 0.0042 });
+    expect(free).toMatchObject({ text: "free", generationId: "gen-2", openRouterCostUsd: 0 });
+    expect(unpriced).not.toHaveProperty("generationId");
+    expect(unpriced).not.toHaveProperty("openRouterCostUsd");
+  });
+
+  it("carries generation id and OpenRouter turn cost through command-delivery messages too", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
+
+    await store.addCommandDeliveryMessageOnce("attempt-1", 0, "codex-sol", "task result", undefined, { burstId: "attempt-1", sequence: 0 }, { generationId: "gen-3", costUsd: 0.0021 });
+    const [delivered] = store.snapshot().messages.slice(-1);
+    expect(delivered).toMatchObject({ text: "task result", generationId: "gen-3", openRouterCostUsd: 0.0021 });
+  });
+
   it("serializes simultaneous message saves without dropping either response", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-room-"));
     temporaryDirectories.push(projectRoot);

@@ -70,6 +70,7 @@ import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import { OPEN_CODE_RUNTIME_REFRESH_TTL_MS, publicOpenCodeRuntimeStatus, resolveOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
+import { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import { OpenCodeContextSummarizer } from "./context-summarizer.js";
@@ -190,7 +191,8 @@ const storageScope = typeof (store as Partial<IdentityRepository>).getStorageSco
   ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
   : undefined;
 const currentProjectId = storageScope?.projectId || legacyProjectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
-const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
+const openRouterSpend = await OpenRouterSpendStore.open(storageConfiguration.dataDirectory, undefined, (error) => structuredLogger.log("error", "openrouter-spend.read.failed", { error, outcome: "started-empty" }));
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation, openRouterSpend);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
@@ -931,8 +933,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         }
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         await delivery.write(sequence, () => deliveryId
-          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence})
-          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence}));
+          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd})
+          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,{generationId:result.generationId,costUsd:result.costUsd}));
         broadcast();
       },
     });
@@ -1073,7 +1075,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
     const visibleCharacters = parsed.visibleMessages.reduce((total,message)=>total+message.length,0);
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters,removedOrProtocolCharacters:result.structuredTurn?0:Math.max(0,result.text.length-visibleCharacters),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
-    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
+    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId,costUsd:result.costUsd };
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) {
       if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
@@ -1115,7 +1117,7 @@ const commandRuntime = new CommandRuntime({
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1125,7 +1127,7 @@ const commandRuntime = new CommandRuntime({
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
     const burstId=randomUUID();
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1447,7 +1449,7 @@ app.get("/api/control/capabilities", async (request, response) => {
   const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
   return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
 });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, humanIsMember: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined, auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, spend: openRouterSpend, control: controlPlane, humanIsMember: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined, auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
 registerRoomSettingsRoutes({
   app,
   store,
@@ -1766,6 +1768,7 @@ async function performShutdown(signal: string) {
   await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
   await structuredLogger.log("info", "server.shutdown.completed", { signal, phase: "closed" });
   await structuredLogger.flush();
+  await openRouterSpend.flush().catch((error) => structuredLogger.log("error", "openrouter-spend.flush.failed", { signal, error }));
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

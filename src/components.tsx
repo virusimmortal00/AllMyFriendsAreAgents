@@ -25,6 +25,7 @@ import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd }
 import type { RoomAgentRoster } from "../shared/roster";
 import { openCodeRuntimeStatusMessage, type OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
+import { formatUsd } from "../shared/currency";
 import { ProviderMark } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
@@ -420,6 +421,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
   const visibleText = isAgentId(message.speaker)
     ? visibleAgentChatText(message.text)
     : visibleAgentText(message.text);
+  const showCost = isAgentId(message.speaker) && message.openRouterCostUsd !== undefined;
   return (
     <article className={`message message--${commandDisclosure ? "command" : message.kind || "chat"}`}>
       <time>[{formatTime(message.timestamp)}]</time>
@@ -435,6 +437,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
         ) : (
           <>
             <strong className={`speaker speaker--${message.speaker}`}>{message.speakerName || participantScreenName(message.speaker)}:</strong>{" "}
+            {showCost ? <><span className={`message-cost-badge${message.openRouterCostUsd === 0 ? " message-cost-badge--free" : ""}`} title="OpenRouter's observed cost for this whole turn, shown on every message it produced.">{message.openRouterCostUsd === 0 ? "Free" : formatUsd(message.openRouterCostUsd)}</span>{" "}</> : null}
             <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
               <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
             </span>
@@ -451,18 +454,21 @@ const TranscriptMessage = memo(function TranscriptMessage({
   && previous.message.speakerName === next.message.speakerName
   && previous.message.text === next.message.text
   && previous.message.timestamp === next.message.timestamp
+  && previous.message.openRouterCostUsd === next.message.openRouterCostUsd
   && equalChatStyle(previous.message.style, next.message.style));
 
 export const Transcript = memo(function Transcript({
   messages,
   magnification,
   showTimestamps = true,
+  showMessagePrices = true,
   transcriptRef,
   onOpenImprovement,
 }: {
   messages: RoomMessage[];
   magnification: number;
   showTimestamps?: boolean;
+  showMessagePrices?: boolean;
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -512,7 +518,7 @@ export const Transcript = memo(function Transcript({
     <div className="transcript-shell">
       <div
         ref={transcriptRef}
-        className={`transcript beveled-inset${showTimestamps ? "" : " transcript--timestamps-hidden"}`}
+        className={`transcript beveled-inset${showTimestamps ? "" : " transcript--timestamps-hidden"}${showMessagePrices ? "" : " transcript--prices-hidden"}`}
         role="log"
         aria-live="polite"
         aria-label="Room transcript"

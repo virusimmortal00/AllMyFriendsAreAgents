@@ -2,6 +2,7 @@ export const TRANSCRIPT_MAGNIFICATION_LEVELS = [75, 90, 100, 110, 125, 150] as c
 export const DEFAULT_TRANSCRIPT_MAGNIFICATION = 100;
 export const TRANSCRIPT_MAGNIFICATION_STORAGE_KEY = "allmyfriendsareagents.transcript-magnification";
 export const TRANSCRIPT_TIMESTAMPS_STORAGE_KEY = "allmyfriendsareagents.transcript-timestamps";
+export const TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY = "allmyfriendsareagents.transcript-message-prices";
 
 export function sanitizeTranscriptMagnification(value: unknown) {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -48,6 +49,24 @@ export function saveTranscriptTimestamps(visible: boolean) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(TRANSCRIPT_TIMESTAMPS_STORAGE_KEY, String(visible));
+  } catch {
+    // A blocked localStorage should not make the room unusable.
+  }
+}
+
+export function loadTranscriptMessagePrices() {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveTranscriptMessagePrices(visible: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY, String(visible));
   } catch {
     // A blocked localStorage should not make the room unusable.
   }

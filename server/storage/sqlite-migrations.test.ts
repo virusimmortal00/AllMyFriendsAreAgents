@@ -117,7 +117,7 @@ describe("SQLite migrations", () => {
         "room_attachment_events",
         "room_forks",
       ]));
-      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 27 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 28 });
       expect((database.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map(({ name }) => name)).toContain("recipient_human_id");
       const assignmentColumns = (database.prepare("PRAGMA table_info(assignment_records)").all() as Array<{ name: string }>).map(({ name }) => name);
       expect(assignmentColumns).toEqual(expect.arrayContaining(["lifecycle_revision", "cancelled_at", "disposed_at", "last_operation_key"]));
@@ -125,6 +125,8 @@ describe("SQLite migrations", () => {
       expect(messageColumns).toContain("client_message_id");
       expect(messageColumns).toContain("mentions_json");
       expect(messageColumns).toContain("continuation_request_json");
+      expect(messageColumns).toContain("generation_id");
+      expect(messageColumns).toContain("open_router_cost_usd");
       expect((database.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["roster_revision", "roster_schema_version", "deployment_provenance_json", "server_id", "project_id", "identity_revision"]));
       expect((database.prepare("PRAGMA table_info(rooms)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["lifecycle_revision", "attachment_revision", "forked_from_room_id", "forked_from_project_id"]));
       expect((database.prepare("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>).map(({ name }) => name)).toEqual(expect.arrayContaining(["code_epoch", "lane", "invalidated_at", "invalidation_reason"]));

@@ -50,6 +50,8 @@ export interface RoomMessage {
   speakerName?: string;
   clientMessageId?: string;
   mentions?: MessageMention[];
+  generationId?: string;
+  openRouterCostUsd?: number;
 }
 export interface PublicPollProjection {
   pollId: string;

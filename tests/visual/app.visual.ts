@@ -65,7 +65,7 @@ async function openScenario(page: Page, id: string) {
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
       await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
-  }
+  } else if (id === "open-router-account") await menu(page, "Window", "OpenRouter");
 }
 
 async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIOS[number], shot: string) {

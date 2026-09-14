@@ -209,6 +209,7 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
               role={item.checked === undefined ? "menuitem" : `menuitem${item.checkType ?? "radio"}`}
               aria-checked={item.checked === undefined ? undefined : item.checked}
               disabled={item.disabled}
+              onMouseEnter={(event) => { if (!item.disabled) event.currentTarget.focus(); }}
               onClick={() => {
                 const returnFocusTo = titleRefs.current[index];
                 deactivate();

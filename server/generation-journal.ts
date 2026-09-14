@@ -1,12 +1,15 @@
 import path from "node:path";
 import type { AgentId } from "./types.js";
 import { AuthoritativeLogging } from "./authoritative-logging.js";
+import type { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 import { conversationLogFields } from "./structured-logger.js";
 
 export interface GenerationJournalEvent {
   type: "session.fresh" | "session.reused" | "session.invalidated" | "generation.started" | "generation.retry" | "generation.completed" | "generation.cancelled" | "generation.failed" | "generation.interpreted" | "generation.delivery";
   generationId: string;
   agent: AgentId;
+  /** The room-agent's configured access provider (e.g. "openrouter", "openai"). Gates OpenRouter-only spend recording. */
+  providerId?: string;
   jobId?: string;
   runId?: string;
   turnId?: string;
@@ -20,14 +23,14 @@ export interface GenerationJournalEvent {
 /** Compatibility facade routing generation evidence into the six-stream foundation. */
 export class GenerationJournal {
   readonly path: string;
-  private constructor(readonly logging: AuthoritativeLogging) {
+  private constructor(readonly logging: AuthoritativeLogging, private readonly spend?: OpenRouterSpendStore) {
     this.path = path.join(logging.logDirectory, "generations.jsonl");
   }
 
-  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), onError?: (error: unknown) => unknown, logging?: AuthoritativeLogging) {
+  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), onError?: (error: unknown) => unknown, logging?: AuthoritativeLogging, spend?: OpenRouterSpendStore) {
     try {
       const foundation = logging || await AuthoritativeLogging.open({ dataDirectory: stateDirectory, projectId: path.basename(projectRoot), projectPath: projectRoot });
-      return new GenerationJournal(foundation);
+      return new GenerationJournal(foundation, spend);
     } catch (error) {
       onError?.(error);
       throw error;
@@ -68,6 +71,7 @@ export class GenerationJournal {
           ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
           routing, rateLimit, cooldown, error,
         }, context);
+        if (event.providerId === "openrouter") this.spend?.record(event.agent, providerUsage, providerCostUsd, { generationId: event.generationId });
       }
       if (toolOutcomes !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes", { ...evidence, outcomes: toolOutcomes }, context);
       else if (toolCalls !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes.summary", { ...evidence, toolCalls, toolFailures, generationEvent: event.type }, context);

@@ -14,11 +14,12 @@ import type { ModelDiscoveryService } from "./model-discovery.js";
 import { ControlError, ControlPlaneStore, CONTROL_SESSION_COOKIE } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
+import type { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService}={}) {
+async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService;spend?:OpenRouterSpendStore}={}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-roster-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
   if (options.control) await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
@@ -37,7 +38,7 @@ async function fixture(options:{control?:boolean;capabilities?:boolean;realContr
   if (options.realControl) registerControlPlaneRoutes({ app, control: control!, discovery, runtimeCommand: () => "opencode" });
   const auditChange = vi.fn(async () => undefined);
   const capabilityStatuses=options.capabilities?()=>({"codex-sol":{agentId:"codex-sol",policyRevision:1 as const,capabilities:{conversation:{configured:true,runtimeAvailable:true,effective:true,reason:"available" as const,guidance:"safe"},room_diagnostics:{configured:true,runtimeAvailable:true,effective:true,reason:"available" as const,guidance:"safe",contract:"read-only" as const},github_read:{configured:false,runtimeAvailable:false,effective:false,reason:"not_configured" as const,guidance:"Configure server-only read access.",contract:"read-only" as const},project_write:{configured:false,runtimeAvailable:false,effective:false,reason:"governed_worker_only" as const,guidance:"Use a worker."}},effectiveCommands:[],commands:{}}}):undefined;
-  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, intelligence: options.intelligence, control, capabilityStatuses, humanIsMember: options.humanIsMember, auditChange, broadcast() {} });
+  registerRosterRoutes({ app, store, humans, sessions, processes, generations, discovery, intelligence: options.intelligence, spend: options.spend, control, capabilityStatuses, humanIsMember: options.humanIsMember, auditChange, broadcast() {} });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (url: string, init: RequestInit = {}, authenticated = true) => fetch(`${base}${url}`, { ...init, headers: { "Content-Type": "application/json", ...(authenticated ? { Cookie: cookie, "X-AMFAA-CSRF": sessions.csrfToken(cookie)! } : {}), ...(init.headers as Record<string, string> | undefined) } });
@@ -87,6 +88,50 @@ describe("live roster API", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.json()).toMatchObject({ resolvedModelId: "z-ai/glm-5.3-flash", revealedReplacement: true });
       expect(intelligence.resolveModelPage).toHaveBeenCalledWith("https://openrouter.ai/stealth/ox-alpha", expect.any(Array));
+    } finally { await api.close(); }
+  });
+
+  it("includes room and per-agent OpenRouter usage in the roster projection only when a spend tracker is configured", async () => {
+    const noSpend = await fixture({});
+    try {
+      expect((await (await noSpend.call("/api/roster")).json()).usage).toBeUndefined();
+    } finally { await noSpend.close(); }
+
+    const spend = { snapshot: vi.fn(() => ({ room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } } })) } as unknown as OpenRouterSpendStore;
+    const intelligence = { enrich: vi.fn(async (result) => result), credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
+    const withSpend = await fixture({ spend, intelligence });
+    try {
+      const projection = await (await withSpend.call("/api/roster")).json();
+      expect(projection.usage).toEqual({
+        room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+        credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" },
+      });
+    } finally { await withSpend.close(); }
+  });
+
+  it("serves windowed OpenRouter usage and validates the window parameter", async () => {
+    const noSpend = await fixture({});
+    try {
+      expect((await noSpend.call("/api/openrouter-usage?window=24h")).status).toBe(404);
+    } finally { await noSpend.close(); }
+
+    const windowResult = { room: { generations: 4, costUsd: 0.4, inputTokens: 40, outputTokens: 8, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: {}, sinceIso: "2026-08-25T00:00:00.000Z", truncated: false };
+    const spend = { since: vi.fn(() => windowResult) } as unknown as OpenRouterSpendStore;
+    const intelligence = { credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
+    const api = await fixture({ spend, intelligence });
+    try {
+      expect((await api.call("/api/openrouter-usage?window=nonsense")).status).toBe(400);
+      expect(spend.since).not.toHaveBeenCalled();
+      const response = await api.call("/api/openrouter-usage?window=24h");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ ...windowResult, credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" } });
+      expect(spend.since).toHaveBeenCalledWith("24h");
+      expect(intelligence.credits).toHaveBeenLastCalledWith(false);
+
+      await api.call("/api/openrouter-usage?window=24h&refresh=1");
+      expect(intelligence.credits).toHaveBeenLastCalledWith(true);
     } finally { await api.close(); }
   });
 

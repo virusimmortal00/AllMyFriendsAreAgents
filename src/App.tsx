@@ -5,7 +5,7 @@ import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, Wor
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
-import { adjacentTranscriptMagnification, loadTranscriptMagnification, loadTranscriptTimestamps, saveTranscriptMagnification, saveTranscriptTimestamps } from "./transcript-view";
+import { adjacentTranscriptMagnification, loadTranscriptMagnification, loadTranscriptMessagePrices, loadTranscriptTimestamps, saveTranscriptMagnification, saveTranscriptMessagePrices, saveTranscriptTimestamps } from "./transcript-view";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
@@ -32,6 +32,7 @@ import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { refreshControlSession } from "./control-session";
 import { ServerAdministration, type AdministrationDestination } from "./server-administration";
 import { Diagnostics } from "./diagnostics";
+import { OpenRouterAccount } from "./openrouter-account";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
@@ -183,6 +184,7 @@ export default function App() {
   const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const [showTimestamps, setShowTimestamps] = useState(loadTranscriptTimestamps);
+  const [showMessagePrices, setShowMessagePrices] = useState(loadTranscriptMessagePrices);
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
@@ -570,6 +572,14 @@ export default function App() {
     });
   }
 
+  function toggleTranscriptMessagePrices() {
+    setShowMessagePrices((current) => {
+      const next = !current;
+      saveTranscriptMessagePrices(next);
+      return next;
+    });
+  }
+
   useEffect(() => {
     const onTranscriptShortcut = (event: globalThis.KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -742,6 +752,11 @@ export default function App() {
     showWorkspace("Server Administration");
   }
 
+  function openOpenRouterAccount() {
+    setRosterOpen(false);
+    if (workspaceView !== "OpenRouter") showWorkspace("OpenRouter");
+  }
+
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
     if (destination === "Diagnostics") showWorkspace("Diagnostics");
@@ -757,6 +772,7 @@ export default function App() {
   const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
+  const agentLabels = useMemo<Readonly<Record<string, string>>>(() => Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.conversationalName || entry.agentId])), [roster.entries]);
   const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
   const peopleHere = (room.humans?.length || 0) + enabledAgents.length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
@@ -819,6 +835,7 @@ export default function App() {
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
+        presentationCommand({ label: "Message prices", accessKey: "M", checked: showMessagePrices, checkType: "checkbox", onSelect: toggleTranscriptMessagePrices }),
         { type: "separator" },
         presentationCommand({ label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) }),
         presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
@@ -833,6 +850,7 @@ export default function App() {
         workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
         workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
         workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
+        workspaceCommand({ label: "OpenRouter", accessKey: "p", checked: workspaceView === "OpenRouter", onSelect: () => openOpenRouterAccount() }),
     ]), view: VIEWS.windowMenu },
     {
       id: "help",
@@ -865,6 +883,7 @@ export default function App() {
       case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} protectedWork={protectedWork} agents={roster.entries.filter((entry) => entry.enabled)} />; break;
       case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
       case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
+      case "OpenRouter": workspaceContent = <OpenRouterAccount agentLabels={agentLabels} refreshKey={connectionEpoch} />; break;
       case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
       default: workspaceView satisfies never;
     }
@@ -889,7 +908,7 @@ export default function App() {
             {workspaceContent}
           </WorkspaceSurface> : <>
           <section className="chat-panel beveled-inset" {...viewAttributes(VIEWS.roomChat)} data-responsive-view-id={VIEWS.compactRoomChat.id} data-responsive-view-name={VIEWS.compactRoomChat.name} data-responsive-view-state={VIEWS.compactRoomChat.state}>
-            <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} transcriptRef={transcript} onOpenImprovement={openImprovement} />
+            <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} showMessagePrices={showMessagePrices} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
@@ -940,6 +959,7 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
+          onOpenOpenRouterAccount={openOpenRouterAccount}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}

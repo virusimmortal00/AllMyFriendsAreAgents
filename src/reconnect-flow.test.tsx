@@ -9,7 +9,7 @@ import App from "./App";
 import { updateControlSession } from "./control-session-state";
 import { ApiRequestError } from "./api";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend } from "./client-persistence";
-import { TRANSCRIPT_TIMESTAMPS_STORAGE_KEY } from "./transcript-view";
+import { TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY, TRANSCRIPT_TIMESTAMPS_STORAGE_KEY } from "./transcript-view";
 import type { HumanPresence, RoomState } from "./types";
 import { legacyDefaultRoomAgentRoster } from "../shared/roster";
 
@@ -668,6 +668,23 @@ describe("rendered reconnect recovery", () => {
     await chooseMenuItem(user, "View", "Timestamps");
     expect(screen.getByRole("log", { name: "Room transcript" }).className).not.toContain("transcript--timestamps-hidden");
     expect(window.localStorage.getItem(TRANSCRIPT_TIMESTAMPS_STORAGE_KEY)).toBe("true");
+  });
+
+  it("toggles and persists message prices from the View menu", async () => {
+    const user = userEvent.setup();
+    await renderConnected([{ id: "priced", speaker: "codex-sol", text: "Priced", timestamp: "2026-08-24T12:00:00.000Z", openRouterCostUsd: 0.0042 }]);
+
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    expect(within(screen.getByRole("menu", { name: "View" })).getByRole("menuitemcheckbox", { name: "Message prices" }).getAttribute("aria-checked")).toBe("true");
+    await user.keyboard("{Escape}");
+
+    await chooseMenuItem(user, "View", "Message prices");
+    expect(screen.getByRole("log", { name: "Room transcript" }).className).toContain("transcript--prices-hidden");
+    expect(window.localStorage.getItem(TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY)).toBe("false");
+
+    await chooseMenuItem(user, "View", "Message prices");
+    expect(screen.getByRole("log", { name: "Room transcript" }).className).not.toContain("transcript--prices-hidden");
+    expect(window.localStorage.getItem(TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY)).toBe("true");
   });
 
   it("keeps an ambiguous POST pending across reconnect and resends only after an explicit click with the same client ID", async () => {

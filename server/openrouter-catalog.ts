@@ -1,8 +1,11 @@
 import type { DiscoveredModel, ModelDiscoveryResult, ModelOffer, ModelOfferDetails, ModelPricing } from "../shared/model-discovery.js";
+import type { OpenRouterCreditBalance } from "../shared/openrouter-usage.js";
 import { parseOpenRouterModelPageUrl, type OpenRouterModelPageResolution } from "../shared/openrouter-model-page.js";
+import { readOpenRouterApiKey } from "./openrouter-credentials.js";
 
 const CATALOG_TTL_MS = 15 * 60_000;
 const OFFER_TTL_MS = 5 * 60_000;
+const CREDITS_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 2_500;
 const MODEL_PAGE_LIMIT_BYTES = 512 * 1024;
 
@@ -59,10 +62,12 @@ function friendlyOpenRouterName(value: unknown, authorDisplayName: string | unde
 export class OpenRouterCatalogService {
   private catalog?: { expiresAt: number; promise: Promise<Map<string, OpenRouterModel>> };
   private readonly offers = new Map<string, { expiresAt: number; promise: Promise<ModelOfferDetails> }>();
+  private creditsCache?: { expiresAt: number; promise: Promise<OpenRouterCreditBalance | undefined> };
 
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
+    private readonly apiKey: (env?: NodeJS.ProcessEnv) => Promise<string | undefined> = readOpenRouterApiKey,
   ) {}
 
   async enrich(result: ModelDiscoveryResult): Promise<ModelDiscoveryResult> {
@@ -104,6 +109,17 @@ export class OpenRouterCatalogService {
     return { status: "unavailable", requestedModelId: reference.modelId, ...(replacement ? { resolvedModelId: replacement } : {}), revealedReplacement: Boolean(replacement) };
   }
 
+  /** The connected account's remaining OpenRouter balance, or undefined when no key is configured. Pass `forceRefresh` to bypass the cache for an explicit user-initiated refresh. */
+  async credits(forceRefresh = false): Promise<OpenRouterCreditBalance | undefined> {
+    if (!forceRefresh && this.creditsCache && this.creditsCache.expiresAt > this.now()) return this.creditsCache.promise;
+    const promise = this.fetchCredits().catch((error) => {
+      this.creditsCache = undefined;
+      throw error;
+    });
+    this.creditsCache = { expiresAt: this.now() + CREDITS_TTL_MS, promise };
+    return promise;
+  }
+
   private models() {
     if (this.catalog && this.catalog.expiresAt > this.now()) return this.catalog.promise;
     const promise = this.fetchModels().catch((error) => {
@@ -114,11 +130,11 @@ export class OpenRouterCatalogService {
     return promise;
   }
 
-  private async fetchJson(url: string) {
+  private async fetchJson(url: string, authorization?: string) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const response = await this.fetchImpl(url, { headers: { Accept: "application/json" }, signal: controller.signal });
+      const response = await this.fetchImpl(url, { headers: { Accept: "application/json", ...(authorization ? { Authorization: authorization } : {}) }, signal: controller.signal });
       if (!response.ok) throw new Error(`OpenRouter catalog returned ${response.status}.`);
       return await response.json() as unknown;
     } finally {
@@ -246,5 +262,16 @@ export class OpenRouterCatalogService {
       if (!previous || offerPrice < previousPrice) grouped.set(key, offer);
     }
     return { providerId: "openrouter", modelId: canonicalModelId, offers: [...grouped.values()].sort((a, b) => ((a.inputPerMillion || 0) + (a.outputPerMillion || 0)) - ((b.inputPerMillion || 0) + (b.outputPerMillion || 0))).slice(0, 16), fetchedAt: new Date(this.now()).toISOString() };
+  }
+
+  private async fetchCredits(): Promise<OpenRouterCreditBalance | undefined> {
+    const key = await this.apiKey();
+    if (!key) return undefined;
+    const payload = await this.fetchJson("https://openrouter.ai/api/v1/credits", `Bearer ${key}`);
+    const data = payload && typeof payload === "object" ? (payload as { data?: unknown }).data : undefined;
+    const totalCreditsUsd = finite(data && typeof data === "object" ? (data as { total_credits?: unknown }).total_credits : undefined);
+    const totalUsageUsd = finite(data && typeof data === "object" ? (data as { total_usage?: unknown }).total_usage : undefined);
+    if (totalCreditsUsd === undefined || totalUsageUsd === undefined) throw new Error("OpenRouter credits response was malformed.");
+    return { totalCreditsUsd, totalUsageUsd, remainingUsd: Math.max(0, totalCreditsUsd - totalUsageUsd), fetchedAt: new Date(this.now()).toISOString() };
   }
 }

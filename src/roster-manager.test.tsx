@@ -84,6 +84,39 @@ describe("roster manager", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
+  it("shows room spend, remaining credits, a per-agent row badge, and a link to the dedicated OpenRouter workspace", async () => {
+    const usage = {
+      room: { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      agents: { "codex-sol": { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+      credits: { totalCreditsUsd: 50, totalUsageUsd: 2, remainingUsd: 48, fetchedAt: "2026-08-26T00:00:00.000Z" },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, conversationalName: "Sol" }] }, catalog, usage }), { status: 200 })));
+    const user = userEvent.setup();
+    const onOpenOpenRouterAccount = vi.fn();
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} onOpenOpenRouterAccount={onOpenOpenRouterAccount} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.getByText("Spent $0.13")).toBeTruthy(); // the compact per-agent row badge
+
+    const link = screen.getByRole("button", { name: /OpenRouter usage.*\$0\.13 spent · \$48\.00 left/s });
+    await user.click(link);
+    expect(onOpenOpenRouterAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits the OpenRouter link when no navigation handler is given, even with usage present", async () => {
+    const usage = { room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: {} };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog, usage }), { status: 200 })));
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByRole("button", { name: /OpenRouter usage/ })).toBeNull();
+  });
+
+  it("omits the spend summary when the server has no spend tracker configured", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 })));
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByText(/^Spent /)).toBeNull();
+  });
+
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
 
