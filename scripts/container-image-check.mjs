@@ -33,6 +33,17 @@ async function ready(){
   } catch {}
   throw new Error(`Isolated image did not become ready: ${JSON.stringify({platform,...result,container:state})}`);
 }
+async function waitExited(name,timeoutMs=60_000){
+  const started=Date.now();
+  while(Date.now()-started<timeoutMs){
+    let state;
+    try { state=JSON.parse(docker(['inspect','--format','{{json .State}}',name])); }
+    catch { throw new Error('Container disappeared while waiting for it to exit.'); }
+    if(!state.Running) return state;
+    await new Promise(resolve=>setTimeout(resolve,1_000));
+  }
+  throw new Error('Container did not exit for incompatible persisted state.');
+}
 function start(){docker(['run','--detach','--init','--network','none','--platform',platform,'--name',container,...volumeArgs(),'-e','ALL_MY_FRIENDS_ARE_AGENTS_STORAGE_BACKEND=sqlite','-e','ALL_MY_FRIENDS_ARE_AGENTS_SQLITE_PATH=/data/amfaa.sqlite','-e','ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR=/data','-e','ALL_MY_FRIENDS_ARE_AGENTS_ASSIGNMENT_WORKTREES_DIR=/worktrees','-e','ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH=/workspace',image]);}
 const freshProbe=`
 import fs from 'node:fs';import {DatabaseSync} from 'node:sqlite';import {createHash,createDecipheriv} from 'node:crypto';
@@ -51,13 +62,18 @@ if(fs.existsSync('/data/github-credentials.enc')) {
   const vault=JSON.parse(Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext,'base64')),decipher.final()]).toString('utf8'));
   credentialRecords=vault.credentials.filter(record=>record.credential!==null).length;
 }
+const integrations=fs.existsSync('/data/github-integrations.json')?JSON.parse(fs.readFileSync('/data/github-integrations.json','utf8')):{connections:[],bindings:[]};
 console.log(JSON.stringify({
   roster:count('SELECT count(*) n FROM room_agents'),
   importedMessages:count("SELECT count(*) n FROM messages WHERE speaker != 'system'"),
   providerAuth:fs.existsSync('/home/node/.local/share/opencode/auth.json'),
   credentialRecords,
   ownerConfigured:fs.existsSync('/data/control-plane.json')&&Boolean(JSON.parse(fs.readFileSync('/data/control-plane.json','utf8')).ownerId),
-  repositoryChoices:fs.existsSync('/data/project-repository-connections.json')&&JSON.parse(fs.readFileSync('/data/project-repository-connections.json','utf8')).connections.length>0
+  repositoryChoices:fs.existsSync('/data/project-repository-connections.json')&&JSON.parse(fs.readFileSync('/data/project-repository-connections.json','utf8')).connections.length>0,
+  // Saved GitHub account connections and project-to-repository bindings, not
+  // just the bundled public app registration metadata (config/github-app.json).
+  githubConnections:integrations.connections.length,
+  githubBindings:integrations.bindings.length
 }));db.close();`;
 
 try {
@@ -104,16 +120,29 @@ try {
       db.prepare('DELETE FROM room_agents WHERE room_id=?').run(room);
       db.prepare('INSERT INTO messages(id,room_id,speaker,speaker_name,human_id,text,created_at) VALUES(?,?,?,?,?,?,?)').run('fixture-history',room,'human','Fixture','fixture-human','Fictional history marker',new Date().toISOString());db.close();
       fs.writeFileSync('/data/fixture-envelope.enc','fictional-envelope');fs.writeFileSync('/home/node/.allmyfriendsareagents/fixture.key','fictional-paired-key');
-      fs.writeFileSync('/home/node/.local/share/opencode/auth.json',JSON.stringify({'fixture-provider':{type:'api',key:'fictional-not-a-real-credential'}}));`,false);
+      fs.writeFileSync('/home/node/.local/share/opencode/auth.json',JSON.stringify({'fixture-provider':{type:'api',key:'fictional-not-a-real-credential'}}));
+      const now=new Date().toISOString();
+      fs.writeFileSync('/data/github-integrations.json',JSON.stringify({schemaVersion:1,connections:[{schemaVersion:1,connectionId:'fixture-connection',revision:1,authMode:'github-device-user',state:'ready',githubUser:{id:1,login:'fixture-user'},secretReference:'fixture-secret-ref',connectedAt:now,lastValidatedAt:now,updatedAt:now}],bindings:[{schemaVersion:1,bindingId:'fixture-binding',projectId:'fixture-project',revision:1,state:'ready',connectionId:'fixture-connection',installationId:1,githubRepositoryId:1,repository:'github.com/fixture-owner/fixture-repo',createdAt:now,updatedAt:now}],catalogs:[]}));`,false);
     docker(['rm',container]);start();await ready();
     const preserved=JSON.parse(node(`import fs from 'node:fs';import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/data/amfaa.sqlite',{readOnly:true});
-      console.log(JSON.stringify({history:db.prepare("SELECT text FROM messages WHERE id='fixture-history'").get()?.text==='Fictional history marker',settings:db.prepare("SELECT count(*) n FROM rooms WHERE name='Fixture room' AND topic='Preserved fixture topic'").get().n===1,emptyRoster:db.prepare('SELECT count(*) n FROM room_agents').get().n===0,envelope:fs.readFileSync('/data/fixture-envelope.enc','utf8')==='fictional-envelope',key:fs.readFileSync('/home/node/.allmyfriendsareagents/fixture.key','utf8')==='fictional-paired-key',auth:JSON.parse(fs.readFileSync('/home/node/.local/share/opencode/auth.json','utf8'))['fixture-provider']?.key==='fictional-not-a-real-credential'}));db.close();`));
+      const integrations=JSON.parse(fs.readFileSync('/data/github-integrations.json','utf8'));
+      console.log(JSON.stringify({history:db.prepare("SELECT text FROM messages WHERE id='fixture-history'").get()?.text==='Fictional history marker',settings:db.prepare("SELECT count(*) n FROM rooms WHERE name='Fixture room' AND topic='Preserved fixture topic'").get().n===1,emptyRoster:db.prepare('SELECT count(*) n FROM room_agents').get().n===0,envelope:fs.readFileSync('/data/fixture-envelope.enc','utf8')==='fictional-envelope',key:fs.readFileSync('/home/node/.allmyfriendsareagents/fixture.key','utf8')==='fictional-paired-key',auth:JSON.parse(fs.readFileSync('/home/node/.local/share/opencode/auth.json','utf8'))['fixture-provider']?.key==='fictional-not-a-real-credential',githubConnection:integrations.connections.length===1&&integrations.connections[0].githubUser.login==='fixture-user',githubBinding:integrations.bindings.length===1&&integrations.bindings[0].repository==='github.com/fixture-owner/fixture-repo'}));db.close();`));
     assert(Object.values(preserved).every(Boolean),'Existing fixture state changed during replacement.');
     console.log(JSON.stringify({platform,health,fresh,restarted,preserved}));
-    assert(!fresh.importedMessages&&!fresh.providerAuth&&!fresh.credentialRecords&&!fresh.ownerConfigured&&!fresh.repositoryChoices,'Fresh image inherited user configuration.');
+    assert(!fresh.importedMessages&&!fresh.providerAuth&&!fresh.credentialRecords&&!fresh.ownerConfigured&&!fresh.repositoryChoices&&!fresh.githubConnections&&!fresh.githubBindings,'Fresh image inherited user configuration.');
     assert(JSON.stringify(fresh)===JSON.stringify(restarted),'Fresh restart changed configuration.');
     assert(fresh.roster===0,'Fresh roster is not empty: public release remains blocked by issue #162.');
     console.log('Fresh/reused-volume acceptance passed.');
+
+    // Incompatible persisted state (an unsupported store schema version) must
+    // fail closed and be reported, not silently replaced with empty defaults.
+    node("import fs from 'node:fs';fs.writeFileSync('/data/github-integrations.json',JSON.stringify({schemaVersion:2,connections:[],bindings:[],catalogs:[]}));",true);
+    docker(['restart',container]);
+    const crashed=await waitExited(container);
+    assert(crashed.ExitCode!==0,'Incompatible GitHub integration state did not fail closed.');
+    const corruptedState=JSON.parse(node("import fs from 'node:fs';process.stdout.write(fs.readFileSync('/data/github-integrations.json','utf8'));",false));
+    assert(corruptedState.schemaVersion===2,'Incompatible state file was silently replaced with defaults instead of being reported.');
+    console.log('Incompatible-state fail-closed acceptance passed.');
   } else throw new Error('Expected context, layers, or runtime mode.');
 } catch(error) {
   // Only emit our bounded assertions, never subprocess stdout/stderr.
