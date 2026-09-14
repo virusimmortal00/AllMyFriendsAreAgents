@@ -32,6 +32,7 @@ import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { refreshControlSession } from "./control-session";
 import { ServerAdministration, type AdministrationDestination } from "./server-administration";
 import { Diagnostics } from "./diagnostics";
+import { OpenRouterAccount } from "./openrouter-account";
 import { GitHubIntegrationDialog } from "./github-integration-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
@@ -742,6 +743,11 @@ export default function App() {
     showWorkspace("Server Administration");
   }
 
+  function openOpenRouterAccount() {
+    setRosterOpen(false);
+    if (workspaceView !== "OpenRouter") showWorkspace("OpenRouter");
+  }
+
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
     if (destination === "Diagnostics") showWorkspace("Diagnostics");
@@ -757,6 +763,7 @@ export default function App() {
   const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
+  const agentLabels = useMemo<Readonly<Record<string, string>>>(() => Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.conversationalName || entry.agentId])), [roster.entries]);
   const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
   const peopleHere = (room.humans?.length || 0) + enabledAgents.length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
@@ -833,6 +840,7 @@ export default function App() {
         workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
         workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
         workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
+        workspaceCommand({ label: "OpenRouter", accessKey: "p", checked: workspaceView === "OpenRouter", onSelect: () => openOpenRouterAccount() }),
     ]), view: VIEWS.windowMenu },
     {
       id: "help",
@@ -865,6 +873,7 @@ export default function App() {
       case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} protectedWork={protectedWork} agents={roster.entries.filter((entry) => entry.enabled)} />; break;
       case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
       case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
+      case "OpenRouter": workspaceContent = <OpenRouterAccount agentLabels={agentLabels} refreshKey={connectionEpoch} />; break;
       case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
       default: workspaceView satisfies never;
     }
@@ -940,6 +949,7 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
+          onOpenOpenRouterAccount={openOpenRouterAccount}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}

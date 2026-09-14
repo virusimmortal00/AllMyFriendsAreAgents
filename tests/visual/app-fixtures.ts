@@ -62,6 +62,16 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
     if (route === "/api/room/settings") return ok({ settings, defaults: { basePromptText: settings.basePromptText } });
     if (route === "/api/room/settings/models") return ok(fixtureModels);
     if (route === "/api/model-details") return ok({ providerId: "fixture-provider", modelId: url.searchParams.get("modelId"), offers: [], fetchedAt: fixtureTime });
+    if (route === "/api/openrouter-usage") return ok({
+      room: { generations: 5, costUsd: 0.42, inputTokens: 4200, outputTokens: 900, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      agents: {
+        [visualRoster.entries[0].agentId]: { generations: 3, costUsd: 0.3, inputTokens: 2800, outputTokens: 600, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [visualRoster.entries[1].agentId]: { generations: 2, costUsd: 0.12, inputTokens: 1400, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      sinceIso: url.searchParams.get("window") === "all" ? null : fixtureTime,
+      truncated: false,
+      credits: { totalCreditsUsd: 75, totalUsageUsd: 48.83, remainingUsd: 26.17, fetchedAt: fixtureTime },
+    });
     if (route === "/api/control/me") return ["github-admin-sign-in", "github-claim-owner", "manage-agents-sign-in", "server-administration-sign-in", "server-administration-unclaimed", "your-profile-signed-out", "your-profile-unclaimed", "owner-diagnostics-sign-in"].includes(scenario) ? unauthorized : ok({ principal: { id: "visual-owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-fixture-csrf", expiresAt: "2099-01-01T20:00:00.000Z" });
     if (route === "/api/control/status") return ok({ claimed: !["github-claim-owner", "server-administration-unclaimed", "your-profile-unclaimed"].includes(scenario), bootstrapConfigured: true });
     if (route === "/api/control/integrations/github") return ok({ app: { name: "Example application", slug: "example-application", clientId: "fictional-client" }, connections: ["github-connect", "github-device-auth"].includes(scenario) ? [] : [connection] });

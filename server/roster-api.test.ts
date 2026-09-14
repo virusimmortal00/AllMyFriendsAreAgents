@@ -118,14 +118,15 @@ describe("live roster API", () => {
 
     const windowResult = { room: { generations: 4, costUsd: 0.4, inputTokens: 40, outputTokens: 8, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: {}, sinceIso: "2026-08-25T00:00:00.000Z", truncated: false };
     const spend = { since: vi.fn(() => windowResult) } as unknown as OpenRouterSpendStore;
-    const api = await fixture({ spend });
+    const intelligence = { credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
+    const api = await fixture({ spend, intelligence });
     try {
       expect((await api.call("/api/openrouter-usage?window=nonsense")).status).toBe(400);
       expect(spend.since).not.toHaveBeenCalled();
       const response = await api.call("/api/openrouter-usage?window=24h");
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.json()).toEqual(windowResult);
+      expect(await response.json()).toEqual({ ...windowResult, credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" } });
       expect(spend.since).toHaveBeenCalledWith("24h");
     } finally { await api.close(); }
   });

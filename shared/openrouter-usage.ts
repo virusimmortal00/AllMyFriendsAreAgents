@@ -34,4 +34,5 @@ export interface OpenRouterUsageWindow {
   readonly sinceIso: string | null;
   /** True when retained event history does not reach back to the requested window start (results understate the window). */
   readonly truncated: boolean;
+  readonly credits?: OpenRouterCreditBalance;
 }

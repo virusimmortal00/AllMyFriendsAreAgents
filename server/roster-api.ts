@@ -131,7 +131,7 @@ export function registerRosterRoutes(input: {
     if (!OPEN_ROUTER_SPEND_WINDOWS.includes(window as OpenRouterSpendWindow)) {
       return response.status(400).json({ error: `window must be one of: ${OPEN_ROUTER_SPEND_WINDOWS.join(", ")}.` });
     }
-    return response.set("Cache-Control", "no-store").json(spend.since(window as OpenRouterSpendWindow));
+    return response.set("Cache-Control", "no-store").json({ ...spend.since(window as OpenRouterSpendWindow), credits: await intelligence?.credits().catch(() => undefined) });
   });
 
   app.put("/api/roster", async (request, response) => {

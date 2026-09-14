@@ -358,7 +358,7 @@ describe("Transcript message styling", () => {
     expect(html).not.toContain("speaker--system");
   });
 
-  it("shows an agent message's OpenRouter turn cost next to its timestamp, but never for humans or system messages", () => {
+  it("shows an agent message's OpenRouter turn cost as a badge next to its name, but never for humans or system messages", () => {
     const html = renderToStaticMarkup(
       <Transcript
         messages={[
@@ -373,10 +373,11 @@ describe("Transcript message styling", () => {
       />,
     );
 
-    expect(html).toContain('<span class="message-cost"');
-    expect(html.match(/message-cost/g)).toHaveLength(2);
+    expect(html).toContain('<span class="message-cost-badge"');
+    expect(html).toContain('<span class="message-cost-badge message-cost-badge--free"');
+    expect(html.match(/message-cost-badge/g)).toHaveLength(3); // one plain + one free (with its modifier repeating the base class)
     expect(html).toContain("$0.0042");
-    expect(html).toContain("$0.00");
+    expect(html).toContain(">Free<");
   });
 
   it("renders safe plain-text URLs as external links without swallowing punctuation", () => {

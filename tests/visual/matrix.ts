@@ -21,7 +21,7 @@ export const ROSTER_SCENARIOS = [
 const APP_VIEW_KEYS = [
   "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "windowMenu",
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
-  "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail", "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration",
+  "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail", "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount",
   "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation",
   "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
