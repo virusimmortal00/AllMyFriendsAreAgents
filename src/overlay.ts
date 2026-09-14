@@ -49,14 +49,14 @@ export function useModalOverlay<T extends HTMLElement = HTMLElement>(onClose: ()
   }, [active, returnFocusTo, resumeFocus]);
 
   function onDialogKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing && (event.key === "Enter" || event.key === "Escape")) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onCloseRef.current();
       return;
     }
-    if (event.key === "Enter" && !(event.target instanceof HTMLTextAreaElement) && !(event.target instanceof HTMLButtonElement)) {
+    if (event.key === "Enter" && !(event.target instanceof HTMLTextAreaElement) && !(event.target instanceof HTMLButtonElement) && !(event.target instanceof HTMLSelectElement)) {
       const defaultButton = dialogRef.current?.querySelector<HTMLButtonElement>("[data-default-button]:not(:disabled)");
       if (defaultButton) {
         event.preventDefault();

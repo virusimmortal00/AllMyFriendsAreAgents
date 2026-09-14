@@ -68,6 +68,7 @@ function DefaultActionFlow() {
   const { dialogRef, onDialogKeyDown } = useModalOverlay(() => undefined);
   return <section ref={dialogRef} role="dialog" aria-label="Default action dialog" tabIndex={-1} onKeyDown={onDialogKeyDown}>
     <label>Alias<input defaultValue="東京" /></label>
+    <label>Variant<select defaultValue="default"><option value="default">Default</option></select></label>
     <button type="button" data-default-button onClick={() => setSubmitted(true)}>Review agent</button>
     <output>{submitted ? "Submitted" : "Editing"}</output>
   </section>;
@@ -117,9 +118,19 @@ describe("overlay foundation", () => {
   it("does not invoke a dialog default action while an IME composition is active", () => {
     render(<DefaultActionFlow />);
     const alias = screen.getByRole("textbox", { name: "Alias" });
+    const variant = screen.getByRole("combobox", { name: "Variant" });
+    const review = screen.getByRole("button", { name: "Review agent" });
 
     fireEvent.keyDown(alias, { key: "Enter", isComposing: true });
     expect(screen.getByText("Editing")).toBeTruthy();
+
+    variant.focus();
+    expect(fireEvent.keyDown(variant, { key: "Enter" })).toBe(true);
+    expect(screen.getByText("Editing")).toBeTruthy();
+
+    review.focus();
+    expect(fireEvent.keyDown(review, { key: "Tab", isComposing: true })).toBe(false);
+    expect(document.activeElement).toBe(alias);
 
     fireEvent.keyDown(alias, { key: "Enter" });
     expect(screen.getByText("Submitted")).toBeTruthy();
