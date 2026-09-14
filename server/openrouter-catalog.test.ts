@@ -124,4 +124,26 @@ describe("OpenRouter catalog enrichment", () => {
       status: "unavailable", requestedModelId: "stealth/example", revealedReplacement: false,
     });
   });
+
+  it("returns undefined without a fetch when no API key is configured", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const service = new OpenRouterCatalogService(fetchMock, undefined, async () => undefined);
+    await expect(service.credits()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches, caches, and computes the remaining balance from /api/v1/credits", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: { total_credits: 50, total_usage: 12.5 } }), { status: 200 }));
+    const service = new OpenRouterCatalogService(fetchMock, () => Date.UTC(2026, 7, 26), async () => "sk-or-v1-fixture");
+    await expect(service.credits()).resolves.toEqual({ totalCreditsUsd: 50, totalUsageUsd: 12.5, remainingUsd: 37.5, fetchedAt: "2026-08-26T00:00:00.000Z" });
+    await service.credits();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("https://openrouter.ai/api/v1/credits", expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer sk-or-v1-fixture" }) }));
+  });
+
+  it("never reports negative remaining credits when usage exceeds the granted balance", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 25 } }), { status: 200 }));
+    const service = new OpenRouterCatalogService(fetchMock, undefined, async () => "sk-or-v1-fixture");
+    await expect(service.credits()).resolves.toMatchObject({ remainingUsd: 0 });
+  });
 });

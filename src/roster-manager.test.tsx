@@ -84,6 +84,26 @@ describe("roster manager", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
+  it("shows room spend, remaining OpenRouter credits, and a per-agent spend badge", async () => {
+    const usage = {
+      room: { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      agents: { "codex-sol": { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+      credits: { totalCreditsUsd: 50, totalUsageUsd: 2, remainingUsd: 48, fetchedAt: "2026-08-26T00:00:00.000Z" },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog, usage }), { status: 200 })));
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.getByText("Spent $0.13 · $48.00 left on OpenRouter")).toBeTruthy();
+    expect(screen.getByText("Spent $0.13")).toBeTruthy();
+  });
+
+  it("omits the spend summary when the server has no spend tracker configured", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog }), { status: 200 })));
+    render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "View Sol configuration" });
+    expect(screen.queryByText(/^Spent /)).toBeNull();
+  });
+
   it("honors an exact initial agent selection through the existing selected-agent flow", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }, { agentId: "claude-opus", enabled: true }] }, catalog }), { status: 200 })));
 

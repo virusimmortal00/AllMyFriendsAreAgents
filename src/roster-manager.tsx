@@ -18,6 +18,7 @@ import { ProviderMark } from "./provider-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
+import type { OpenRouterUsageSummary } from "../shared/openrouter-usage";
 import { AdministrationSignIn } from "./server-administration";
 import { DialogFrame } from "./dialog-frame";
 import { useScrollEdges } from "./scroll-edges";
@@ -57,6 +58,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const [authenticationRequired, setAuthenticationRequired] = useState(false);
   const [setupInstruction, setSetupInstruction] = useState("");
   const [capabilityStatuses, setCapabilityStatuses] = useState<Readonly<Record<string, AgentCapabilityStatus>>>({});
+  const [usage, setUsage] = useState<OpenRouterUsageSummary>();
   const closed = useRef(false);
   const rosterEditorRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLElement>(null);
@@ -80,6 +82,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
       setCatalog(response.catalog);
       setModelDiscovery(response.modelDiscovery);
       setCapabilityStatuses(response.capabilityStatuses || {});
+      setUsage(response.usage);
       setError("");
     }).catch((reason) => {
       if (closed.current) return;
@@ -169,6 +172,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     setCatalog(conflict.catalog);
     setModelDiscovery(conflict.modelDiscovery);
     setCapabilityStatuses(conflict.capabilityStatuses || {});
+    setUsage(conflict.usage);
     setSelectedAgentId(conflict.roster.entries[0]?.agentId || null);
     setChangingModelForAgentId(null);
     setConflict(null);
@@ -241,7 +245,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
           ) : (
             <div className="roster-workspace" data-mobile-pane={mobilePane}>
               <aside className={`roster-rail${!loading && entries.length === 0 ? " roster-rail--empty" : ""}`} aria-label="Configured agents">
-                <header className="roster-rail__header"><span><strong>Your agents</strong><small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small></span><label>View<select className="classic-select" aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label></header>
+                <header className="roster-rail__header"><span><strong>Your agents</strong><small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small>{usage ? <small className="roster-rail__usage" title="Spend accumulated by this server since it last restarted">Spent {formatUsd(usage.room.costUsd)}{usage.credits ? ` · ${formatUsd(usage.credits.remainingUsd)} left on OpenRouter` : ""}</small> : null}</span><label>View<select className="classic-select" aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label></header>
                 {loading ? <p className="roster-empty" role="status">Loading roster…</p> : (
                   <div ref={rosterEditorRef} className="roster-editor classic-scroll-region" role="list" aria-label="Room agent roster">
                     {displayedEntries.map((item, index) => {
@@ -258,7 +262,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                           <button type="button" className="roster-agent-select" aria-pressed={isSelected} aria-label={`View ${name} configuration`} onClick={() => { setSelectedAgentId(entry.agentId); setChangingModelForAgentId(null); setMobilePane("detail"); }}>
                             <span className={`presence-status${entry.enabled ? "" : " presence-status--offline"}`} aria-hidden="true" />
                             <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
-                            <span className="presence-identity"><strong className="speaker" title={name}>{name}</strong><small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small><small className={`roster-agent-state${entry.enabled ? "" : " roster-agent-state--inactive"}`}>{entry.enabled ? "Active in room" : "Deactivated"}</small></span>
+                            <span className="presence-identity"><strong className="speaker" title={name}>{name}</strong><small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small><small className={`roster-agent-state${entry.enabled ? "" : " roster-agent-state--inactive"}`}>{entry.enabled ? "Active in room" : "Deactivated"}</small>{usage?.agents[entry.agentId] ? <small className="roster-agent-spend">Spent {formatUsd(usage.agents[entry.agentId]!.costUsd)}</small> : null}</span>
                             <span className="roster-row-chevron" aria-hidden="true">›</span>
                           </button>
                         </div>
@@ -354,6 +358,11 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
 
 function positiveRosterRevision(value: unknown, fallback: number) {
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function formatUsd(value: number) {
+  if (value <= 0) return "$0.00";
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }
 
 function formatCatalogPrice(value: number | undefined) {

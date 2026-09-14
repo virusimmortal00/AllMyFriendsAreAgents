@@ -14,6 +14,7 @@ import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { OpenRouterModelPageResolution } from "../shared/openrouter-model-page";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
+import type { OpenRouterUsageSummary } from "../shared/openrouter-usage";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -153,6 +154,7 @@ export interface RosterResponse {
   readonly modelDiscovery?: ModelDiscoveryResult;
   readonly participantAvailability?: Partial<Record<ActiveAgentId, ModelAvailability>>;
   readonly capabilityStatuses?: Readonly<Record<string, AgentCapabilityStatus>>;
+  readonly usage?: OpenRouterUsageSummary;
 }
 
 export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {

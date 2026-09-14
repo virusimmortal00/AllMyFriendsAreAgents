@@ -538,6 +538,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .roster-agent-select small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-agent-state { color: #17702a; font: 700 10px/13px Tahoma, Arial, sans-serif; }
 .roster-agent-state--inactive { color: #777; }
+.roster-agent-spend { color: #777; font: 10px/13px Tahoma, Arial, sans-serif; }
 .roster-row-chevron { color: #667182; font: 24px/1 Arial, sans-serif; }
 .roster-rail__footer { padding: 6px 0 0; background: var(--chrome); }
 .roster-explore-button { width: 100%; border: 2px outset white; border-radius: 0; background: var(--chrome); color: #111; }

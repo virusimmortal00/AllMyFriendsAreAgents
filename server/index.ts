@@ -70,6 +70,7 @@ import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import { OPEN_CODE_RUNTIME_REFRESH_TTL_MS, publicOpenCodeRuntimeStatus, resolveOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
+import { OpenRouterSpendTracker } from "./openrouter-spend.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import { OpenCodeContextSummarizer } from "./context-summarizer.js";
@@ -190,7 +191,8 @@ const storageScope = typeof (store as Partial<IdentityRepository>).getStorageSco
   ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
   : undefined;
 const currentProjectId = storageScope?.projectId || legacyProjectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
-const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation);
+const openRouterSpend = new OpenRouterSpendTracker();
+const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation, openRouterSpend);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
@@ -1447,7 +1449,7 @@ app.get("/api/control/capabilities", async (request, response) => {
   const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
   return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
 });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, control: controlPlane, humanIsMember: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined, auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, spend: openRouterSpend, control: controlPlane, humanIsMember: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined, auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
 registerRoomSettingsRoutes({
   app,
   store,

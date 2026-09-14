@@ -10,6 +10,7 @@ import { sessionHuman, type HumanSessions } from "./human-session.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
+import type { OpenRouterSpendTracker } from "./openrouter-spend.js";
 import { ControlError, type ControlPlaneStore } from "./control-plane.js";
 import { normalizeCommandPermissions } from "../shared/command-domain.js";
 import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page.js";
@@ -24,6 +25,7 @@ export function registerRosterRoutes(input: {
   broadcast: () => void | Promise<void>;
   discovery: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
+  spend?: OpenRouterSpendTracker;
   control?: ControlPlaneStore;
   humanIsMember?: (humanId: string) => boolean;
   auditChange?: (change: { roomId: string; actorKind: "room-member" | "control"; actorId: string; previousRevision: number; nextRevision: number }) => Promise<unknown>;
@@ -32,6 +34,7 @@ export function registerRosterRoutes(input: {
   const { app, store, humans, sessions, processes, generations, broadcast } = input;
   const discovery = input.discovery;
   const intelligence = input.intelligence;
+  const spend = input.spend;
   const control = input.control;
   const authorize = (request: express.Request, response: express.Response, capability: "PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE" | readonly ("PROVIDER_VIEW" | "MODEL_SELECT" | "ROSTER_MANAGE")[], csrf = false) => {
     // Room members manage this roster by default. Keep this policy local to the
@@ -73,6 +76,7 @@ export function registerRosterRoutes(input: {
         ? { available: false as const, reason: "selection_unpinnable" as const, diagnostic: entry.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run." }
         : selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery)])),
       capabilityStatuses: input.capabilityStatuses ? await input.capabilityStatuses() : {},
+      ...(spend ? { usage: { ...spend.snapshot(), credits: await intelligence?.credits().catch(() => undefined) } } : {}),
     };
   };
 
