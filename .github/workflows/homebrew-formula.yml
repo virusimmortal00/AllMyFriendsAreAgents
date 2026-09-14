@@ -1,0 +1,41 @@
+name: Homebrew formula validation
+
+on:
+  pull_request:
+    paths: ['homebrew/Casks/**', 'scripts/update-homebrew-formula.ts']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Real brew install and run
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Stage the cask into a throwaway local tap
+        # This cask has no dedicated tap yet (see homebrew/README.md), and
+        # `brew audit`/`brew install` refuse a bare file path -- they need a
+        # formula/cask name resolvable through a tap. `brew tap-new` plus a
+        # copy is the standard way to test an untapped cask.
+        run: |
+          brew tap-new local/amfaa --no-git
+          mkdir -p "$(brew --repository local/amfaa)/Casks"
+          cp homebrew/Casks/amfaa.rb "$(brew --repository local/amfaa)/Casks/amfaa.rb"
+      - name: Lint and audit the cask
+        run: |
+          brew style local/amfaa/amfaa
+          brew audit --cask local/amfaa/amfaa
+      - name: Install the published artifact and run the real launcher
+        run: |
+          brew install --cask local/amfaa/amfaa
+          identity=$("$(brew --prefix)/bin/amfaa" version)
+          echo "$identity"
+          expected=$(ruby -e 'puts /version "([^"]+)"/.match(File.read("homebrew/Casks/amfaa.rb"))[1]')
+          echo "$identity" | grep -q "\"version\":\"$expected\"" || {
+            echo "::error::Installed amfaa reported a different version than the cask declares ($expected)." >&2
+            exit 1
+          }
