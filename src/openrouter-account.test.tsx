@@ -48,7 +48,7 @@ describe("OpenRouterAccount", () => {
     expect((screen.getByRole("combobox", { name: "Spend time window" }) as HTMLSelectElement).value).toBe("7d");
   });
 
-  it("re-fetches with the selected window, remembers the choice, and re-fetches on manual refresh", async () => {
+  it("re-fetches with the selected window (not bypassing the credits cache), remembers the choice, and only manual refresh bypasses the cache", async () => {
     const saveSpy = vi.spyOn(spendWindowPreference, "saveOpenRouterSpendWindow").mockImplementation(() => undefined);
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(usageWithCredits), { status: 200 }))
@@ -65,6 +65,21 @@ describe("OpenRouterAccount", () => {
 
     await user.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/openrouter-usage?window=7d&refresh=1", expect.anything());
+  });
+
+  it("resets a stale not-configured state instead of hiding a later error behind it", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "not configured" }), { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "boom" }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { rerender } = render(<OpenRouterAccount refreshKey={0} />);
+    expect(await screen.findByText("OpenRouter spend tracking is not configured on this server.")).toBeTruthy();
+
+    rerender(<OpenRouterAccount refreshKey={1} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByText("OpenRouter spend tracking is not configured on this server.")).toBeNull();
   });
 
   it("shows a not-configured message on 404 instead of a generic error", async () => {

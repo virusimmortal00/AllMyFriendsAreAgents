@@ -191,7 +191,7 @@ const storageScope = typeof (store as Partial<IdentityRepository>).getStorageSco
   ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
   : undefined;
 const currentProjectId = storageScope?.projectId || legacyProjectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
-const openRouterSpend = await OpenRouterSpendStore.open(storageConfiguration.dataDirectory);
+const openRouterSpend = await OpenRouterSpendStore.open(storageConfiguration.dataDirectory, undefined, (error) => structuredLogger.log("error", "openrouter-spend.read.failed", { error, outcome: "started-empty" }));
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation, openRouterSpend);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -933,7 +933,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         }
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         await delivery.write(sequence, () => deliveryId
-          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence})
+          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd})
           : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,{generationId:result.generationId,costUsd:result.costUsd}));
         broadcast();
       },
@@ -1075,7 +1075,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
     const visibleCharacters = parsed.visibleMessages.reduce((total,message)=>total+message.length,0);
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters,removedOrProtocolCharacters:result.structuredTurn?0:Math.max(0,result.text.length-visibleCharacters),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
-    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId };
+    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId,costUsd:result.costUsd };
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) {
       if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
@@ -1117,7 +1117,7 @@ const commandRuntime = new CommandRuntime({
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1127,7 +1127,7 @@ const commandRuntime = new CommandRuntime({
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
     const burstId=randomUUID();
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1768,6 +1768,7 @@ async function performShutdown(signal: string) {
   await Promise.all([closeServer, roomMcp.close(), agentProcesses.shutdown(), investigationShutdown]);
   await structuredLogger.log("info", "server.shutdown.completed", { signal, phase: "closed" });
   await structuredLogger.flush();
+  await openRouterSpend.flush().catch((error) => structuredLogger.log("error", "openrouter-spend.flush.failed", { signal, error }));
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

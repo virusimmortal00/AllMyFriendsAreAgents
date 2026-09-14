@@ -128,6 +128,10 @@ describe("live roster API", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.json()).toEqual({ ...windowResult, credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" } });
       expect(spend.since).toHaveBeenCalledWith("24h");
+      expect(intelligence.credits).toHaveBeenLastCalledWith(false);
+
+      await api.call("/api/openrouter-usage?window=24h&refresh=1");
+      expect(intelligence.credits).toHaveBeenLastCalledWith(true);
     } finally { await api.close(); }
   });
 

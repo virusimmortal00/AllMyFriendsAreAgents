@@ -35,6 +35,7 @@ export interface CommandExecutionResult {
   readonly permission?: "read-only" | "writable";
   readonly codeEpoch?: string;
   readonly cursorMessageId?: string;
+  readonly costUsd?: number;
 }
 
 export interface CommandLaunchHooks {

@@ -1,28 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiRequestError, loadOpenRouterUsageWindow } from "./api";
 import { OPEN_ROUTER_SPEND_WINDOWS, type OpenRouterSpendWindow, type OpenRouterUsageWindow } from "../shared/openrouter-usage";
 import { formatUsd } from "../shared/currency";
 import { OpenRouterSpendChart } from "./spend-chart";
 import { OpenRouterMark } from "./openrouter-mark";
-import { loadOpenRouterSpendWindow, saveOpenRouterSpendWindow } from "./openrouter-spend-window";
+import { loadOpenRouterSpendWindow, safeLocalStorage, saveOpenRouterSpendWindow } from "./openrouter-spend-window";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 const CHECKED_AT_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 
 /** The room's dedicated view of its OpenRouter account: remaining credits, spend by time window, and spend by agent. */
 export function OpenRouterAccount({ agentLabels, refreshKey = 0 }: { agentLabels?: Readonly<Record<string, string>>; refreshKey?: number }) {
-  const [spendWindow, setSpendWindow] = useState<OpenRouterSpendWindow>(() => loadOpenRouterSpendWindow(typeof window === "undefined" ? undefined : window.localStorage));
+  const [spendWindow, setSpendWindow] = useState<OpenRouterSpendWindow>(() => loadOpenRouterSpendWindow(safeLocalStorage()));
   const [usage, setUsage] = useState<OpenRouterUsageWindow>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notConfigured, setNotConfigured] = useState(false);
   const [manualRefresh, setManualRefresh] = useState(0);
+  // Set right before the Refresh button bumps manualRefresh, and consumed by the very next effect
+  // run, so only that one explicit request bypasses the credits cache — window/reconnect refetches
+  // still respect it.
+  const forceRefreshCreditsRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
+    const forceRefreshCredits = forceRefreshCreditsRef.current;
+    forceRefreshCreditsRef.current = false;
     setLoading(true);
     setError("");
-    loadOpenRouterUsageWindow(spendWindow, controller.signal).then((value) => {
+    setNotConfigured(false);
+    loadOpenRouterUsageWindow(spendWindow, controller.signal, forceRefreshCredits).then((value) => {
       setUsage(value);
       setNotConfigured(false);
     }).catch((reason) => {
@@ -54,7 +61,7 @@ export function OpenRouterAccount({ agentLabels, refreshKey = 0 }: { agentLabels
                   <div className="openrouter-credits__headline"><strong>{formatUsd(credits.remainingUsd)}</strong><span>available</span></div>
                   <div className="openrouter-credits__meta">
                     <span>Checked {CHECKED_AT_FORMATTER.format(new Date(credits.fetchedAt))}</span>
-                    <button type="button" className="classic-button" disabled={loading} onClick={() => setManualRefresh((current) => current + 1)}>{loading ? "Checking…" : "Refresh"}</button>
+                    <button type="button" className="classic-button" disabled={loading} onClick={() => { forceRefreshCreditsRef.current = true; setManualRefresh((current) => current + 1); }}>{loading ? "Checking…" : "Refresh"}</button>
                   </div>
                 </>
               ) : <p>Connect an OpenRouter API key to see your remaining balance here.</p>}
@@ -63,7 +70,7 @@ export function OpenRouterAccount({ agentLabels, refreshKey = 0 }: { agentLabels
               <label>Window<select className="classic-select" aria-label="Spend time window" value={spendWindow} onChange={(event) => {
                 const next = event.target.value as OpenRouterSpendWindow;
                 setSpendWindow(next);
-                saveOpenRouterSpendWindow(typeof window === "undefined" ? undefined : window.localStorage, next);
+                saveOpenRouterSpendWindow(safeLocalStorage(), next);
               }}>{OPEN_ROUTER_SPEND_WINDOWS.map((value) => <option key={value} value={value}>{value === "all" ? "All time" : `Last ${value}`}</option>)}</select></label>
               <span className="openrouter-account__total">{formatUsd(usage.room.costUsd)} spent · {usage.room.generations} turn{usage.room.generations === 1 ? "" : "s"}</span>
             </div>

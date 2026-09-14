@@ -109,9 +109,9 @@ export class OpenRouterCatalogService {
     return { status: "unavailable", requestedModelId: reference.modelId, ...(replacement ? { resolvedModelId: replacement } : {}), revealedReplacement: Boolean(replacement) };
   }
 
-  /** The connected account's remaining OpenRouter balance, or undefined when no key is configured. */
-  async credits(): Promise<OpenRouterCreditBalance | undefined> {
-    if (this.creditsCache && this.creditsCache.expiresAt > this.now()) return this.creditsCache.promise;
+  /** The connected account's remaining OpenRouter balance, or undefined when no key is configured. Pass `forceRefresh` to bypass the cache for an explicit user-initiated refresh. */
+  async credits(forceRefresh = false): Promise<OpenRouterCreditBalance | undefined> {
+    if (!forceRefresh && this.creditsCache && this.creditsCache.expiresAt > this.now()) return this.creditsCache.promise;
     const promise = this.fetchCredits().catch((error) => {
       this.creditsCache = undefined;
       throw error;

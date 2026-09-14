@@ -896,7 +896,7 @@ export async function runAgent(
         await append({
           type: "generation.completed", generationId, agent, durationMs, sessionId: structuredResult.sessionId,
           structuredResponse: structuredResult.structured, responseCharacters: text.length,
-          providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
+          providerId: participant.providerId, providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
           finish: structuredResult.finish, transport: "sdk-server",
         });
         await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, transport: "sdk-server" });
@@ -966,6 +966,7 @@ export async function runAgent(
       await append({
         type: "generation.completed", generationId, agent, durationMs, sessionId,
         rawResponse: parsed.text, responseCharacters: parsed.text.length,
+        providerId: participant.providerId,
         ...openCodeJournalMetadata(parsed),
         cliStdout: result.stdout, cliStderr: result.stderr,
       });

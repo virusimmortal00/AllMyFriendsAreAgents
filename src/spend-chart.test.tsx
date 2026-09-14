@@ -23,6 +23,20 @@ describe("OpenRouterSpendChart", () => {
     expect(html).toContain(">25%<");
   });
 
+  it("allocates rounded shares that always sum to exactly 100%, even for three equal thirds", () => {
+    const html = renderToStaticMarkup(
+      <OpenRouterSpendChart agents={{
+        a: { ...zero, generations: 1, costUsd: 1 },
+        b: { ...zero, generations: 1, costUsd: 1 },
+        c: { ...zero, generations: 1, costUsd: 1 },
+      }} />,
+    );
+    const shares = [...html.matchAll(/spend-chart__share">(\d+)%</g)].map(([, value]) => Number(value));
+    expect(shares).toHaveLength(3);
+    expect(shares.reduce((sum, value) => sum + value, 0)).toBe(100);
+    expect(shares.sort((a, b) => b - a)).toEqual([34, 33, 33]); // largest remainder gets the odd point, not naive rounding's 33/33/33 = 99
+  });
+
   it("falls back to comparing generation counts when every agent is free", () => {
     const html = renderToStaticMarkup(
       <OpenRouterSpendChart agents={{ "codex-sol": { ...zero, generations: 3, costUsd: 0 }, "claude-sonnet": { ...zero, generations: 1, costUsd: 0 } }} />,

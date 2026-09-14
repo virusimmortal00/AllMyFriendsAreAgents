@@ -37,7 +37,7 @@ function roomPath(endpoint:"state"|"messages"|"events"){
 }
 export function roomEventsPath(){return roomPath("events");}
 
-const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","rooms"]);
+const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","openrouter-usage","rooms"]);
 export function scopedRequestPath(path:string){
   const roomId=routedRoomId();
   if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
@@ -173,8 +173,8 @@ export async function resolveOpenRouterModelPage(url: string, signal?: AbortSign
     .then((response) => response.json());
 }
 
-export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal): Promise<OpenRouterUsageWindow> {
-  const query = new URLSearchParams({ window });
+export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal, forceRefreshCredits = false): Promise<OpenRouterUsageWindow> {
+  const query = new URLSearchParams({ window, ...(forceRefreshCredits ? { refresh: "1" } : {}) });
   return request(`/api/openrouter-usage?${query}`, { method: "GET", cache: "no-store", signal })
     .then((response) => response.json());
 }

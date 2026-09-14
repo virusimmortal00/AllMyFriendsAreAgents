@@ -82,6 +82,16 @@ describe("SQLite room repository", () => {
     reopened.close();
   });
 
+  it("carries generation id and OpenRouter turn cost through command-delivery messages too", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-spend-delivery-"));
+    temporaryDirectories.push(projectRoot);
+    const store = await SqliteRoomRepository.open(projectRoot, path.join(projectRoot, "amfaa.sqlite"));
+    await store.addCommandDeliveryMessageOnce("attempt-1", 0, "codex-sol", "task result", undefined, { burstId: "attempt-1", sequence: 0 }, { generationId: "gen-3", costUsd: 0.0021 });
+    const [delivered] = store.snapshot().messages.slice(-1);
+    expect(delivered).toMatchObject({ text: "task result", generationId: "gen-3", openRouterCostUsd: 0.0021 });
+    store.close();
+  });
+
   it("atomically persists ordering, disabled entries, empty rosters, and revision conflicts", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-roster-"));
     temporaryDirectories.push(projectRoot);

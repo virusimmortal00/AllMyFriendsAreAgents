@@ -8,6 +8,8 @@ export interface GenerationJournalEvent {
   type: "session.fresh" | "session.reused" | "session.invalidated" | "generation.started" | "generation.retry" | "generation.completed" | "generation.cancelled" | "generation.failed" | "generation.interpreted" | "generation.delivery";
   generationId: string;
   agent: AgentId;
+  /** The room-agent's configured access provider (e.g. "openrouter", "openai"). Gates OpenRouter-only spend recording. */
+  providerId?: string;
   jobId?: string;
   runId?: string;
   turnId?: string;
@@ -69,7 +71,7 @@ export class GenerationJournal {
           ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
           routing, rateLimit, cooldown, error,
         }, context);
-        this.spend?.record(event.agent, providerUsage, providerCostUsd, { generationId: event.generationId });
+        if (event.providerId === "openrouter") this.spend?.record(event.agent, providerUsage, providerCostUsd, { generationId: event.generationId });
       }
       if (toolOutcomes !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes", { ...evidence, outcomes: toolOutcomes }, context);
       else if (toolCalls !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes.summary", { ...evidence, toolCalls, toolFailures, generationEvent: event.type }, context);

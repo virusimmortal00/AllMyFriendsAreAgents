@@ -7,6 +7,21 @@ function polarPoint(cx: number, cy: number, r: number, angle: number) {
   return { x: cx + r * Math.sin(angle), y: cy - r * Math.cos(angle) };
 }
 
+/** Largest-remainder rounding: integer percentages that always sum to exactly 100 (given shares summing to ~1). */
+function allocatePercentages(shares: readonly number[]): number[] {
+  const raw = shares.map((share) => share * 100);
+  const base = raw.map(Math.floor);
+  let remaining = 100 - base.reduce((sum, value) => sum + value, 0);
+  const order = base.map((_, index) => index).sort((a, b) => (raw[b] - base[b]) - (raw[a] - base[a]));
+  const allocated = [...base];
+  for (const index of order) {
+    if (remaining <= 0) break;
+    allocated[index] += 1;
+    remaining -= 1;
+  }
+  return allocated;
+}
+
 function wedgePath(cx: number, cy: number, r: number, start: number, end: number): string {
   if (end - start >= Math.PI * 2 - 1e-6) {
     // A full circle can't be drawn as one SVG arc (start === end); split it into two halves.
@@ -28,12 +43,13 @@ export function OpenRouterSpendChart({ agents, labels }: { agents: Readonly<Reco
   const sorted = [...entries].sort((a, b) => metric(b) - metric(a));
   const total = sorted.reduce((sum, entry) => sum + metric(entry), 0) || 1;
 
+  const percentages = allocatePercentages(sorted.map((entry) => metric(entry) / total));
   let angle = 0;
   const slices = sorted.map(([agentId, totals], index) => {
     const share = metric([agentId, totals]) / total;
     const start = angle;
     angle += share * Math.PI * 2;
-    return { agentId, totals, share, start, end: angle, color: SLICE_COLORS[index % SLICE_COLORS.length] };
+    return { agentId, totals, share, start, end: angle, percent: percentages[index], color: SLICE_COLORS[index % SLICE_COLORS.length] };
   });
 
   return (
@@ -50,7 +66,7 @@ export function OpenRouterSpendChart({ agents, labels }: { agents: Readonly<Reco
             <span className="spend-chart__swatch" style={{ background: slice.color }} aria-hidden="true" />
             <span className="spend-chart__label">{labels?.[slice.agentId] || slice.agentId}</span>
             <span className="spend-chart__value">{byCost ? formatUsd(slice.totals.costUsd) : `${slice.totals.generations} turn${slice.totals.generations === 1 ? "" : "s"}`}</span>
-            <span className="spend-chart__share">{Math.round(slice.share * 100)}%</span>
+            <span className="spend-chart__share">{slice.percent}%</span>
           </li>
         ))}
       </ul>

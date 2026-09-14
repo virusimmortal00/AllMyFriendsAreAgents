@@ -15,5 +15,19 @@ export function loadOpenRouterSpendWindow(storage: Pick<Storage, "getItem"> | un
 }
 
 export function saveOpenRouterSpendWindow(storage: Pick<Storage, "setItem"> | undefined, window: OpenRouterSpendWindow) {
-  storage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, window }));
+  try {
+    storage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, window }));
+  } catch {
+    // A blocked or full localStorage should not make the page unusable.
+  }
+}
+
+/** `window.localStorage` itself can throw (private-browsing quirks, locked-down embeds) even before any read/write. */
+export function safeLocalStorage(): Storage | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }

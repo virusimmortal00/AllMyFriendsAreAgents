@@ -21,12 +21,22 @@ const WINDOW_MS: Readonly<Record<Exclude<OpenRouterSpendWindow, "all">, number>>
 };
 
 interface PersistedState {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  /** Exact lifetime totals, kept independent of the bounded event list below so pruning never loses them. */
+  totals: { room: OpenRouterSpendTotals; agents: Record<string, OpenRouterSpendTotals> };
   events: OpenRouterSpendEvent[];
 }
 
 function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isValidTotals(value: unknown): value is OpenRouterSpendTotals {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return Number.isInteger(record.generations) && (record.generations as number) >= 0
+    && isFiniteNonNegative(record.costUsd) && isFiniteNonNegative(record.inputTokens) && isFiniteNonNegative(record.outputTokens)
+    && isFiniteNonNegative(record.reasoningTokens) && isFiniteNonNegative(record.cacheReadTokens) && isFiniteNonNegative(record.cacheWriteTokens);
 }
 
 function isValidEvent(value: unknown): value is OpenRouterSpendEvent {
@@ -39,11 +49,21 @@ function isValidEvent(value: unknown): value is OpenRouterSpendEvent {
     && (record.generationId === undefined || typeof record.generationId === "string");
 }
 
+function isValidPersistedState(value: unknown): value is PersistedState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 2 || !record.totals || typeof record.totals !== "object" || !Array.isArray(record.events)) return false;
+  const totals = record.totals as Record<string, unknown>;
+  return isValidTotals(totals.room) && Boolean(totals.agents) && typeof totals.agents === "object"
+    && Object.values(totals.agents as Record<string, unknown>).every(isValidTotals);
+}
+
 /**
  * Durable OpenRouter spend accounting: an append-only, disk-persisted, bounded-retention event log
  * (same shape as CapabilityAuditStore) plus running lifetime totals kept exact regardless of retention.
- * Lifetime totals (`snapshot()`) never lose precision to the retention bound; only windowed queries
- * (`since()`) are limited to however far back the retained event log reaches.
+ * The lifetime totals are persisted directly (not derived by replaying the bounded event list), so
+ * pruning old events never loses them on restart. Only windowed queries (`since()`) are limited to
+ * however far back the retained event log reaches.
  */
 export class OpenRouterSpendStore {
   private room = zeroSpendTotals();
@@ -53,17 +73,22 @@ export class OpenRouterSpendStore {
 
   private constructor(private readonly filePath: string, private readonly eventLimit: number) {}
 
-  static async open(directory: string, eventLimit = DEFAULT_EVENT_LIMIT) {
+  /**
+   * `onError` is called (never thrown) for a read failure that is not a simple missing file —
+   * a corrupt or unreadable store starts empty in memory either way, but this makes that
+   * degradation visible instead of silently indistinguishable from "nothing was ever recorded".
+   */
+  static async open(directory: string, eventLimit = DEFAULT_EVENT_LIMIT, onError?: (error: unknown) => unknown) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const store = new OpenRouterSpendStore(path.join(directory, "openrouter-spend.json"), Math.max(100, Math.min(eventLimit, 50_000)));
     try {
-      const parsed = JSON.parse(await readFile(store.filePath, "utf8")) as Partial<PersistedState>;
-      for (const event of Array.isArray(parsed.events) ? parsed.events : []) {
-        if (isValidEvent(event)) store.applyEvent(event);
-      }
-    } catch {
-      // A missing or corrupt file starts this store fresh; nothing durable was lost silently, since
-      // nothing was ever confirmed written in that case.
+      const parsed = JSON.parse(await readFile(store.filePath, "utf8")) as unknown;
+      if (!isValidPersistedState(parsed)) throw new Error("OpenRouter spend store file is present but not a recognized schema.");
+      store.room = parsed.totals.room;
+      for (const [agentId, totals] of Object.entries(parsed.totals.agents)) store.byAgent.set(agentId as AgentId, totals);
+      store.events = parsed.events.filter(isValidEvent).slice(-store.eventLimit);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") onError?.(error);
     }
     return store;
   }
@@ -106,7 +131,7 @@ export class OpenRouterSpendStore {
     return { room, agents: Object.fromEntries(agents), sinceIso: sinceMs === undefined ? null : new Date(sinceMs).toISOString(), truncated };
   }
 
-  /** Waits for any in-flight persistence to settle. For tests and graceful shutdown only. */
+  /** Waits for the most recently queued persistence attempt, rejecting if that attempt failed. For tests and graceful shutdown. */
   async flush() {
     await this.queue;
   }
@@ -118,12 +143,18 @@ export class OpenRouterSpendStore {
   }
 
   private persist() {
-    const serialized = JSON.stringify({ schemaVersion: 1, events: this.events } satisfies PersistedState, null, 2);
-    this.queue = this.queue.catch(() => undefined).then(async () => {
+    const state: PersistedState = { schemaVersion: 2, totals: { room: this.room, agents: Object.fromEntries(this.byAgent) }, events: this.events };
+    const serialized = JSON.stringify(state, null, 2);
+    // Chained off the prior attempt (swallowing its failure here so one bad write doesn't
+    // permanently wedge the queue) but the resulting promise is left to reject on its own
+    // failure — flush() awaits this exact promise, so a write failure is still observable there.
+    const attempt = this.queue.catch(() => undefined).then(async () => {
       const temporary = `${this.filePath}.tmp`;
       await writeFile(temporary, serialized, { mode: 0o600 });
       await rename(temporary, this.filePath);
       await chmod(this.filePath, 0o600);
-    }).catch(() => undefined);
+    });
+    this.queue = attempt;
+    attempt.catch(() => {}); // Prevent an unhandled-rejection warning when nothing ever calls flush().
   }
 }

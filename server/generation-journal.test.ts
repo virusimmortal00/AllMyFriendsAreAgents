@@ -66,13 +66,24 @@ describe("GenerationJournal", () => {
     const journal = await GenerationJournal.open(directory, undefined, undefined, undefined, spend);
     try {
       await journal.append({
-        type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 10,
+        type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 10, providerId: "openrouter",
         providerUsage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 120 },
         providerCostUsd: 0.002,
       });
       await journal.append({
-        type: "generation.completed", generationId: "two", agent: "claude-sonnet", durationMs: 10,
+        type: "generation.completed", generationId: "two", agent: "claude-sonnet", durationMs: 10, providerId: "openrouter",
         providerUsage: { input: 50, output: 10, reasoning: 0, cache: { read: 0, write: 0 } }, providerCostUsd: 0.001,
+      });
+      // A direct (non-OpenRouter) provider also reports usage/cost, but it isn't this account's spend.
+      await journal.append({
+        type: "generation.completed", generationId: "three", agent: "claude-sonnet", durationMs: 10, providerId: "anthropic",
+        providerUsage: { inputTokens: 999, outputTokens: 999, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1998 },
+        providerCostUsd: 9.99,
+      });
+      await journal.append({
+        type: "generation.completed", generationId: "four", agent: "claude-sonnet", durationMs: 10,
+        providerUsage: { inputTokens: 999, outputTokens: 999, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1998 },
+        providerCostUsd: 9.99,
       });
       const snapshot = spend.snapshot();
       expect(snapshot.room).toMatchObject({ generations: 2, costUsd: 0.003, inputTokens: 150, outputTokens: 30 });
