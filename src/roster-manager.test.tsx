@@ -84,17 +84,34 @@ describe("roster manager", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
-  it("shows room spend, remaining OpenRouter credits, and a per-agent spend badge", async () => {
+  it("shows room spend and remaining credits, expands to a per-agent chart, and fetches a windowed total on demand", async () => {
     const usage = {
       room: { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       agents: { "codex-sol": { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
       credits: { totalCreditsUsd: 50, totalUsageUsd: 2, remainingUsd: 48, fetchedAt: "2026-08-26T00:00:00.000Z" },
     };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true }] }, catalog, usage }), { status: 200 })));
+    const windowResult = { room: { generations: 1, costUsd: 0.01, inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } }, sinceIso: "2026-08-25T00:00:00.000Z", truncated: false };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, conversationalName: "Sol" }] }, catalog, usage }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(windowResult), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
     render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
     await screen.findByRole("button", { name: "View Sol configuration" });
-    expect(screen.getByText("Spent $0.13 · $48.00 left on OpenRouter")).toBeTruthy();
-    expect(screen.getByText("Spent $0.13")).toBeTruthy();
+    expect(screen.getByText("Spent $0.13")).toBeTruthy(); // the compact per-agent row badge
+    const toggle = screen.getByRole("button", { name: /Spent \$0\.13 · \$48\.00 left on OpenRouter/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const panel = screen.getByRole("region", { name: "OpenRouter spend by agent" });
+    expect(within(panel).getByRole("img", { name: "OpenRouter spend by agent" })).toBeTruthy();
+    expect(within(panel).getByText("Sol")).toBeTruthy();
+    expect(within(panel).getByText("$48.00 remaining of $50.00 on OpenRouter.")).toBeTruthy();
+
+    await user.selectOptions(within(panel).getByRole("combobox", { name: "Spend time window" }), "24h");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=24h", expect.anything()));
+    await waitFor(() => expect(within(panel).getByText("$0.01")).toBeTruthy());
   });
 
   it("omits the spend summary when the server has no spend tracker configured", async () => {

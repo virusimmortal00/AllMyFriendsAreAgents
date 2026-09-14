@@ -1,7 +1,10 @@
 import type { AgentId } from "./types.js";
 import type { OpenRouterSpendTotals } from "../shared/openrouter-usage.js";
 
-function zero(): OpenRouterSpendTotals {
+/** One normalized (agent-less) accounting entry: what a single `record()` call contributes. */
+export type OpenRouterSpendEntry = Omit<OpenRouterSpendTotals, "generations">;
+
+export function zeroSpendTotals(): OpenRouterSpendTotals {
   return { generations: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 }
 
@@ -23,33 +26,48 @@ function normalizedUsage(usage: unknown) {
   };
 }
 
-function add(totals: OpenRouterSpendTotals, usage: ReturnType<typeof normalizedUsage>, costUsd: number): OpenRouterSpendTotals {
+/** Normalizes one `record()` call's raw usage/cost into a storable entry, or undefined when there is nothing to record. */
+export function spendEntry(usage: unknown, costUsd: unknown): OpenRouterSpendEntry | undefined {
+  const cost = typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined;
+  const tokens = normalizedUsage(usage);
+  if (cost === undefined && tokens === undefined) return undefined;
+  return {
+    costUsd: cost || 0,
+    inputTokens: tokens?.inputTokens || 0,
+    outputTokens: tokens?.outputTokens || 0,
+    reasoningTokens: tokens?.reasoningTokens || 0,
+    cacheReadTokens: tokens?.cacheReadTokens || 0,
+    cacheWriteTokens: tokens?.cacheWriteTokens || 0,
+  };
+}
+
+export function addSpendEntry(totals: OpenRouterSpendTotals, entry: OpenRouterSpendEntry): OpenRouterSpendTotals {
   return {
     generations: totals.generations + 1,
-    costUsd: totals.costUsd + costUsd,
-    inputTokens: totals.inputTokens + (usage?.inputTokens || 0),
-    outputTokens: totals.outputTokens + (usage?.outputTokens || 0),
-    reasoningTokens: totals.reasoningTokens + (usage?.reasoningTokens || 0),
-    cacheReadTokens: totals.cacheReadTokens + (usage?.cacheReadTokens || 0),
-    cacheWriteTokens: totals.cacheWriteTokens + (usage?.cacheWriteTokens || 0),
+    costUsd: totals.costUsd + entry.costUsd,
+    inputTokens: totals.inputTokens + entry.inputTokens,
+    outputTokens: totals.outputTokens + entry.outputTokens,
+    reasoningTokens: totals.reasoningTokens + entry.reasoningTokens,
+    cacheReadTokens: totals.cacheReadTokens + entry.cacheReadTokens,
+    cacheWriteTokens: totals.cacheWriteTokens + entry.cacheWriteTokens,
   };
 }
 
 /**
  * Accumulates OpenRouter's own per-generation cost/usage accounting (already parsed out of the
  * OpenCode CLI event stream in agent-runner.ts) into running per-agent and room totals. In-memory
- * only: totals reset with the server process and reflect this room's lifetime since its last restart.
+ * only, with no persistence of its own — see OpenRouterSpendStore for the durable, windowed version
+ * wired into the running server.
  */
 export class OpenRouterSpendTracker {
-  private room = zero();
+  private room = zeroSpendTotals();
   private readonly byAgent = new Map<AgentId, OpenRouterSpendTotals>();
 
   record(agent: AgentId, usage: unknown, costUsd: unknown) {
-    const cost = typeof costUsd === "number" && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined;
-    const tokens = normalizedUsage(usage);
-    if (cost === undefined && tokens === undefined) return;
-    this.room = add(this.room, tokens, cost || 0);
-    this.byAgent.set(agent, add(this.byAgent.get(agent) || zero(), tokens, cost || 0));
+    const entry = spendEntry(usage, costUsd);
+    if (!entry) return;
+    this.room = addSpendEntry(this.room, entry);
+    this.byAgent.set(agent, addSpendEntry(this.byAgent.get(agent) || zeroSpendTotals(), entry));
   }
 
   snapshot(): { room: OpenRouterSpendTotals; agents: Readonly<Record<string, OpenRouterSpendTotals>> } {

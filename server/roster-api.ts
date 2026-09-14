@@ -10,7 +10,8 @@ import { sessionHuman, type HumanSessions } from "./human-session.js";
 import type { RoomRepository } from "./storage/room-repository.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
-import type { OpenRouterSpendTracker } from "./openrouter-spend.js";
+import type { OpenRouterSpendStore } from "./openrouter-spend-store.js";
+import { OPEN_ROUTER_SPEND_WINDOWS, type OpenRouterSpendWindow } from "../shared/openrouter-usage.js";
 import { ControlError, type ControlPlaneStore } from "./control-plane.js";
 import { normalizeCommandPermissions } from "../shared/command-domain.js";
 import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page.js";
@@ -25,7 +26,7 @@ export function registerRosterRoutes(input: {
   broadcast: () => void | Promise<void>;
   discovery: ModelDiscoveryService;
   intelligence?: OpenRouterCatalogService;
-  spend?: OpenRouterSpendTracker;
+  spend?: OpenRouterSpendStore;
   control?: ControlPlaneStore;
   humanIsMember?: (humanId: string) => boolean;
   auditChange?: (change: { roomId: string; actorKind: "room-member" | "control"; actorId: string; previousRevision: number; nextRevision: number }) => Promise<unknown>;
@@ -121,6 +122,16 @@ export function registerRosterRoutes(input: {
     } catch {
       return response.status(503).json({ error: "OpenRouter could not resolve that model page right now." });
     }
+  });
+
+  app.get("/api/openrouter-usage", async (request, response) => {
+    if (!authorize(request, response, ["PROVIDER_VIEW", "MODEL_SELECT"])) return;
+    if (!spend) return response.status(404).json({ error: "OpenRouter spend tracking is not configured." });
+    const window = typeof request.query.window === "string" ? request.query.window : "";
+    if (!OPEN_ROUTER_SPEND_WINDOWS.includes(window as OpenRouterSpendWindow)) {
+      return response.status(400).json({ error: `window must be one of: ${OPEN_ROUTER_SPEND_WINDOWS.join(", ")}.` });
+    }
+    return response.set("Cache-Control", "no-store").json(spend.since(window as OpenRouterSpendWindow));
   });
 
   app.put("/api/roster", async (request, response) => {

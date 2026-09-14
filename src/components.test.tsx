@@ -358,6 +358,27 @@ describe("Transcript message styling", () => {
     expect(html).not.toContain("speaker--system");
   });
 
+  it("shows an agent message's OpenRouter turn cost next to its timestamp, but never for humans or system messages", () => {
+    const html = renderToStaticMarkup(
+      <Transcript
+        messages={[
+          { id: "priced", speaker: "codex-sol", text: "Priced turn.", timestamp: "2026-08-19T12:00:00.000Z", openRouterCostUsd: 0.0042 },
+          { id: "free", speaker: "codex-sol", text: "Free turn.", timestamp: "2026-08-19T12:01:00.000Z", openRouterCostUsd: 0 },
+          { id: "unpriced", speaker: "codex-sol", text: "No cost recorded.", timestamp: "2026-08-19T12:02:00.000Z" },
+          { id: "human", speaker: "you", text: "From a human.", timestamp: "2026-08-19T12:03:00.000Z" },
+          { id: "system", speaker: "system", kind: "status", text: "Status line.", timestamp: "2026-08-19T12:04:00.000Z" },
+        ]}
+        magnification={100}
+        transcriptRef={createRef<HTMLDivElement>()}
+      />,
+    );
+
+    expect(html).toContain('<span class="message-cost"');
+    expect(html.match(/message-cost/g)).toHaveLength(2);
+    expect(html).toContain("$0.0042");
+    expect(html).toContain("$0.00");
+  });
+
   it("renders safe plain-text URLs as external links without swallowing punctuation", () => {
     const html = renderToStaticMarkup(
       <Transcript

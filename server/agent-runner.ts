@@ -39,6 +39,8 @@ interface RunResult {
   codeEpoch?: string;
   cursorMessageId?: string;
   structuredTurn?: OpenCodeStructuredTurnResult["structured"];
+  /** OpenRouter's observed cost for this whole turn, when the CLI reported one. */
+  costUsd?: number;
 }
 
 export interface AgentContextRuntime {
@@ -908,6 +910,7 @@ export async function runAgent(
           permission,
           ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}),
           ...(cursorMessageId ? { cursorMessageId } : {}),
+          ...(typeof structuredResult.cost === "number" ? { costUsd: structuredResult.cost } : {}),
         };
       }
       let resumedSessionId = existing?.id;
@@ -967,7 +970,7 @@ export async function runAgent(
         cliStdout: result.stdout, cliStderr: result.stderr,
       });
       await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
-      return { sessionId, text: parsed.text, generationId, attemptOrdinal, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}) };
+      return { sessionId, text: parsed.text, generationId, attemptOrdinal, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}), costUsd: parsed.cost };
     } catch (error) {
       if (error instanceof OpenCodeStructuredTurnCancelledError) {
         await append({ type: "generation.cancelled", generationId, agent, durationMs: Date.now() - startedAt, reason: error.message, transport: "sdk-server" });

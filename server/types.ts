@@ -30,6 +30,10 @@ export interface RoomMessage {
   continuationRequest?: RoomContinuationWorkRequest;
   /** Server-only recipient boundary. This field is stripped from every client projection. */
   recipientHumanId?: string;
+  /** The generation this message's content came from, when it was produced by an agent turn. */
+  generationId?: string;
+  /** OpenRouter's observed cost for that whole turn. Every message from the same turn repeats it. */
+  openRouterCostUsd?: number;
 }
 
 export interface HumanPresence {

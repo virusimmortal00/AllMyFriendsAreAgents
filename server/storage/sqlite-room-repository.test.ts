@@ -63,6 +63,25 @@ describe("SQLite room repository", () => {
     reopened.close();
   });
 
+  it("persists a message's generation id and OpenRouter turn cost across restart", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-spend-"));
+    temporaryDirectories.push(projectRoot);
+    const databasePath = path.join(projectRoot, "amfaa.sqlite");
+    const store = await SqliteRoomRepository.open(projectRoot, databasePath);
+    await store.addMessage("codex-sol", "priced", "chat", undefined, undefined, undefined, { generationId: "gen-1", costUsd: 0.0042 });
+    await store.addMessage("codex-sol", "free", "chat", undefined, undefined, undefined, { generationId: "gen-2", costUsd: 0 });
+    await store.addMessage("codex-sol", "unpriced");
+    store.close();
+
+    const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
+    const [priced, free, unpriced] = reopened.snapshot().messages.slice(-3);
+    expect(priced).toMatchObject({ text: "priced", generationId: "gen-1", openRouterCostUsd: 0.0042 });
+    expect(free).toMatchObject({ text: "free", generationId: "gen-2", openRouterCostUsd: 0 });
+    expect(unpriced).not.toHaveProperty("generationId");
+    expect(unpriced).not.toHaveProperty("openRouterCostUsd");
+    reopened.close();
+  });
+
   it("atomically persists ordering, disabled entries, empty rosters, and revision conflicts", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "amfaa-sqlite-roster-"));
     temporaryDirectories.push(projectRoot);

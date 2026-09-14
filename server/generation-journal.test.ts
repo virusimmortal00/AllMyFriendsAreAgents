@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GenerationJournal } from "./generation-journal.js";
-import { OpenRouterSpendTracker } from "./openrouter-spend.js";
+import { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -59,10 +59,10 @@ describe("GenerationJournal", () => {
     for (const name of generationFiles) expect((await stat(path.join(logDirectory, name))).mode & 0o777).toBe(0o600);
   });
 
-  it("feeds observed provider usage and cost into the given spend tracker", async () => {
+  it("feeds observed provider usage and cost into the given spend store", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-spend-"));
     temporaryDirectories.push(directory);
-    const spend = new OpenRouterSpendTracker();
+    const spend = await OpenRouterSpendStore.open(directory);
     const journal = await GenerationJournal.open(directory, undefined, undefined, undefined, spend);
     try {
       await journal.append({
@@ -78,6 +78,6 @@ describe("GenerationJournal", () => {
       expect(snapshot.room).toMatchObject({ generations: 2, costUsd: 0.003, inputTokens: 150, outputTokens: 30 });
       expect(snapshot.agents["codex-sol"]).toMatchObject({ generations: 1, costUsd: 0.002, inputTokens: 100 });
       expect(snapshot.agents["claude-sonnet"]).toMatchObject({ generations: 1, costUsd: 0.001, inputTokens: 50 });
-    } finally { await journal.logging.close(); }
+    } finally { await spend.flush(); await journal.logging.close(); }
   });
 });

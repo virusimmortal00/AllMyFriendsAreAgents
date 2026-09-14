@@ -113,6 +113,8 @@ interface MessageRow {
   mentions_json: string | null;
   continuation_request_json: string | null;
   recipient_human_id: string | null;
+  generation_id: string | null;
+  open_router_cost_usd: number | null;
 }
 
 interface SessionRow {
@@ -219,6 +221,8 @@ function messageFromRow(row: MessageRow, participantStyles: RoomSettings["partic
     ...(mentions.length ? { mentions } : {}),
     ...(continuationRequest ? { continuationRequest } : {}),
     ...(row.recipient_human_id ? { recipientHumanId: row.recipient_human_id } : {}),
+    ...(row.generation_id ? { generationId: row.generation_id } : {}),
+    ...(row.open_router_cost_usd !== null ? { openRouterCostUsd: row.open_router_cost_usd } : {}),
   };
 }
 
@@ -230,6 +234,7 @@ function messageFor(
   style?: ChatStyle,
   burst?: { burstId: string; sequence: number },
   human?: { id: string; name: string; clientMessageId?: string; mentions?: RoomMessage["mentions"]; continuationRequest?: RoomContinuationWorkRequest },
+  spend?: { generationId?: string; costUsd?: number },
 ): RoomMessage {
   const participant = isParticipantId(speaker) ? speaker : undefined;
   const messageStyle = participant
@@ -248,6 +253,8 @@ function messageFor(
     ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
     ...(human?.mentions?.length ? { mentions: structuredClone(human.mentions) } : {}),
     ...(human?.continuationRequest ? { continuationRequest: structuredClone(human.continuationRequest) } : {}),
+    ...(spend?.generationId ? { generationId: spend.generationId } : {}),
+    ...(typeof spend?.costUsd === "number" ? { openRouterCostUsd: spend.costUsd } : {}),
   };
 }
 
@@ -529,9 +536,10 @@ export class SqliteRoomRepository implements RoomRepository {
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
     human?: { id: string; name: string; clientMessageId?: string; mentions?: RoomMessage["mentions"]; continuationRequest?: RoomContinuationWorkRequest },
+    spend?: { generationId?: string; costUsd?: number },
   ) {
     const state = this.snapshot();
-    const message = messageFor(state, speaker, text, kind, style, burst, human);
+    const message = messageFor(state, speaker, text, kind, style, burst, human, spend);
     this.insertMessage(message);
     state.messages.push(message);
     this.state = state;
@@ -1597,8 +1605,9 @@ export class SqliteRoomRepository implements RoomRepository {
     this.database.prepare(`
       INSERT INTO messages(
         id, room_id, speaker, speaker_name, human_id, text, kind, style_json,
-        burst_id, burst_sequence, client_message_id, created_at, mentions_json, continuation_request_json, recipient_human_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        burst_id, burst_sequence, client_message_id, created_at, mentions_json, continuation_request_json, recipient_human_id,
+        generation_id, open_router_cost_usd
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       message.id,
       this.roomId,
@@ -1615,6 +1624,8 @@ export class SqliteRoomRepository implements RoomRepository {
       message.mentions?.length ? JSON.stringify(message.mentions) : null,
       message.continuationRequest ? JSON.stringify(message.continuationRequest) : null,
       message.recipientHumanId || null,
+      message.generationId || null,
+      message.openRouterCostUsd ?? null,
     );
   }
 

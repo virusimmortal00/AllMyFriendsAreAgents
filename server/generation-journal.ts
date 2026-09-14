@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { AgentId } from "./types.js";
 import { AuthoritativeLogging } from "./authoritative-logging.js";
-import type { OpenRouterSpendTracker } from "./openrouter-spend.js";
+import type { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 import { conversationLogFields } from "./structured-logger.js";
 
 export interface GenerationJournalEvent {
@@ -21,11 +21,11 @@ export interface GenerationJournalEvent {
 /** Compatibility facade routing generation evidence into the six-stream foundation. */
 export class GenerationJournal {
   readonly path: string;
-  private constructor(readonly logging: AuthoritativeLogging, private readonly spend?: OpenRouterSpendTracker) {
+  private constructor(readonly logging: AuthoritativeLogging, private readonly spend?: OpenRouterSpendStore) {
     this.path = path.join(logging.logDirectory, "generations.jsonl");
   }
 
-  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), onError?: (error: unknown) => unknown, logging?: AuthoritativeLogging, spend?: OpenRouterSpendTracker) {
+  static async open(projectRoot: string, stateDirectory = path.join(projectRoot, ".allmyfriendsareagents"), onError?: (error: unknown) => unknown, logging?: AuthoritativeLogging, spend?: OpenRouterSpendStore) {
     try {
       const foundation = logging || await AuthoritativeLogging.open({ dataDirectory: stateDirectory, projectId: path.basename(projectRoot), projectPath: projectRoot });
       return new GenerationJournal(foundation, spend);
@@ -69,7 +69,7 @@ export class GenerationJournal {
           ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
           routing, rateLimit, cooldown, error,
         }, context);
-        this.spend?.record(event.agent, providerUsage, providerCostUsd);
+        this.spend?.record(event.agent, providerUsage, providerCostUsd, { generationId: event.generationId });
       }
       if (toolOutcomes !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes", { ...evidence, outcomes: toolOutcomes }, context);
       else if (toolCalls !== undefined) this.logging.log("opencode-harness", "info", "opencode.tool.outcomes.summary", { ...evidence, toolCalls, toolFailures, generationEvent: event.type }, context);

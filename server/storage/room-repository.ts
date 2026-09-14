@@ -129,6 +129,7 @@ export interface RoomRepository extends AssignmentRecordStore, ContinuationRecor
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
+    spend?: { generationId?: string; costUsd?: number },
   ): Promise<RoomMessage>;
   addCommandAuditMessageOnce(auditId: string, text: string): Promise<RoomMessage>;
   addCommandDeliveryMessageOnce(attemptId: string, sequence: number, speaker: RoomMessage["speaker"], text: string, style?: ChatStyle, burst?: { burstId: string; sequence: number; kind?: RoomMessage["kind"] }): Promise<RoomMessage>;

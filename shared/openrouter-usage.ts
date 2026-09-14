@@ -22,3 +22,16 @@ export interface OpenRouterUsageSummary {
   readonly agents: Readonly<Record<string, OpenRouterSpendTotals>>;
   readonly credits?: OpenRouterCreditBalance;
 }
+
+/** A named, bounded time span for the windowed spend query. "all" reaches only as far back as retained history. */
+export const OPEN_ROUTER_SPEND_WINDOWS = ["1h", "24h", "7d", "30d", "all"] as const;
+export type OpenRouterSpendWindow = (typeof OPEN_ROUTER_SPEND_WINDOWS)[number];
+
+export interface OpenRouterUsageWindow {
+  readonly room: OpenRouterSpendTotals;
+  readonly agents: Readonly<Record<string, OpenRouterSpendTotals>>;
+  /** Null for "all" when retained history reaches back further than any bound; otherwise the window's start. */
+  readonly sinceIso: string | null;
+  /** True when retained event history does not reach back to the requested window start (results understate the window). */
+  readonly truncated: boolean;
+}

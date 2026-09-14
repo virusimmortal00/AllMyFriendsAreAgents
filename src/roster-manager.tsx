@@ -3,6 +3,7 @@ import {
   ApiRequestError,
   initiateProviderSetup,
   loadControlMe,
+  loadOpenRouterUsageWindow,
   loadRoster,
   refreshModelDiscovery,
   updateRoster,
@@ -15,10 +16,12 @@ import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared
 import { ConfirmationDialog } from "./components";
 import { RichModelPicker } from "./model-picker";
 import { ProviderMark } from "./provider-mark";
+import { OpenRouterSpendChart } from "./spend-chart";
+import { formatUsd } from "../shared/currency";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
-import type { OpenRouterUsageSummary } from "../shared/openrouter-usage";
+import { OPEN_ROUTER_SPEND_WINDOWS, type OpenRouterSpendWindow, type OpenRouterUsageSummary, type OpenRouterUsageWindow } from "../shared/openrouter-usage";
 import { AdministrationSignIn } from "./server-administration";
 import { DialogFrame } from "./dialog-frame";
 import { useScrollEdges } from "./scroll-edges";
@@ -59,6 +62,10 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
   const [setupInstruction, setSetupInstruction] = useState("");
   const [capabilityStatuses, setCapabilityStatuses] = useState<Readonly<Record<string, AgentCapabilityStatus>>>({});
   const [usage, setUsage] = useState<OpenRouterUsageSummary>();
+  const [spendExpanded, setSpendExpanded] = useState(false);
+  const [spendWindow, setSpendWindow] = useState<OpenRouterSpendWindow>("all");
+  const [windowedUsage, setWindowedUsage] = useState<OpenRouterUsageWindow>();
+  const [windowError, setWindowError] = useState("");
   const closed = useRef(false);
   const rosterEditorRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLElement>(null);
@@ -93,7 +100,20 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     return () => { closed.current = true; };
   }, []);
 
+  useEffect(() => {
+    if (!spendExpanded || spendWindow === "all") return;
+    const controller = new AbortController();
+    setWindowError("");
+    void loadOpenRouterUsageWindow(spendWindow, controller.signal).then(setWindowedUsage).catch((reason) => {
+      if (controller.signal.aborted) return;
+      setWindowedUsage(undefined);
+      setWindowError(reason instanceof Error ? reason.message : "OpenRouter usage for this window could not be loaded.");
+    });
+    return () => controller.abort();
+  }, [spendExpanded, spendWindow]);
+
   const catalogById = useMemo(() => new Map(catalog.map((entry) => [entry.agentId, entry])), [catalog]);
+  const agentLabels = useMemo(() => Object.fromEntries(entries.map((entry) => [entry.agentId, entry.conversationalName || catalogById.get(entry.agentId)?.conversationalName || entry.agentId])), [entries, catalogById]);
   const duplicateNames = useMemo(() => {
     const seen = new Set<string>();
     const duplicates = new Set<string>();
@@ -245,7 +265,26 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
           ) : (
             <div className="roster-workspace" data-mobile-pane={mobilePane}>
               <aside className={`roster-rail${!loading && entries.length === 0 ? " roster-rail--empty" : ""}`} aria-label="Configured agents">
-                <header className="roster-rail__header"><span><strong>Your agents</strong><small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small>{usage ? <small className="roster-rail__usage" title="Spend accumulated by this server since it last restarted">Spent {formatUsd(usage.room.costUsd)}{usage.credits ? ` · ${formatUsd(usage.credits.remainingUsd)} left on OpenRouter` : ""}</small> : null}</span><label>View<select className="classic-select" aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label></header>
+                <header className="roster-rail__header">
+                  <span>
+                    <strong>Your agents</strong>
+                    <small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small>
+                    {usage ? <button type="button" className="roster-rail__usage" aria-expanded={spendExpanded} onClick={() => setSpendExpanded((current) => !current)}>Spent {formatUsd(usage.room.costUsd)}{usage.credits ? ` · ${formatUsd(usage.credits.remainingUsd)} left on OpenRouter` : ""} {spendExpanded ? "▴" : "▾"}</button> : null}
+                  </span>
+                  <label>View<select className="classic-select" aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label>
+                </header>
+                {usage && spendExpanded ? (
+                  <section className="spend-panel" aria-label="OpenRouter spend by agent">
+                    <div className="spend-panel__header">
+                      <strong>Spend by agent</strong>
+                      <label>Window<select className="classic-select" aria-label="Spend time window" value={spendWindow} onChange={(event) => setSpendWindow(event.target.value as OpenRouterSpendWindow)}>{OPEN_ROUTER_SPEND_WINDOWS.map((window) => <option key={window} value={window}>{window === "all" ? "All time" : `Last ${window}`}</option>)}</select></label>
+                    </div>
+                    {windowError ? <p className="roster-diagnostic" role="alert">{windowError}</p> : null}
+                    {spendWindow !== "all" && (windowedUsage as OpenRouterUsageWindow | undefined)?.truncated ? <p className="roster-diagnostic" role="status">Retained history doesn't reach back this far; totals may undercount.</p> : null}
+                    <OpenRouterSpendChart agents={spendWindow === "all" ? usage.agents : windowedUsage?.agents || {}} labels={agentLabels} />
+                    {usage.credits ? <p className="spend-panel__credits">{formatUsd(usage.credits.remainingUsd)} remaining of {formatUsd(usage.credits.totalCreditsUsd)} on OpenRouter.</p> : null}
+                  </section>
+                ) : null}
                 {loading ? <p className="roster-empty" role="status">Loading roster…</p> : (
                   <div ref={rosterEditorRef} className="roster-editor classic-scroll-region" role="list" aria-label="Room agent roster">
                     {displayedEntries.map((item, index) => {
@@ -358,11 +397,6 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
 
 function positiveRosterRevision(value: unknown, fallback: number) {
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
-}
-
-function formatUsd(value: number) {
-  if (value <= 0) return "$0.00";
-  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }
 
 function formatCatalogPrice(value: number | undefined) {

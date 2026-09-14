@@ -14,12 +14,12 @@ import type { ModelDiscoveryService } from "./model-discovery.js";
 import { ControlError, ControlPlaneStore, CONTROL_SESSION_COOKIE } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import type { OpenRouterCatalogService } from "./openrouter-catalog.js";
-import type { OpenRouterSpendTracker } from "./openrouter-spend.js";
+import type { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService;spend?:OpenRouterSpendTracker}={}) {
+async function fixture(options:{control?:boolean;capabilities?:boolean;realControl?:boolean;claimed?:boolean;humanIsMember?:(humanId:string)=>boolean;intelligence?:OpenRouterCatalogService;spend?:OpenRouterSpendStore}={}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-roster-api-")); roots.push(root);
   const store = await RoomStore.open(root, path.join(root, "state"));
   if (options.control) await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
@@ -97,7 +97,7 @@ describe("live roster API", () => {
       expect((await (await noSpend.call("/api/roster")).json()).usage).toBeUndefined();
     } finally { await noSpend.close(); }
 
-    const spend = { snapshot: vi.fn(() => ({ room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } } })) } as unknown as OpenRouterSpendTracker;
+    const spend = { snapshot: vi.fn(() => ({ room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } } })) } as unknown as OpenRouterSpendStore;
     const intelligence = { enrich: vi.fn(async (result) => result), credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
     const withSpend = await fixture({ spend, intelligence });
     try {
@@ -108,6 +108,26 @@ describe("live roster API", () => {
         credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" },
       });
     } finally { await withSpend.close(); }
+  });
+
+  it("serves windowed OpenRouter usage and validates the window parameter", async () => {
+    const noSpend = await fixture({});
+    try {
+      expect((await noSpend.call("/api/openrouter-usage?window=24h")).status).toBe(404);
+    } finally { await noSpend.close(); }
+
+    const windowResult = { room: { generations: 4, costUsd: 0.4, inputTokens: 40, outputTokens: 8, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: {}, sinceIso: "2026-08-25T00:00:00.000Z", truncated: false };
+    const spend = { since: vi.fn(() => windowResult) } as unknown as OpenRouterSpendStore;
+    const api = await fixture({ spend });
+    try {
+      expect((await api.call("/api/openrouter-usage?window=nonsense")).status).toBe(400);
+      expect(spend.since).not.toHaveBeenCalled();
+      const response = await api.call("/api/openrouter-usage?window=24h");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(windowResult);
+      expect(spend.since).toHaveBeenCalledWith("24h");
+    } finally { await api.close(); }
   });
 
   it("rejects missing, forged, and cross-session CSRF tokens before discovery or mutation", async () => {

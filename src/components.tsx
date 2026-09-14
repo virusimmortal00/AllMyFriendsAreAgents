@@ -25,6 +25,7 @@ import { isTranscriptFollowing, preferredScrollBehavior, scrollTranscriptToEnd }
 import type { RoomAgentRoster } from "../shared/roster";
 import { openCodeRuntimeStatusMessage, type OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
+import { formatUsd } from "../shared/currency";
 import { ProviderMark } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
@@ -422,7 +423,12 @@ const TranscriptMessage = memo(function TranscriptMessage({
     : visibleAgentText(message.text);
   return (
     <article className={`message message--${commandDisclosure ? "command" : message.kind || "chat"}`}>
-      <time>[{formatTime(message.timestamp)}]</time>
+      <time>
+        [{formatTime(message.timestamp)}]
+        {isAgentId(message.speaker) && message.openRouterCostUsd !== undefined
+          ? <span className="message-cost" title="OpenRouter's observed cost for this whole turn, shown on every message it produced.">{formatUsd(message.openRouterCostUsd)}</span>
+          : null}
+      </time>
       <div>
         {commandDisclosure ? (
           <details className="command-disclosure">
@@ -451,6 +457,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
   && previous.message.speakerName === next.message.speakerName
   && previous.message.text === next.message.text
   && previous.message.timestamp === next.message.timestamp
+  && previous.message.openRouterCostUsd === next.message.openRouterCostUsd
   && equalChatStyle(previous.message.style, next.message.style));
 
 export const Transcript = memo(function Transcript({

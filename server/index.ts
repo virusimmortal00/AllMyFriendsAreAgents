@@ -70,7 +70,7 @@ import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import { OPEN_CODE_RUNTIME_REFRESH_TTL_MS, publicOpenCodeRuntimeStatus, resolveOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
-import { OpenRouterSpendTracker } from "./openrouter-spend.js";
+import { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
 import { registerControlPlaneRoutes } from "./control-plane-api.js";
 import { OpenCodeContextSummarizer } from "./context-summarizer.js";
@@ -191,7 +191,7 @@ const storageScope = typeof (store as Partial<IdentityRepository>).getStorageSco
   ? await (store as RoomRepository & IdentityRepository).getStorageScope(store.roomId)
   : undefined;
 const currentProjectId = storageScope?.projectId || legacyProjectId || `legacy-project:${createHash("sha256").update(await realpath(projectRepositoryPath)).digest("hex").slice(0, 32)}`;
-const openRouterSpend = new OpenRouterSpendTracker();
+const openRouterSpend = await OpenRouterSpendStore.open(storageConfiguration.dataDirectory);
 const generationJournal = await GenerationJournal.open(projectRoot, storageConfiguration.dataDirectory, (error) => structuredLogger.log("error", "generation-journal.write.failed", { error, outcome: "failed" }), loggingFoundation, openRouterSpend);
 const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
@@ -934,7 +934,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         await delivery.write(sequence, () => deliveryId
           ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence})
-          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence}));
+          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,{generationId:result.generationId,costUsd:result.costUsd}));
         broadcast();
       },
     });

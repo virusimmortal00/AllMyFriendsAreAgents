@@ -340,6 +340,7 @@ export class RoomStore implements RoomRepository {
     style?: ChatStyle,
     burst?: { burstId: string; sequence: number },
     human?: { id: string; name: string; clientMessageId?: string; mentions?: MessageMention[]; continuationRequest?: RoomContinuationWorkRequest },
+    spend?: { generationId?: string; costUsd?: number },
   ) {
     const participant = styledParticipant(speaker);
     const messageStyle = participant
@@ -358,6 +359,8 @@ export class RoomStore implements RoomRepository {
       ...(human?.clientMessageId ? { clientMessageId: human.clientMessageId } : {}),
       ...(human?.mentions?.length ? { mentions: structuredClone(human.mentions) } : {}),
       ...(human?.continuationRequest ? { continuationRequest: structuredClone(human.continuationRequest) } : {}),
+      ...(spend?.generationId ? { generationId: spend.generationId } : {}),
+      ...(typeof spend?.costUsd === "number" ? { openRouterCostUsd: spend.costUsd } : {}),
     };
     this.state.messages.push(message);
     await this.save();

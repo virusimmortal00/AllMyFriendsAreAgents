@@ -14,7 +14,7 @@ import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { OpenRouterModelPageResolution } from "../shared/openrouter-model-page";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
-import type { OpenRouterUsageSummary } from "../shared/openrouter-usage";
+import type { OpenRouterSpendWindow, OpenRouterUsageSummary, OpenRouterUsageWindow } from "../shared/openrouter-usage";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -170,6 +170,12 @@ export async function loadModelOfferDetails(providerId: string, modelId: string,
 export async function resolveOpenRouterModelPage(url: string, signal?: AbortSignal): Promise<OpenRouterModelPageResolution> {
   const query = new URLSearchParams({ url });
   return request(`/api/openrouter-model-page?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
+}
+
+export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal): Promise<OpenRouterUsageWindow> {
+  const query = new URLSearchParams({ window });
+  return request(`/api/openrouter-usage?${query}`, { method: "GET", cache: "no-store", signal })
     .then((response) => response.json());
 }
 
