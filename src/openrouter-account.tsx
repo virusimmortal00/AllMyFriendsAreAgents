@@ -4,13 +4,14 @@ import { OPEN_ROUTER_SPEND_WINDOWS, type OpenRouterSpendWindow, type OpenRouterU
 import { formatUsd } from "../shared/currency";
 import { OpenRouterSpendChart } from "./spend-chart";
 import { OpenRouterMark } from "./openrouter-mark";
+import { loadOpenRouterSpendWindow, saveOpenRouterSpendWindow } from "./openrouter-spend-window";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 const CHECKED_AT_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 
 /** The room's dedicated view of its OpenRouter account: remaining credits, spend by time window, and spend by agent. */
 export function OpenRouterAccount({ agentLabels, refreshKey = 0 }: { agentLabels?: Readonly<Record<string, string>>; refreshKey?: number }) {
-  const [spendWindow, setSpendWindow] = useState<OpenRouterSpendWindow>("all");
+  const [spendWindow, setSpendWindow] = useState<OpenRouterSpendWindow>(() => loadOpenRouterSpendWindow(typeof window === "undefined" ? undefined : window.localStorage));
   const [usage, setUsage] = useState<OpenRouterUsageWindow>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -52,14 +53,18 @@ export function OpenRouterAccount({ agentLabels, refreshKey = 0 }: { agentLabels
                 <>
                   <div className="openrouter-credits__headline"><strong>{formatUsd(credits.remainingUsd)}</strong><span>available</span></div>
                   <div className="openrouter-credits__meta">
-                    <span>{formatUsd(credits.totalUsageUsd)} spent all-time · Checked {CHECKED_AT_FORMATTER.format(new Date(credits.fetchedAt))}</span>
+                    <span>Checked {CHECKED_AT_FORMATTER.format(new Date(credits.fetchedAt))}</span>
                     <button type="button" className="classic-button" disabled={loading} onClick={() => setManualRefresh((current) => current + 1)}>{loading ? "Checking…" : "Refresh"}</button>
                   </div>
                 </>
               ) : <p>Connect an OpenRouter API key to see your remaining balance here.</p>}
             </section>
             <div className="openrouter-account__toolbar">
-              <label>Window<select className="classic-select" aria-label="Spend time window" value={spendWindow} onChange={(event) => setSpendWindow(event.target.value as OpenRouterSpendWindow)}>{OPEN_ROUTER_SPEND_WINDOWS.map((value) => <option key={value} value={value}>{value === "all" ? "All time" : `Last ${value}`}</option>)}</select></label>
+              <label>Window<select className="classic-select" aria-label="Spend time window" value={spendWindow} onChange={(event) => {
+                const next = event.target.value as OpenRouterSpendWindow;
+                setSpendWindow(next);
+                saveOpenRouterSpendWindow(typeof window === "undefined" ? undefined : window.localStorage, next);
+              }}>{OPEN_ROUTER_SPEND_WINDOWS.map((value) => <option key={value} value={value}>{value === "all" ? "All time" : `Last ${value}`}</option>)}</select></label>
               <span className="openrouter-account__total">{formatUsd(usage.room.costUsd)} spent · {usage.room.generations} turn{usage.room.generations === 1 ? "" : "s"}</span>
             </div>
             {usage.truncated ? <p className="roster-diagnostic" role="status">Retained history doesn't reach back this far; totals may undercount.</p> : null}

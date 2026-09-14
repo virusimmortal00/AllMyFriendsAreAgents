@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OpenRouterAccount } from "./openrouter-account";
+import * as spendWindowPreference from "./openrouter-spend-window";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const usageWithCredits = {
   room: { generations: 2, costUsd: 0.05, inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -15,18 +16,40 @@ const usageWithCredits = {
 };
 
 describe("OpenRouterAccount", () => {
-  it("shows the plain remaining balance (never framed as a fraction of a cap), spend all-time, and a checked time", async () => {
+  it("shows the plain remaining balance (never framed as a fraction of a cap, and never the account's all-time usage) with a checked time", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(usageWithCredits), { status: 200 })));
     render(<OpenRouterAccount agentLabels={{ "codex-sol": "Sol" }} />);
     await screen.findByText("$26.15");
     expect(screen.getByText("available")).toBeTruthy();
     expect(screen.queryByText(/of \$100/)).toBeNull();
-    expect(screen.getByText(/\$73\.85 spent all-time/)).toBeTruthy();
+    expect(screen.queryByText(/\$73\.85/)).toBeNull(); // the account's lifetime usage isn't scoped to this room
     expect(screen.getByText(/Checked/)).toBeTruthy();
     expect(screen.getByText("Sol")).toBeTruthy();
   });
 
-  it("re-fetches with the selected window and on manual refresh", async () => {
+  it("defaults the window to whatever the stored preference resolves to (the last 24 hours with nothing stored)", async () => {
+    const loadSpy = vi.spyOn(spendWindowPreference, "loadOpenRouterSpendWindow");
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(usageWithCredits), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OpenRouterAccount />);
+    await screen.findByText("$26.15");
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=24h", expect.anything());
+    expect((screen.getByRole("combobox", { name: "Spend time window" }) as HTMLSelectElement).value).toBe("24h");
+  });
+
+  it("honors a previously remembered window instead of the default", async () => {
+    vi.spyOn(spendWindowPreference, "loadOpenRouterSpendWindow").mockReturnValue("7d");
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(usageWithCredits), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<OpenRouterAccount />);
+    await screen.findByText("$26.15");
+    expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=7d", expect.anything());
+    expect((screen.getByRole("combobox", { name: "Spend time window" }) as HTMLSelectElement).value).toBe("7d");
+  });
+
+  it("re-fetches with the selected window, remembers the choice, and re-fetches on manual refresh", async () => {
+    const saveSpy = vi.spyOn(spendWindowPreference, "saveOpenRouterSpendWindow").mockImplementation(() => undefined);
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(usageWithCredits), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...usageWithCredits, room: { ...usageWithCredits.room, costUsd: 0.01 } }), { status: 200 }))
@@ -36,8 +59,9 @@ describe("OpenRouterAccount", () => {
     render(<OpenRouterAccount />);
     await screen.findByText("$26.15");
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Spend time window" }), "24h");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=24h", expect.anything()));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Spend time window" }), "7d");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=7d", expect.anything()));
+    expect(saveSpy.mock.calls[0]?.[1]).toBe("7d"); // storage itself is undefined in this jsdom config (no --localstorage-file)
 
     await user.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
