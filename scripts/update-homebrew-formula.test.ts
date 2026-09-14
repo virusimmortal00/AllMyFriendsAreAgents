@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateHomebrewFormula, parseHomebrewSourceManifest, renderHomebrewFormula } from "./update-homebrew-formula.js";
+import { generateHomebrewCask, parseHomebrewSourceManifest, renderHomebrewCask } from "./update-homebrew-formula.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,9 +18,9 @@ function manifest(overrides: Record<string, unknown> = {}) {
     schemaVersion: 1,
     application: { version: "1.2.3", commit: "b".repeat(40) },
     targets: [
-      { id: "darwin-arm64", artifact: file("amfaa-v1.2.3-darwin-arm64.tar.gz", "1".repeat(64)) },
-      { id: "darwin-x64", artifact: file("amfaa-v1.2.3-darwin-x64.tar.gz", "2".repeat(64)) },
-      { id: "linux-x64", artifact: file("amfaa-v1.2.3-linux-x64.tar.gz", "3".repeat(64)) },
+      { id: "darwin-arm64", artifact: file("all-my-friends-are-agents-v1.2.3-darwin-arm64.tar.gz", "1".repeat(64)) },
+      { id: "darwin-x64", artifact: file("all-my-friends-are-agents-v1.2.3-darwin-x64.tar.gz", "2".repeat(64)) },
+      { id: "linux-x64", artifact: file("all-my-friends-are-agents-v1.2.3-linux-x64.tar.gz", "3".repeat(64)) },
     ],
     ...overrides,
   };
@@ -74,40 +74,56 @@ describe("parseHomebrewSourceManifest", () => {
   });
 });
 
-describe("renderHomebrewFormula", () => {
-  it("embeds the version, class name, and per-target url/sha256 pairs", () => {
+describe("renderHomebrewCask", () => {
+  it("embeds the version and per-arch sha256 pairs, and an arch-interpolated url", () => {
     const parsed = parseHomebrewSourceManifest(manifest());
-    const formula = renderHomebrewFormula(parsed);
-    expect(formula).toContain("class Amfaa < Formula");
-    expect(formula).toContain("published with v1.2.3");
-    expect(formula).toContain("on_arm do");
-    expect(formula).toContain('url "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v1.2.3/amfaa-v1.2.3-darwin-arm64.tar.gz"');
-    expect(formula).toContain(`sha256 "${"1".repeat(64)}"`);
-    expect(formula).toContain("on_intel do");
-    expect(formula).toContain('url "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v1.2.3/amfaa-v1.2.3-darwin-x64.tar.gz"');
-    expect(formula).toContain(`sha256 "${"2".repeat(64)}"`);
+    const cask = renderHomebrewCask(parsed);
+    expect(cask).toContain('cask "amfaa" do');
+    expect(cask).toContain("published with v1.2.3");
+    expect(cask).toContain('version "1.2.3"');
+    expect(cask).toContain(`sha256 arm:   "${"1".repeat(64)}"`);
+    expect(cask).toContain(`intel: "${"2".repeat(64)}"`);
+    expect(cask).toContain('url "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v#{version}/all-my-friends-are-agents-v#{version}-#{arch}.tar.gz"');
+  });
+
+  it("rejects an artifact URL that does not match the expected release asset naming convention", () => {
+    const bad = manifest();
+    bad.targets = bad.targets.map((target) =>
+      target.id === "darwin-arm64" ? { ...target, artifact: { ...target.artifact, url: target.artifact.url.replace("all-my-friends-are-agents-v1.2.3", "renamed") } } : target,
+    );
+    const parsed = parseHomebrewSourceManifest(bad);
+    expect(() => renderHomebrewCask(parsed)).toThrow(/naming convention/);
   });
 
   it("never embeds a non-darwin target", () => {
     const parsed = parseHomebrewSourceManifest(manifest());
-    const formula = renderHomebrewFormula(parsed);
-    expect(formula).not.toContain("linux-x64");
+    const cask = renderHomebrewCask(parsed);
+    expect(cask).not.toContain("linux-x64");
   });
 
-  it("wires the test block to amfaa version and the installed launcher via a write_exec_script wrapper", () => {
+  it("writes an exec wrapper into HOMEBREW_PREFIX/bin instead of using the binary stanza", () => {
     const parsed = parseHomebrewSourceManifest(manifest());
-    const formula = renderHomebrewFormula(parsed);
-    expect(formula).toContain('shell_output("#{bin}/amfaa version")');
-    expect(formula).toContain('bin.write_exec_script libexec/"amfaa"');
+    const cask = renderHomebrewCask(parsed);
+    expect(cask).toContain("postflight_steps do");
+    expect(cask).toContain('write_file "bin/amfaa"');
+    expect(cask).toContain("{{staged_path}}/all-my-friends-are-agents/amfaa");
+    expect(cask).toContain('set_permissions "bin/amfaa", "0755"');
+    expect(cask).not.toContain("binary ");
+  });
+
+  it("cleans up the installed launcher wrapper on uninstall", () => {
+    const parsed = parseHomebrewSourceManifest(manifest());
+    const cask = renderHomebrewCask(parsed);
+    expect(cask).toContain('uninstall delete: "#{HOMEBREW_PREFIX}/bin/amfaa"');
   });
 });
 
-describe("generateHomebrewFormula", () => {
-  it("reads a manifest file from disk and renders the formula", () => {
+describe("generateHomebrewCask", () => {
+  it("reads a manifest file from disk and renders the cask", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "amfaa-homebrew-"));
     const manifestPath = path.join(directory, "native-release-manifest.json");
     writeFileSync(manifestPath, JSON.stringify(manifest()));
-    const formula = generateHomebrewFormula(manifestPath);
-    expect(formula).toContain("published with v1.2.3");
+    const cask = generateHomebrewCask(manifestPath);
+    expect(cask).toContain("published with v1.2.3");
   });
 });

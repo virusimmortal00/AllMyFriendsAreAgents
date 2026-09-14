@@ -93,3 +93,76 @@ jobs:
               "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v$RELEASE_VERSION/$name"
             cmp "$source" "$RUNNER_TEMP/public-release/$name"
           done
+
+  bump-homebrew-formula:
+    name: Bump the Homebrew formula
+    needs: publish
+    if: github.repository == 'virusimmortal00/AllMyFriendsAreAgents' && github.ref == 'refs/heads/main'
+    # Homebrew Cask commands (style/audit for a Casks/ file) only work on
+    # macOS -- there is no Cask support in Linuxbrew.
+    runs-on: macos-14
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.5.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch the just-published release manifest
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          env -u GH_TOKEN -u GITHUB_TOKEN curl --fail --location --proto '=https' --tlsv1.2 \
+            --retry 4 --retry-all-errors \
+            -o "$RUNNER_TEMP/native-release-manifest.json" \
+            "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/download/v$RELEASE_VERSION/native-release-manifest.json"
+      - name: Regenerate homebrew/Casks/amfaa.rb from the manifest
+        run: pnpm exec tsx scripts/update-homebrew-formula.ts "$RUNNER_TEMP/native-release-manifest.json"
+      - name: Check whether the cask actually changed
+        id: diff
+        run: |
+          if git diff --quiet -- homebrew/Casks/amfaa.rb; then
+            echo 'Cask already matches this release; nothing to bump.'
+            echo changed=false >> "$GITHUB_OUTPUT"
+          else
+            echo changed=true >> "$GITHUB_OUTPUT"
+          fi
+      - name: Lint and audit the regenerated cask before proposing it
+        # A throwaway local tap, because brew audit/style for an untapped
+        # cask need a resolvable tap/name, not a bare file path. The PR this
+        # step opens gets a full brew install + real launcher run from
+        # .github/workflows/homebrew-formula.yml before it can auto-merge.
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          brew tap-new local/amfaa --no-git
+          mkdir -p "$(brew --repository local/amfaa)/Casks"
+          cp homebrew/Casks/amfaa.rb "$(brew --repository local/amfaa)/Casks/amfaa.rb"
+          brew style local/amfaa/amfaa
+          brew audit --cask local/amfaa/amfaa
+      - name: Open a pull request and request auto-merge
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          branch="automation/homebrew-formula-v$RELEASE_VERSION"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$branch"
+          git add homebrew/Casks/amfaa.rb
+          git commit --message "Bump Homebrew formula to v$RELEASE_VERSION"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "Bump Homebrew formula to v$RELEASE_VERSION" \
+            --body "Regenerated \`homebrew/Casks/amfaa.rb\` from the published \`v$RELEASE_VERSION\` \`native-release-manifest.json\` with \`scripts/update-homebrew-formula.ts\`. Style/audit already passed on this run against a throwaway local tap; the **Homebrew formula validation** check on this PR performs a real \`brew install --cask\` and runs the installed launcher against the published artifact before it can merge.")
+          gh pr merge --auto --squash "$pr_url" || echo "::warning::Could not enable auto-merge for $pr_url; merge it manually once its checks pass."

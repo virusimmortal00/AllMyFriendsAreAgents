@@ -128,31 +128,44 @@ downstream identities through `amfaa version` and runtime readiness through
 ## Homebrew
 
 macOS users can also install through Homebrew (issue #200), on top of the
-same signed `darwin-arm64`/`darwin-x64` artifacts described above. There is
+same signed `darwin-arm64`/`darwin-x64` artifacts described above, as a
+**cask** rather than a formula -- every from-source Formula install runs
+Homebrew's Mach-O linkage-fixing pass unconditionally, and that pass fails on
+this fully self-contained bundle (see `homebrew/README.md` for why). There is
 not yet a dedicated `virusimmortal00/homebrew-amfaa` tap repository -- that
 requires repo-creation permissions this project does not currently have -- so
-the formula lives in this repository at
-[`homebrew/Formula/amfaa.rb`](../../homebrew/Formula/amfaa.rb), which is the
+the cask lives in this repository at
+[`homebrew/Casks/amfaa.rb`](../../homebrew/Casks/amfaa.rb), which is the
 source of truth in the meantime. See
 [`homebrew/README.md`](../../homebrew/README.md) for the exact
-`brew tap`/`brew install` steps and their current limitation, and for how
-`brew upgrade`/`brew uninstall` relate to this section's `update`/`rollback`/
-`uninstall` subcommands (Homebrew replaces the whole install directory on
-upgrade, so the tarball's own rollback bookkeeping is redundant under brew).
+`brew tap`/`brew install --cask` steps and their current limitation, and for
+how `brew upgrade --cask`/`brew uninstall --cask` relate to this section's
+`update`/`rollback`/`uninstall` subcommands (Homebrew replaces the whole
+install directory on upgrade, so the tarball's own rollback bookkeeping is
+redundant under brew).
 
-The formula's `version`/`url`/`sha256` fields are generated from a published
-release's `native-release-manifest.json` by
-[`scripts/update-homebrew-formula.ts`](../../scripts/update-homebrew-formula.ts),
-run manually today. Remaining follow-up work, out of scope for this change:
+**This is wired into the release pipeline**, not a manual step. The
+`bump-homebrew-formula` job at the end of **Publish accepted native release**
+runs [`scripts/update-homebrew-formula.ts`](../../scripts/update-homebrew-formula.ts)
+against the manifest it just published, lints and audits the regenerated cask
+against a throwaway local tap, and -- only if the cask actually changed --
+opens a pull request and requests auto-merge. That PR gets a second,
+independent gate: `.github/workflows/homebrew-formula.yml` runs on any PR
+touching `homebrew/Casks/amfaa.rb` and performs a real `brew install --cask`
+against the published artifact, then runs the installed launcher and checks
+its reported version, before the PR is allowed to merge. A broken cask
+either fails to open a PR (lint/audit failure) or opens one that never
+auto-merges (install/run failure) -- it does not silently reach users.
+
+Remaining follow-up work, out of scope for this change:
 
 - Create the dedicated `virusimmortal00/homebrew-amfaa` tap repository and
-  move the formula there.
-- Wire a formula-bump step into the end of **Publish accepted native
-  release** so each promotion commits an updated formula automatically. This
-  is left as a follow-up rather than done here because that workflow is
-  sensitive, gated, and requires explicit maintainer authorization to change
-  (see above); it should be reviewed on its own once the dedicated tap
-  exists.
+  move the cask there (see `homebrew/README.md`'s follow-up section for the
+  exact steps once repo-creation permissions are available).
+- `gh pr merge --auto` only truly blocks on checks that branch protection
+  marks as required; consider marking **Real brew install and run** (from
+  `homebrew-formula.yml`) as a required status check for `main` so a slow or
+  still-running check can't be raced by auto-merge.
 
 ## Native setup presentation
 
