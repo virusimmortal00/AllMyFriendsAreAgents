@@ -109,6 +109,12 @@ needed. The branded URL redirects to the installer attached to the
 where you can inspect it before running it. Pass `--no-modify-path` when running
 a downloaded copy to leave your shell configuration unchanged.
 
+On macOS, you can install the same way with [Homebrew](https://github.com/virusimmortal00/homebrew-amfaa) instead:
+
+```bash
+brew install --cask virusimmortal00/amfaa/amfaa
+```
+
 On Windows x64, download, inspect, and run the PowerShell installer:
 
 ```powershell
@@ -121,16 +127,22 @@ Get-Content $Installer
 The Windows installer uses the unprivileged per-user application directory and
 adds its launcher to your user `PATH`. Open a new terminal to use `amfaa` by name.
 
+Prefer a container? Skip to [Docker](#docker) below — steps 2 and 3 continue
+for the native and Homebrew installs.
+
 ### 2. Run the first-time setup
 
 Run AMFAA from the project directory that agents should be allowed to inspect.
-The installer cannot refresh the current shell's `PATH`, so use the full command
-path for the first launch on macOS or Linux:
+The curl installer cannot refresh the current shell's `PATH`, so use the full
+command path for its first launch on macOS or Linux:
 
 ```bash
 cd /path/to/your/project
 "$HOME/.local/bin/amfaa"
 ```
+
+A Homebrew install is already on `PATH`, so `cd /path/to/your/project && amfaa`
+is enough.
 
 On Windows, open a new terminal first:
 
@@ -208,6 +220,29 @@ configuration, and agent-behavior settings require administrative authority.
 Operators can [claim the server owner](docs/operations/server-administration.md)
 through **Window → Server Administration**.
 
+### Docker
+
+Prefer a container over installing anything on the host? Clone the repository,
+then from a dedicated standalone checkout you want agents to inspect:
+
+```bash
+cp .env.compose.example .env
+cp .env.container.example .env.container
+chmod 600 .env .env.container
+docker compose build amfaa
+docker compose up --detach --wait amfaa
+curl --fail http://127.0.0.1:53147/api/ready
+```
+
+Open [http://127.0.0.1:53147](http://127.0.0.1:53147) once it's ready. The
+image ships the same pinned Node.js and audited OpenCode runtime as the
+native install. To connect a provider, use
+`docker compose run --rm amfaa opencode auth login` rather than editing the
+image or a committed file — provider state lives in its own volume. See the
+[container deployment guide](docs/operations/container-deployment.md) for
+the full mount/volume contract, upgrades, and operator guidance; it is the
+authority this summary defers to.
+
 ## Source checkout for contributors
 
 To develop the application itself, install [Node.js 24+](https://nodejs.org/) and
@@ -229,9 +264,9 @@ for operators and runtime development; every selected executable still passes th
 startup version and binary-contract checks. The development UI defaults to
 [http://127.0.0.1:4173](http://127.0.0.1:4173), with the API on port `53147`.
 
-For Docker, use the [container setup and provider authentication instructions](docs/operations/container-deployment.md#local-build-and-fresh-installation)
-so credentials are available inside the container's provider-state volume. Release
-verification, update, rollback, and uninstall behavior is documented in the
+See [Docker](#docker) above for a container instead of a source checkout.
+Release verification, update, rollback, and uninstall behavior for the native
+install is documented in the
 [native release runbook](docs/operations/native-releases.md).
 
 ## Start a conversation

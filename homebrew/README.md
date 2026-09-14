@@ -1,7 +1,12 @@
 # Homebrew cask
 
-This directory holds the Homebrew cask for `amfaa`, tracking issue
+This directory holds `amfaa`'s Homebrew cask source of truth, tracking issue
 [#200](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/200).
+
+The dedicated tap is
+[`virusimmortal00/homebrew-amfaa`](https://github.com/virusimmortal00/homebrew-amfaa).
+See the main [README](../README.md#homebrew-macos) for the one-line install
+command.
 
 ## Why a cask, not a formula
 
@@ -15,74 +20,45 @@ bundle's deeply nested install path overflows that addon's Mach-O header
 padding. Homebrew Casks stage files as-is with no relinking, which sidesteps
 the problem generally rather than patching around this one binary.
 
-## Current state: in-repo cask, no dedicated tap yet, automated on release
+## How the cask stays current, end to end
 
-The plan in issue #200 calls for a separate `virusimmortal00/homebrew-amfaa`
-tap repository, which is the location Homebrew's naming convention (and
-`brew tap`) expects for a cask named `amfaa`. Creating that repository
-requires GitHub repo-creation permissions this change does not have, so as an
-interim step the cask lives here instead:
-
-- [`Casks/amfaa.rb`](Casks/amfaa.rb) is the **source of truth** for the cask
-  until a dedicated tap repository exists. Do not fork or duplicate it
-  elsewhere without updating this note.
-- It is regenerated from a published release's `native-release-manifest.json`
-  by [`scripts/update-homebrew-formula.ts`](../scripts/update-homebrew-formula.ts).
+- [`Casks/amfaa.rb`](Casks/amfaa.rb) in **this** repository is the source of
+  truth. It is regenerated from a published release's
+  `native-release-manifest.json` by
+  [`scripts/update-homebrew-formula.ts`](../scripts/update-homebrew-formula.ts).
   Do not hand-edit the `version`/`url`/`sha256` fields.
-- **This is wired into the release pipeline.** The end of **Publish accepted
-  native release** (`.github/workflows/publish-native-release.yml`) runs that
-  script against the manifest it just published, lints/audits the result
-  against a throwaway local tap, and — if the cask actually changed — opens a
-  pull request with auto-merge requested. `.github/workflows/homebrew-formula.yml`
-  runs on that PR (and on any other PR touching `Casks/amfaa.rb`): a real
-  `brew install --cask` against the published artifact, then invokes the
-  installed launcher and checks its reported version, before the PR can
-  merge. A release with a broken cask never gets to merge a stale-looking
-  bump silently — the PR simply doesn't open, or its check fails and it
-  never auto-merges.
+- The end of **Publish accepted native release**
+  (`.github/workflows/publish-native-release.yml`) runs that script against
+  the manifest it just published, lints/audits the result against a
+  throwaway local tap, and — if the cask actually changed — opens a pull
+  request here and requests auto-merge.
+  `.github/workflows/homebrew-formula.yml` runs on any PR touching
+  `homebrew/Casks/amfaa.rb`: a real `brew install --cask` against the
+  published artifact, then invokes the installed launcher and checks its
+  reported version, before the PR can merge.
+- [`virusimmortal00/homebrew-amfaa`](https://github.com/virusimmortal00/homebrew-amfaa)
+  (the actual tap Homebrew users install from) mirrors this file. Its own
+  `.github/workflows/sync.yml` pulls `Casks/amfaa.rb` from this repository's
+  `main` branch on a schedule, lints it, commits it there when it changes,
+  and then verifies the published tap installs and runs for real — using
+  only that repository's own `GITHUB_TOKEN`, since reading a public file
+  from this repository needs no cross-repository credential.
 
-### Follow-up: move this to a real tap
+A broken cask never silently reaches users: it either fails to open a PR
+here (lint/audit failure), opens one that never auto-merges (install/run
+failure), or — if it somehow got this far — fails the tap's own sync
+verification instead of getting mirrored.
 
-Once `virusimmortal00/homebrew-amfaa` (or an equivalent tap repository) can be
-created:
-
-1. Copy `Casks/amfaa.rb` from this repo into `Casks/amfaa.rb` in the new tap
-   repository.
-2. Point `scripts/update-homebrew-formula.ts`'s output path (or the workflow
-   step that invokes it) at a checkout of that repository instead of
-   `homebrew/Casks/amfaa.rb` in this repo.
-3. Update this README and `docs/operations/native-releases.md` to describe
-   `brew tap virusimmortal00/amfaa` instead of the manual steps below.
-4. Leave this `homebrew/` directory in place for one release cycle with a
-   note pointing at the new tap, then remove it.
-
-## Using the cask today
-
-Homebrew requires a cask to live in a tap (a git repository Homebrew knows
-how to find casks in). Until the dedicated tap above exists, use this
-repository itself as the tap:
+## Using the cask
 
 ```sh
-brew tap virusimmortal00/all-my-friends-are-agents https://github.com/virusimmortal00/AllMyFriendsAreAgents
-brew install virusimmortal00/all-my-friends-are-agents/amfaa
+brew install --cask virusimmortal00/amfaa/amfaa
 ```
 
-Homebrew looks for casks directly under `Casks/` at the tap's root, not under
-a `homebrew/` subdirectory, so tapping this repository as-is will not find
-`amfaa.rb` where Homebrew expects it. Until the cask is relocated to match
-that layout (or into a dedicated tap, see above), stage it into a local tap
-instead:
-
-```sh
-git clone https://github.com/virusimmortal00/AllMyFriendsAreAgents
-brew tap-new local/amfaa --no-git
-mkdir -p "$(brew --repository local/amfaa)/Casks"
-cp AllMyFriendsAreAgents/homebrew/Casks/amfaa.rb "$(brew --repository local/amfaa)/Casks/amfaa.rb"
-brew install --cask local/amfaa/amfaa
-```
-
-Upgrading and uninstalling then follow normal Homebrew lifecycle commands
-(`brew upgrade --cask amfaa`, `brew uninstall --cask amfaa`) once installed.
+See the [tap's own README](https://github.com/virusimmortal00/homebrew-amfaa#readme)
+for why this exact command (rather than `brew tap` + `brew install amfaa`) is
+the one to use, upgrade/uninstall commands, and how the mirror works from
+that side.
 
 This is deliberately separate from `scripts/install-native.sh`'s own
 `update`/`rollback`/`uninstall` subcommands (see
@@ -112,7 +88,7 @@ The script only reads the manifest's `application.version`/`commit` and the
 two darwin targets' `artifact` entries; it does not re-verify SBOM or
 provenance the way `scripts/install-native.sh` does. Homebrew's own
 `sha256` verification on download already covers artifact integrity, and the
-real `brew install --cask` run in CI (see above) covers the rest.
+real `brew install --cask` runs in CI (see above) cover the rest.
 
 Validate a hand-edited or regenerated cask the same way CI does, before
 committing it:
