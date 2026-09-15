@@ -15,6 +15,7 @@ type PropertiesPage = "general" | "agent-behavior";
 interface RoomPropertiesDialogProps extends RoomSettingsInput {
   active?: boolean;
   onOpenAdministration: () => void;
+  repository?: string;
   disabled: boolean;
   returnFocusTo: HTMLElement | null;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;

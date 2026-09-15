@@ -639,7 +639,7 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("textbox", { name: "What should everyone call you?" })).toBeNull();
   });
 
-  it("keeps full-workspace destinations in Window and closes Diagnostics back to Chat", async () => {
+  it("keeps full-workspace destinations in Window and closes administration Diagnostics back to Chat", async () => {
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -649,10 +649,14 @@ describe("rendered reconnect recovery", () => {
     expect(within(screen.getByRole("menu", { name: "View" })).queryByRole("menuitemradio", { name: "Diagnostics" })).toBeNull();
     await user.keyboard("{Escape}");
 
-    await chooseMenuItem(user, "Window", "Diagnostics");
+    await user.click(screen.getByRole("menuitem", { name: "Window" }));
+    for (const name of ["Diagnostics", "Integrations"]) expect(within(screen.getByRole("menu", { name: "Window" })).queryByRole("menuitemradio", { name })).toBeNull();
+    await user.keyboard("{Escape}");
+    await chooseMenuItem(user, "Window", "Server Administration");
+    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
     expect(screen.getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close Diagnostics and return to Chat" }));
+    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
     expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
     expect(pushState).not.toHaveBeenCalled();
   });
@@ -673,17 +677,18 @@ describe("rendered reconnect recovery", () => {
     const user = userEvent.setup();
     await renderConnected();
     const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
-    await chooseMenuItem(user, "Window", "Diagnostics");
-    await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
-    await screen.findByRole("alert");
-    await user.click(screen.getByRole("button", { name: "Sign in to server administration" }));
+    await chooseMenuItem(user, "Window", "Server Administration");
+    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
+    // The administration window has already checked the session, so Diagnostics starts gated.
+    expect((await screen.findByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(await screen.findByRole("button", { name: "Sign in to server administration" }));
     expect(screen.queryByRole("heading", { name: "Owner diagnostics" })).toBeNull();
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
     await screen.findByRole("heading", { name: "Owner diagnostics" });
     await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByText("No matching records.");
-    await chooseMenuItem(user, "Window", "Server Administration");
+    await user.click(screen.getByRole("tab", { name: "Session" }));
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
     expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);

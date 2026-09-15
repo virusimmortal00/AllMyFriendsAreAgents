@@ -45,6 +45,11 @@ export class RoomLifecycleStore {
     const rows=this.database.prepare(`SELECT r.* FROM rooms r JOIN room_memberships m ON m.room_id=r.id WHERE m.human_id=? ${includeArchived?"":"AND r.archived_at IS NULL"} ORDER BY r.updated_at DESC,r.id`).all(humanId) as RoomRow[];
     return rows.map((row)=>this.project(row));
   }
+  /** Server-control listing of every room on this server; room-facing callers use `list`, which is membership-scoped. */
+  listAll(includeArchived=false) {
+    const rows=this.database.prepare(`SELECT r.* FROM rooms r ${includeArchived?"":"WHERE r.archived_at IS NULL"} ORDER BY r.updated_at DESC,r.id`).all() as RoomRow[];
+    return rows.map((row)=>this.project(row));
+  }
   read(roomId:string,humanId:string) { const row=this.memberRow(roomId,humanId); return row?this.project(row):undefined; }
 
   create(humanId:string,input:{name?:unknown;topic?:unknown;projectId?:unknown}) {

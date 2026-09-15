@@ -104,7 +104,7 @@ export interface RoomState {
   preflightEvidence?: PreflightEvidence;
   humans?: HumanPresence[];
   deployment?: DeploymentProvenance;
-  githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
+  githubReadStatus?: { state: "ready" | "unavailable"; reason: string; repository?: string };
   openCodeRuntime?: OpenCodeRuntimeStatus;
 }
 export interface WorkshopResponse extends GovernedImprovementDetail {

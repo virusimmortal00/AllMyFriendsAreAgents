@@ -21,7 +21,8 @@ async function openScenario(page: Page, id: string) {
     if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
   } else if (id.startsWith("github-")) {
-    await menu(page, "Window", "Integrations");
+    await menu(page, "Window", "Server Administration");
+    await page.getByRole("tab", { name: "Integrations", exact: true }).click();
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
   } else if (id.startsWith("manage-agents-") || id === "unsaved-changes-confirmation") {
     await menu(page, "Room", "Manage agents...");
@@ -45,11 +46,20 @@ async function openScenario(page: Page, id: string) {
   else if (id === "assign-task") {
     await menu(page, "Room", "Assign task...");
     await page.getByRole("textbox", { name: "Task", exact: true }).fill("Check the smaller navigation layout for clipped controls.");
+  } else if (id === "rooms-repositories") {
+    await menu(page, "Window", "Server Administration");
+    await page.getByRole("tab", { name: "Rooms & repositories", exact: true }).click();
+    await expect(page.getByRole("table", { name: "Rooms and repositories" })).toBeVisible();
+  } else if (id === "room-usage") {
+    await menu(page, "Room", "Usage & spend...");
+    await expect(page.getByText("$0.42 spent · 5 turns")).toBeVisible();
   } else if (id.startsWith("owner-diagnostics")) {
-    await menu(page, "Window", "Diagnostics");
+    await menu(page, "Window", "Server Administration");
+    await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
     if (id === "owner-diagnostics-sign-in") {
-      await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
-      await expect(page.getByRole("alert")).toBeVisible();
+      // The administration window checks the session first, so signed-out Diagnostics opens gated.
+      await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Sign in to server administration", exact: true })).toBeVisible();
     }
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");
@@ -57,7 +67,10 @@ async function openScenario(page: Page, id: string) {
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
       await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
-  } else if (id === "open-router-account") await menu(page, "Window", "Integrations");
+  } else if (id === "open-router-account") {
+    await menu(page, "Window", "Server Administration");
+    await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  }
 }
 
 async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIOS[number], shot: string) {

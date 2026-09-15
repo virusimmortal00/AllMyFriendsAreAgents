@@ -336,8 +336,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .provider-mark__logo { position: relative; z-index: 1; display: block; width: 70%; height: 70%; object-fit: contain; }
 .provider-mark__access { position: absolute; z-index: 2; right: -5px; bottom: -5px; display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #adb4be; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .provider-mark__access img { display: block; width: 11px; height: 11px; object-fit: contain; }
-.human-avatar { position: relative; display: inline-grid; width: 64px; height: 64px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid #aeb7c3; border-radius: 14px; background: linear-gradient(145deg, #eef4ff, #cbd9ef); box-shadow: 0 1px 2px rgba(0,0,0,.15); color: #23436f; font: 800 19px/1 Tahoma, Arial, sans-serif; }
-.human-avatar--compact { width: 28px; height: 28px; border-radius: 7px; font-size: 9px; }
+.human-avatar { position: relative; display: inline-grid; width: 64px; height: 64px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 2px inset white; border-radius: 0; background: #fff; color: var(--blue); font: 700 19px/1 "MS Sans Serif", Tahoma, Arial, sans-serif; }
+.human-avatar--compact { width: 28px; height: 28px; border-width: 1px; font-size: 9px; }
 .human-avatar img { position: absolute; z-index: 1; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
 .human-avatar-settings-button { font-size: 12px; }
 
@@ -407,11 +407,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .github-control-login label, .github-integration-card label { display: grid; gap: 4px; font-weight: 700; }
 .github-control-login input { min-width: 0; min-height: 25px; padding: 2px 4px; border: 2px inset white; background: #fff; font: inherit; }
 /* Window > Integrations: GitHub's account/repository section stacked above OpenRouter's, in one page instead of a separate dialog and destination (#209). */
-.integrations-body { display: grid; gap: 4px; align-content: start; width: 100%; max-width: 720px; margin: 0 auto; padding: 4px; }
-.integrations-section { padding: 10px 12px 12px; border-top: 3px solid var(--blue); background: var(--chrome); font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
-.integrations-section__heading { margin: 0 0 8px; color: #13264b; font: 700 13px/1.2 "MS Sans Serif", Arial, sans-serif; }
-.openrouter-credits--signed-out { display: grid; gap: 8px; padding: 12px 14px; border: 2px inset #fff; background: #fff; }
-.openrouter-credits--signed-out p { margin: 0; color: #444; }
+.integrations-body { display: grid; gap: 12px; align-content: start; width: 100%; max-width: 900px; }
+.integrations-section { display: grid; gap: 8px; min-width: 0; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.integrations-section__heading { margin: 0; color: #111; font: 700 12px/1.3 "MS Sans Serif", Arial, sans-serif; }
 .github-integration-card .classic-select { min-width: 0; font: inherit; }
 .github-account-summary { display: grid; grid-template-columns: 38px minmax(0, 1fr) max-content; align-items: center; gap: 10px; }
 .github-brand-mark { display: grid; width: 38px; height: 38px; place-items: center; color: #111; }
@@ -440,8 +438,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .room-properties-body .room-properties-general-content .classic-input { width: 100%; margin: 0; font: 13px/1.35 Arial, sans-serif; }
 .room-properties-body .room-properties-general-content hr { width: 100%; margin: 4px 0; }
 .help-window { width: min(520px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100dvh - 28px); overflow: hidden; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 2px outset white; box-shadow: 2px 2px 0 #000; }
-.help-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.45 Tahoma, Arial, sans-serif; }
-.help-body h3 { margin: 14px 0 4px; color: var(--blue); font-size: 15px; }
+.help-body { margin: 8px; padding: 10px 12px; border: 2px inset white; background: #fff; font: 12px/1.45 "MS Sans Serif", Tahoma, Arial, sans-serif; }
+.help-body h3 { margin: 12px 0 3px; color: #111; font-size: 12px; font-weight: 700; }
 .help-body h3:first-child { margin-top: 0; }
 .help-body p { margin: 0; }
 .assign-task-window { width: min(440px, calc(100vw - 28px)); }
@@ -465,7 +463,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .provider-recovery small { color: #555; font: 11px/1.35 Tahoma, Arial, sans-serif; }
 .provider-recovery .agent-settings-error { margin: 0; color: #8b0000; font: 700 11px/1.35 Tahoma, Arial, sans-serif; }
 .agent-settings-body fieldset { margin: 0; padding: 13px; border: 2px groove white; }
-.agent-settings-body legend { padding: 0 6px; color: var(--blue); font-size: 16px; font-weight: 800; }
+.agent-settings-body legend { padding: 0 4px; color: #111; font-size: 12px; font-weight: 700; }
 .agent-settings-body fieldset p { margin: 10px 0 0 30px; color: #555; font: 12px/1.4 Tahoma, Arial, sans-serif; }
 .agent-settings-body fieldset .agent-settings-warning { color: #7b3100; font-weight: 700; }
 .agent-settings-body fieldset .agent-settings-status { color: #333; font-weight: 700; }
@@ -482,10 +480,10 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .confirmation-confirm { color: #7a0000; font-weight: 700; }
 .human-avatar-backdrop { z-index: 55; }
 .human-avatar-window { width: min(480px, calc(100vw - 28px)); overflow: hidden; }
-.human-avatar-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 12px 16px; margin: 8px; padding: 18px; border: 2px inset white; background: #f5f5f5; font: 13px/1.4 Tahoma, Arial, sans-serif; }
-.human-profile-name { display: grid; gap: 3px; min-width: 0; color: #13264b; font-weight: 700; }
+.human-avatar-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 10px 14px; margin: 0; padding: 12px; background: var(--chrome); font: 12px/1.4 "MS Sans Serif", Tahoma, Arial, sans-serif; }
+.human-profile-name { display: grid; gap: 3px; min-width: 0; color: #111; }
 .human-profile-name input { width: 100%; min-width: 0; }
-.human-avatar-body small { color: #5b6471; }
+.human-avatar-body small { color: #333; }
 .human-avatar-actions, .human-avatar-body > small, .human-avatar-body > p { grid-column: 1 / -1; }
 .human-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .human-avatar-remove { color: #7a0000; }
@@ -564,19 +562,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .spend-chart__value { color: #13264b; font-weight: 700; white-space: nowrap; }
 .spend-chart__share { color: #777; white-space: nowrap; }
 .spend-chart__empty { color: #777; font-size: 11px; margin: 0; }
-.openrouter-account__body { display: grid; gap: 12px; align-content: start; width: 100%; max-width: 720px; margin: 0 auto; padding: 4px; }
 .openrouter-mark { display: block; flex: 0 0 auto; }
-.openrouter-credits { padding: 12px 14px; border: 2px inset #fff; border-top: 3px solid #7624f4; background: #fff; }
-.openrouter-credits__brand { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #7624f4; font: 700 12px/1 "MS Sans Serif", Arial, sans-serif; letter-spacing: .02em; }
-.openrouter-credits__headline { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.openrouter-credits__headline strong { color: #13264b; font-size: 26px; }
-.openrouter-credits__headline span { color: #626b78; font-size: 12px; }
-.openrouter-credits__meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
-.openrouter-credits__meta span { color: #777; font-size: 11px; }
-.openrouter-account__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 2px inset #fff; background: #fff; }
-.openrouter-account__toolbar label { display: flex; align-items: center; gap: 6px; color: #4e5865; font-size: 11px; font-weight: 700; }
-.openrouter-account__total { color: #13264b; font-size: 12px; font-weight: 700; }
-.openrouter-account .spend-chart, .openrouter-account .spend-chart__empty { padding: 12px 14px; border: 2px inset #fff; background: #fff; }
 .roster-row-chevron { color: #667182; font: 24px/1 Arial, sans-serif; }
 .roster-rail__footer { padding: 6px 0 0; background: var(--chrome); }
 .roster-explore-button { width: 100%; border: 2px outset white; border-radius: 0; background: var(--chrome); color: #111; }
@@ -799,7 +785,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .improvement-reference:focus-visible { outline: 2px solid #ffb000; outline-offset: 2px; }
 .workshop-window { width: min(620px, calc(100vw - 28px)); min-width: 0; max-width: 100%; max-height: calc(100dvh - 28px); overflow: hidden; overflow-wrap: anywhere; color: #111; background: var(--chrome); border: 2px outset white; box-shadow: 2px 2px 0 #000; }
 .workshop-body { margin: 8px; padding: 14px 18px; border: 2px inset white; background: #fff; font: 14px/1.4 Tahoma, Arial, sans-serif; }
-.workshop-body h3 { margin: 18px 0 5px; color: var(--blue); font-size: 15px; }
+.workshop-body h3 { margin: 12px 0 4px; color: #111; font-size: 12px; font-weight: 700; }
 .workshop-body ul { margin: 5px 0; padding-left: 22px; }
 .workshop-recovery { padding: 4px 0; }
 .workshop-recovery p { margin: 0 0 10px; }
@@ -813,7 +799,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .workspace-content { display: grid; align-content: start; gap: 8px; width: 100%; min-width: 0; max-width: 1100px; margin-inline: auto; padding: 8px; border: 2px inset white; background: #fff; }
 .workspace-content > p:first-child { margin-top: 0; }
 .administration-workspace .workspace-view__header { display: block; }
-.administration-content { max-width: 640px; border: 0; background: var(--chrome); gap: 12px; overflow-wrap: anywhere; }
+.administration-content { display: grid; align-content: start; gap: 12px; max-width: 640px; overflow-wrap: anywhere; }
 .administration-content > button, .administration-form > button { justify-self: start; }
 .administration-sign-in { justify-self: start; align-self: start; max-width: 100%; }
 .administration-form { display: grid; gap: 10px; }
@@ -1094,6 +1080,58 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .connection-lights { display: inline-flex; gap: 6px; }
 .connection-lights i { width: 12px; height: 12px; border-radius: 50%; background: #10a222; border: 1px solid #076511; box-shadow: inset 1px 1px white; }
 
+/* Explorer window: page list beside one content pane (Server Administration). */
+.administration-window { grid-template-rows: minmax(0, 1fr); padding: 0; }
+.explorer { display: grid; grid-template-columns: 184px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 4px; background: var(--chrome); }
+.explorer__pages { display: flex; flex-direction: column; gap: 1px; min-width: 0; min-height: 0; padding: 2px; overflow: auto; border: 2px inset white; background: #fff; }
+.explorer__pages [role="tab"] { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 2px 6px; border: 0; background: transparent; color: #111; font: 12px/1.2 "MS Sans Serif", Arial, sans-serif; text-align: left; }
+.explorer__pages [role="tab"][aria-selected="true"] { background: var(--blue); color: #fff; }
+.explorer__pages [role="tab"]:focus-visible { outline: 1px dotted currentColor; outline-offset: -3px; }
+.explorer__icon { flex: 0 0 18px; font-size: 14px; line-height: 1; text-align: center; }
+.explorer__content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 10px 12px; border: 2px inset white; background: var(--chrome); }
+.explorer__content:focus { outline: 0; }
+.explorer__status { grid-column: 1 / -1; min-width: 0; min-height: 20px; padding: 2px 6px; overflow: hidden; border: 1px solid; border-color: #808080 #fff #fff #808080; font: 11px/16px "MS Sans Serif", Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.administration-page { display: grid; align-content: start; gap: 10px; min-width: 0; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.page-header { min-width: 0; padding-bottom: 6px; border-bottom: 2px groove white; }
+.page-header h2 { margin: 0; font: 700 13px/1.3 "MS Sans Serif", Arial, sans-serif; }
+.page-header p { margin: 2px 0 0; color: #333; }
+.page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.diagnostics-workspace .diagnostics-body { padding: 0; }
+.diagnostics-workspace .diagnostics-content { max-width: none; }
+
+/* ListView (Details): raised column headers over an inset white table. */
+.list-view { min-width: 0; overflow-x: auto; border: 2px inset white; background: #fff; }
+.list-view table { width: 100%; min-width: 520px; border-collapse: collapse; table-layout: fixed; font: 12px/1.3 "MS Sans Serif", Arial, sans-serif; }
+.list-view th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--chrome); font-weight: 400; text-align: left; }
+.list-view th > button, .list-view th > span { display: flex; align-items: center; justify-content: space-between; gap: 4px; width: 100%; min-height: 20px; padding: 1px 6px; border: 2px outset white; background: var(--chrome); color: #111; font: inherit; text-align: left; }
+.list-view th > button:active { border-style: inset; }
+.list-view td { padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.list-view__sort { font-size: 8px; }
+.list-view__empty { padding: 12px; color: #555; text-align: center; }
+.list-view__muted { color: #666; }
+.classic-link-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.rooms-repositories__room small { color: #666; }
+
+/* OpenRouter account balance (administration) and room spend (member dialog). */
+.openrouter-credits { display: grid; gap: 8px; }
+.openrouter-credits__legend { display: inline-flex; align-items: center; gap: 5px; }
+.openrouter-credits__signed-out { display: grid; justify-items: start; gap: 8px; }
+.openrouter-credits__signed-out p { margin: 0; }
+.openrouter-credits__summary { display: grid; gap: 6px; max-width: 420px; }
+.openrouter-credits__balance { padding: 3px 6px; font-weight: 700; }
+.openrouter-credits__balance span { font-weight: 400; }
+.openrouter-credits__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.room-usage-window { width: min(520px, calc(100vw - 28px)); }
+.room-usage-body { display: grid; gap: 8px; padding: 10px 12px; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.room-usage-intro { margin: 0; color: #333; }
+.room-spend { display: grid; gap: 8px; min-width: 0; }
+.room-spend__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.room-spend__toolbar .classic-property-row { grid-template-columns: auto minmax(120px, 1fr); }
+.room-spend__chart { padding: 10px; }
+.room-repository { margin: 0; padding: 3px 6px; overflow-wrap: anywhere; }
+.status-bar:has(.status-cell--repository) { grid-template-columns: 300px minmax(0, 1fr) minmax(0, 260px) 200px; }
+.status-cell--repository { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 @media (max-width: 1050px) {
   .desktop { padding: 12px; }
   .app-window { width: 100%; height: calc(100dvh - 24px); min-height: 0; }
@@ -1224,7 +1262,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .github-repository-summary > .classic-status { grid-column: 2; justify-self: start; }
   .github-empty-repositories .classic-button, .github-use-repository-button { width: 100%; }
   .human-avatar-body { grid-template-columns: 54px minmax(0, 1fr); padding: 14px; }
-  .human-avatar-body > .human-avatar { width: 54px; height: 54px; border-radius: 12px; }
+  .human-avatar-body > .human-avatar { width: 54px; height: 54px; }
   .workshop-window { width: 100%; max-height: calc(100dvh - 14px); box-shadow: 2px 2px 0 #000; }
   .workshop-body { padding: 13px; } .workshop-facts { grid-template-columns: 115px minmax(0, 1fr); }
   .improvements-panel { padding: 5px; }
@@ -1290,6 +1328,16 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .format-toolbar button, .format-toolbar .color-well { width: 100%; min-width: 0; }
 }
 
+@media (max-width: 720px) {
+  .explorer { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .explorer__pages { flex-direction: row; flex-wrap: wrap; overflow: visible; }
+  .explorer__pages [role="tab"] { width: auto; flex: 1 1 auto; }
+  .status-cell--repository { display: none; }
+  .status-bar:has(.status-cell--repository) { grid-template-columns: 1fr 1fr; }
+}
+@media (pointer: coarse) {
+  .explorer__pages [role="tab"], .list-view th > button { min-height: 44px; font-size: 13px; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }

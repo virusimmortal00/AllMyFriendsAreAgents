@@ -150,9 +150,9 @@ export function Diagnostics({ onOpenAdministration }: { onOpenAdministration: ()
     finally { if (generation === requestGeneration.current) setLoading(false); }
   }
 
-  return <section className="workspace-view tasks-workspace diagnostics-workspace classic-scrollbars" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
-    <header className="workspace-view__header tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
-    <div className="workspace-view__body diagnostics-body"><div className="diagnostics-content">
+  return <section className="administration-page diagnostics-workspace" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
+    <header className="page-header"><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></header>
+    <div className="diagnostics-body"><div className="diagnostics-content">
     {accessDenied || !session ? <div className="diagnostics-authentication">
       <AdministrationSignIn onOpen={onOpenAdministration} />
       {accessDenied ? <p className="diagnostics-note" role="status">Sign in with an OWNER account to query diagnostics and inspect capabilities.</p> : null}

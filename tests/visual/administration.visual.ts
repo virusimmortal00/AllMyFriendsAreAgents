@@ -38,9 +38,8 @@ test("administration recovery and room membership", async ({ page }) => {
   };
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
   const humanBefore = await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"));
-  await menu("Window", "Diagnostics");
-  await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("Diagnostics are unavailable");
+  await menu("Window", "Server Administration");
+  await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
   await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Refresh capability diagnostics", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
@@ -61,7 +60,7 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("button", { name: /conversation.run.started/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
   await expect(page.getByRole("button", { name: /conversation.run.started/ })).toBeVisible();
-  await menu("Window", "Server Administration");
+  await page.getByRole("tab", { name: "Session", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim owner", exact: true })).toHaveCount(0);
@@ -76,15 +75,15 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("button", { name: "View Alpha configuration" })).toBeVisible();
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await menu("Window", "Integrations");
+  await menu("Window", "Server Administration");
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
   // GitHub and OpenRouter's credits card each render their own sign-in gate; scope to GitHub's.
   await page.getByLabel("GitHub").getByRole("button", { name: "Sign in to server administration", exact: true }).click();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "GitHub connected", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Close Integrations and return to Chat", exact: true }).click();
-  await menu("Window", "Server Administration");
+  await page.getByRole("tab", { name: "Session", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close Server Administration and return to Chat" }).click();

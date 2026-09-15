@@ -21,8 +21,8 @@ export const ROSTER_SCENARIOS = [
 const APP_VIEW_KEYS = [
   "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "windowMenu",
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
-  "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount",
-  "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask",
+  "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories",
+  "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",
   "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
 ] as const satisfies readonly ViewKey[];

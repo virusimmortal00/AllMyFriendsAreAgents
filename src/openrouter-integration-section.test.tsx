@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { OpenRouterIntegrationSection } from "./openrouter-integration-section";
+import { OpenRouterCreditsSection, RoomSpendPanel } from "./openrouter-integration-section";
 import { updateControlSession } from "./control-session-state";
 import * as spendWindowPreference from "./openrouter-spend-window";
 
@@ -41,11 +41,11 @@ function stubFetch(extra: (route: string) => Response | undefined = () => undefi
   return fetchMock;
 }
 
-describe("OpenRouterIntegrationSection", () => {
+describe("OpenRouter credits and room spend", () => {
   it("shows the room's spend chart to a signed-out viewer while gating credits behind admin sign-in", async () => {
     confirmedSignedOut();
     stubFetch();
-    render(<OpenRouterIntegrationSection agentLabels={{ "codex-sol": "Sol" }} onOpenAdministration={vi.fn()} />);
+    render(<><OpenRouterCreditsSection onOpenAdministration={vi.fn()} /><RoomSpendPanel agentLabels={{ "codex-sol": "Sol" }} /></>);
     await screen.findByText("$0.05 spent · 2 turns");
     expect(screen.getByText("Sol")).toBeTruthy();
     expect(await screen.findByText("Sign in as a server administrator to see the account's remaining balance.")).toBeTruthy();
@@ -57,7 +57,7 @@ describe("OpenRouterIntegrationSection", () => {
     stubFetch((route) => route.startsWith("/api/control/integrations/openrouter")
       ? json({ credits: { totalCreditsUsd: 100, totalUsageUsd: 73.85, remainingUsd: 26.15, fetchedAt: "2026-09-14T12:47:00.000Z" } })
       : undefined);
-    render(<OpenRouterIntegrationSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
     await screen.findByText("$26.15");
     expect(screen.getByText("available")).toBeTruthy();
     expect(screen.queryByText(/of \$100/)).toBeNull();
@@ -71,7 +71,7 @@ describe("OpenRouterIntegrationSection", () => {
       ? json({ credits: { totalCreditsUsd: 100, totalUsageUsd: 73.85, remainingUsd: 26.15, fetchedAt: "2026-09-14T12:47:00.000Z" } })
       : undefined);
     const user = userEvent.setup();
-    render(<OpenRouterIntegrationSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
     await screen.findByText("$26.15");
     expect(fetchMock).toHaveBeenCalledWith("/api/control/integrations/openrouter", expect.anything());
 
@@ -82,13 +82,13 @@ describe("OpenRouterIntegrationSection", () => {
   it("falls back to a connect-a-key message when signed in but no credits are available", async () => {
     ownerSession();
     stubFetch((route) => route.startsWith("/api/control/integrations/openrouter") ? json({}) : undefined);
-    render(<OpenRouterIntegrationSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
     expect(await screen.findByText("Connect an OpenRouter API key to see your remaining balance here.")).toBeTruthy();
   });
 
   it("flags a truncated window without hiding the chart, and falls back to the raw agent id without a label", async () => {
     stubFetch((route) => route.startsWith("/api/openrouter-usage") ? json({ ...usageWithoutCredits, truncated: true }) : undefined);
-    render(<OpenRouterIntegrationSection onOpenAdministration={vi.fn()} />);
+    render(<RoomSpendPanel />);
     expect(await screen.findByText(/Retained history doesn't reach back this far/)).toBeTruthy();
     const panel = screen.getByRole("img", { name: "OpenRouter spend by agent" }).closest<HTMLElement>(".spend-chart")!;
     expect(within(panel).getByText("codex-sol")).toBeTruthy();
@@ -97,7 +97,7 @@ describe("OpenRouterIntegrationSection", () => {
   it("defaults the spend window to the stored preference and remembers a new choice", async () => {
     const loadSpy = vi.spyOn(spendWindowPreference, "loadOpenRouterSpendWindow");
     const fetchMock = stubFetch();
-    render(<OpenRouterIntegrationSection onOpenAdministration={vi.fn()} />);
+    render(<RoomSpendPanel />);
     await screen.findByText("$0.05 spent · 2 turns");
     expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/openrouter-usage?window=24h", expect.anything());

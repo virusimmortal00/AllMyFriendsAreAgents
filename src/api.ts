@@ -351,6 +351,19 @@ export async function refreshGitHubRepositoryCatalog(connectionId: string, expec
   return request("/api/control/integrations/github/catalog-refreshes", { method: "POST", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify({ connectionId, expectedRevision }) }, GITHUB_DISCOVERY_TIMEOUT_MS)
     .then((response) => response.json()).then((result) => result.catalog);
 }
+export interface RoomRepositoryListing {
+  readonly roomId: string;
+  readonly name: string;
+  readonly archived: boolean;
+  readonly projectId: string | null;
+  readonly repository: string | null;
+  readonly state: "ready" | "unavailable";
+  readonly reason: string;
+}
+export async function loadRoomRepositories(includeArchived = false, signal?: AbortSignal): Promise<readonly RoomRepositoryListing[]> {
+  return request(`/api/control/rooms${includeArchived ? "?archived=true" : ""}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json()).then((result) => Array.isArray(result?.items) ? result.items : []);
+}
 export async function loadCurrentProjectGitHubStatus(): Promise<CurrentProjectGitHubStatus> {
   return request("/api/control/projects/current/repository", { method: "GET", cache: "no-store" }).then((response) => response.json());
 }

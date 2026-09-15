@@ -26,9 +26,9 @@ import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { refreshControlSession } from "./control-session";
-import { ServerAdministration, type AdministrationDestination } from "./server-administration";
-import { Diagnostics } from "./diagnostics";
-import { IntegrationsPage } from "./integrations";
+import type { AdministrationDestination } from "./server-administration";
+import { AdministrationWindow, type AdministrationPage } from "./administration-window";
+import { RoomUsageDialog } from "./room-usage-dialog";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
 import { VIEWS, viewAttributes } from "./view-registry";
@@ -147,6 +147,9 @@ export default function App() {
   const [assignTaskAgentId, setAssignTaskAgentId] = useState<ActiveAgentId | typeof NEXT_AVAILABLE_AGENT | null>(null);
   const assignTaskTrigger = useRef<HTMLElement | null>(null);
   const [administrationDestination, setAdministrationDestination] = useState<AdministrationDestination | null>(null);
+  const [administrationPage, setAdministrationPage] = useState<AdministrationPage>("Session");
+  const [usageOpen, setUsageOpen] = useState(false);
+  const usageTrigger = useRef<HTMLElement | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceName | null>(null);
   const [clientError, setClientError] = useState("");
   const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
@@ -675,20 +678,21 @@ export default function App() {
       : "Room is idle";
   function openAdministration(destination: AdministrationDestination | null = null) {
     setAdministrationDestination(destination);
+    setAdministrationPage("Session");
     setProfileOpen(false);
     setRosterOpen(false);
     showWorkspace("Server Administration");
   }
 
-  function openIntegrations() {
+  function openUsage(trigger: HTMLElement | null = null) {
+    usageTrigger.current = trigger;
     setRosterOpen(false);
-    if (workspaceView !== "Integrations") showWorkspace("Integrations");
+    setUsageOpen(true);
   }
 
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
-    if (destination === "Diagnostics") showWorkspace("Diagnostics");
-    else if (destination === "Integrations") showWorkspace("Integrations");
+    if (destination === "Diagnostics" || destination === "Integrations" || destination === "Rooms") setAdministrationPage(destination);
     else {
       showChat();
       if (destination === "Manage room agents") setRosterOpen(true);
@@ -757,6 +761,7 @@ export default function App() {
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
         { label: "Assign task...", accessKey: "A", disabled: !connected, onSelect: (trigger) => openAssignTask(trigger) },
+        { label: "Usage & spend...", accessKey: "U", onSelect: (trigger) => openUsage(trigger) },
       ],
     },
     defineViewMenu([
@@ -769,9 +774,7 @@ export default function App() {
     ]),
     { ...defineWindowMenu([
         workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
-        workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
-        workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
-        workspaceCommand({ label: "Integrations", accessKey: "g", checked: workspaceView === "Integrations", onSelect: () => openIntegrations() }),
+        workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => { if (workspaceView !== "Server Administration") openAdministration(); } }),
     ]), view: VIEWS.windowMenu },
     {
       id: "help",
@@ -790,9 +793,7 @@ export default function App() {
   let workspaceContent: ReactNode = null;
   if (workspaceView) {
     switch (workspaceView) {
-      case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
-      case "Integrations": workspaceContent = <IntegrationsPage agentLabels={agentLabels} refreshKey={connectionEpoch} onOpenAdministration={() => openAdministration("Integrations")} />; break;
-      case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
+      case "Server Administration": workspaceContent = <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} onSelectPage={setAdministrationPage} onOpenAdministration={openAdministration} onContinue={continueFromAdministration} />; break;
       default: workspaceView satisfies never;
     }
   }
@@ -844,7 +845,7 @@ export default function App() {
           </>}
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} repository={room.githubReadStatus?.repository} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
@@ -866,7 +867,7 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
-          onOpenOpenRouterAccount={openIntegrations}
+          onOpenOpenRouterAccount={() => openUsage(rosterTrigger)}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}
@@ -877,13 +878,16 @@ export default function App() {
         /> : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
+        {usageOpen ? <RoomUsageDialog agentLabels={agentLabels} refreshKey={connectionEpoch} returnFocusTo={usageTrigger.current} onClose={() => setUsageOpen(false)} /> : null}
         {assignTaskAgentId !== null ? <AssignTaskDialog agents={assignableAgents} initialAgentId={assignTaskAgentId} disabled={!connected} returnFocusTo={assignTaskTrigger.current} onSubmit={assignTask} onClose={() => setAssignTaskAgentId(null)} /> : null}
 
         {clientError || room.error && room.error !== dismissedRoomError ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span><button type="button" aria-label="Dismiss error" onClick={() => clientError ? setClientError("") : setDismissedRoomError(room.error || null)}>×</button></div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
-          {room.githubReadStatus ? <div className="status-cell" aria-label="Room GitHub read status">GitHub read: {room.githubReadStatus.state === "ready" ? "Ready for this room" : room.githubReadStatus.reason.replaceAll("-", " ")}</div> : null}
+          {room.githubReadStatus ? <div className="status-cell status-cell--repository" aria-label="Room repository" title={room.githubReadStatus.state === "ready" ? "GitHub reads are ready for this room" : `GitHub reads unavailable: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}>{room.githubReadStatus.repository
+            ? <>Repository: {room.githubReadStatus.repository}{room.githubReadStatus.state === "ready" ? "" : ` (${room.githubReadStatus.reason.replace(/^connection-/, "").replaceAll("-", " ")})`}</>
+            : room.githubReadStatus.reason === "general-room" ? "No repository" : `Repository: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>

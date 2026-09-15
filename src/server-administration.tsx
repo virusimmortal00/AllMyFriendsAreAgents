@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { bootstrapControlPlane, controlLogin, controlLogout } from "./api";
 import { refreshControlSession, useControlSession } from "./control-session";
-import { VIEWS, viewAttributes } from "./view-registry";
 
 // Internal destinations only: never navigate to a caller-supplied URL.
-export type AdministrationDestination = "Diagnostics" | "Integrations" | "Manage room agents" | "Room Properties";
+export type AdministrationDestination = "Diagnostics" | "Integrations" | "Rooms" | "Manage room agents" | "Room Properties";
 
 export function AdministrationEntry({ onOpen, disabled = false }: { onOpen: () => void; disabled?: boolean }) {
   const { status, session, checked, error } = useControlSession();
@@ -50,9 +49,9 @@ export function ServerAdministration({ destination, onContinue }: { destination:
     } finally { setWorking(false); }
   }
 
-  return <section className="workspace-view administration-workspace classic-scrollbars" aria-label="Server administration" {...viewAttributes(VIEWS.serverAdministration)}>
-    <header className="workspace-view__header"><h2>Server administration</h2><p>Manage this server using your durable administrator account. Your room name and membership are separate.</p></header>
-    <div className="workspace-view__body"><div className="workspace-content administration-content">
+  return <div className="administration-page administration-session">
+    <header className="page-header"><h2>Session</h2><p>Manage this server using your durable administrator account. Your room name and membership are separate.</p></header>
+    <div className="administration-content">
       {!checked && !statusError ? <p role="status">Checking server administration…</p> : null}
       {statusError ? <p role="alert">{statusError}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
@@ -64,7 +63,7 @@ export function ServerAdministration({ destination, onContinue }: { destination:
         {destination === "Diagnostics" && session.principal.role !== "OWNER" ? <p role="alert">Diagnostics requires the OWNER role. Sign out and sign in with the owner account.</p> : null}
         <div className="administration-actions">
           <button type="button" className="classic-button" disabled={working} onClick={() => void signOut()}>{working ? "Signing out…" : "Sign out"}</button>
-          {destination && (destination !== "Diagnostics" || session.principal.role === "OWNER") ? <button type="button" className="classic-button" onClick={() => onContinue(destination)}>Continue to {destination}</button> : null}
+          {destination && (destination !== "Diagnostics" || session.principal.role === "OWNER") ? <button type="button" className="classic-button" onClick={() => onContinue(destination)}>Continue to {destination === "Rooms" ? "Rooms & repositories" : destination}</button> : null}
           {!destination && session.principal.role === "OWNER" ? <button type="button" className="classic-button" onClick={() => onContinue("Diagnostics")}>Open Diagnostics</button> : null}
         </div>
       </fieldset> : checked && status && !statusError ? <form onSubmit={(event) => { event.preventDefault(); void authenticate(); }}>
@@ -81,6 +80,6 @@ export function ServerAdministration({ destination, onContinue }: { destination:
       </form> : null}
       <section className="classic-property-section"><h3>About administrator sessions</h3><p>Sessions last eight hours from sign-in. Activity does not extend them. Restarting the server ends all administrator sessions; sign in again to continue.</p><p>Signing out leaves the server claimed and keeps your room identity and membership. Ownership transfer and owner recovery remain separate local operator procedures.</p></section>
       <button type="button" className="classic-button" disabled={working} onClick={() => void refreshControlSession()}>Check session</button>
-    </div></div>
-  </section>;
+    </div>
+  </div>;
 }

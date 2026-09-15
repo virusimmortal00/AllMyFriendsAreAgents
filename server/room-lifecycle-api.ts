@@ -1,3 +1,4 @@
+import type { RoomGitHubReadStatus } from "./room-repository-api.js";
 import type express from "express";
 import type { HumanPresenceRegistry } from "./human-presence.js";
 import { sessionHuman, type HumanSessions } from "./human-session.js";
@@ -17,7 +18,7 @@ function hasAuthorityInput(value:unknown,depth=0):boolean{
   return Object.entries(value as Record<string,unknown>).some(([key,item])=>forbiddenAuthorityKeys.has(key)||hasAuthorityInput(item,depth+1));
 }
 
-export function registerRoomLifecycleRoutes(input:{app:express.Express;lifecycle:RoomLifecycleStore;runtimes:RoomRuntimeRegistry;humans:HumanPresenceRegistry;sessions:HumanSessions;server:ServerIdentity;commands?:RoomCommandDispatcher;githubReadStatus?:(room:NonNullable<ReturnType<RoomLifecycleStore["read"]>>)=>{state:"ready"|"unavailable";reason:string}}){
+export function registerRoomLifecycleRoutes(input:{app:express.Express;lifecycle:RoomLifecycleStore;runtimes:RoomRuntimeRegistry;humans:HumanPresenceRegistry;sessions:HumanSessions;server:ServerIdentity;commands?:RoomCommandDispatcher;githubReadStatus?:(room:NonNullable<ReturnType<RoomLifecycleStore["read"]>>)=>RoomGitHubReadStatus}){
   const {app,lifecycle,runtimes,humans,sessions,server,commands,githubReadStatus}=input;
   const actor=(request:express.Request,response:express.Response)=>{const human=sessionHuman(request,humans,sessions);if(!human)response.status(401).json({error:"Join a room before accessing rooms."});return human;};
   const failure=(response:express.Response,error:unknown)=>{const message=error instanceof Error?error.message:"Room operation failed.";const status=/not found/i.test(message)?404:/revision/i.test(message)?409:/locked|read-only/i.test(message)?409:400;return response.status(status).json({error:message});};
@@ -38,7 +39,7 @@ export function registerRoomLifecycleRoutes(input:{app:express.Express;lifecycle
   app.get("/api/rooms/:roomId/events",async(request,response)=>{const human=actor(request,response);if(!human)return;const room=lifecycle.read(request.params.roomId,human.id);if(!room)return response.status(404).json({error:"Room not found."});try{const runtime=await runtimes.acquire(room.roomId);runtime.clients+=1;const present=runtime.presence.get(human.id);runtime.presence.set(human.id,{human,connections:(present?.connections||0)+1});const stream=runtimes.stream(runtime,human.id);stream.connect(request,response,publicState(runtime,human.id,room,server),()=>{runtime.clients=Math.max(0,runtime.clients-1);const current=runtime.presence.get(human.id);if(current&&current.connections>1)runtime.presence.set(human.id,{...current,connections:current.connections-1});else runtime.presence.delete(human.id);runtime.lastUsedAt=Date.now();for(const [viewerId,candidate] of runtime.events)candidate.broadcast(publicState(runtime,viewerId,room,server));});for(const [viewerId,candidate] of runtime.events)candidate.broadcast(publicState(runtime,viewerId,room,server));}catch(error){return failure(response,error);}});
 }
 
-function publicState(runtime:import("./room-runtime-registry.js").RoomRuntime,humanId:string,room:ReturnType<RoomLifecycleStore["read"]>,server:ServerIdentity,githubReadStatus?:(room:NonNullable<ReturnType<RoomLifecycleStore["read"]>>)=>{state:"ready"|"unavailable";reason:string}):PublicRoomState&{room:NonNullable<typeof room>}{
+function publicState(runtime:import("./room-runtime-registry.js").RoomRuntime,humanId:string,room:ReturnType<RoomLifecycleStore["read"]>,server:ServerIdentity,githubReadStatus?:(room:NonNullable<ReturnType<RoomLifecycleStore["read"]>>)=>RoomGitHubReadStatus):PublicRoomState&{room:NonNullable<typeof room>}{
   const state:RoomState=runtime.repository.snapshot();
   const {sessions:_sessions,error:_error,agentContextSummaries:_summaries,roomConfigurationAudit:_audit,...rest}=state;
   return {...rest,server,...(githubReadStatus?{githubReadStatus:githubReadStatus(room!)}:{}),humans:[...runtime.presence.values()].map(({human})=>human),activeGenerations:Object.fromEntries([...runtime.activeGenerations].map(([generationId,{agent}])=>[generationId,agent])),messages:state.messages.filter((message)=>!message.recipientHumanId||message.recipientHumanId===humanId).map(({recipientHumanId:_,...message})=>message),settings:{roomName:state.settings.roomName,topic:state.settings.topic,conversationEnergy:state.settings.conversationEnergy,participantStyles:state.settings.participantStyles},room:room!};
