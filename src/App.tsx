@@ -887,7 +887,7 @@ export default function App() {
           <div className="status-cell">{statusText}</div>
           {room.githubReadStatus ? <div className="status-cell status-cell--repository" aria-label="Room repository" title={room.githubReadStatus.state === "ready" ? "GitHub reads are ready for this room" : `GitHub reads unavailable: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}>{room.githubReadStatus.repository
             ? <>Repository: {room.githubReadStatus.repository}{room.githubReadStatus.state === "ready" ? "" : ` (${room.githubReadStatus.reason.replace(/^connection-/, "").replaceAll("-", " ")})`}</>
-            : room.githubReadStatus.reason === "general-room" ? "No repository" : `Repository: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}</div> : null}
+            : "No repository connected"}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>
