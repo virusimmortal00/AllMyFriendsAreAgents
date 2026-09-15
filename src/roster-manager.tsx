@@ -259,7 +259,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                   <button type="button" className="roster-openrouter-link" onClick={onOpenOpenRouterAccount}>
                     <OpenRouterMark size={15} />
                     <span className="roster-openrouter-link__label">OpenRouter usage</span>
-                    <strong>{formatUsd(usage.room.costUsd)} spent{usage.credits ? ` · ${formatUsd(usage.credits.remainingUsd)} left` : ""}</strong>
+                    <strong>{formatUsd(usage.room.costUsd)} spent</strong>
                     <span aria-hidden="true">→</span>
                   </button>
                 ) : null}

@@ -84,11 +84,12 @@ describe("roster manager", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
-  it("shows room spend, remaining credits, a per-agent row badge, and a link to the dedicated OpenRouter workspace", async () => {
+  it("shows room spend and a per-agent row badge, without the account's credit balance, and links to the Integrations workspace", async () => {
+    // The account's credit balance is account-level and admin-only (see #209); the roster
+    // projection carries only this room's own spend, not `usage.credits`.
     const usage = {
       room: { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       agents: { "codex-sol": { generations: 3, costUsd: 0.125, inputTokens: 900, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
-      credits: { totalCreditsUsd: 50, totalUsageUsd: 2, remainingUsd: 48, fetchedAt: "2026-08-26T00:00:00.000Z" },
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ roster: { revision: 4, entries: [{ agentId: "codex-sol", enabled: true, conversationalName: "Sol" }] }, catalog, usage }), { status: 200 })));
     const user = userEvent.setup();
@@ -97,7 +98,8 @@ describe("roster manager", () => {
     await screen.findByRole("button", { name: "View Sol configuration" });
     expect(screen.getByText("Spent $0.13")).toBeTruthy(); // the compact per-agent row badge
 
-    const link = screen.getByRole("button", { name: /OpenRouter usage.*\$0\.13 spent · \$48\.00 left/s });
+    const link = screen.getByRole("button", { name: /OpenRouter usage.*\$0\.13 spent/s });
+    expect(link.textContent).not.toContain("left");
     await user.click(link);
     expect(onOpenOpenRouterAccount).toHaveBeenCalledTimes(1);
   });

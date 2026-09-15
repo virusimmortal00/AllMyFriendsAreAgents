@@ -49,6 +49,7 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
   const route = url.pathname;
   const ok = (body: unknown): FixtureResponse => ({ status: 200, body });
   const unauthorized = { status: 401, body: { error: "Owner sign-in required." } };
+  const unauthenticatedScenarios = ["github-admin-sign-in", "github-claim-owner", "manage-agents-sign-in", "server-administration-sign-in", "server-administration-unclaimed", "your-profile-signed-out", "your-profile-unclaimed", "owner-diagnostics-sign-in"];
   if (method === "GET") {
     if (route === "/api/protected-work") return ok(["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario) ? [{ workId: "protected-fixture", roomId: "00000000-0000-4000-8000-000000000001", owner: visualRoster.entries[0].agentId, objective: "Review navigation recovery", phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.parse(fixtureTime) - 65_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }] : []);
     if (route === "/api/ready") return ok(fixtureRoom.server);
@@ -70,9 +71,11 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
       },
       sinceIso: url.searchParams.get("window") === "all" ? null : fixtureTime,
       truncated: false,
-      credits: { totalCreditsUsd: 75, totalUsageUsd: 48.83, remainingUsd: 26.17, fetchedAt: fixtureTime },
     });
-    if (route === "/api/control/me") return ["github-admin-sign-in", "github-claim-owner", "manage-agents-sign-in", "server-administration-sign-in", "server-administration-unclaimed", "your-profile-signed-out", "your-profile-unclaimed", "owner-diagnostics-sign-in"].includes(scenario) ? unauthorized : ok({ principal: { id: "visual-owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-fixture-csrf", expiresAt: "2099-01-01T20:00:00.000Z" });
+    // The account's credit balance is server-admin only (#209) — a separate control-plane
+    // route from the room-visible spend above, gated the same as every other control route.
+    if (route === "/api/control/integrations/openrouter") return unauthenticatedScenarios.includes(scenario) ? unauthorized : ok({ credits: { totalCreditsUsd: 75, totalUsageUsd: 48.83, remainingUsd: 26.17, fetchedAt: fixtureTime } });
+    if (route === "/api/control/me") return unauthenticatedScenarios.includes(scenario) ? unauthorized : ok({ principal: { id: "visual-owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-fixture-csrf", expiresAt: "2099-01-01T20:00:00.000Z" });
     if (route === "/api/control/status") return ok({ claimed: !["github-claim-owner", "server-administration-unclaimed", "your-profile-unclaimed"].includes(scenario), bootstrapConfigured: true });
     if (route === "/api/control/integrations/github") return ok({ app: { name: "Example application", slug: "example-application", clientId: "fictional-client" }, connections: ["github-connect", "github-device-auth"].includes(scenario) ? [] : [connection] });
     if (route === "/api/control/projects/current/repository") return ok({ binding: { projectId: "visual-project", revision: 1 }, readiness: { state: "available", authority: scenario === "github-repair-repo" ? "unverified" : "verified", reason: "explicit-path-validation-required" }, repository: ["github-configured-repo", "github-repair-repo"].includes(scenario) ? { configured: true, revision: 1, state: "verified", repository: "github.com/example/navigation" } : { configured: false }, defaults: { checkoutPath: "/example/checkout", worktreeRoot: "/example/worktrees", policyRevision: 1 } });

@@ -14,7 +14,7 @@ import type { ActiveAgentId, AgentProvider } from "../shared/participants";
 import type { ModelDiscoveryResult, ModelAvailability, ModelOfferDetails, ModelReference } from "../shared/model-discovery";
 import type { OpenRouterModelPageResolution } from "../shared/openrouter-model-page";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
-import type { OpenRouterSpendWindow, OpenRouterUsageSummary, OpenRouterUsageWindow } from "../shared/openrouter-usage";
+import type { OpenRouterCreditsResponse, OpenRouterSpendWindow, OpenRouterUsageSummary, OpenRouterUsageWindow } from "../shared/openrouter-usage";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const READY_TIMEOUT_MS = 2_500;
@@ -173,9 +173,16 @@ export async function resolveOpenRouterModelPage(url: string, signal?: AbortSign
     .then((response) => response.json());
 }
 
-export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal, forceRefreshCredits = false): Promise<OpenRouterUsageWindow> {
-  const query = new URLSearchParams({ window, ...(forceRefreshCredits ? { refresh: "1" } : {}) });
+export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal): Promise<OpenRouterUsageWindow> {
+  const query = new URLSearchParams({ window });
   return request(`/api/openrouter-usage?${query}`, { method: "GET", cache: "no-store", signal })
+    .then((response) => response.json());
+}
+
+/** The account's OpenRouter credit balance. Server-admin only — see `registerOpenRouterIntegrationRoutes`. */
+export async function loadOpenRouterCredits(forceRefresh = false, signal?: AbortSignal): Promise<OpenRouterCreditsResponse> {
+  const query = forceRefresh ? "?refresh=1" : "";
+  return request(`/api/control/integrations/openrouter${query}`, { method: "GET", cache: "no-store", signal })
     .then((response) => response.json());
 }
 

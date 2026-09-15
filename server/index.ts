@@ -113,6 +113,7 @@ import { registerProjectRepositoryRoutes } from "./project-repository-api.js";
 import { CascadingGitHubCredentialProvider } from "./github-credential-provider.js";
 import { openGitHubIntegrationRuntime } from "./github-integration-runtime.js";
 import { registerGitHubIntegrationRoutes } from "./github-integration-api.js";
+import { registerOpenRouterIntegrationRoutes } from "./openrouter-integration-api.js";
 import { ProjectGitHubBindingService } from "./project-github-binding.js";
 import { registerProjectGitHubBindingRoutes } from "./project-github-binding-api.js";
 
@@ -1435,6 +1436,7 @@ registerProtectedWorkRoutes({ app, roomId: CANONICAL_ROOM_ID, service: protected
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery, runtimeCommand });
 if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
   authorizations: githubIntegrationRuntime.authorizations, catalogs: githubIntegrationRuntime.catalogs, configuration: githubIntegrationRuntime.configuration });
+registerOpenRouterIntegrationRoutes({ app, control: controlPlane, intelligence: openRouterCatalog });
 if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: controlPlane, bindings: projectGitHubBindings,
   currentProjectId,
   defaultsForProject: (projectId) => projectId === currentProjectId

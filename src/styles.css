@@ -396,10 +396,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .room-configuration-model > strong { min-width: 0; overflow-wrap: anywhere; }
 /* Cover the page's 12px top padding when pinned; scrolled labels must not peek above. */
 .room-model-selection__navigation { position: sticky; top: -12px; z-index: 1; padding: 4px; border-bottom: 2px groove white; background: var(--chrome); }
-.github-integration-window { width: min(640px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; }
-.github-integration-window[data-presentation="authentication"] { width: min(440px, calc(100vw - 28px)); }
 .github-mark { display: block; flex: 0 0 auto; }
-.github-integration-body { display: grid; gap: 10px; padding: 10px 12px 12px; background: var(--chrome); font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.github-integration-panel { display: grid; gap: 10px; }
 .github-integration-card, .github-control-login { display: grid; gap: 10px; }
 .github-repair { display: grid; gap: 10px; min-width: 0; }
 .github-repair .classic-input { width: 100%; min-width: 0; }
@@ -408,6 +406,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .github-integration-card h3, .github-control-login h3, .github-integration-card p, .github-control-login p { margin: 0; }
 .github-control-login label, .github-integration-card label { display: grid; gap: 4px; font-weight: 700; }
 .github-control-login input { min-width: 0; min-height: 25px; padding: 2px 4px; border: 2px inset white; background: #fff; font: inherit; }
+/* Window > Integrations: GitHub's account/repository section stacked above OpenRouter's, in one page instead of a separate dialog and destination (#209). */
+.integrations-body { display: grid; gap: 4px; align-content: start; width: 100%; max-width: 720px; margin: 0 auto; padding: 4px; }
+.integrations-section { padding: 10px 12px 12px; border-top: 3px solid var(--blue); background: var(--chrome); font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.integrations-section__heading { margin: 0 0 8px; color: #13264b; font: 700 13px/1.2 "MS Sans Serif", Arial, sans-serif; }
+.openrouter-credits--signed-out { display: grid; gap: 8px; padding: 12px 14px; border: 2px inset #fff; background: #fff; }
+.openrouter-credits--signed-out p { margin: 0; color: #444; }
 .github-integration-card .classic-select { min-width: 0; font: inherit; }
 .github-account-summary { display: grid; grid-template-columns: 38px minmax(0, 1fr) max-content; align-items: center; gap: 10px; }
 .github-brand-mark { display: grid; width: 38px; height: 38px; place-items: center; color: #111; }
@@ -1204,8 +1208,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .room-properties-body .room-settings-actions { width: 100%; margin: 0; }
   .room-properties-body .room-settings-form > .room-properties-page-content { padding: 8px; }
   .room-configuration-panel > .room-properties-page-content { padding: 8px; }
-  .github-integration-window { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
-  .github-integration-body { max-height: none; }
   .github-account-summary { grid-template-columns: 36px minmax(0, 1fr); align-items: start; }
   .github-brand-mark { width: 36px; height: 36px; }
   .github-account-summary > .classic-status { grid-column: 2; justify-self: start; }

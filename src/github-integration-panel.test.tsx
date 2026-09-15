@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { updateControlSession } from "./control-session-state";
-import { GitHubIntegrationDialog } from "./github-integration-dialog";
+import { GitHubIntegrationPanel } from "./github-integration-panel";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -44,7 +44,7 @@ const catalog = {
 
 afterEach(() => { cleanup(); updateControlSession({ status: null, session: null, checked: false, error: "" }); vi.unstubAllGlobals(); });
 
-describe("GitHubIntegrationDialog", () => {
+describe("GitHubIntegrationPanel", () => {
   it("repairs stale paths and retries an uncertain response with the same request", async () => {
     const attempts: string[] = [];
     let repaired = false;
@@ -64,7 +64,7 @@ describe("GitHubIntegrationDialog", () => {
       throw new Error("Unexpected route");
     }));
     const user = userEvent.setup();
-    render(<GitHubIntegrationDialog onOpenAdministration={vi.fn()} returnFocusTo={null} onClose={vi.fn()} />);
+    render(<GitHubIntegrationPanel onOpenAdministration={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Repair repository paths" }));
     expect(screen.getByLabelText("Checkout path").hasAttribute("disabled")).toBe(true);
     await user.click(await screen.findByRole("button", { name: "Retry repair" }));
@@ -73,6 +73,7 @@ describe("GitHubIntegrationDialog", () => {
     expect(attempts[0]).toBe(attempts[1]);
     expect(JSON.parse(attempts[0])).toMatchObject({ expectedBindingRevision: 1, expectedRepositoryRevision: 1, checkoutPath: "/workspace", worktreeRoot: "/worktrees" });
   });
+
   it("offers administration after capability denial without discarding a valid session", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input) => {
       if (String(input).endsWith("/status")) return json({ claimed: true, bootstrapConfigured: false });
@@ -80,7 +81,7 @@ describe("GitHubIntegrationDialog", () => {
       return json({ error: "The INTEGRATION_VIEW capability is required." }, 403);
     }));
     const onOpenAdministration = vi.fn();
-    render(<GitHubIntegrationDialog onOpenAdministration={onOpenAdministration} returnFocusTo={null} onClose={vi.fn()} />);
+    render(<GitHubIntegrationPanel onOpenAdministration={onOpenAdministration} />);
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
     expect(onOpenAdministration).toHaveBeenCalledOnce();
     expect(screen.getByRole("alert").textContent).toContain("INTEGRATION_VIEW");
@@ -102,7 +103,7 @@ describe("GitHubIntegrationDialog", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<GitHubIntegrationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={vi.fn()} />);
+    render(<GitHubIntegrationPanel onOpenAdministration={() => undefined} />);
 
     expect(await screen.findByRole("heading", { name: "GitHub connected" })).toBeTruthy();
     expect(screen.getByText("@virusimmortal00")).toBeTruthy();
@@ -132,44 +133,9 @@ describe("GitHubIntegrationDialog", () => {
   it.each([true, false])("routes claimed=%s to administration without duplicate credentials", async (claimed) => {
     vi.stubGlobal("fetch", vi.fn(async (input) => String(input).endsWith("/status") ? json({ claimed, bootstrapConfigured: true }) : json({ error: "Authentication required." }, 401)));
     const onOpenAdministration = vi.fn();
-    render(<GitHubIntegrationDialog onOpenAdministration={onOpenAdministration} returnFocusTo={null} onClose={vi.fn()} />);
+    render(<GitHubIntegrationPanel onOpenAdministration={onOpenAdministration} />);
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
     expect(onOpenAdministration).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText("Password")).toBeNull();
-  });
-
-  it("blocks every dialog dismissal path while repository configuration is in progress", async () => {
-    let resolveConfiguration!: (response: Response) => void;
-    const configurationResponse = new Promise<Response>((resolve) => { resolveConfiguration = resolve; });
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const path = String(input);
-      if (path === "/api/control/status") return json({ claimed: true, bootstrapConfigured: false });
-      if (path === "/api/control/me") return json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf-test" });
-      if (path === "/api/control/integrations/github") return json({ app: { name: "All My Friends Are Agents", slug: "all-my-friends-are-agents", clientId: "Iv23test" }, connections: [connection] });
-      if (path === "/api/control/projects/current/repository" && init?.method === "GET") return json({ repository: { configured: false }, defaults: { checkoutPath: "/srv/amfaa", worktreeRoot: "/srv/worktrees", policyRevision: 1 } });
-      if (path.startsWith("/api/control/integrations/github/repositories?")) return json({ catalog });
-      if (path === "/api/control/projects/current/repository" && init?.method === "PUT") return configurationResponse;
-      return json({ error: `Unexpected request: ${path}` }, 500);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-
-    render(<GitHubIntegrationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={onClose} />);
-    await user.click(await screen.findByRole("button", { name: "Use repository" }));
-    expect(await screen.findByRole("button", { name: "Configuring…" })).toBeTruthy();
-
-    await user.keyboard("{Escape}");
-    fireEvent.mouseDown(screen.getByRole("dialog", { name: "GitHub" }).parentElement!);
-    expect(onClose).not.toHaveBeenCalled();
-
-    resolveConfiguration(json({
-      binding: { projectId: "project-one", revision: 1, state: "ready", connectionId: connection.connectionId, installationId: 157_360_466, githubRepositoryId: 1_234, repository: "github.com/virusimmortal00/AllMyFriendsAreAgents", updatedAt: "2026-08-30T12:00:00.000Z" },
-      repository: { configured: true, revision: 1, state: "verified", repository: "github.com/virusimmortal00/AllMyFriendsAreAgents" },
-    }));
-    expect(await screen.findByText("Configured")).toBeTruthy();
-    await waitFor(() => expect((screen.getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "GitHub" }), { key: "Escape" });
-    expect(onClose).toHaveBeenCalledOnce();
   });
 });

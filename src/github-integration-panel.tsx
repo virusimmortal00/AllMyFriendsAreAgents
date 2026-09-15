@@ -17,10 +17,8 @@ import {
 } from "./api";
 import { AdministrationSignIn } from "./server-administration";
 import { useControlSession } from "./control-session";
-import { DialogFrame } from "./dialog-frame";
-import { VIEWS } from "./view-registry";
+import { VIEWS, viewAttributes } from "./view-registry";
 import type { RepairProjectRepositoryInput } from "../shared/project-repository-repair";
-
 
 // GitHub mark from Primer Octicons: https://primer.style/octicons/icon/mark-github-24/
 function GitHubMark({ size = 24 }: { size?: number }) {
@@ -29,7 +27,12 @@ function GitHubMark({ size = 24 }: { size?: number }) {
   </svg>;
 }
 
-export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdministration }: { returnFocusTo: HTMLElement | null; onClose: () => void; onOpenAdministration: () => void }) {
+/**
+ * GitHub's account/project-repository connection, as a section of the shared server-admin
+ * Integrations page (`src/integrations.tsx`). Formerly a standalone modal dialog reached
+ * from the Room menu; its content and control-session gate are unchanged, only the chrome.
+ */
+export function GitHubIntegrationPanel({ onOpenAdministration }: { onOpenAdministration: () => void }) {
   const { status: controlStatus, session, checked, error: sessionError } = useControlSession();
   const authentication = !checked ? "checking" : session ? "ready" : "required";
   const dashboardRequest = useRef(0);
@@ -166,7 +169,6 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
   const projectRepository = project?.binding?.repository || project?.repository.repository;
   const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
   const repositoryCount = catalog?.repositories.length || 0;
-  const requestClose = () => { if (!working) onClose(); };
   const currentView = authentication === "required" && controlStatus
     ? controlStatus.claimed ? VIEWS.githubAdminSignIn : VIEWS.githubClaimOwner
     : authorization?.state === "authorizing"
@@ -179,60 +181,59 @@ export function GitHubIntegrationDialog({ returnFocusTo, onClose, onOpenAdminist
             ? VIEWS.githubEmptyRepo
             : VIEWS.githubChooseRepo;
 
-  // WebKit must create the repair scroll owner with its native gutter already styled.
-  // Remount only when entering/leaving repair; request state stays in this component.
-  return <DialogFrame key={currentView === VIEWS.githubRepairRepo ? "repair" : "integration"} title="GitHub" closeLabel="Close GitHub integration" closeDisabled={working} className={`github-integration-window${currentView === VIEWS.githubRepairRepo ? " classic-scrollbars" : ""}`} backdropClassName="room-settings-backdrop" bodyClassName="github-integration-body" returnFocusTo={returnFocusTo} onClose={requestClose} dataPresentation={authentication === "required" ? "authentication" : undefined} view={currentView} actions={<button type="button" className="classic-button" disabled={working} onClick={requestClose}>Close</button>}>
-        {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
-        {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
-        {repairMessage ? <p role="status">{repairMessage}</p> : null}
-        {authentication === "ready" && permissionDenied ? <AdministrationSignIn onOpen={onOpenAdministration} /> : null}
-        {sessionError ? <p role="alert">{sessionError}</p> : null}
-        {authentication === "required" ? <div className="github-control-login">
-          <h3>{controlStatus?.claimed === false ? "Claim server owner" : "Server administrator sign in"}</h3>
-          <p>Open server administration to manage this server's GitHub connection. You will return here after signing in.</p>
-          <AdministrationSignIn onOpen={onOpenAdministration} />
+  return <section className="integrations-section github-integration-panel" aria-labelledby="integrations-github-heading" {...viewAttributes(currentView)}>
+    <h3 id="integrations-github-heading" className="integrations-section__heading">GitHub</h3>
+    {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
+    {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
+    {repairMessage ? <p role="status">{repairMessage}</p> : null}
+    {authentication === "ready" && permissionDenied ? <AdministrationSignIn onOpen={onOpenAdministration} /> : null}
+    {sessionError ? <p role="alert">{sessionError}</p> : null}
+    {authentication === "required" ? <div className="github-control-login">
+      <h3>{controlStatus?.claimed === false ? "Claim server owner" : "Server administrator sign in"}</h3>
+      <p>Open server administration to manage this server's GitHub connection. You will return here after signing in.</p>
+      <AdministrationSignIn onOpen={onOpenAdministration} />
+    </div> : null}
+    {authentication === "ready" && integration ? <>
+      <fieldset className="github-integration-card classic-group">
+        <legend>GitHub account</legend>
+        <div className="github-account-summary">
+          <span className="github-brand-mark"><GitHubMark size={32} /></span>
+          <span className="github-account-copy"><h3>{readyConnection ? "GitHub connected" : "Connect GitHub"}</h3><p>{readyConnection ? <>Signed in as <strong>@{readyConnection.githubUser.login}</strong></> : "Connect your account to choose a repository for this project."}</p></span>
+          {readyConnection ? <span className="classic-status">Connected</span> : integration.app ? <button type="button" className="classic-button github-connect-button" disabled={working} onClick={() => void connect()}>{working ? "Starting…" : "Connect GitHub"}</button> : null}
+        </div>
+        {!integration.app ? <p role="alert">GitHub connections are unavailable in this build.</p> : null}
+        {integration.app && readyConnection ? <a className="classic-link github-secondary-link" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Manage repository access</a> : null}
+        {authorization?.state === "authorizing" && authorization.challenge ? <div className="github-device-challenge" role="status">
+          <span><strong>Enter code {authorization.challenge.userCode}</strong><small>Enter this code only at github.com. This window updates automatically.</small></span>
+          <a className="classic-button" href={authorization.challenge.verificationUri} target="_blank" rel="noreferrer">Continue on GitHub</a>
+        </div> : authorization && authorization.state !== "ready" ? <p role="alert">GitHub connection {authorization.state.replaceAll("-", " ")}.</p> : null}
+      </fieldset>
+      {readyConnection && project ? <fieldset className="github-integration-card classic-group">
+        <legend>Project repository</legend>
+        {!project.repository.configured ? <div className="github-card-heading"><small>{repositoryCount} {repositoryCount === 1 ? "repository" : "repositories"} available</small><button type="button" className="classic-button github-refresh-button" disabled={working} onClick={() => void refreshCatalog(readyConnection)}>{working ? "Refreshing…" : "Refresh"}</button></div> : null}
+        {project.repository.configured && projectRepositoryPath ? <div className="github-repository-summary classic-summary">
+          <span className="github-repository-icon" aria-hidden="true" />
+          <span><a className="classic-link" href={`https://github.com/${projectRepositoryPath}`} target="_blank" rel="noreferrer">{projectRepositoryPath}</a><small>Used by every room in this project.</small></span>
+          <span className="classic-status" data-attention={project.readiness?.authority === "unverified"}>{project.readiness?.authority === "verified" ? "Repository verified" : project.readiness?.authority === "unverified" ? "Needs repair" : "Configured"}</span>
+        </div> : catalog?.repositories.length ? <>
+          <label>Repository<select className="classic-select" value={selectedRepositoryId} onChange={(event) => setSelectedRepositoryId(event.target.value)}>{catalog.repositories.map((repository) => <option key={repository.githubRepositoryId} value={repository.githubRepositoryId}>{repository.owner}/{repository.name} · {repository.visibility}</option>)}</select></label>
+          {!project.defaults ? <p role="alert">This project is not ready to configure a repository.</p> : null}
+          <button type="button" className="classic-button github-use-repository-button" disabled={!selectedRepository || !project.defaults || working} onClick={() => void configureProject()}>{working ? "Configuring…" : "Use repository"}</button>
+        </> : <div className="github-empty-repositories classic-summary"><p><strong>No repositories available.</strong><small>Choose which repositories this app can access, then refresh.</small></p>{integration.app ? <a className="classic-button" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Choose repositories on GitHub</a> : null}</div>}
+        {project.repository.configured ? <div className="github-repair">
+          {project.readiness?.authority === "unverified" ? <>
+            <p role="status">The saved repository could not be verified. After a server move, repair its paths here. Signing in to GitHub does not update them.</p>
+            {project.readiness.state === "available" ? <>
+              <p>Use a standalone checkout on the configured default branch. These paths are on the server.</p>
+              <label>Checkout path<input className="classic-input" value={repairPaths.checkoutPath} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, checkoutPath: event.target.value })} /></label>
+              <label>Assignment worktree root<input className="classic-input" value={repairPaths.worktreeRoot} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, worktreeRoot: event.target.value })} /></label>
+              {session?.principal.role === "OWNER" || session?.principal.capabilities.includes("PROJECT_REPOSITORY_CONFIGURE") ? <button type="button" className="classic-button" disabled={working || !repairPaths.checkoutPath || !repairPaths.worktreeRoot} onClick={() => void repairProject()}>{working ? "Repairing…" : repairRequest ? "Retry repair" : "Repair repository paths"}</button> : <p>An administrator with repository configuration permission must apply the repair.</p>}
+              {repairRequest && !working ? <p>The outcome is unconfirmed. Retry uses the same paths and request.</p> : null}
+            </> : <p role="alert">{project.readiness.state === "blocked" ? "Repair is blocked. Check GitHub credential availability and finish or reconcile outstanding repository work." : "Repair requires an enabled repository and its matching GitHub connection."}</p>}
+          </> : null}
+          <button type="button" className="classic-button" disabled={working || loading || Boolean(repairRequest)} onClick={() => void loadDashboard()}>Check repository status</button>
         </div> : null}
-        {authentication === "ready" && integration ? <>
-          <fieldset className="github-integration-card classic-group">
-            <legend>GitHub account</legend>
-            <div className="github-account-summary">
-              <span className="github-brand-mark"><GitHubMark size={32} /></span>
-              <span className="github-account-copy"><h3>{readyConnection ? "GitHub connected" : "Connect GitHub"}</h3><p>{readyConnection ? <>Signed in as <strong>@{readyConnection.githubUser.login}</strong></> : "Connect your account to choose a repository for this project."}</p></span>
-              {readyConnection ? <span className="classic-status">Connected</span> : integration.app ? <button type="button" className="classic-button github-connect-button" disabled={working} onClick={() => void connect()}>{working ? "Starting…" : "Connect GitHub"}</button> : null}
-            </div>
-            {!integration.app ? <p role="alert">GitHub connections are unavailable in this build.</p> : null}
-            {integration.app && readyConnection ? <a className="classic-link github-secondary-link" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Manage repository access</a> : null}
-            {authorization?.state === "authorizing" && authorization.challenge ? <div className="github-device-challenge" role="status">
-              <span><strong>Enter code {authorization.challenge.userCode}</strong><small>Enter this code only at github.com. This window updates automatically.</small></span>
-              <a className="classic-button" href={authorization.challenge.verificationUri} target="_blank" rel="noreferrer">Continue on GitHub</a>
-            </div> : authorization && authorization.state !== "ready" ? <p role="alert">GitHub connection {authorization.state.replaceAll("-", " ")}.</p> : null}
-          </fieldset>
-          {readyConnection && project ? <fieldset className="github-integration-card classic-group">
-            <legend>Project repository</legend>
-            {!project.repository.configured ? <div className="github-card-heading"><small>{repositoryCount} {repositoryCount === 1 ? "repository" : "repositories"} available</small><button type="button" className="classic-button github-refresh-button" disabled={working} onClick={() => void refreshCatalog(readyConnection)}>{working ? "Refreshing…" : "Refresh"}</button></div> : null}
-            {project.repository.configured && projectRepositoryPath ? <div className="github-repository-summary classic-summary">
-              <span className="github-repository-icon" aria-hidden="true" />
-              <span><a className="classic-link" href={`https://github.com/${projectRepositoryPath}`} target="_blank" rel="noreferrer">{projectRepositoryPath}</a><small>Used by every room in this project.</small></span>
-              <span className="classic-status" data-attention={project.readiness?.authority === "unverified"}>{project.readiness?.authority === "verified" ? "Repository verified" : project.readiness?.authority === "unverified" ? "Needs repair" : "Configured"}</span>
-            </div> : catalog?.repositories.length ? <>
-              <label>Repository<select className="classic-select" value={selectedRepositoryId} onChange={(event) => setSelectedRepositoryId(event.target.value)}>{catalog.repositories.map((repository) => <option key={repository.githubRepositoryId} value={repository.githubRepositoryId}>{repository.owner}/{repository.name} · {repository.visibility}</option>)}</select></label>
-              {!project.defaults ? <p role="alert">This project is not ready to configure a repository.</p> : null}
-              <button type="button" className="classic-button github-use-repository-button" disabled={!selectedRepository || !project.defaults || working} onClick={() => void configureProject()}>{working ? "Configuring…" : "Use repository"}</button>
-            </> : <div className="github-empty-repositories classic-summary"><p><strong>No repositories available.</strong><small>Choose which repositories this app can access, then refresh.</small></p>{integration.app ? <a className="classic-button" href={`https://github.com/apps/${integration.app.slug}/installations/new`} target="_blank" rel="noreferrer">Choose repositories on GitHub</a> : null}</div>}
-            {project.repository.configured ? <div className="github-repair">
-              {project.readiness?.authority === "unverified" ? <>
-                <p role="status">The saved repository could not be verified. After a server move, repair its paths here. Signing in to GitHub does not update them.</p>
-                {project.readiness.state === "available" ? <>
-                  <p>Use a standalone checkout on the configured default branch. These paths are on the server.</p>
-                  <label>Checkout path<input className="classic-input" value={repairPaths.checkoutPath} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, checkoutPath: event.target.value })} /></label>
-                  <label>Assignment worktree root<input className="classic-input" value={repairPaths.worktreeRoot} disabled={working || Boolean(repairRequest)} onChange={(event) => setRepairPaths({ ...repairPaths, worktreeRoot: event.target.value })} /></label>
-                  {session?.principal.role === "OWNER" || session?.principal.capabilities.includes("PROJECT_REPOSITORY_CONFIGURE") ? <button type="button" className="classic-button" disabled={working || !repairPaths.checkoutPath || !repairPaths.worktreeRoot} onClick={() => void repairProject()}>{working ? "Repairing…" : repairRequest ? "Retry repair" : "Repair repository paths"}</button> : <p>An administrator with repository configuration permission must apply the repair.</p>}
-                  {repairRequest && !working ? <p>The outcome is unconfirmed. Retry uses the same paths and request.</p> : null}
-                </> : <p role="alert">{project.readiness.state === "blocked" ? "Repair is blocked. Check GitHub credential availability and finish or reconcile outstanding repository work." : "Repair requires an enabled repository and its matching GitHub connection."}</p>}
-              </> : null}
-              <button type="button" className="classic-button" disabled={working || loading || Boolean(repairRequest)} onClick={() => void loadDashboard()}>Check repository status</button>
-            </div> : null}
-          </fieldset> : null}
-        </> : null}
-  </DialogFrame>;
+      </fieldset> : null}
+    </> : null}
+  </section>;
 }
