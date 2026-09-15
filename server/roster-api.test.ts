@@ -98,19 +98,21 @@ describe("live roster API", () => {
     } finally { await noSpend.close(); }
 
     const spend = { snapshot: vi.fn(() => ({ room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } } })) } as unknown as OpenRouterSpendStore;
-    const intelligence = { enrich: vi.fn(async (result) => result), credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
+    const intelligence = { enrich: vi.fn(async (result) => result), credits: vi.fn() } as unknown as OpenRouterCatalogService;
     const withSpend = await fixture({ spend, intelligence });
     try {
       const projection = await (await withSpend.call("/api/roster")).json();
+      // Room and per-agent spend are room activity; the account's credit balance is not
+      // — it stays behind the server-admin `/api/control/integrations/openrouter` route.
       expect(projection.usage).toEqual({
         room: { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
         agents: { "codex-sol": { generations: 1, costUsd: 0.01, inputTokens: 10, outputTokens: 2, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } },
-        credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" },
       });
+      expect(intelligence.credits).not.toHaveBeenCalled();
     } finally { await withSpend.close(); }
   });
 
-  it("serves windowed OpenRouter usage and validates the window parameter", async () => {
+  it("serves windowed OpenRouter usage without the account's credit balance, and validates the window parameter", async () => {
     const noSpend = await fixture({});
     try {
       expect((await noSpend.call("/api/openrouter-usage?window=24h")).status).toBe(404);
@@ -118,7 +120,7 @@ describe("live roster API", () => {
 
     const windowResult = { room: { generations: 4, costUsd: 0.4, inputTokens: 40, outputTokens: 8, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, agents: {}, sinceIso: "2026-08-25T00:00:00.000Z", truncated: false };
     const spend = { since: vi.fn(() => windowResult) } as unknown as OpenRouterSpendStore;
-    const intelligence = { credits: vi.fn(async () => ({ totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" })) } as unknown as OpenRouterCatalogService;
+    const intelligence = { credits: vi.fn() } as unknown as OpenRouterCatalogService;
     const api = await fixture({ spend, intelligence });
     try {
       expect((await api.call("/api/openrouter-usage?window=nonsense")).status).toBe(400);
@@ -126,12 +128,9 @@ describe("live roster API", () => {
       const response = await api.call("/api/openrouter-usage?window=24h");
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(await response.json()).toEqual({ ...windowResult, credits: { totalCreditsUsd: 50, totalUsageUsd: 1, remainingUsd: 49, fetchedAt: "2026-08-26T00:00:00.000Z" } });
+      expect(await response.json()).toEqual(windowResult);
       expect(spend.since).toHaveBeenCalledWith("24h");
-      expect(intelligence.credits).toHaveBeenLastCalledWith(false);
-
-      await api.call("/api/openrouter-usage?window=24h&refresh=1");
-      expect(intelligence.credits).toHaveBeenLastCalledWith(true);
+      expect(intelligence.credits).not.toHaveBeenCalled();
     } finally { await api.close(); }
   });
 

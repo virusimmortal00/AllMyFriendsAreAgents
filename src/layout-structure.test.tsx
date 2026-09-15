@@ -32,7 +32,7 @@ describe("shared responsive layout structure", () => {
   });
 
   it("routes every full workspace through the same header and scroll-body contract", () => {
-    for (const file of ["tasks.tsx", "contributions.tsx", "improvements.tsx", "continuations.tsx", "investigations.tsx", "diagnostics.tsx"]) {
+    for (const file of ["tasks.tsx", "contributions.tsx", "improvements.tsx", "continuations.tsx", "investigations.tsx", "diagnostics.tsx", "integrations.tsx"]) {
       const source = readFileSync(resolve(process.cwd(), "src", file), "utf8");
       expect(source, file).toContain("workspace-view");
       expect(source, file).toContain("workspace-view__header");
@@ -41,7 +41,7 @@ describe("shared responsive layout structure", () => {
   });
 
   it("keeps full modal workflows on DialogFrame instead of bespoke window markup", () => {
-    for (const file of ["components.tsx", "human-avatar.tsx", "roster-manager.tsx", "github-integration-dialog.tsx", "room-configuration-dialog.tsx"]) {
+    for (const file of ["components.tsx", "human-avatar.tsx", "roster-manager.tsx", "room-configuration-dialog.tsx"]) {
       const source = readFileSync(resolve(process.cwd(), "src", file), "utf8");
       expect(source, file).toContain("<DialogFrame");
       expect(source, file).not.toContain('className="agent-settings-window');

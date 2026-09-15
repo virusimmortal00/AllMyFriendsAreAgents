@@ -77,7 +77,7 @@ export function registerRosterRoutes(input: {
         ? { available: false as const, reason: "selection_unpinnable" as const, diagnostic: entry.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run." }
         : selectedModelAvailability(roomAgentModelReference(entry), modelDiscovery)])),
       capabilityStatuses: input.capabilityStatuses ? await input.capabilityStatuses() : {},
-      ...(spend ? { usage: { ...spend.snapshot(), credits: await intelligence?.credits().catch(() => undefined) } } : {}),
+      ...(spend ? { usage: spend.snapshot() } : {}),
     };
   };
 
@@ -131,8 +131,7 @@ export function registerRosterRoutes(input: {
     if (!OPEN_ROUTER_SPEND_WINDOWS.includes(window as OpenRouterSpendWindow)) {
       return response.status(400).json({ error: `window must be one of: ${OPEN_ROUTER_SPEND_WINDOWS.join(", ")}.` });
     }
-    const forceRefreshCredits = request.query.refresh === "1" || request.query.refresh === "true";
-    return response.set("Cache-Control", "no-store").json({ ...spend.since(window as OpenRouterSpendWindow), credits: await intelligence?.credits(forceRefreshCredits).catch(() => undefined) });
+    return response.set("Cache-Control", "no-store").json(spend.since(window as OpenRouterSpendWindow));
   });
 
   app.put("/api/roster", async (request, response) => {

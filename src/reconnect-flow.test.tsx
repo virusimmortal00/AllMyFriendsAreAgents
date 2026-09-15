@@ -551,7 +551,6 @@ describe("rendered reconnect recovery", () => {
     expect(roomMenu.queryByRole("menuitem", { name: "Change name..." })).toBeNull();
     expect(roomMenu.queryByRole("menuitem", { name: "Room settings..." })).toBeNull();
     expect(roomMenu.getByRole("menuitem", { name: "Manage agents..." })).toBeTruthy();
-    expect(roomMenu.getByRole("menuitem", { name: "GitHub integration..." })).toBeTruthy();
     for (const name of ["Continue discussion", "Start roundtable", "Review with all agents"]) {
       expect((roomMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
     }

@@ -32,8 +32,7 @@ import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { refreshControlSession } from "./control-session";
 import { ServerAdministration, type AdministrationDestination } from "./server-administration";
 import { Diagnostics } from "./diagnostics";
-import { OpenRouterAccount } from "./openrouter-account";
-import { GitHubIntegrationDialog } from "./github-integration-dialog";
+import { IntegrationsPage } from "./integrations";
 import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
 import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
 import { VIEWS, viewAttributes } from "./view-registry";
@@ -144,7 +143,6 @@ export default function App() {
   const [resendingPending, setResendingPending] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [roomPropertiesOpen, setRoomPropertiesOpen] = useState(false);
-  const [githubIntegrationOpen, setGitHubIntegrationOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [configuredAgent, setConfiguredAgent] = useState<ActiveAgentId | null>(null);
@@ -189,7 +187,6 @@ export default function App() {
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
   const roomPropertiesTrigger = useRef<HTMLElement | null>(null);
-  const githubIntegrationTrigger = useRef<HTMLElement | null>(null);
   const profileTrigger = useRef<HTMLElement | null>(null);
   const roomRevealed = useRef(false);
   const serverInstance = useRef<string | undefined>(undefined);
@@ -747,23 +744,22 @@ export default function App() {
   function openAdministration(destination: AdministrationDestination | null = null) {
     setAdministrationDestination(destination);
     setProfileOpen(false);
-    setGitHubIntegrationOpen(false);
     setRosterOpen(false);
     showWorkspace("Server Administration");
   }
 
-  function openOpenRouterAccount() {
+  function openIntegrations() {
     setRosterOpen(false);
-    if (workspaceView !== "OpenRouter") showWorkspace("OpenRouter");
+    if (workspaceView !== "Integrations") showWorkspace("Integrations");
   }
 
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
     if (destination === "Diagnostics") showWorkspace("Diagnostics");
+    else if (destination === "Integrations") showWorkspace("Integrations");
     else {
       showChat();
-      if (destination === "GitHub") setGitHubIntegrationOpen(true);
-      else if (destination === "Manage room agents") setRosterOpen(true);
+      if (destination === "Manage room agents") setRosterOpen(true);
       else setRoomPropertiesOpen(true);
     }
   }
@@ -792,10 +788,6 @@ export default function App() {
   const openRoomProperties = useCallback((trigger: HTMLElement) => {
     roomPropertiesTrigger.current = trigger;
     setRoomPropertiesOpen(true);
-  }, []);
-  const openGitHubIntegration = useCallback((trigger: HTMLElement) => {
-    githubIntegrationTrigger.current = trigger;
-    setGitHubIntegrationOpen(true);
   }, []);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
@@ -826,7 +818,6 @@ export default function App() {
       items: [
         { label: "Room properties...", accessKey: "P", onSelect: openRoomProperties },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
-        { label: "GitHub integration...", accessKey: "G", onSelect: openGitHubIntegration },
         { type: "separator" },
         { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("continue", "all"); } },
         { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("roundtable", "all"); } },
@@ -850,7 +841,7 @@ export default function App() {
         workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
         workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
         workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
-        workspaceCommand({ label: "OpenRouter", accessKey: "p", checked: workspaceView === "OpenRouter", onSelect: () => openOpenRouterAccount() }),
+        workspaceCommand({ label: "Integrations", accessKey: "g", checked: workspaceView === "Integrations", onSelect: () => openIntegrations() }),
     ]), view: VIEWS.windowMenu },
     {
       id: "help",
@@ -883,7 +874,7 @@ export default function App() {
       case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} protectedWork={protectedWork} agents={roster.entries.filter((entry) => entry.enabled)} />; break;
       case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
       case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
-      case "OpenRouter": workspaceContent = <OpenRouterAccount agentLabels={agentLabels} refreshKey={connectionEpoch} />; break;
+      case "Integrations": workspaceContent = <IntegrationsPage agentLabels={agentLabels} refreshKey={connectionEpoch} onOpenAdministration={() => openAdministration("Integrations")} />; break;
       case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
       default: workspaceView satisfies never;
     }
@@ -937,7 +928,6 @@ export default function App() {
         </div>
 
         {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
-        {githubIntegrationOpen ? <GitHubIntegrationDialog onOpenAdministration={() => openAdministration("GitHub")} returnFocusTo={githubIntegrationTrigger.current} onClose={() => setGitHubIntegrationOpen(false)} /> : null}
         {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
@@ -959,7 +949,7 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
-          onOpenOpenRouterAccount={openOpenRouterAccount}
+          onOpenOpenRouterAccount={openIntegrations}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}

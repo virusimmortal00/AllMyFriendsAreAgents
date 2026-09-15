@@ -17,10 +17,15 @@ export interface OpenRouterCreditBalance {
   readonly fetchedAt: string;
 }
 
+/**
+ * Room activity, not account data: every room member may see it (same bar as the
+ * per-message cost badges in the transcript). The account's credit balance is
+ * account-level and financial instead — see `OpenRouterCreditsResponse`, which is
+ * gated behind server administration.
+ */
 export interface OpenRouterUsageSummary {
   readonly room: OpenRouterSpendTotals;
   readonly agents: Readonly<Record<string, OpenRouterSpendTotals>>;
-  readonly credits?: OpenRouterCreditBalance;
 }
 
 /** A named, bounded time span for the windowed spend query. "all" reaches only as far back as retained history. */
@@ -34,5 +39,9 @@ export interface OpenRouterUsageWindow {
   readonly sinceIso: string | null;
   /** True when retained event history does not reach back to the requested window start (results understate the window). */
   readonly truncated: boolean;
+}
+
+/** The account's remaining credit balance, served only to a signed-in server administrator (`GET /api/control/integrations/openrouter`). */
+export interface OpenRouterCreditsResponse {
   readonly credits?: OpenRouterCreditBalance;
 }

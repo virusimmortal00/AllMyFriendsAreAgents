@@ -4,7 +4,7 @@ import { refreshControlSession, useControlSession } from "./control-session";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 // Internal destinations only: never navigate to a caller-supplied URL.
-export type AdministrationDestination = "Diagnostics" | "GitHub" | "Manage room agents" | "Room Properties";
+export type AdministrationDestination = "Diagnostics" | "Integrations" | "Manage room agents" | "Room Properties";
 
 export function AdministrationEntry({ onOpen, disabled = false }: { onOpen: () => void; disabled?: boolean }) {
   const { status, session, checked, error } = useControlSession();

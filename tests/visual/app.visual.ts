@@ -21,7 +21,7 @@ async function openScenario(page: Page, id: string) {
     if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
   } else if (id.startsWith("github-")) {
-    await menu(page, "Room", "GitHub integration...");
+    await menu(page, "Window", "Integrations");
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
   } else if (id.startsWith("manage-agents-") || id === "unsaved-changes-confirmation") {
     await menu(page, "Room", "Manage agents...");
@@ -65,7 +65,7 @@ async function openScenario(page: Page, id: string) {
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
       await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
-  } else if (id === "open-router-account") await menu(page, "Window", "OpenRouter");
+  } else if (id === "open-router-account") await menu(page, "Window", "Integrations");
 }
 
 async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIOS[number], shot: string) {
@@ -92,7 +92,9 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
       if (!visible(button)) continue;
       if (button.parentElement!.getBoundingClientRect().width > 360 && button.getBoundingClientRect().width > 320) issues.push("The sign-in command is stretched across its panel.");
     }
-    for (const dialog of document.querySelectorAll<HTMLElement>('.github-integration-window[data-presentation="authentication"], .roster-window[data-presentation="authentication"]')) {
+    // GitHub's sign-in state is a full-width Integrations page section now, not a
+    // content-sized modal — only the roster dialog's own sign-in gate is still checked here.
+    for (const dialog of document.querySelectorAll<HTMLElement>('.roster-window[data-presentation="authentication"]')) {
       if (visible(dialog) && innerWidth > 720 && dialog.getBoundingClientRect().width > 441) issues.push("A short sign-in dialog exceeds its content-sized width.");
     }
     for (const navigation of document.querySelectorAll<HTMLElement>(".room-model-selection__navigation")) {
