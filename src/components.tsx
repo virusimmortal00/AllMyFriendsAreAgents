@@ -102,6 +102,7 @@ export function RoomRoster({
   onManageRoster,
   onConfigureAgent,
   onConfigureHumanAvatar,
+  onAssignTask,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   openCodeRuntime?: OpenCodeRuntimeStatus;
@@ -118,6 +119,8 @@ export function RoomRoster({
   onManageRoster?: (trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => void;
   onConfigureAgent?: (agent: ActiveAgentId) => void;
   onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
+  /** Right-click (or the keyboard context-menu key) on an agent opens Assign task for that agent. */
+  onAssignTask?: (trigger: HTMLElement, agent: ActiveAgentId) => void;
 }) {
   const presenceList = useRef<HTMLDivElement>(null);
   useScrollEdges(presenceList);
@@ -161,9 +164,16 @@ export function RoomRoster({
               role={configurable ? "button" : "listitem"}
               tabIndex={configurable ? 0 : undefined}
               aria-label={configurable ? `Configure ${availableLabel}` : undefined}
+              aria-keyshortcuts={onAssignTask ? "ContextMenu Shift+F10" : undefined}
+              title={onAssignTask ? "Double-click to configure · right-click to assign a task" : undefined}
               onDoubleClick={configurable ? (event) => {
                 event.currentTarget.focus({ preventScroll: true });
                 onManageRoster?.(event.currentTarget, agent);
+              } : undefined}
+              onContextMenu={onAssignTask ? (event) => {
+                event.preventDefault();
+                event.currentTarget.focus({ preventScroll: true });
+                onAssignTask(event.currentTarget, agent);
               } : undefined}
               onKeyDown={configurable ? (event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
@@ -596,6 +606,8 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <h3>Reading the room</h3>
         <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
         <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
+        <h3>Assigning work</h3>
+        <p>Choose Room → Assign task…, or right-click an agent in the room list, to send an agent bounded work. You can also type /task @agent followed by the work. Results appear in the transcript.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
   </DialogFrame>;

@@ -42,17 +42,9 @@ async function openScenario(page: Page, id: string) {
   else if (id === "window-menu") await menu(page, "Window");
   else if (id === "mention-suggestions") await page.getByRole("textbox", { name: "Message", exact: true }).fill("@");
   else if (["text-color-palette", "highlight-color-palette", "classic-smiley-picker"].includes(id)) await page.getByRole("button", { name: id === "text-color-palette" ? "Text color" : id === "highlight-color-palette" ? "Message highlight color" : "Classic emojis", exact: true }).click();
-  else if (["improvements-list", "improvement-detail"].includes(id)) {
-    await menu(page, "Window", "Improvements");
-    if (id === "improvement-detail") await page.getByRole("link", { name: "navigation-review", exact: true }).click();
-  } else if (["room-tasks-list", "room-task-detail"].includes(id)) {
-    await menu(page, "Window", "Tasks");
-    if (id === "room-task-detail") await page.getByRole("button", { name: /Review navigation across screen sizes/ }).click();
-  } else if (id === "durable-continuations") await menu(page, "Window", "Continuations");
-  else if (id === "background-investigations") await menu(page, "Window", "Investigations");
-  else if (id.startsWith("reviewed-contribution")) {
-    await menu(page, "Window", "Reviewed contributions");
-    if (id === "reviewed-contribution-detail") await page.getByRole("button", { name: /Consistent navigation controls/ }).click();
+  else if (id === "assign-task") {
+    await menu(page, "Room", "Assign task...");
+    await page.getByRole("textbox", { name: "Task", exact: true }).fill("Check the smaller navigation layout for clipped controls.");
   } else if (id.startsWith("owner-diagnostics")) {
     await menu(page, "Window", "Diagnostics");
     if (id === "owner-diagnostics-sign-in") {
@@ -269,7 +261,7 @@ for (const scenario of APP_SCENARIOS) {
       }
       return route.continue();
     });
-    if (["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
+    if (["room-chat", "compact-room-chat", "agent-status"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
     await page.goto(`/tests/visual/index.html?scenario=${scenario.id}`);
     if (scenario.view.category !== "application") await expect(page.locator(".app-window")).toBeVisible();
     await openScenario(page, scenario.id);
@@ -308,7 +300,6 @@ for (const scenario of APP_SCENARIOS) {
     await expect(surface).toBeVisible();
     if (scenario.id === "room-summarizer-model-picker") await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
     await expect(page.getByText(/^(Loading roster…|Loading configuration…|Loading settings…|Loading contribution…|Loading tasks…|Loading improvements…)$/)).toHaveCount(0);
-    if (scenario.id === "improvement-not-found") await expect(page.getByRole("region", { name: "Bounded heartbeat controls" })).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     await capture(page, info, scenario, "top");
     if (scenario.id === "room-properties-shared-behavior") {
@@ -359,16 +350,6 @@ for (const scenario of APP_SCENARIOS) {
       await back.click();
       await expect(surface).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Choose model…", exact: true })).toBeFocused();
-    }
-    if (["durable-continuations", "background-investigations"].includes(scenario.id)) {
-      const policy = surface.getByRole("checkbox");
-      await policy.focus();
-      // Enter keyboard modality without mutating this read-only policy fixture.
-      // WebKit's Tab traversal depends on the host's full-keyboard-access setting.
-      await policy.press("ArrowRight");
-      await expect(policy).toBeFocused();
-      await expect(policy).toHaveCSS("outline-style", "dotted");
-      await expect(policy).toHaveCSS("box-shadow", /rgb\(255, 255, 255\)/);
     }
     if (scenario.id === "github-choose-repo") {
       const repository = surface.getByRole("combobox", { name: "Repository", exact: true });

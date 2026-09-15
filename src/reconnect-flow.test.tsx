@@ -538,7 +538,7 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
   });
 
-  it("puts You first, removes People and Change name, and grays unavailable room actions", async () => {
+  it("puts You first, removes People and Change name, and drops retired room actions", async () => {
     const user = userEvent.setup();
     await renderConnected();
     const topLevelMenus = screen.getAllByRole("menuitem");
@@ -552,8 +552,49 @@ describe("rendered reconnect recovery", () => {
     expect(roomMenu.queryByRole("menuitem", { name: "Room settings..." })).toBeNull();
     expect(roomMenu.getByRole("menuitem", { name: "Manage agents..." })).toBeTruthy();
     for (const name of ["Continue discussion", "Start roundtable", "Review with all agents"]) {
-      expect((roomMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+      expect(roomMenu.queryByRole("menuitem", { name })).toBeNull();
     }
+    expect((roomMenu.getByRole("menuitem", { name: "Assign task..." }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("hides deprecated workspaces from Window and returns retired improvement links to Chat", async () => {
+    window.history.replaceState({}, "", "/improvements/known-id");
+    const user = userEvent.setup();
+    await renderConnected();
+    expect(window.location.pathname).toBe("/");
+    await user.click(screen.getByRole("menuitem", { name: "Window" }));
+    const windowMenu = within(screen.getByRole("menu", { name: "Window" }));
+    for (const name of ["Improvements", "Tasks", "Continuations", "Investigations", "Reviewed contributions"]) {
+      expect(windowMenu.queryByRole("menuitemradio", { name })).toBeNull();
+    }
+  });
+
+  it("assigns a task to a chosen agent through the existing /task command", async () => {
+    api.sendMessage.mockResolvedValueOnce({ command: true, result: { kind: "accepted" } });
+    const user = userEvent.setup();
+    await renderConnected();
+    const roomTrigger = screen.getByRole("menuitem", { name: "Room" });
+    await chooseMenuItem(user, "Room", "Assign task...");
+    const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
+    const [agent] = legacyDefaultRoomAgentRoster().entries.filter((entry) => entry.enabled);
+    await user.selectOptions(dialog.getByRole("combobox", { name: "Agent" }), agent.agentId);
+    await user.type(dialog.getByRole("textbox", { name: "Task" }), "  inspect the error path  ");
+    await user.click(dialog.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith(`/task @${agent.agentId} inspect the error path`, expect.stringMatching(/^message_/), []));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Assign task" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(roomTrigger));
+  });
+
+  it("keeps the Assign task draft open and explains a rejected command", async () => {
+    api.sendMessage.mockResolvedValueOnce({ command: true, result: { kind: "private-error", message: "That participant is not in the room roster." } });
+    const user = userEvent.setup();
+    await renderConnected();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getAllByRole("button", { name: /^Configure / })[0] });
+    const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
+    await user.type(dialog.getByRole("textbox", { name: "Task" }), "check the retry path");
+    await user.click(dialog.getByRole("button", { name: "OK" }));
+    expect(await dialog.findByRole("alert")).toHaveProperty("textContent", "That participant is not in the room roster.");
+    expect((dialog.getByRole("textbox", { name: "Task" }) as HTMLTextAreaElement).value).toBe("check the retry path");
   });
 
   it("opens the existing Manage Agents dialog from the Room menu and restores focus", async () => {

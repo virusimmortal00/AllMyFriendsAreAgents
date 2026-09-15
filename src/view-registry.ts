@@ -48,6 +48,7 @@ export const VIEWS = {
   manageAgentsModelPicker: defineView({ id: "ROOM-07", name: "Manage Room Agents — Model Picker", state: "Provider/model selection and model detail", category: "room" }),
   manageAgentsConflict: defineView({ id: "ROOM-08", name: "Manage Room Agents — Conflict", state: "Save conflict and recovery", category: "room" }),
   unsavedChangesConfirmation: defineView({ id: "ROOM-09", name: "Unsaved Changes Confirmation", state: "Destructive-close confirmation", category: "room" }),
+  assignTask: defineView({ id: "ROOM-10", name: "Assign Task", state: "Agent choice and bounded task text sent as /task", category: "room" }),
   yourProfile: defineView({ id: "PERSON-01", name: "Your Profile", state: "Name and avatar editor", category: "participant" }),
   agentStatus: defineView({ id: "PERSON-02", name: "Agent Status", state: "Individual agent availability, provider health, and recovery", category: "participant" }),
   githubAdminSignIn: defineView({ id: "GH-01", name: "GitHub — Administrator Sign In", state: "Existing server-owner authentication", category: "github" }),
@@ -65,6 +66,15 @@ export const VIEWS = {
 } as const;
 
 export type ViewKey = keyof typeof VIEWS;
+
+/**
+ * Deprecated workspaces whose components are retained for repurposing but are no
+ * longer reachable from application navigation. They are excluded from visual capture.
+ */
+export const HIDDEN_VIEW_KEYS = [
+  "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail",
+  "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail",
+] as const satisfies readonly ViewKey[];
 export type ViewId = (typeof VIEWS)[ViewKey]["id"];
 
 export function viewAttributes(view: ViewDefinition) {

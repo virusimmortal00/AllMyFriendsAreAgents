@@ -12,7 +12,6 @@ export const appScenario = new URLSearchParams(location.search).get("scenario") 
 // bundle has no fixture imports, fake API, or authentication bypass.
 localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(fixtureHuman));
 if (appScenario === "pending-send-recovery") savePendingSend(localStorage, fixtureHuman.id, { clientMessageId: "visual-pending", text: "Please review the smaller navigation layout before continuing." });
-if (appScenario === "improvement-not-found") history.replaceState(null, "", "/improvements/missing-review?scenario=improvement-not-found");
 
 class FixtureEventSource extends EventTarget {
   onmessage: ((event: MessageEvent) => void) | null = null;
