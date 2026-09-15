@@ -13,13 +13,16 @@ export interface ListViewColumn<Row> {
  * Windows 95 ListView in Details mode: raised column headers over an inset white
  * table. Clicking a sortable header sorts by it; clicking again reverses the order.
  */
-export function ListView<Row>({ label, columns, rows, rowKey, empty, initialSort }: {
+export function ListView<Row>({ label, columns, rows, rowKey, empty, initialSort, isSelected, className = "" }: {
   label: string;
   columns: readonly ListViewColumn<Row>[];
   rows: readonly Row[];
   rowKey: (row: Row) => string;
   empty: ReactNode;
   initialSort?: string;
+  /** Highlights the row with the classic selection color; selection itself stays with the row's own control. */
+  isSelected?: (row: Row) => boolean;
+  className?: string;
 }) {
   const [sort, setSort] = useState<{ key: string; direction: 1 | -1 } | null>(initialSort ? { key: initialSort, direction: 1 } : null);
   const sorted = useMemo(() => {
@@ -32,7 +35,7 @@ export function ListView<Row>({ label, columns, rows, rowKey, empty, initialSort
     });
   }, [columns, rows, sort]);
 
-  return <div className="list-view">
+  return <div className={`list-view ${className}`.trim()}>
     <table aria-label={label}>
       <colgroup>{columns.map((column) => <col key={column.key} style={column.width ? { width: column.width } : undefined} />)}</colgroup>
       <thead><tr>{columns.map((column) => {
@@ -43,7 +46,7 @@ export function ListView<Row>({ label, columns, rows, rowKey, empty, initialSort
           </button> : <span>{column.label}</span>}
         </th>;
       })}</tr></thead>
-      <tbody>{sorted.length ? sorted.map((row) => <tr key={rowKey(row)}>{columns.map((column) => <td key={column.key}>{column.render(row)}</td>)}</tr>)
+      <tbody>{sorted.length ? sorted.map((row) => <tr key={rowKey(row)} className={isSelected?.(row) ? "is-selected" : undefined}>{columns.map((column) => <td key={column.key}>{column.render(row)}</td>)}</tr>)
         : <tr><td className="list-view__empty" colSpan={columns.length}>{empty}</td></tr>}</tbody>
     </table>
   </div>;

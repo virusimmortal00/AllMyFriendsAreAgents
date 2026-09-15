@@ -15,6 +15,7 @@ These are application contracts, not stylistic suggestions. A feature is incompl
 | UI-RESP-002 | Every registered view needs rendered evidence and an independent image review for screen use, navigation, style, proportion, empty space, scroll ownership, and outcome. Narrative answers are not visual proof. | `src/view-registry.ts` identifies surfaces; `tests/visual/matrix.ts` declares captured scenarios. The audit records unsupported coverage honestly. | Registry/ledger tests enforce naming only. Browser geometry tests and `check:visual-review` enforce the current capture matrix and image-bound verdicts; uncovered views remain unverified. |
 | UI-VISUAL-002 | A screenshot capture or pixel diff is not an agent visual approval. | `review:visual` supplies original PNGs to fresh local Codex sessions, separate from the implementation conversation, and records seven-question verdicts and receipts. | `scripts/visual-review.test.ts` and `scripts/codex-visual-review.test.ts` cover stale/missing/self-approved verdicts, failed geometry/judgments, account-only invocation, image inspection, and process failure. See `docs/testing/visual-review.md`. |
 | UI-STRUCT-001 | Application windows stay centered and screen-efficient; workspaces use the full allocated canvas; long dialogs separate a scrolling body from persistent actions. | `.desktop`/`.app-window`, `WorkspaceSurface`, `workspace-view`, and `DialogFrame` own those structures. | `src/mobile-layout.test.ts`, `src/layout-structure.test.tsx`, and rendered browser checks for changed layouts. |
+| UI-ADMIN-001 | Surfaces that need server-administrator authority are pages of one Server Administration window, not separate Window destinations. Member-visible room data stays in Room dialogs. | `AdministrationWindow` hosts Session, Integrations, Rooms & repositories, and Diagnostics through `ExplorerLayout`; `WORKSPACE_NAMES` contains only Server Administration. | `src/layout-structure.test.tsx` requires administration pages to use `administration-page`/`page-header` inside `ExplorerLayout`; `src/reconnect-flow.test.tsx` proves Diagnostics and Integrations are absent from Window. |
 | UI-VISUAL-001 | New surfaces preserve the Windows 95/AIM vocabulary: square raised/inset controls, blue title strips, gray chrome, grooved groups, compact typography, classic links, and restrained status colors. Branding and content-specific artwork may remain local. | Shared `classic-*`, dialog, workspace, menu, and status primitives; feature CSS is limited to content-specific composition. | Structure/style contract tests plus P/T/L/D visual review recorded under the affected view IDs. |
 
 ## Application menu taxonomy
@@ -22,10 +23,17 @@ These are application contracts, not stylistic suggestions. A feature is incompl
 - **You** changes the current member's profile.
 - **Room** changes this room or invokes room-scoped actions.
 - **View** changes how the current workspace is presented. It does not open another workspace.
-- **Window** switches between Chat and whole-workspace destinations.
+- **Window** switches between Chat and whole-workspace destinations (currently Server Administration, whose pages hold every administrator surface).
 - **Help** contains documentation and support entry points.
 
 New `View` commands must be created with `presentationCommand`. New full-workspace destinations must be created with `workspaceCommand`, added to `WORKSPACE_NAMES`, and rendered inside the application-owned `WorkspaceSurface`. Product code must not use type assertions to bypass these builders.
+
+## Windows 95 composition primitives
+
+- **Explorer window** (`ExplorerLayout`): a fixed page list beside one inset content pane and a sunken status line. Use it when a workspace has several related pages; do not add a second blue header band inside the window title strip. Page headings are plain 13px bold text over a groove separator.
+- **Details list** (`ListView`): raised column headers over an inset white table for tabular records (rooms, models). Prefer it over stacked white cards; rows stay one line and put secondary detail in a smaller second line or a detail pane.
+- **Headings inside dialogs and group boxes** use compact black bold labels (12–14px). Reserve the blue selection color for title strips, selected rows, and menu highlights, not body headings or badges.
+- **Values and tags** use inset wells and 1px gray-bordered tags, not rounded pills, gradients, or brand-colored cards.
 
 ## View identity in code
 

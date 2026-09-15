@@ -64,7 +64,7 @@ device code; the server encrypts those tokens locally.
 
 ## Self-hosted installation experience
 
-1. The server owner opens **Room → GitHub integration...**, claims or signs in to
+1. The server owner opens **Window → Server Administration → Integrations**, claims or signs in to
    server administration, and selects **Install or configure repositories**.
 2. In GitHub, the owner selects the repositories available to that server.
 3. Back in the same dialog, the owner selects **Connect with GitHub**, opens the

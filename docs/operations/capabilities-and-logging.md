@@ -237,7 +237,7 @@ not a failed subprocess.
 
 ### Owner whole-trace workflow
 
-Open **Window → Diagnostics** from a loopback browser signed in to a local OWNER
+Open **Window → Server Administration → Diagnostics** from a loopback browser signed in to a local OWNER
 session. Queries remain explicit and bounded to the last hour; the page does not
 load log evidence automatically.
 

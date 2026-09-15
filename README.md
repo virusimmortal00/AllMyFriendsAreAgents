@@ -291,7 +291,7 @@ and send the same `/task` without remembering the syntax. Results appear in the
 transcript. Command availability depends on server support and permissions.
 
 GitHub reads require a verified project repository and the relevant permission.
-An administrator can connect through **Room → GitHub integration…** using the
+An administrator can connect through **Window → Server Administration → Integrations** using the
 project's reusable GitHub App. No per-room token variables are needed for that
 normal read-only connection; see the [GitHub setup guide](docs/operations/github-app-registration.md).
 

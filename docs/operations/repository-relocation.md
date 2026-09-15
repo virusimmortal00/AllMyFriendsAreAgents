@@ -10,7 +10,7 @@ Reconnecting GitHub does not replace saved checkout paths.
 The authenticated control API provides an explicit repair operation. It does not
 disable/reconnect the repository, change its remote, select another branch,
 reauthorize an account, or grant write access. There is no automatic path
-substitution. **Room → GitHub integration...** checks current filesystem
+substitution. **Window → Server Administration → Integrations** checks current filesystem
 authority and shows **Repair repository paths** when repair is available.
 Review the suggested server-side paths before submitting. On an uncertain
 response, **Retry repair** retains the same paths, revisions, and request key.
@@ -44,7 +44,7 @@ validation errors retain editable paths and explain the rejection.
 
 ## Discover and inspect repair
 
-Sign in to server administration through **Room → GitHub integration...** with
+Sign in to server administration through **Window → Server Administration → Integrations** with
 an existing owner/admin credential. A delegated identity needs `INTEGRATION_VIEW`
 to inspect and `PROJECT_REPOSITORY_CONFIGURE` to repair. Room membership and
 GitHub account authorization are not control-plane authorization.
