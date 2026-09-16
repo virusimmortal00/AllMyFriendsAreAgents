@@ -1109,12 +1109,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 /* Model picker rows inside the shared ListView. */
 .list-view tbody tr.is-selected { background: var(--blue); color: #fff; }
 .list-view tbody tr.is-selected small, .list-view tbody tr.is-selected .model-row__tags span { color: #fff; border-color: #fff; }
-.model-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 1px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.model-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 1px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .model-row:focus-visible { outline: 1px dotted currentColor; outline-offset: 1px; }
 .model-row__name { display: grid; min-width: 0; }
 .model-row__name strong, .model-row__name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-row__name small { color: #555; font-size: 10px; }
-.model-row__tags { display: flex; flex-wrap: wrap; gap: 2px 4px; white-space: normal; }
+.model-row__tags { display: flex; flex-wrap: nowrap; gap: 2px 4px; white-space: nowrap; }
 .model-row__tags span { padding: 0 3px; border: 1px solid #808080; font-size: 10px; line-height: 14px; }
 .model-picker__results table { min-width: 0; table-layout: auto; }
 .model-picker__results col { width: auto !important; }

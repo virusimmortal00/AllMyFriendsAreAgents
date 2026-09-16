@@ -39,7 +39,7 @@ try {
   await page.getByRole("button", { name: "Manage agents...", exact: true }).click();
   await page.getByRole("button", { name: "＋ Add another agent" }).click();
   await expect(page.getByRole("searchbox", { name: "Search models or paste OpenRouter link" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Gemini 3.8 Flash.*Choose this model/ })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Available models" }).getByRole("button", { name: /Gemini 3.8 Flash/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save roster", exact: true })).toBeDisabled();
   await page.screenshot({ path: resolve(output, "model-picker.png") });
   if (errors.length) throw new Error(`README fixture errors: ${errors.join("; ")}`);
