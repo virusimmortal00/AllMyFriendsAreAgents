@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   loadRoom: vi.fn(),
   loadPolls: vi.fn(),
   loadWorkshop: vi.fn(),
-  runAction: vi.fn(),
   sendMessage: vi.fn(),
   updateMyAvatar: vi.fn(),
   updateMyProfile: vi.fn(),
@@ -144,7 +143,6 @@ beforeEach(() => {
   api.loadPolls.mockResolvedValue({ items: [] });
   api.voteOnPoll.mockResolvedValue({ kind: "accepted" });
   api.loadWorkshop.mockRejectedValue(new Error("not used"));
-  api.runAction.mockResolvedValue({ accepted: true });
   api.sendMessage.mockImplementation(async (_text: string, clientMessageId: string) => ({
     accepted: true, duplicate: false, clientMessageId, messageId: `server-${clientMessageId}`,
   }));
@@ -835,7 +833,6 @@ describe("rendered reconnect recovery", () => {
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));
     await user.click(await screen.findByRole("button", { name: "Dismiss error" }));
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(api.runAction).not.toHaveBeenCalled();
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 1, version: 2, state: clearState }));
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 2, version: 3, state }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));

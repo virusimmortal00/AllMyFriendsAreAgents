@@ -391,14 +391,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .room-model-selection__navigation { position: sticky; top: -12px; z-index: 1; padding: 4px; border-bottom: 2px groove white; background: var(--chrome); }
 .github-mark { display: block; flex: 0 0 auto; }
 .github-integration-panel { display: grid; gap: 10px; }
-.github-integration-card, .github-control-login { display: grid; gap: 10px; }
+.github-integration-card { display: grid; gap: 10px; }
 .github-repair { display: grid; gap: 10px; min-width: 0; }
 .github-repair .classic-input { width: 100%; min-width: 0; }
 .github-repair .classic-button { justify-self: start; }
-.github-control-login { padding: 14px; border: 2px groove white; background: var(--chrome); }
-.github-integration-card h3, .github-control-login h3, .github-integration-card p, .github-control-login p { margin: 0; }
-.github-control-login label, .github-integration-card label { display: grid; gap: 4px; font-weight: 700; }
-.github-control-login input { min-width: 0; min-height: 25px; padding: 2px 4px; border: 2px inset white; background: #fff; font: inherit; }
+.github-integration-card h3, .github-integration-card p { margin: 0; }
+.github-integration-card label { display: grid; gap: 4px; font-weight: 700; }
 /* Window > Integrations: GitHub's account/repository section stacked above OpenRouter's, in one page instead of a separate dialog and destination (#209). */
 .integrations-body { display: grid; gap: 12px; align-content: start; width: 100%; max-width: 900px; }
 .integrations-section { display: grid; gap: 8px; min-width: 0; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
@@ -1153,7 +1151,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 
 @media (pointer: coarse) {
   .classic-tabs [role="tab"] { min-height: 44px; }
-  .classic-input, .classic-select, .github-control-login input, .github-integration-card select { min-height: 40px; }
+  .classic-input, .classic-select, .github-integration-card select { min-height: 40px; }
   .dialog-titlebar { min-height: 44px; padding: 4px 6px; }
   .dialog-titlebar h2 { font-size: 14px; line-height: 20px; }
   .dialog-titlebar button { width: 36px; height: 34px; font-size: 18px; }

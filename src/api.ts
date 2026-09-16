@@ -532,12 +532,6 @@ function isMessageAcknowledgement(value: unknown): value is MessageMutationAckno
     && typeof acknowledgement.messageId === "string";
 }
 
-export async function runAction(action: "ask" | "review" | "roundtable" | "continue", target: AgentId | "all") {
-  return request("/api/actions", {
-    method: "POST",
-    body: JSON.stringify({ action, target }),
-  });
-}
 
 export async function loadWorkshop(id: string): Promise<WorkshopResponse> {
   return request(`/api/improvements/${encodeURIComponent(id)}`, { method: "GET", cache: "no-store" }).then((response) => response.json());
