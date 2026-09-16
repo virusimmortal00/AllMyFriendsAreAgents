@@ -52,11 +52,13 @@ async function openScenario(page: Page, id: string) {
     await menu(page, "Room", "Usage & spend...");
     await expect(page.getByText("$0.42 spent · 5 turns")).toBeVisible();
   } else if (id.startsWith("owner-diagnostics")) {
-    await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-sign-in") {
-      // The administration window checks the session first, so signed-out Diagnostics opens gated.
-      await expect(page.getByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeVisible();
-    }
+      // Signed out, Diagnostics is grayed out in the Server menu and the window's page list.
+      await menu(page, "Server");
+      await expect(page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Diagnostics...", exact: true })).toBeDisabled();
+      await page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Owner login...", exact: true }).click();
+      await expect(page.getByRole("tab", { name: "Diagnostics", exact: true })).toBeDisabled();
+    } else await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");
       await page.getByLabel("Trace ID").fill(fixtureTraceId);

@@ -38,12 +38,15 @@ test("administration recovery and room membership", async ({ page }) => {
   };
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
   const humanBefore = await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"));
-  await menu("Server", "Diagnostics...");
-  await expect(page.getByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Server Administration" }).getByRole("button", { name: /Sign in/ })).toHaveCount(1);
+  await page.getByRole("menuitem", { name: "Server", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Diagnostics...", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await menu("Server", "Owner login...");
+  await expect(page.getByRole("tab", { name: "Diagnostics", exact: true })).toBeDisabled();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByLabel("Password", { exact: true }).press("Enter");
+  await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Owner diagnostics", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
@@ -74,12 +77,12 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("button", { name: "View Alpha configuration" })).toBeVisible();
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await menu("Server", "Integrations...");
-  // Integrations is locked while signed out: one Owner login form, no per-section sign-in buttons.
-  await expect(page.getByRole("heading", { name: /Integrations needs a server administrator/ })).toBeVisible();
+  await menu("Server", "Owner login...");
+  await expect(page.getByRole("tab", { name: "Integrations", exact: true })).toBeDisabled();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
   await expect(page.getByRole("heading", { name: "GitHub connected", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Owner login", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();

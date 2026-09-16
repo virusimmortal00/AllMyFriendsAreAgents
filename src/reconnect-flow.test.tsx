@@ -655,14 +655,19 @@ describe("rendered reconnect recovery", () => {
     await user.click(serverTrigger);
     const serverCommands = within(screen.getByRole("menu", { name: "Server" })).getAllByRole("menuitem").map((item) => item.textContent?.replace(/\.\.\.$/, ""));
     await user.keyboard("{Escape}");
-    await chooseMenuItem(user, "Server", "Diagnostics...");
+    // Signed out, only Owner login is available; administrator commands are grayed out.
+    await user.click(serverTrigger);
+    const serverMenu = within(screen.getByRole("menu", { name: "Server" }));
+    expect((serverMenu.getByRole("menuitem", { name: "Owner login..." }) as HTMLButtonElement).disabled).toBe(false);
+    for (const name of ["Integrations...", "Rooms & repositories...", "Diagnostics..."]) expect((serverMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+    await user.keyboard("{Escape}");
+    await chooseMenuItem(user, "Server", "Owner login...");
     const administration = screen.getByRole("dialog", { name: "Server Administration" });
     // Each Server command is named exactly like the window page it opens.
     expect(serverCommands).toEqual(within(administration).getAllByRole("tab").map((tab) => tab.querySelector(":scope > span:not([aria-hidden])")?.textContent));
-    expect(within(administration).getByRole("tab", { name: "Diagnostics" }).getAttribute("aria-selected")).toBe("true");
-    // Signed out, the window gates the page with its one Owner login form.
-    expect(await within(administration).findByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeTruthy();
-    expect(within(administration).getAllByRole("button", { name: /Sign in/ })).toHaveLength(1);
+    expect(within(administration).getByRole("tab", { name: "Owner login" }).getAttribute("aria-selected")).toBe("true");
+    for (const name of ["Integrations", "Rooms & repositories", "Diagnostics"]) expect((within(administration).getByRole("tab", { name }) as HTMLButtonElement).disabled).toBe(true);
+    expect(await within(administration).findByRole("heading", { name: "Owner login" })).toBeTruthy();
     // The chat window stays in place behind the administration window.
     expect(screen.getByRole("log", { name: "Room transcript" })).toBeTruthy();
     await user.click(within(administration).getByRole("button", { name: "Close server administration" }));
@@ -671,7 +676,7 @@ describe("rendered reconnect recovery", () => {
     expect(pushState).not.toHaveBeenCalled();
   });
 
-  it("unlocks Diagnostics in place after owner login and signs out without leaving the room", async () => {
+  it("enables Diagnostics only after owner login and signs out without leaving the room", async () => {
     let authenticated = false;
     const session = { principal: { id: "durable-owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-control-csrf", expiresAt: new Date(Date.now() + 28_800_000).toISOString() };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -687,18 +692,19 @@ describe("rendered reconnect recovery", () => {
     const user = userEvent.setup();
     await renderConnected();
     const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
-    await chooseMenuItem(user, "Server", "Diagnostics...");
-    // Signed out, Diagnostics is locked and shows the window's Owner login form in place.
-    await screen.findByRole("heading", { name: /Diagnostics needs a server administrator/ });
-    expect(screen.queryByRole("button", { name: "Query diagnostics" })).toBeNull();
+    await chooseMenuItem(user, "Server", "Owner login...");
+    expect((screen.getByRole("tab", { name: "Diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
+    await waitFor(() => expect((screen.getByRole("tab", { name: "Diagnostics" }) as HTMLButtonElement).disabled).toBe(false));
+    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
     await screen.findByRole("heading", { name: "Owner diagnostics" });
     await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByText("No matching records.");
     await user.click(screen.getByRole("tab", { name: "Owner login" }));
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
+    expect((screen.getByRole("tab", { name: "Diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
     expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);
     await user.click(screen.getByRole("button", { name: "Close server administration" }));
     expect(screen.queryByRole("dialog", { name: "Server Administration" })).toBeNull();

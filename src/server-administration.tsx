@@ -18,8 +18,8 @@ export function AdministratorRequired({ onSignIn, children }: { onSignIn: () => 
   </div>;
 }
 
-/** The single sign-in form: the Owner login page, and the gate on locked administration pages. */
-export function ServerAdministration({ destination = null, onContinue, lockedPage }: { destination?: AdministrationDestination | null; onContinue?: (destination: AdministrationDestination) => void; lockedPage?: string }) {
+/** The single sign-in form: the Owner login page of the Server Administration window. */
+export function ServerAdministration({ destination = null, onContinue }: { destination?: AdministrationDestination | null; onContinue?: (destination: AdministrationDestination) => void }) {
   const { status, session, checked, error: statusError } = useControlSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -52,9 +52,7 @@ export function ServerAdministration({ destination = null, onContinue, lockedPag
   }
 
   return <div className="administration-page administration-session">
-    <header className="page-header">{lockedPage
-      ? <><h2>🔒 {lockedPage} needs a server administrator</h2><p>Sign in with an administrator account to open this page. You stay in the room either way.</p></>
-      : <><h2>Owner login</h2><p>Sign in with the server's administrator account. Your room name and membership are separate.</p></>}</header>
+    <header className="page-header"><h2>Owner login</h2><p>Sign in with the server's administrator account to unlock Integrations, Rooms &amp; repositories, and Diagnostics. Your room name and membership are separate.</p></header>
     <div className="administration-content">
       {!checked && !statusError ? <p role="status">Checking server administration…</p> : null}
       {statusError ? <p role="alert">{statusError}</p> : null}
@@ -79,10 +77,8 @@ export function ServerAdministration({ destination = null, onContinue, lockedPag
           <button type="submit" className="classic-button" disabled={!canAuthenticate}>{working ? "Authenticating…" : claimed ? "Sign in" : "Claim owner"}</button>
         </fieldset>
       </form> : null}
-      {lockedPage ? null : <>
-        <section className="classic-property-section"><h3>About administrator sessions</h3><p>Sessions last eight hours from sign-in. Activity does not extend them. Restarting the server ends all administrator sessions; sign in again to continue.</p><p>Signing out leaves the server claimed and keeps your room identity and membership. Ownership transfer and owner recovery remain separate local operator procedures.</p></section>
-        <button type="button" className="classic-button" disabled={working} onClick={() => void refreshControlSession()}>Check session</button>
-      </>}
+      <section className="classic-property-section"><h3>About administrator sessions</h3><p>Sessions last eight hours from sign-in. Activity does not extend them. Restarting the server ends all administrator sessions; sign in again to continue.</p><p>Signing out leaves the server claimed and keeps your room identity and membership. Ownership transfer and owner recovery remain separate local operator procedures.</p></section>
+      <button type="button" className="classic-button" disabled={working} onClick={() => void refreshControlSession()}>Check session</button>
     </div>
   </div>;
 }

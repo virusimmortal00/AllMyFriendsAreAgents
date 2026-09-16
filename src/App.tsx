@@ -25,7 +25,7 @@ import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomPropertiesDialog } from "./room-configuration-dialog";
-import { refreshControlSession } from "./control-session";
+import { refreshControlSession, useControlSession } from "./control-session";
 import type { AdministrationDestination } from "./server-administration";
 import { ADMINISTRATION_PAGES, AdministrationWindow, type AdministrationPage } from "./administration-window";
 import { RoomUsageDialog } from "./room-usage-dialog";
@@ -151,6 +151,7 @@ export default function App() {
   const [usageOpen, setUsageOpen] = useState(false);
   const usageTrigger = useRef<HTMLElement | null>(null);
   const [administrationOpen, setAdministrationOpen] = useState(false);
+  const { session: administratorSession } = useControlSession();
   const administrationTrigger = useRef<HTMLElement | null>(null);
   const [clientError, setClientError] = useState("");
   const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
@@ -759,7 +760,7 @@ export default function App() {
       accessKey: "S",
       view: VIEWS.serverMenu,
       // One command per window page, named exactly like the page it opens.
-      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),

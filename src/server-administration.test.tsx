@@ -82,14 +82,11 @@ describe("canonical server administration", () => {
     expect(fetchMock.mock.calls.some(([url]) => /humans|leave/.test(String(url)))).toBe(false);
   });
 
-  it("titles the form Owner login, and names the locked page when gating one", async () => {
+  it("titles the single sign-in form Owner login", async () => {
     fixture();
-    const view = render(<ServerAdministration />);
+    render(<ServerAdministration />);
     expect(await screen.findByRole("heading", { name: "Owner login" })).toBeTruthy();
-    view.rerender(<ServerAdministration lockedPage="Diagnostics" />);
-    expect(screen.getByRole("heading", { name: "🔒 Diagnostics needs a server administrator" })).toBeTruthy();
     expect(screen.getByLabelText("Username")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Check session" })).toBeNull();
   });
 
   it("recovers after restart without offering to reclaim ownership", async () => {

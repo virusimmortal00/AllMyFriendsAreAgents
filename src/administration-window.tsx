@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useControlSession } from "./control-session";
 import { DialogFrame } from "./dialog-frame";
 import { Diagnostics } from "./diagnostics";
@@ -20,8 +20,8 @@ export const ADMINISTRATION_PAGES: readonly (ExplorerPage<AdministrationPage> & 
 /**
  * Server menu: one top-level window over the chat window for everything that needs
  * server-administrator authority, like a Windows 95 Control Panel applet. The window
- * owns sign-in: locked pages show the Owner login form in place, and pages themselves
- * never render their own sign-in controls.
+ * owns sign-in: administrator pages are disabled until Owner login succeeds, and pages
+ * themselves never render their own sign-in controls.
  */
 export function AdministrationWindow({ page, destination, refreshKey, active = true, returnFocusTo = null, onSelectPage, onContinue, onClose }: {
   page: AdministrationPage;
@@ -36,20 +36,20 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const { session, checked } = useControlSession();
   const [roomsSummary, setRoomsSummary] = useState("");
   const openIntegrations = useCallback(() => onSelectPage("Integrations"), [onSelectPage]);
-  const current = ADMINISTRATION_PAGES.find((candidate) => candidate.key === page) ?? ADMINISTRATION_PAGES[0];
-  const locked = current.requiresAdministrator && !session;
-  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in" : "Checking sign-in…";
-  const pages = ADMINISTRATION_PAGES.map((candidate) => ({ ...candidate, locked: candidate.requiresAdministrator && !session }));
+  const requested = ADMINISTRATION_PAGES.find((candidate) => candidate.key === page) ?? ADMINISTRATION_PAGES[0];
+  // Administrator pages stay disabled until sign-in; a signed-out window always shows Owner login.
+  const current = requested.requiresAdministrator && !session ? ADMINISTRATION_PAGES[0] : requested;
+  useEffect(() => { if (checked && current.key !== page) onSelectPage(current.key); }, [checked, current.key, page, onSelectPage]);
+  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in. Sign in to open the other pages." : "Checking sign-in…";
+  const pages = ADMINISTRATION_PAGES.map((candidate) => ({ ...candidate, disabled: candidate.requiresAdministrator && !session }));
 
   return <DialogFrame title="Server Administration" closeLabel="Close server administration" active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={onClose}
     actions={<button type="button" className="classic-button" onClick={onClose}>Close</button>}>
-    <ExplorerLayout label="Administration pages" pages={pages} selected={page} onSelect={onSelectPage} status={page === "Rooms" && roomsSummary && !locked ? `${signInState} · ${roomsSummary}` : signInState}>
-      {page === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
-        : !checked ? <p role="status">Checking server administration…</p>
-          : locked ? <ServerAdministration lockedPage={current.label} />
-            : page === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
-              : page === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
-                : <Diagnostics />}
+    <ExplorerLayout label="Administration pages" pages={pages} selected={current.key} onSelect={onSelectPage} status={current.key === "Rooms" && roomsSummary ? `${signInState} · ${roomsSummary}` : signInState}>
+      {current.key === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
+        : current.key === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
+          : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
+            : <Diagnostics />}
     </ExplorerLayout>
   </DialogFrame>;
 }
