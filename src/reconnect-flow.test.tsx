@@ -543,7 +543,7 @@ describe("rendered reconnect recovery", () => {
     await renderConnected();
     const topLevelMenus = screen.getAllByRole("menuitem");
     expect(topLevelMenus[0]?.textContent).toBe("You");
-    expect((screen.getByRole("menuitem", { name: "Window" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(topLevelMenus.map((menu) => menu.textContent)).toEqual(["You", "Room", "Server", "View", "Help"]);
 
     await user.click(screen.getByRole("menuitem", { name: "Room" }));
     const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
@@ -557,15 +557,14 @@ describe("rendered reconnect recovery", () => {
     expect((roomMenu.getByRole("menuitem", { name: "Assign task..." }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("hides deprecated workspaces from Window and returns retired improvement links to Chat", async () => {
+  it("offers no workspace switcher and returns retired improvement links to Chat", async () => {
     window.history.replaceState({}, "", "/improvements/known-id");
     const user = userEvent.setup();
     await renderConnected();
     expect(window.location.pathname).toBe("/");
-    await user.click(screen.getByRole("menuitem", { name: "Window" }));
-    const windowMenu = within(screen.getByRole("menu", { name: "Window" }));
+    expect(screen.queryByRole("menuitem", { name: "Window" })).toBeNull();
     for (const name of ["Improvements", "Tasks", "Continuations", "Investigations", "Reviewed contributions"]) {
-      expect(windowMenu.queryByRole("menuitemradio", { name })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name })).toBeNull();
     }
   });
 
@@ -639,7 +638,7 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("textbox", { name: "What should everyone call you?" })).toBeNull();
   });
 
-  it("keeps full-workspace destinations in Window and closes administration Diagnostics back to Chat", async () => {
+  it("opens Server Administration as a window at the chosen Server menu page and restores focus on close", async () => {
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -649,15 +648,16 @@ describe("rendered reconnect recovery", () => {
     expect(within(screen.getByRole("menu", { name: "View" })).queryByRole("menuitemradio", { name: "Diagnostics" })).toBeNull();
     await user.keyboard("{Escape}");
 
-    await user.click(screen.getByRole("menuitem", { name: "Window" }));
-    for (const name of ["Diagnostics", "Integrations"]) expect(within(screen.getByRole("menu", { name: "Window" })).queryByRole("menuitemradio", { name })).toBeNull();
-    await user.keyboard("{Escape}");
-    await chooseMenuItem(user, "Window", "Server Administration");
-    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
-    expect(screen.getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    const serverTrigger = screen.getByRole("menuitem", { name: "Server" });
+    await chooseMenuItem(user, "Server", "Diagnostics...");
+    const administration = screen.getByRole("dialog", { name: "Server Administration" });
+    expect(within(administration).getByRole("tab", { name: "Diagnostics" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(administration).getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
+    // The chat window stays in place behind the administration window.
+    expect(screen.getByRole("log", { name: "Room transcript" })).toBeTruthy();
+    await user.click(within(administration).getByRole("button", { name: "Close server administration" }));
+    expect(screen.queryByRole("dialog", { name: "Server Administration" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(serverTrigger));
     expect(pushState).not.toHaveBeenCalled();
   });
 
@@ -677,8 +677,7 @@ describe("rendered reconnect recovery", () => {
     const user = userEvent.setup();
     await renderConnected();
     const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
-    await chooseMenuItem(user, "Window", "Server Administration");
-    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
+    await chooseMenuItem(user, "Server", "Diagnostics...");
     // The administration window has already checked the session, so Diagnostics starts gated.
     expect((await screen.findByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(await screen.findByRole("button", { name: "Sign in to server administration" }));
@@ -692,8 +691,8 @@ describe("rendered reconnect recovery", () => {
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
     expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);
-    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Close server administration" }));
+    expect(screen.queryByRole("dialog", { name: "Server Administration" })).toBeNull();
     expect(api.joinRoom).toHaveBeenCalledOnce();
     expect(window.location.pathname).toBe("/");
   });

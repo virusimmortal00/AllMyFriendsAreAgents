@@ -19,7 +19,7 @@ export const ROSTER_SCENARIOS = [
 
 // Explicitly enumerate routes/states; adding a registry entry does not invent coverage.
 const APP_VIEW_KEYS = [
-  "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "windowMenu",
+  "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "serverMenu",
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
   "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories",
   "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",

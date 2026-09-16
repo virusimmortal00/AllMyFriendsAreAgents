@@ -1,5 +1,5 @@
 import { useProtectedWork } from "./protected-work";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ApiRequestError, checkReady, clearControlSessionState, closePoll, joinRoom, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
@@ -29,8 +29,7 @@ import { refreshControlSession } from "./control-session";
 import type { AdministrationDestination } from "./server-administration";
 import { AdministrationWindow, type AdministrationPage } from "./administration-window";
 import { RoomUsageDialog } from "./room-usage-dialog";
-import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
-import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
+import { defineViewMenu, presentationCommand } from "./application-menu-policy";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 const EMPTY_ROOM: RoomState = {
@@ -150,7 +149,8 @@ export default function App() {
   const [administrationPage, setAdministrationPage] = useState<AdministrationPage>("Session");
   const [usageOpen, setUsageOpen] = useState(false);
   const usageTrigger = useRef<HTMLElement | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceName | null>(null);
+  const [administrationOpen, setAdministrationOpen] = useState(false);
+  const administrationTrigger = useRef<HTMLElement | null>(null);
   const [clientError, setClientError] = useState("");
   const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
   useEffect(() => setDismissedRoomError(null), [room.error]);
@@ -660,15 +660,6 @@ export default function App() {
     saveHumanProfile(null);
   }
 
-  function showChat() {
-    setWorkspaceView(null);
-  }
-
-  function showWorkspace(name: WorkspaceName) {
-    setWorkshopId(null);
-    setWorkspaceView(name);
-  }
-
   const statusText = working
     ? activeTypingAgents.length === 1
       ? `${agentScreenName(activeTypingAgents[0])} is typing...`
@@ -676,12 +667,14 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  function openAdministration(destination: AdministrationDestination | null = null) {
+  function openAdministration(destination: AdministrationDestination | null = null, page: AdministrationPage = "Session", trigger: HTMLElement | null = null) {
+    administrationTrigger.current = trigger;
     setAdministrationDestination(destination);
-    setAdministrationPage("Session");
+    setAdministrationPage(page);
     setProfileOpen(false);
     setRosterOpen(false);
-    showWorkspace("Server Administration");
+    setWorkshopId(null);
+    setAdministrationOpen(true);
   }
 
   function openUsage(trigger: HTMLElement | null = null) {
@@ -694,14 +687,12 @@ export default function App() {
     setAdministrationDestination(null);
     if (destination === "Diagnostics" || destination === "Integrations" || destination === "Rooms") setAdministrationPage(destination);
     else {
-      showChat();
+      setAdministrationOpen(false);
       if (destination === "Manage room agents") setRosterOpen(true);
       else setRoomPropertiesOpen(true);
     }
   }
 
-  const activeWorkspaceName: WorkspaceName | null = workspaceView;
-  const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const agentLabels = useMemo<Readonly<Record<string, string>>>(() => Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.conversationalName || entry.agentId])), [roster.entries]);
@@ -739,8 +730,8 @@ export default function App() {
   // Application menu contract:
   // - You changes the current member's profile.
   // - Room changes this room or invokes room-scoped actions.
-  // - View changes the presentation of the current workspace; it never navigates.
-  // - Window switches between whole-workspace destinations.
+  // - Server opens the Server Administration window, optionally at a specific page.
+  // - View changes the presentation of the chat window; it never opens windows.
   // - Help contains documentation and support entry points.
   const menus: ClassicMenuDefinition[] = [
     {
@@ -764,6 +755,19 @@ export default function App() {
         { label: "Usage & spend...", accessKey: "U", onSelect: (trigger) => openUsage(trigger) },
       ],
     },
+    {
+      id: "server",
+      label: "Server",
+      accessKey: "S",
+      view: VIEWS.serverMenu,
+      items: [
+        { label: "Administration...", accessKey: "A", onSelect: (trigger) => openAdministration(null, "Session", trigger) },
+        { type: "separator" },
+        { label: "Integrations...", accessKey: "I", onSelect: (trigger) => openAdministration(null, "Integrations", trigger) },
+        { label: "Rooms & repositories...", accessKey: "R", onSelect: (trigger) => openAdministration(null, "Rooms", trigger) },
+        { label: "Diagnostics...", accessKey: "D", onSelect: (trigger) => openAdministration(null, "Diagnostics", trigger) },
+      ],
+    },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
         presentationCommand({ label: "Message prices", accessKey: "M", checked: showMessagePrices, checkType: "checkbox", onSelect: toggleTranscriptMessagePrices }),
@@ -772,10 +776,6 @@ export default function App() {
         presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
         presentationCommand({ label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification }),
     ]),
-    { ...defineWindowMenu([
-        workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
-        workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => { if (workspaceView !== "Server Administration") openAdministration(); } }),
-    ]), view: VIEWS.windowMenu },
     {
       id: "help",
       label: "Help",
@@ -789,14 +789,6 @@ export default function App() {
   useEffect(() => {
     document.title = `AllMyFriendsAreAgents — ${room.settings.roomName}`;
   }, [room.settings.roomName]);
-
-  let workspaceContent: ReactNode = null;
-  if (workspaceView) {
-    switch (workspaceView) {
-      case "Server Administration": workspaceContent = <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} onSelectPage={setAdministrationPage} onOpenAdministration={openAdministration} onContinue={continueFromAdministration} />; break;
-      default: workspaceView satisfies never;
-    }
-  }
 
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
   if (!human) return <LoadingScreen error={joinError || "Joining the room"} joining={Boolean(joinError)} retrying={joinPending} onRetry={retryJoin} onCancel={cancelJoin} />;
@@ -812,10 +804,7 @@ export default function App() {
         <ClassicMenuBar menus={menus} onHelp={() => { setRoomPropertiesOpen(false); setHelpOpen(true); }} />
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true" {...viewAttributes(VIEWS.connectionNotices)}>{connectionNotice}</div> : null}
-        <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {activeWorkspaceName ? <WorkspaceSurface name={activeWorkspaceName} onClose={showChat}>
-            {workspaceContent}
-          </WorkspaceSurface> : <>
+        <div className="workspace" data-primary-workspace tabIndex={-1}>
           <section className="chat-panel beveled-inset" {...viewAttributes(VIEWS.roomChat)} data-responsive-view-id={VIEWS.compactRoomChat.id} data-responsive-view-name={VIEWS.compactRoomChat.name} data-responsive-view-state={VIEWS.compactRoomChat.state}>
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} showMessagePrices={showMessagePrices} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
@@ -842,10 +831,10 @@ export default function App() {
               onSubmit={submitMessage}
             />
           </div>
-          </>}
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} repository={room.githubReadStatus?.repository} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} repository={room.githubReadStatus?.repository} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onOpenAdministration={(destination) => openAdministration(destination)} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
         {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (

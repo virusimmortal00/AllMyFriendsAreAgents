@@ -218,7 +218,7 @@ Joined members can manage the main room's roster without owner credentials.
 Server administration is separate: the browser's provider-setup controls, GitHub
 configuration, and agent-behavior settings require administrative authority.
 Operators can [claim the server owner](docs/operations/server-administration.md)
-through **Window → Server Administration**.
+through **Server → Administration…**.
 
 ### Docker
 
@@ -291,7 +291,7 @@ and send the same `/task` without remembering the syntax. Results appear in the
 transcript. Command availability depends on server support and permissions.
 
 GitHub reads require a verified project repository and the relevant permission.
-An administrator can connect through **Window → Server Administration → Integrations** using the
+An administrator can connect through **Server → Integrations…** using the
 project's reusable GitHub App. No per-room token variables are needed for that
 normal read-only connection; see the [GitHub setup guide](docs/operations/github-app-registration.md).
 

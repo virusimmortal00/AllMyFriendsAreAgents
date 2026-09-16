@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
 import { useState } from "react";
 import { ServerAdministration } from "./server-administration";
-import { WorkspaceSurface } from "./workspace-surface";
 import { updateControlSession } from "./control-session-state";
 import { RoomConfigurationDialog, RoomPropertiesDialog } from "./room-configuration-dialog";
 
@@ -91,7 +90,7 @@ describe("RoomConfigurationDialog", () => {
     function AuthenticationFlow() {
       const [administrationOpen, setAdministrationOpen] = useState(false);
       return <><RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => setAdministrationOpen(true)} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />
-        {administrationOpen ? <WorkspaceSurface name="Server Administration" onClose={() => setAdministrationOpen(false)}><ServerAdministration destination="Room Properties" onContinue={() => setAdministrationOpen(false)} /></WorkspaceSurface> : null}</>;
+        {administrationOpen ? <section aria-label="Server Administration"><button type="button" onClick={() => setAdministrationOpen(false)}>Close server administration</button><ServerAdministration destination="Room Properties" onContinue={() => setAdministrationOpen(false)} /></section> : null}</>;
     }
     render(<AuthenticationFlow />);
     await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
@@ -104,7 +103,7 @@ describe("RoomConfigurationDialog", () => {
     await user.click(signIn);
     await screen.findByLabelText("Username");
     expect(screen.queryByRole("dialog", { name: "Room Properties" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
+    await user.click(screen.getByRole("button", { name: "Close server administration" }));
     expect(screen.queryByRole("dialog", { name: "GitHub" })).toBeNull();
     expect(document.activeElement).toBe(signIn);
     expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");

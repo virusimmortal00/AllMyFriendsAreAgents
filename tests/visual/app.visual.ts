@@ -8,12 +8,12 @@ import { measureControlDensity, measureScrollAffordances, measureScrollRegions }
 
 async function menu(page: Page, name: string, item?: string) {
   await page.getByRole("menuitem", { name, exact: true }).click();
-  if (item) await page.getByRole("menu", { name }).getByRole(name === "Window" ? "menuitemradio" : "menuitem", { name: item, exact: name !== "Help" }).click();
+  if (item) await page.getByRole("menu", { name }).getByRole("menuitem", { name: item, exact: name !== "Help" }).click();
 }
 
 async function openScenario(page: Page, id: string) {
   if (id.startsWith("server-administration")) {
-    await menu(page, "Window", "Server Administration");
+    await menu(page, "Server", "Administration...");
     await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
   } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");
@@ -21,8 +21,7 @@ async function openScenario(page: Page, id: string) {
     if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
   } else if (id.startsWith("github-")) {
-    await menu(page, "Window", "Server Administration");
-    await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+    await menu(page, "Server", "Integrations...");
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
   } else if (id.startsWith("manage-agents-") || id === "unsaved-changes-confirmation") {
     await menu(page, "Room", "Manage agents...");
@@ -40,22 +39,20 @@ async function openScenario(page: Page, id: string) {
   } else if (id.startsWith("your-profile")) await menu(page, "You", "Profile...");
   else if (id === "help") await menu(page, "Help", "Help topics");
   else if (id === "room-menu") await menu(page, "Room");
-  else if (id === "window-menu") await menu(page, "Window");
+  else if (id === "server-menu") await menu(page, "Server");
   else if (id === "mention-suggestions") await page.getByRole("textbox", { name: "Message", exact: true }).fill("@");
   else if (["text-color-palette", "highlight-color-palette", "classic-smiley-picker"].includes(id)) await page.getByRole("button", { name: id === "text-color-palette" ? "Text color" : id === "highlight-color-palette" ? "Message highlight color" : "Classic emojis", exact: true }).click();
   else if (id === "assign-task") {
     await menu(page, "Room", "Assign task...");
     await page.getByRole("textbox", { name: "Task", exact: true }).fill("Check the smaller navigation layout for clipped controls.");
   } else if (id === "rooms-repositories") {
-    await menu(page, "Window", "Server Administration");
-    await page.getByRole("tab", { name: "Rooms & repositories", exact: true }).click();
+    await menu(page, "Server", "Rooms & repositories...");
     await expect(page.getByRole("table", { name: "Rooms and repositories" })).toBeVisible();
   } else if (id === "room-usage") {
     await menu(page, "Room", "Usage & spend...");
     await expect(page.getByText("$0.42 spent · 5 turns")).toBeVisible();
   } else if (id.startsWith("owner-diagnostics")) {
-    await menu(page, "Window", "Server Administration");
-    await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
+    await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-sign-in") {
       // The administration window checks the session first, so signed-out Diagnostics opens gated.
       await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
@@ -67,10 +64,7 @@ async function openScenario(page: Page, id: string) {
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
       await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
-  } else if (id === "open-router-account") {
-    await menu(page, "Window", "Server Administration");
-    await page.getByRole("tab", { name: "Integrations", exact: true }).click();
-  }
+  } else if (id === "open-router-account") await menu(page, "Server", "Integrations...");
 }
 
 async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIOS[number], shot: string) {
@@ -235,7 +229,7 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
       const bounds = popup.getBoundingClientRect();
       if (bounds.top < toolbar.bottom && bounds.bottom > toolbar.top) issues.push("A formatting popup overlaps the formatting toolbar.");
     }
-    for (const el of document.querySelectorAll<HTMLElement>(".app-window, .loading-window, .dialog-window, .workspace-surface__titlebar, .status-bar, .dialog-titlebar, .dialog-actions")) {
+    for (const el of document.querySelectorAll<HTMLElement>(".app-window, .loading-window, .dialog-window, .status-bar, .dialog-titlebar, .dialog-actions")) {
       if (visible(el) && !contained(el)) issues.push(`${el.className} extends outside the viewport.`);
     }
     for (const el of document.querySelectorAll<HTMLElement>(".dialog-body, .workspace-view__body, .chat-panel, .dialog-window")) {
@@ -398,12 +392,12 @@ for (const scenario of APP_SCENARIOS) {
       await page.getByRole("button", { name: "Dismiss error" }).click();
       await expect(surface).toHaveCount(0);
     }
-    // Every workspace must retain a visible, functioning route back to Chat.
-    const exit = page.getByRole("button", { name: /^Close .* and return to Chat$/ });
-    if (await exit.count()) {
-      await expect(exit).toBeInViewport({ ratio: 1 });
-      await exit.click();
-      await expect(page.locator(".chat-panel")).toBeVisible();
+    // Every administration window keeps a visible, functioning close control.
+    const administrationClose = page.getByRole("button", { name: "Close server administration", exact: true });
+    if (await administrationClose.count()) {
+      await expect(administrationClose).toBeInViewport({ ratio: 1 });
+      await administrationClose.click();
+      await expect(page.getByRole("dialog", { name: "Server Administration" })).toHaveCount(0);
     }
     expect(errors).toEqual([]);
   });

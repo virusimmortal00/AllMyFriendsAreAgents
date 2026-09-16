@@ -605,7 +605,7 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
         <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
-        <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
+        <p>Use the Server menu to open Server Administration for sign-in, integrations, rooms and repositories, and diagnostics. It opens in its own window; close it to return to the chat.</p>
         <h3>Assigning work</h3>
         <p>Choose Room → Assign task…, or right-click an agent in the room list, to send an agent bounded work. You can also type /task @agent followed by the work. Results appear in the transcript.</p>
         <h3>Project work</h3>
