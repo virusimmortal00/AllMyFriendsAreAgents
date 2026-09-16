@@ -186,7 +186,7 @@ export function RichModelPicker({
             const authorId = model.authorId || modelAuthorId(model.providerId, model.modelId);
             return <button type="button" className="model-row" aria-pressed={checked} title={model.description} onClick={() => onChange(model)}>
               <ProviderMark authorId={authorId} accessProviderId={model.providerId} compact />
-              <span className="model-row__name"><strong>{model.displayName}</strong><small>{model.authorDisplayName || providerDisplayName(authorId)}{model.providerId && model.providerId !== authorId ? ` · via ${model.accessProviderDisplayName || providerDisplayName(model.providerId)}` : ""}</small></span>
+              <span className="model-row__name"><strong>{model.displayName}</strong><small>{model.authorDisplayName || providerDisplayName(authorId)}{model.providerId && model.providerId !== authorId ? ` · via ${model.accessProviderDisplayName || providerDisplayName(model.providerId)}` : ""}</small><small className="model-row__price">In {formatMoney(model.pricing?.inputPerMillion)} · Out {formatMoney(model.pricing?.outputPerMillion)} /1M · {formatTokens(model.limits?.context)}</small></span>
             </button>;
           } },
           { key: "input", label: "In $/1M", width: "12%", render: (model) => formatMoney(model.pricing?.inputPerMillion) },

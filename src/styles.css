@@ -131,7 +131,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   background: #f5f5f5;
   font: 14px/1.35 Tahoma, Arial, sans-serif;
 }
-.loading-dialog strong { color: var(--blue); font-size: 18px; }
+.loading-dialog strong { color: #111; font-size: 14px; }
 .loading-dialog > span:last-child { grid-column: 2; color: #555; }
 .loading-dialog__actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 7px; margin-top: 5px; }
 .name-entry {
@@ -146,7 +146,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   font: 14px/1.35 Tahoma, Arial, sans-serif;
 }
 .name-entry strong, .name-entry label, .name-entry > span { grid-column: 1 / -1; }
-.name-entry strong { color: var(--blue); font-size: 18px; }
+.name-entry strong { color: #111; font-size: 14px; }
 .name-entry .classic-input { min-width: 0; font-size: 17px; }
 .name-entry > span { color: #555; }
 .name-entry__error { color: #a40000 !important; }
@@ -781,7 +781,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .administration-content .classic-group > legend + * { margin-top: 2px; }
 .administration-form label { display: grid; gap: 4px; }
 .administration-form input { width: 100%; min-width: 0; }
-.administration-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.administration-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .administration-entry { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
 .administration-entry p { margin: 0 0 8px; }
 .improvements-panel { min-width: 0; }
@@ -1069,7 +1069,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .explorer__icon { flex: 0 0 18px; font-size: 14px; line-height: 1; text-align: center; }
 .explorer__content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 10px 12px; border: 2px inset white; background: var(--chrome); }
 .explorer__content:focus { outline: 0; }
-.explorer__status { grid-column: 1 / -1; min-width: 0; min-height: 20px; padding: 2px 6px; overflow: hidden; border: 1px solid; border-color: #808080 #fff #fff #808080; font: 11px/16px "MS Sans Serif", Arial, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.explorer__status { grid-column: 1 / -1; min-width: 0; min-height: 20px; padding: 2px 6px; overflow: hidden; border: 1px solid; border-color: #808080 #fff #fff #808080; font: 11px/16px "MS Sans Serif", Arial, sans-serif; overflow-wrap: anywhere; }
 .administration-page { display: grid; align-content: start; gap: 10px; min-width: 0; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
 .page-header { min-width: 0; padding-bottom: 6px; border-bottom: 2px groove white; }
 .page-header h2 { margin: 0; font: 700 13px/1.3 "MS Sans Serif", Arial, sans-serif; }
@@ -1114,6 +1114,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .model-row__name { display: grid; min-width: 0; }
 .model-row__name strong, .model-row__name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-row__name small { color: #555; font-size: 10px; }
+.model-row__price { display: none; }
+@container (max-width: 420px) {
+  .model-picker__results th:nth-child(n+2), .model-picker__results td:nth-child(n+2) { display: none; }
+  .model-row__price { display: block; }
+}
 .model-row__tags { display: flex; flex-wrap: nowrap; gap: 2px 4px; white-space: nowrap; }
 .model-row__tags span { padding: 0 3px; border: 1px solid #808080; font-size: 10px; line-height: 14px; }
 .model-picker__results table { min-width: 0; table-layout: auto; }
@@ -1147,6 +1152,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
   .app-window { width: 100%; height: calc(100dvh - 24px); min-height: 0; }
   .workspace { grid-template-columns: minmax(0, 1fr) 240px; }
   .status-bar { grid-template-columns: 260px 1fr 190px; }
+  .status-bar:has(.status-cell--repository) { grid-template-columns: minmax(70px, 150px) minmax(110px, 1fr) minmax(0, 220px) minmax(100px, 150px); }
 }
 
 @media (pointer: coarse) {

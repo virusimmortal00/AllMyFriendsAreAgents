@@ -39,7 +39,7 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const current = ADMINISTRATION_PAGES.find((candidate) => candidate.key === page) ?? ADMINISTRATION_PAGES[0];
   // Signed out, administrator pages still open as read-only previews: every control is disabled.
   const preview = current.requiresAdministrator && !session;
-  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in. Other pages are previews until you sign in on Owner login." : "Checking sign-in…";
+  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in · other pages are previews" : "Checking sign-in…";
   const content = current.key === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
     : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
       : <Diagnostics />;
