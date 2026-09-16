@@ -18,17 +18,16 @@ describe("owner diagnostic dashboard", () => {
     const expiresAt = new Date(Date.now() + 28_800_000).toISOString();
     updateControlSession({ checked: true, session: role ? { principal, expiresAt } : null });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
-    const onOpenAdministration = vi.fn();
-    render(<Diagnostics onOpenAdministration={onOpenAdministration} />);
+    render(<Diagnostics />);
     for (const name of ["Query diagnostics", "Refresh capability diagnostics"]) {
       const button = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
       fireEvent.click(button);
     }
     expect((screen.getByLabelText("Correlation ID") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByRole("status").textContent).toContain("Sign in with an OWNER account");
-    fireEvent.click(screen.getByRole("button", { name: "Sign in to server administration" }));
-    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status").textContent).toContain("OWNER");
+    // Sign-in belongs to the administration window's Owner login page, not this page.
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     act(() => { updateControlSession({ session: { principal: { ...principal, role: "OWNER" }, expiresAt } }); });
     expect((screen.getByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).disabled).toBe(false);
@@ -48,7 +47,7 @@ describe("owner diagnostic dashboard", () => {
       return response(page());
     });
     await controlLogin("owner", "fictional-password");
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     const recordButton = await screen.findByRole("button", { name: /generation.completed/ });
     fireEvent.click(recordButton);
@@ -59,14 +58,14 @@ describe("owner diagnostic dashboard", () => {
     await act(async () => { finishQuery(await response(page())); });
     expect(screen.queryByRole("button", { name: /generation.completed/ })).toBeNull();
     expect(screen.queryByText(/peer prompt/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Sign in to server administration" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("OWNER");
     expect((screen.getByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Refresh capability diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("starts empty and uses the owner session rather than a diagnostic bearer token", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByLabelText(/token/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
@@ -81,7 +80,7 @@ describe("owner diagnostic dashboard", () => {
     const expiresAt = new Date(Date.now() + 28_800_000).toISOString();
     updateControlSession({ checked: true, session: { principal, expiresAt } });
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     fireEvent.click(await screen.findByRole("button", { name: /generation.completed/ }));
     expect(screen.getByText(/peer prompt/)).toBeTruthy();
@@ -100,7 +99,7 @@ describe("owner diagnostic dashboard", () => {
     vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishOld = resolve; }))
       .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishNew = resolve; }));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     act(() => { updateControlSession({ session: null }); });
     act(() => { updateControlSession({ session: { principal, expiresAt } }); });
@@ -117,7 +116,7 @@ describe("owner diagnostic dashboard", () => {
     vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page()))
       .mockImplementationOnce(() => response({ error: "Owner required" }, 403));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     fireEvent.click(await screen.findByRole("button", { name: /generation.completed/ }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh capability diagnostics" }));
@@ -131,7 +130,7 @@ describe("owner diagnostic dashboard", () => {
       .mockImplementationOnce(() => response({ error: "Diagnostics are unavailable." }, 403))
       .mockImplementationOnce(() => response({ principal: { id: "owner-1", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "owner-csrf" }))
       .mockImplementationOnce(() => response(page()));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByRole("button", { name: /generation.completed/ });
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/control/me");
@@ -142,7 +141,7 @@ describe("owner diagnostic dashboard", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page({ nextCursor: "cursor-one" })))
       .mockImplementationOnce(() => response(page({ records: [{ ...record, recordId: "diag-2", event: "generation.failed" }] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Diagnostic visibility"), { target: { value: "project" } });
     fireEvent.change(screen.getByLabelText("Diagnostic stream"), { target: { value: "generations" } });
     fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "correlation-one" } });
@@ -161,7 +160,7 @@ describe("owner diagnostic dashboard", () => {
 
   it("keeps correlation and trace selectors explicit and exact", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "correlation-one" } });
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByRole("button", { name: /generation.completed/ });
@@ -179,7 +178,7 @@ describe("owner diagnostic dashboard", () => {
 
   it("requires a non-empty trace ID before querying a whole trace", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page()));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
     const query = screen.getByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement;
     expect(query.disabled).toBe(true);
@@ -193,7 +192,7 @@ describe("owner diagnostic dashboard", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page({ nextCursor: "trace-cursor" })))
       .mockImplementationOnce(() => response(page({ records: [{ ...record, recordId: "diag-2" }] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
     fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: traceId } });
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
@@ -216,7 +215,7 @@ describe("owner diagnostic dashboard", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page({ records: [selectedRecord] })))
       .mockImplementationOnce(() => response(page({ records: [selectedRecord] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Correlation ID"), { target: { value: "correlation-one" } });
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(selectedRecord.event) }));
@@ -234,7 +233,7 @@ describe("owner diagnostic dashboard", () => {
     vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(() => response(page({ nextCursor: "cursor-one" })))
       .mockImplementationOnce(() => response({ error: "unavailable" }, 500));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByRole("button", { name: /generation.completed/ });
     fireEvent.click(screen.getByRole("button", { name: "Load next bounded page" }));
@@ -245,7 +244,7 @@ describe("owner diagnostic dashboard", () => {
   it("renders preserved evidence only after selection and redacts authentication secrets", async () => {
     const sensitive = { ...record, content: { prompt: "peer prompt", rawOutput: "provider output", stdout: "OpenCode stdout", stderr: "OpenCode stderr", toolOutcome: "completed", providerError: "bounded failure", usage: 21, cost: 0.04, routing: "provider/model", rateLimit: "clear", cooldown: "none", authorization: "Bearer bearer-secret", password: "unsafe" } };
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [sensitive] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     fireEvent.click(await screen.findByRole("button", { name: /generation.completed/ }));
     await waitFor(() => expect(document.body.textContent).toContain("provider output"));
@@ -259,7 +258,7 @@ describe("owner diagnostic dashboard", () => {
 
   it("fails closed without echoing an authorization response", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ error: "cookie secret-value" }, 401));
-    const { container } = render(<Diagnostics onOpenAdministration={() => undefined} />);
+    const { container } = render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Diagnostics are unavailable");
     expect(container.textContent).not.toContain("secret-value");
@@ -269,7 +268,7 @@ describe("owner diagnostic dashboard", () => {
 
   it("keeps the selected result state associated with its adjacent detail", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [record, { ...record, recordId: "diag-2", event: "generation.failed", content: { outcome: "failed" } }] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
     const completed = await screen.findByRole("button", { name: /generation.completed/ });
     const failed = screen.getByRole("button", { name: /generation.failed/ });
@@ -314,7 +313,7 @@ describe("owner diagnostic dashboard", () => {
 
   it("keeps unpaired raw evidence visible and describes absent evidence without guessing a cause", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response(page({ records: [{ ...record, generationId: "orphan-generation" }] })));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.change(screen.getByLabelText("Diagnostic selector"), { target: { value: "traceId" } });
     fireEvent.change(screen.getByLabelText("Trace ID"), { target: { value: traceId } });
     fireEvent.click(screen.getByRole("button", { name: "Query diagnostics" }));
@@ -336,7 +335,7 @@ describe("owner diagnostic dashboard", () => {
   it("preserves the explicit owner capability inspector", async () => {
     const projection = { policyRevision: 1, agents: { "codex-sol": { agentId: "codex-sol", capabilities: { conversation: { effective: true } }, effectiveCommands: ["gh"] } }, audit: [{ id: "audit-1", timestamp: "2026-08-28T12:00:00.000Z", agentId: "codex-sol", capability: "github_read", outcome: "completed" }] };
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => response(projection));
-    render(<Diagnostics onOpenAdministration={() => undefined} />);
+    render(<Diagnostics />);
     fireEvent.click(screen.getByRole("button", { name: "Refresh capability diagnostics" }));
     expect(await screen.findByText(/Policy revision 1/)).toBeTruthy();
     expect(screen.getByRole("region", { name: "Capability audit events" }).textContent).toContain("github_read · completed");

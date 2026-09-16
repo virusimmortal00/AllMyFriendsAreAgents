@@ -5,7 +5,6 @@ import { formatUsd } from "../shared/currency";
 import { OpenRouterSpendChart } from "./spend-chart";
 import { OpenRouterMark } from "./openrouter-mark";
 import { loadOpenRouterSpendWindow, safeLocalStorage, saveOpenRouterSpendWindow } from "./openrouter-spend-window";
-import { AdministrationSignIn } from "./server-administration";
 import { useControlSession } from "./control-session";
 import { VIEWS, viewAttributes } from "./view-registry";
 
@@ -16,7 +15,7 @@ const CHECKED_AT_FORMATTER = new Intl.DateTimeFormat([], { hour: "numeric", minu
  * server administration, same bar as GitHub. It lives on the administration Integrations
  * page; this room's own spend is a member-visible dialog (`RoomSpendPanel`).
  */
-export function OpenRouterCreditsSection({ onOpenAdministration, refreshKey = 0 }: { onOpenAdministration: () => void; refreshKey?: number }) {
+export function OpenRouterCreditsSection({ refreshKey = 0 }: { refreshKey?: number }) {
   const { session, checked } = useControlSession(false);
   const [credits, setCredits] = useState<{ totalCreditsUsd: number; totalUsageUsd: number; remainingUsd: number; fetchedAt: string }>();
   const [loading, setLoading] = useState(true);
@@ -46,10 +45,7 @@ export function OpenRouterCreditsSection({ onOpenAdministration, refreshKey = 0 
   return <fieldset className="classic-group openrouter-credits" aria-label="Remaining OpenRouter credits" {...viewAttributes(VIEWS.openRouterAccount)}>
     <legend><span className="openrouter-credits__legend"><OpenRouterMark size={14} />OpenRouter account</span></legend>
     {!checked ? <p role="status">Checking server administration…</p>
-      : !session ? <div className="openrouter-credits__signed-out">
-        <p>Sign in as a server administrator to see the account's remaining balance.</p>
-        <AdministrationSignIn onOpen={onOpenAdministration} />
-      </div>
+      : !session ? <p role="status">Server administrator sign-in required.</p>
         : notConfigured ? <p>OpenRouter credit tracking is not configured on this server.</p>
           : error ? <p role="alert">{error}</p>
             : loading && !credits ? <p role="status">Checking balance…</p>

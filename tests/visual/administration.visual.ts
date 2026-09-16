@@ -39,9 +39,8 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
   const humanBefore = await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"));
   await menu("Server", "Diagnostics...");
-  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Refresh capability diagnostics", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Server Administration" }).getByRole("button", { name: /Sign in/ })).toHaveCount(1);
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByLabel("Password", { exact: true }).press("Enter");
@@ -59,15 +58,16 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("button", { name: /conversation.run.started/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
   await expect(page.getByRole("button", { name: /conversation.run.started/ })).toBeVisible();
-  await page.getByRole("tab", { name: "Session", exact: true }).click();
+  await page.getByRole("tab", { name: "Owner login", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim owner", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Close server administration" }).click();
   expect(await page.evaluate(() => localStorage.getItem("all-my-friends-are-agents-human"))).toBe(humanBefore);
   await menu("You", "Profile...");
-  await expect(page.getByText("Server claimed. You are signed out of server administration.")).toBeVisible();
-  await page.getByRole("button", { name: "Open server administration", exact: true }).click();
+  await expect(page.getByRole("button", { name: /server administration/i })).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await menu("Server", "Owner login...");
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close server administration" }).click();
   await menu("Room", "Manage agents...");
@@ -75,13 +75,13 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await menu("Server", "Integrations...");
-  // GitHub and OpenRouter's credits card each render their own sign-in gate; scope to GitHub's.
-  await page.getByLabel("GitHub").getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  // Integrations is locked while signed out: one Owner login form, no per-section sign-in buttons.
+  await expect(page.getByRole("heading", { name: /Integrations needs a server administrator/ })).toBeVisible();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "GitHub connected", exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Session", exact: true }).click();
+  await page.getByRole("tab", { name: "Owner login", exact: true }).click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close server administration" }).click();
@@ -89,7 +89,7 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("tab", { name: "Agent behavior", exact: true }).click();
   await page.getByLabel("Additional room prompt", { exact: true }).fill("Fictional draft retained through sign-in.");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
-  await page.getByRole("button", { name: "Sign in to server administration", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in…", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Server Administration", exact: true })).toBeVisible();
   // The administration window is modal over the chat window, so the application menu stays inert.
@@ -101,7 +101,7 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Room Properties", exact: true })).toBeVisible();
   await expect(page.getByLabel("Additional room prompt", { exact: true })).toHaveValue("Fictional draft retained through sign-in.");
-  await expect(page.getByRole("button", { name: "Sign in to server administration", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Sign in…", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
   await expect.poll(() => mutations.filter((path) => path === "/api/room/settings").length).toBe(1);

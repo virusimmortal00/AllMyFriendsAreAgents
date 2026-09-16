@@ -3,8 +3,6 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ServerAdministration } from "./server-administration";
-import { HumanProfileDialog } from "./human-avatar";
-import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style";
 import { refreshControlSession } from "./control-session";
 import { controlSessionSnapshot, updateControlSession } from "./control-session-state";
 import { controlLogin, controlLogout, loadControlMe, loadRoster, updateRoster } from "./api";
@@ -43,13 +41,13 @@ describe("canonical server administration", () => {
   it.each([true, false])("authenticates claimed=%s with Enter and returns to the requested destination", async (claimed) => {
     const { fetchMock } = fixture({ claimed });
     const onContinue = vi.fn();
-    render(<ServerAdministration destination="Diagnostics" onContinue={onContinue} />);
+    render(<ServerAdministration destination="Room Properties" onContinue={onContinue} />);
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "fictional-bootstrap-proof");
     else expect(screen.queryByLabelText("Local bootstrap secret")).toBeNull();
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
-    await waitFor(() => expect(onContinue).toHaveBeenCalledWith("Diagnostics"));
+    await waitFor(() => expect(onContinue).toHaveBeenCalledWith("Room Properties"));
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith(claimed ? "/login" : "/bootstrap"))).toHaveLength(1);
     expect(screen.getByText("server-owner")).toBeTruthy();
     expect(screen.queryByLabelText("Password")).toBeNull();
@@ -84,30 +82,14 @@ describe("canonical server administration", () => {
     expect(fetchMock.mock.calls.some(([url]) => /humans|leave/.test(String(url)))).toBe(false);
   });
 
-  it("separates mutable room names from the durable principal in the profile", async () => {
-    fixture({ signedIn: true });
-    const onOpenAdministration = vi.fn();
-    render(<HumanProfileDialog human={{ id: "room-member", name: "Room Alias", style: DEFAULT_PARTICIPANT_STYLES.you }} busy={false} returnFocusTo={null} onClose={vi.fn()} onProfileChange={vi.fn()} onOpenAdministration={onOpenAdministration} />);
-    expect(await screen.findByText("server-owner")).toBeTruthy();
-    const user = userEvent.setup();
-    await user.clear(screen.getByLabelText("Display name"));
-    await user.type(screen.getByLabelText("Display name"), "New Alias");
-    expect(screen.getByText("server-owner")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Open server administration" }));
-    expect(onOpenAdministration).toHaveBeenCalledOnce();
-    expect(screen.queryByLabelText("Password")).toBeNull();
-  });
-
-  it("keeps non-owner sessions distinct from owner-only Diagnostics access", async () => {
-    fixture({ role: "ADMIN" });
-    const onContinue = vi.fn();
-    render(<ServerAdministration destination="Diagnostics" onContinue={onContinue} />);
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("Username"), "server-owner");
-    await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
-    expect(await screen.findByText(/Diagnostics requires the OWNER role/)).toBeTruthy();
-    expect(onContinue).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Continue to Diagnostics" })).toBeNull();
+  it("titles the form Owner login, and names the locked page when gating one", async () => {
+    fixture();
+    const view = render(<ServerAdministration />);
+    expect(await screen.findByRole("heading", { name: "Owner login" })).toBeTruthy();
+    view.rerender(<ServerAdministration lockedPage="Diagnostics" />);
+    expect(screen.getByRole("heading", { name: "🔒 Diagnostics needs a server administrator" })).toBeTruthy();
+    expect(screen.getByLabelText("Username")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check session" })).toBeNull();
   });
 
   it("recovers after restart without offering to reclaim ownership", async () => {

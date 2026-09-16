@@ -64,7 +64,7 @@ describe("GitHubIntegrationPanel", () => {
       throw new Error("Unexpected route");
     }));
     const user = userEvent.setup();
-    render(<GitHubIntegrationPanel onOpenAdministration={vi.fn()} />);
+    render(<GitHubIntegrationPanel />);
     await user.click(await screen.findByRole("button", { name: "Repair repository paths" }));
     expect(screen.getByLabelText("Checkout path").hasAttribute("disabled")).toBe(true);
     await user.click(await screen.findByRole("button", { name: "Retry repair" }));
@@ -74,17 +74,16 @@ describe("GitHubIntegrationPanel", () => {
     expect(JSON.parse(attempts[0])).toMatchObject({ expectedBindingRevision: 1, expectedRepositoryRevision: 1, checkoutPath: "/workspace", worktreeRoot: "/worktrees" });
   });
 
-  it("offers administration after capability denial without discarding a valid session", async () => {
+  it("explains a capability denial without discarding a valid session or offering another sign-in", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input) => {
       if (String(input).endsWith("/status")) return json({ claimed: true, bootstrapConfigured: false });
       if (String(input).endsWith("/me")) return json({ principal: { id: "member", username: "operator", role: "MEMBER", capabilities: [], revision: 1 }, csrfToken: "fictional-csrf", expiresAt: "2099-01-01T00:00:00Z" });
       return json({ error: "The INTEGRATION_VIEW capability is required." }, 403);
     }));
-    const onOpenAdministration = vi.fn();
-    render(<GitHubIntegrationPanel onOpenAdministration={onOpenAdministration} />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
-    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    render(<GitHubIntegrationPanel />);
+    expect(await screen.findByText(/does not have permission to manage GitHub/)).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("INTEGRATION_VIEW");
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
   });
 
   it("shows the server connection and binds a catalog repository to the current project", async () => {
@@ -103,7 +102,7 @@ describe("GitHubIntegrationPanel", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<GitHubIntegrationPanel onOpenAdministration={() => undefined} />);
+    render(<GitHubIntegrationPanel />);
 
     expect(await screen.findByRole("heading", { name: "GitHub connected" })).toBeTruthy();
     expect(screen.getByText("@virusimmortal00")).toBeTruthy();
@@ -130,12 +129,11 @@ describe("GitHubIntegrationPanel", () => {
     });
   });
 
-  it.each([true, false])("routes claimed=%s to administration without duplicate credentials", async (claimed) => {
+  it.each([true, false])("leaves claimed=%s sign-in to the administration window without duplicate credentials", async (claimed) => {
     vi.stubGlobal("fetch", vi.fn(async (input) => String(input).endsWith("/status") ? json({ claimed, bootstrapConfigured: true }) : json({ error: "Authentication required." }, 401)));
-    const onOpenAdministration = vi.fn();
-    render(<GitHubIntegrationPanel onOpenAdministration={onOpenAdministration} />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
-    expect(onOpenAdministration).toHaveBeenCalledOnce();
+    render(<GitHubIntegrationPanel />);
+    expect(await screen.findByText("Server administrator sign-in required.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
     expect(screen.queryByLabelText("Password")).toBeNull();
   });
 });

@@ -15,25 +15,18 @@ import {
   type GitHubIntegrationStatus,
   type GitHubRepositoryCatalog,
 } from "./api";
-import { AdministrationSignIn } from "./server-administration";
+import { GitHubMark } from "./github-mark";
 import { useControlSession } from "./control-session";
 import { VIEWS, viewAttributes } from "./view-registry";
 import type { RepairProjectRepositoryInput } from "../shared/project-repository-repair";
-
-// GitHub mark from Primer Octicons: https://primer.style/octicons/icon/mark-github-24/
-function GitHubMark({ size = 24 }: { size?: number }) {
-  return <svg aria-hidden="true" className="github-mark" width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-    <path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943" />
-  </svg>;
-}
 
 /**
  * GitHub's account/project-repository connection, as a section of the shared server-admin
  * Integrations page (`src/integrations.tsx`). Formerly a standalone modal dialog reached
  * from the Room menu; its content and control-session gate are unchanged, only the chrome.
  */
-export function GitHubIntegrationPanel({ onOpenAdministration }: { onOpenAdministration: () => void }) {
-  const { status: controlStatus, session, checked, error: sessionError } = useControlSession();
+export function GitHubIntegrationPanel() {
+  const { session, checked, error: sessionError } = useControlSession();
   const authentication = !checked ? "checking" : session ? "ready" : "required";
   const dashboardRequest = useRef(0);
   const [integration, setIntegration] = useState<GitHubIntegrationStatus>();
@@ -169,9 +162,7 @@ export function GitHubIntegrationPanel({ onOpenAdministration }: { onOpenAdminis
   const projectRepository = project?.binding?.repository || project?.repository.repository;
   const projectRepositoryPath = projectRepository?.replace(/^(?:https?:\/\/)?github\.com\//i, "");
   const repositoryCount = catalog?.repositories.length || 0;
-  const currentView = authentication === "required" && controlStatus
-    ? controlStatus.claimed ? VIEWS.githubAdminSignIn : VIEWS.githubClaimOwner
-    : authorization?.state === "authorizing"
+  const currentView = authorization?.state === "authorizing"
       ? VIEWS.githubDeviceAuth
       : !readyConnection
         ? VIEWS.githubConnect
@@ -182,17 +173,13 @@ export function GitHubIntegrationPanel({ onOpenAdministration }: { onOpenAdminis
             : VIEWS.githubChooseRepo;
 
   return <section className="integrations-section github-integration-panel" aria-labelledby="integrations-github-heading" {...viewAttributes(currentView)}>
-    <h3 id="integrations-github-heading" className="integrations-section__heading">GitHub</h3>
+    <h3 id="integrations-github-heading" className="integrations-section__heading"><GitHubMark size={14} /> GitHub</h3>
     {loading || authentication === "checking" ? <p role="status">Loading GitHub integration…</p> : null}
     {error ? <p role="alert" className="room-settings-error">{error}</p> : null}
     {repairMessage ? <p role="status">{repairMessage}</p> : null}
-    {authentication === "ready" && permissionDenied ? <AdministrationSignIn onOpen={onOpenAdministration} /> : null}
+    {authentication === "ready" && permissionDenied ? <p>Your administrator account does not have permission to manage GitHub. Ask the server owner.</p> : null}
     {sessionError ? <p role="alert">{sessionError}</p> : null}
-    {authentication === "required" ? <div className="github-control-login">
-      <h3>{controlStatus?.claimed === false ? "Claim server owner" : "Server administrator sign in"}</h3>
-      <p>Open server administration to manage this server's GitHub connection. You will return here after signing in.</p>
-      <AdministrationSignIn onOpen={onOpenAdministration} />
-    </div> : null}
+    {authentication === "required" ? <p role="status">Server administrator sign-in required.</p> : null}
     {authentication === "ready" && integration ? <>
       <fieldset className="github-integration-card classic-group">
         <legend>GitHub account</legend>
@@ -212,7 +199,7 @@ export function GitHubIntegrationPanel({ onOpenAdministration }: { onOpenAdminis
         <legend>Project repository</legend>
         {!project.repository.configured ? <div className="github-card-heading"><small>{repositoryCount} {repositoryCount === 1 ? "repository" : "repositories"} available</small><button type="button" className="classic-button github-refresh-button" disabled={working} onClick={() => void refreshCatalog(readyConnection)}>{working ? "Refreshing…" : "Refresh"}</button></div> : null}
         {project.repository.configured && projectRepositoryPath ? <div className="github-repository-summary classic-summary">
-          <span className="github-repository-icon" aria-hidden="true" />
+          <span className="github-brand-mark"><GitHubMark size={20} /></span>
           <span><a className="classic-link" href={`https://github.com/${projectRepositoryPath}`} target="_blank" rel="noreferrer">{projectRepositoryPath}</a><small>Used by every room in this project.</small></span>
           <span className="classic-status" data-attention={project.readiness?.authority === "unverified"}>{project.readiness?.authority === "verified" ? "Repository verified" : project.readiness?.authority === "unverified" ? "Needs repair" : "Configured"}</span>
         </div> : catalog?.repositories.length ? <>

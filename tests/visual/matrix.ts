@@ -23,7 +23,7 @@ const APP_VIEW_KEYS = [
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
   "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories",
   "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",
-  "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
+  "yourProfile", "agentStatus", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
 ] as const satisfies readonly ViewKey[];
 const SCROLLING_VIEWS: readonly ViewKey[] = ["ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
@@ -36,7 +36,7 @@ export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   { id: "server-administration-unclaimed", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
   { id: "your-profile-signed-out", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
   { id: "your-profile-unclaimed", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
-  { id: "owner-diagnostics-sign-in", view: VIEWS.ownerDiagnosticsQuery, shots: ["top"] },
+  { id: "owner-diagnostics-sign-in", view: VIEWS.serverAdministration, shots: ["top"] },
   { id: "manage-agents-empty", view: VIEWS.manageAgentsRoster, shots: ["top"] },
 ];
 export const VISUAL_SCENARIOS = [...ROSTER_SCENARIOS, ...APP_SCENARIOS];

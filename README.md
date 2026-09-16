@@ -218,7 +218,7 @@ Joined members can manage the main room's roster without owner credentials.
 Server administration is separate: the browser's provider-setup controls, GitHub
 configuration, and agent-behavior settings require administrative authority.
 Operators can [claim the server owner](docs/operations/server-administration.md)
-through **Server → Session…**.
+through **Server → Owner login…**.
 
 ### Docker
 

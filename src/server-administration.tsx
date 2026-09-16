@@ -1,24 +1,25 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { bootstrapControlPlane, controlLogin, controlLogout } from "./api";
 import { refreshControlSession, useControlSession } from "./control-session";
 
+// Dialogs outside the administration window that send the member to sign in and back.
 // Internal destinations only: never navigate to a caller-supplied URL.
-export type AdministrationDestination = "Diagnostics" | "Integrations" | "Rooms" | "Manage room agents" | "Room Properties";
+export type AdministrationDestination = "Manage room agents" | "Room Properties";
 
-export function AdministrationEntry({ onOpen, disabled = false }: { onOpen: () => void; disabled?: boolean }) {
-  const { status, session, checked, error } = useControlSession();
-  return <fieldset className="classic-group administration-entry">
-    <legend>Server administration</legend>
-    <p>{error || (!checked ? "Checking server administration…" : session ? <>Signed in as <strong>{session.principal.username}</strong> · {session.principal.role}</> : status?.claimed ? "Server claimed. You are signed out of server administration." : "This server has not been claimed.")}</p>
-    <button type="button" className="classic-button" disabled={disabled} onClick={onOpen}>Open server administration</button>
-  </fieldset>;
+/**
+ * The one notice shown outside the Server Administration window where an action needs
+ * a server administrator. Its button opens the window's Owner login page.
+ */
+export function AdministratorRequired({ onSignIn, children }: { onSignIn: () => void; children?: ReactNode }) {
+  return <div className="administrator-required">
+    <span className="administrator-required__lock" aria-hidden="true">🔒</span>
+    <span>{children ?? "Needs a server administrator."}</span>
+    <button type="button" className="classic-button administration-sign-in" onClick={(event) => { event.currentTarget.focus(); onSignIn(); }}>Sign in…</button>
+  </div>;
 }
 
-export function AdministrationSignIn({ onOpen }: { onOpen: () => void }) {
-  return <button type="button" className="classic-button administration-sign-in" onClick={(event) => { event.currentTarget.focus(); onOpen(); }}>Sign in to server administration</button>;
-}
-
-export function ServerAdministration({ destination, onContinue }: { destination: AdministrationDestination | null; onContinue: (destination: AdministrationDestination) => void }) {
+/** The single sign-in form: the Owner login page, and the gate on locked administration pages. */
+export function ServerAdministration({ destination = null, onContinue, lockedPage }: { destination?: AdministrationDestination | null; onContinue?: (destination: AdministrationDestination) => void; lockedPage?: string }) {
   const { status, session, checked, error: statusError } = useControlSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -32,8 +33,9 @@ export function ServerAdministration({ destination, onContinue }: { destination:
     if (!canAuthenticate || working) return;
     setWorking(true); setError("");
     try {
-      const authenticated = claimed ? await controlLogin(username, password) : await bootstrapControlPlane(bootstrapSecret, username, password);
-      if (destination && (destination !== "Diagnostics" || authenticated.principal.role === "OWNER")) onContinue(destination);
+      if (claimed) await controlLogin(username, password);
+      else await bootstrapControlPlane(bootstrapSecret, username, password);
+      if (destination) onContinue?.(destination);
     } catch {
       setError("Could not sign in or claim the server. Check your credentials and server status, then try again.");
       await refreshControlSession();
@@ -50,21 +52,20 @@ export function ServerAdministration({ destination, onContinue }: { destination:
   }
 
   return <div className="administration-page administration-session">
-    <header className="page-header"><h2>Session</h2><p>Manage this server using your durable administrator account. Your room name and membership are separate.</p></header>
+    <header className="page-header">{lockedPage
+      ? <><h2>🔒 {lockedPage} needs a server administrator</h2><p>Sign in with an administrator account to open this page. You stay in the room either way.</p></>
+      : <><h2>Owner login</h2><p>Sign in with the server's administrator account. Your room name and membership are separate.</p></>}</header>
     <div className="administration-content">
       {!checked && !statusError ? <p role="status">Checking server administration…</p> : null}
       {statusError ? <p role="alert">{statusError}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {session ? <fieldset className="classic-group">
-        <legend>Administrator session</legend>
-        <p>Signed in as <strong>{session.principal.username}</strong></p>
-        <p>Role: <strong>{session.principal.role}</strong></p>
+        <legend>Signed in</legend>
+        <p>Signed in as <strong>{session.principal.username}</strong> · {session.principal.role}</p>
         <p>Session expires at <time dateTime={session.expiresAt}>{new Date(session.expiresAt).toLocaleString()}</time>.</p>
-        {destination === "Diagnostics" && session.principal.role !== "OWNER" ? <p role="alert">Diagnostics requires the OWNER role. Sign out and sign in with the owner account.</p> : null}
         <div className="administration-actions">
           <button type="button" className="classic-button" disabled={working} onClick={() => void signOut()}>{working ? "Signing out…" : "Sign out"}</button>
-          {destination && (destination !== "Diagnostics" || session.principal.role === "OWNER") ? <button type="button" className="classic-button" onClick={() => onContinue(destination)}>Continue to {destination === "Rooms" ? "Rooms & repositories" : destination}</button> : null}
-          {!destination && session.principal.role === "OWNER" ? <button type="button" className="classic-button" onClick={() => onContinue("Diagnostics")}>Open Diagnostics</button> : null}
+          {destination ? <button type="button" className="classic-button" onClick={() => onContinue?.(destination)}>Continue to {destination}</button> : null}
         </div>
       </fieldset> : checked && status && !statusError ? <form onSubmit={(event) => { event.preventDefault(); void authenticate(); }}>
         <fieldset className="classic-group administration-form" disabled={working}>
@@ -78,8 +79,10 @@ export function ServerAdministration({ destination, onContinue }: { destination:
           <button type="submit" className="classic-button" disabled={!canAuthenticate}>{working ? "Authenticating…" : claimed ? "Sign in" : "Claim owner"}</button>
         </fieldset>
       </form> : null}
-      <section className="classic-property-section"><h3>About administrator sessions</h3><p>Sessions last eight hours from sign-in. Activity does not extend them. Restarting the server ends all administrator sessions; sign in again to continue.</p><p>Signing out leaves the server claimed and keeps your room identity and membership. Ownership transfer and owner recovery remain separate local operator procedures.</p></section>
-      <button type="button" className="classic-button" disabled={working} onClick={() => void refreshControlSession()}>Check session</button>
+      {lockedPage ? null : <>
+        <section className="classic-property-section"><h3>About administrator sessions</h3><p>Sessions last eight hours from sign-in. Activity does not extend them. Restarting the server ends all administrator sessions; sign in again to continue.</p><p>Signing out leaves the server claimed and keeps your room identity and membership. Ownership transfer and owner recovery remain separate local operator procedures.</p></section>
+        <button type="button" className="classic-button" disabled={working} onClick={() => void refreshControlSession()}>Check session</button>
+      </>}
     </div>
   </div>;
 }

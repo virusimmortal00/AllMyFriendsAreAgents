@@ -45,10 +45,10 @@ describe("OpenRouter credits and room spend", () => {
   it("shows the room's spend chart to a signed-out viewer while gating credits behind admin sign-in", async () => {
     confirmedSignedOut();
     stubFetch();
-    render(<><OpenRouterCreditsSection onOpenAdministration={vi.fn()} /><RoomSpendPanel agentLabels={{ "codex-sol": "Sol" }} /></>);
+    render(<><OpenRouterCreditsSection /><RoomSpendPanel agentLabels={{ "codex-sol": "Sol" }} /></>);
     await screen.findByText("$0.05 spent · 2 turns");
     expect(screen.getByText("Sol")).toBeTruthy();
-    expect(await screen.findByText("Sign in as a server administrator to see the account's remaining balance.")).toBeTruthy();
+    expect(await screen.findByText("Server administrator sign-in required.")).toBeTruthy();
     expect(screen.queryByText(/available/)).toBeNull();
   });
 
@@ -57,7 +57,7 @@ describe("OpenRouter credits and room spend", () => {
     stubFetch((route) => route.startsWith("/api/control/integrations/openrouter")
       ? json({ credits: { totalCreditsUsd: 100, totalUsageUsd: 73.85, remainingUsd: 26.15, fetchedAt: "2026-09-14T12:47:00.000Z" } })
       : undefined);
-    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection />);
     await screen.findByText("$26.15");
     expect(screen.getByText("available")).toBeTruthy();
     expect(screen.queryByText(/of \$100/)).toBeNull();
@@ -71,7 +71,7 @@ describe("OpenRouter credits and room spend", () => {
       ? json({ credits: { totalCreditsUsd: 100, totalUsageUsd: 73.85, remainingUsd: 26.15, fetchedAt: "2026-09-14T12:47:00.000Z" } })
       : undefined);
     const user = userEvent.setup();
-    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection />);
     await screen.findByText("$26.15");
     expect(fetchMock).toHaveBeenCalledWith("/api/control/integrations/openrouter", expect.anything());
 
@@ -82,7 +82,7 @@ describe("OpenRouter credits and room spend", () => {
   it("falls back to a connect-a-key message when signed in but no credits are available", async () => {
     ownerSession();
     stubFetch((route) => route.startsWith("/api/control/integrations/openrouter") ? json({}) : undefined);
-    render(<OpenRouterCreditsSection onOpenAdministration={vi.fn()} />);
+    render(<OpenRouterCreditsSection />);
     expect(await screen.findByText("Connect an OpenRouter API key to see your remaining balance here.")).toBeTruthy();
   });
 

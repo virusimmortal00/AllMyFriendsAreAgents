@@ -1,3 +1,4 @@
+import { GitHubMark, RepositoryName } from "./github-mark";
 import type { ProtectedWorkView } from "../shared/protected-work";
 import { ProtectedWorkControls, ProtectedWorkStatus } from "./protected-work";
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
@@ -1081,8 +1082,8 @@ export function RoomControls({
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
       {propertySheet ? <><hr /><span className="field-label" id="room-repository-label">Repository</span>
-      <p className="classic-summary room-repository" aria-labelledby="room-repository-label">{repository ? <a className="classic-link" href={`https://github.com/${repository}`} target="_blank" rel="noreferrer">{repository}</a> : "No repository is connected to this room."}</p>
-      <p className="field-help">Set by the room's project in Server Administration → Integrations.</p></> : null}
+      <p className="classic-summary room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
+      <p className="field-help">Visible to everyone in the room. A server administrator connects it from the Server menu, under Integrations.</p></> : null}
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
       {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
       {saving ? <p className="room-settings-status" role="status">Saving room properties…</p> : saved ? <p className="room-settings-status" role="status">Room properties saved.</p> : null}

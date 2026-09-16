@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiRequestError, loadRoomRepositories, type RoomRepositoryListing } from "./api";
 import { useControlSession } from "./control-session";
 import { ListView, type ListViewColumn } from "./list-view";
-import { AdministrationSignIn } from "./server-administration";
+import { RepositoryName } from "./github-mark";
 import { VIEWS, viewAttributes } from "./view-registry";
 
 const REASON_LABELS: Readonly<Record<string, string>> = {
@@ -22,9 +22,8 @@ function shortProject(projectId: string) {
 }
 
 /** Administrator list of every room and the repository its project gives it. */
-export function RoomsRepositories({ refreshKey = 0, onOpenAdministration, onOpenIntegrations, onCountChange }: {
+export function RoomsRepositories({ refreshKey = 0, onOpenIntegrations, onCountChange }: {
   refreshKey?: number;
-  onOpenAdministration: () => void;
   onOpenIntegrations: () => void;
   onCountChange?: (summary: string) => void;
 }) {
@@ -57,7 +56,7 @@ export function RoomsRepositories({ refreshKey = 0, onOpenAdministration, onOpen
   const columns: ListViewColumn<RoomRepositoryListing>[] = [
     { key: "room", label: "Room", width: "30%", sortValue: (room) => room.name.toLocaleLowerCase(), render: (room) => <span className="rooms-repositories__room">{room.name}{room.archived ? <small> (archived)</small> : null}</span> },
     { key: "repository", label: "Repository", width: "30%", sortValue: (room) => room.repository ?? "~", render: (room) => room.repository
-      ? <a className="classic-link" href={`https://github.com/${room.repository}`} target="_blank" rel="noreferrer">{room.repository}</a>
+      ? <RepositoryName repository={room.repository} />
       : <span className="list-view__muted">(none)</span> },
     { key: "status", label: "Status", width: "20%", sortValue: (room) => repositoryStatusLabel(room), render: (room) => room.state === "ready"
       ? <span className="classic-status">Verified</span>
@@ -69,10 +68,8 @@ export function RoomsRepositories({ refreshKey = 0, onOpenAdministration, onOpen
   return <div className="administration-page rooms-repositories" {...viewAttributes(VIEWS.roomsRepositories)}>
     <header className="page-header"><h2>Rooms &amp; repositories</h2><p>Rooms get repository access from their project. Rooms in the same project share one repository.</p></header>
     {!checked ? <p role="status">Checking server administration…</p>
-      : !session || denied ? <div className="classic-summary">
-        <p>Sign in as a server administrator to see which repository each room uses.</p>
-        <AdministrationSignIn onOpen={onOpenAdministration} />
-      </div> : <>
+      : !session ? <p role="status">Server administrator sign-in required.</p>
+        : denied ? <p className="classic-summary">Your administrator account does not have permission to list rooms. Ask the server owner.</p> : <>
         <div className="page-toolbar">
           <label className="classic-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} />Show archived rooms</label>
           <button type="button" className="classic-button" onClick={() => setReload((current) => current + 1)}>Refresh</button>

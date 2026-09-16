@@ -29,6 +29,7 @@ import { refreshControlSession } from "./control-session";
 import type { AdministrationDestination } from "./server-administration";
 import { ADMINISTRATION_PAGES, AdministrationWindow, type AdministrationPage } from "./administration-window";
 import { RoomUsageDialog } from "./room-usage-dialog";
+import { GitHubMark } from "./github-mark";
 import { defineViewMenu, presentationCommand } from "./application-menu-policy";
 import { VIEWS, viewAttributes } from "./view-registry";
 
@@ -146,7 +147,7 @@ export default function App() {
   const [assignTaskAgentId, setAssignTaskAgentId] = useState<ActiveAgentId | typeof NEXT_AVAILABLE_AGENT | null>(null);
   const assignTaskTrigger = useRef<HTMLElement | null>(null);
   const [administrationDestination, setAdministrationDestination] = useState<AdministrationDestination | null>(null);
-  const [administrationPage, setAdministrationPage] = useState<AdministrationPage>("Session");
+  const [administrationPage, setAdministrationPage] = useState<AdministrationPage>("Login");
   const [usageOpen, setUsageOpen] = useState(false);
   const usageTrigger = useRef<HTMLElement | null>(null);
   const [administrationOpen, setAdministrationOpen] = useState(false);
@@ -667,7 +668,7 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  function openAdministration(destination: AdministrationDestination | null = null, page: AdministrationPage = "Session", trigger: HTMLElement | null = null) {
+  function openAdministration(destination: AdministrationDestination | null = null, page: AdministrationPage = "Login", trigger: HTMLElement | null = null) {
     administrationTrigger.current = trigger;
     setAdministrationDestination(destination);
     setAdministrationPage(page);
@@ -685,12 +686,9 @@ export default function App() {
 
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
-    if (destination === "Diagnostics" || destination === "Integrations" || destination === "Rooms") setAdministrationPage(destination);
-    else {
-      setAdministrationOpen(false);
-      if (destination === "Manage room agents") setRosterOpen(true);
-      else setRoomPropertiesOpen(true);
-    }
+    setAdministrationOpen(false);
+    if (destination === "Manage room agents") setRosterOpen(true);
+    else setRoomPropertiesOpen(true);
   }
 
   const roster = normalizeRoomAgentRoster(room.roster);
@@ -829,8 +827,8 @@ export default function App() {
         </div>
 
         {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} repository={room.githubReadStatus?.repository} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
-        {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onOpenAdministration={(destination) => openAdministration(destination)} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
-        {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
+        {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
+        {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
           <AgentSettingsDialog
@@ -869,8 +867,8 @@ export default function App() {
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
-          {room.githubReadStatus ? <div className="status-cell status-cell--repository" aria-label="Room repository" title={room.githubReadStatus.state === "ready" ? "GitHub reads are ready for this room" : `GitHub reads unavailable: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}>{room.githubReadStatus.repository
-            ? <>Repository: {room.githubReadStatus.repository}{room.githubReadStatus.state === "ready" ? "" : ` (${room.githubReadStatus.reason.replace(/^connection-/, "").replaceAll("-", " ")})`}</>
+          {room.githubReadStatus ? <div className="status-cell status-cell--repository" aria-label="Room repository" title={room.githubReadStatus.state === "ready" ? "GitHub reads are ready for this room" : `GitHub reads unavailable: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}><GitHubMark size={12} />{room.githubReadStatus.repository
+            ? <>{room.githubReadStatus.repository}{room.githubReadStatus.state === "ready" ? "" : ` (${room.githubReadStatus.reason.replace(/^connection-/, "").replaceAll("-", " ")})`}</>
             : "No repository connected"}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>

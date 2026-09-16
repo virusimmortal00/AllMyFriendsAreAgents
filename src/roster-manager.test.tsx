@@ -140,7 +140,7 @@ describe("roster manager", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onOpenAdministration = vi.fn();
     render(<RosterManagerDialog onOpenAdministration={onOpenAdministration} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in to server administration" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sign in…" }));
     expect(onOpenAdministration).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText("Password")).toBeNull();
     expect(fetchMock).toHaveBeenCalledOnce();

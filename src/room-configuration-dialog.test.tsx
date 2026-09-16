@@ -98,7 +98,7 @@ describe("RoomConfigurationDialog", () => {
     await user.clear(prompt);
     await user.type(prompt, "Draft room rule");
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    const signIn = await screen.findByRole("button", { name: "Sign in to server administration" });
+    const signIn = await screen.findByRole("button", { name: "Sign in…" });
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
     await user.click(signIn);
     await screen.findByLabelText("Username");

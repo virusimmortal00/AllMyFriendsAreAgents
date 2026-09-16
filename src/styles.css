@@ -778,7 +778,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .administration-content { display: grid; align-content: start; gap: 12px; max-width: 640px; overflow-wrap: anywhere; }
 .administration-content > button, .administration-form > button { justify-self: start; }
 .administration-sign-in { justify-self: start; align-self: start; max-width: 100%; }
-.administration-form { display: grid; gap: 10px; }
+.administration-form { display: grid; gap: 8px; }
+.administration-content .classic-group p, .administration-content .classic-group small { margin: 0; }
+.administration-content .classic-group > legend + * { margin-top: 2px; }
 .administration-form label { display: grid; gap: 4px; }
 .administration-form input { width: 100%; min-width: 0; }
 .administration-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1061,7 +1063,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .administration-dialog { width: min(1040px, 100%); height: min(760px, 100%); min-height: 0; max-height: 100%; justify-self: center; align-self: center; }
 .administration-dialog-body { display: grid; min-height: 0; overflow: hidden; }
 .administration-dialog .dialog-actions { display: flex; justify-content: flex-end; padding: 6px 8px; }
-.explorer { display: grid; grid-template-columns: 184px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 4px; background: var(--chrome); }
+.explorer { display: grid; grid-template-columns: 208px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 4px; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 4px; background: var(--chrome); }
 .explorer__pages { display: flex; flex-direction: column; gap: 1px; min-width: 0; min-height: 0; padding: 2px; overflow: auto; border: 2px inset white; background: #fff; }
 .explorer__pages [role="tab"] { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 2px 6px; border: 0; background: transparent; color: #111; font: 12px/1.2 "MS Sans Serif", Arial, sans-serif; text-align: left; }
 .explorer__pages [role="tab"][aria-selected="true"] { background: var(--blue); color: #fff; }
@@ -1077,6 +1079,15 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .diagnostics-workspace .diagnostics-body { padding: 0; }
 .diagnostics-workspace .diagnostics-content { max-width: none; }
+
+.explorer__lock { margin-left: auto; font-size: 10px; }
+.administrator-required { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0; padding: 6px 8px; border: 2px groove white; background: var(--chrome); color: #111; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.administrator-required__lock { font-size: 13px; }
+.administrator-required .classic-button { margin-left: auto; }
+.repository-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.repository-name .github-mark, .status-cell--repository .github-mark { flex: 0 0 auto; color: #111; }
+.status-cell--repository { display: flex; align-items: center; gap: 4px; }
+.integrations-section__heading { display: flex; align-items: center; gap: 5px; }
 
 /* ListView (Details): raised column headers over an inset white table. */
 .list-view { min-width: 0; overflow-x: auto; border: 2px inset white; background: #fff; }

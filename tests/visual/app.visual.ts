@@ -13,7 +13,7 @@ async function menu(page: Page, name: string, item?: string) {
 
 async function openScenario(page: Page, id: string) {
   if (id.startsWith("server-administration")) {
-    await menu(page, "Server", "Session...");
+    await menu(page, "Server", "Owner login...");
     await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
   } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");
@@ -55,8 +55,7 @@ async function openScenario(page: Page, id: string) {
     await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-sign-in") {
       // The administration window checks the session first, so signed-out Diagnostics opens gated.
-      await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "Sign in to server administration", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeVisible();
     }
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");

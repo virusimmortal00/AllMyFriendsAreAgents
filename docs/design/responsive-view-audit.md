@@ -1251,8 +1251,6 @@ below is not silently promoted to current approval.
 | ROOM-09 | Unsaved Changes Confirmation | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 |
 | PERSON-01 | Your Profile | 0/24 | — | — | — | — | — | — | — |
 | PERSON-02 | Agent Status | 0/12 | — | — | — | — | — | — | — |
-| GH-01 | GitHub — Administrator Sign In | 0/12 | — | — | — | — | — | — | — |
-| GH-02 | GitHub — Claim Owner | 0/12 | — | — | — | — | — | — | — |
 | GH-03 | GitHub — Connect Account | 0/12 | — | — | — | — | — | — | — |
 | GH-04 | GitHub — Device Authorization | 0/12 | — | — | — | — | — | — | — |
 | GH-05 | GitHub — Choose Project Repository | 12/12 | 11/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 11/12 |
@@ -1397,8 +1395,6 @@ uncaptured states.
 | ROOM-09 | Unsaved Changes Confirmation | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | PERSON-01 | Your Profile | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 |
 | PERSON-02 | Agent Status | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
-| GH-01 | GitHub — Administrator Sign In | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
-| GH-02 | GitHub — Claim Owner | 12/12 | 12/12 | 12/12 | 11/12 | 12/12 | 12/12 | 11/12 |
 | GH-03 | GitHub — Connect Account | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | GH-04 | GitHub — Device Authorization | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | GH-05 | GitHub — Choose Project Repository | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
@@ -1555,7 +1551,7 @@ independent image review.
 | WORK-09 | Reviewed Contribution Detail | Review gates and contribution detail | Unverified |
 | WORK-10 | Owner Diagnostics Query | Bounded diagnostic search controls | Unverified |
 | WORK-11 | Owner Diagnostics Results | Result list and selected diagnostic detail | Unverified |
-| WORK-12 | Server Administration | Top-level window over chat with page list; Session page for claim, sign-in, and active administrator session | Pending |
+| WORK-12 | Server Administration | Top-level window over chat with page list; Owner login page, also shown in place on locked pages | Pending |
 | WORK-13 | OpenRouter Credits | Administrator-gated remaining account balance on the Integrations page | Pending |
 | WORK-14 | Rooms and Repositories | Administrator list of rooms with repository, status, and project | Pending |
 
@@ -1591,8 +1587,6 @@ review was not run, so both inventory rows remain `Unverified`.
 
 | ID | Named view | Distinct state | Status |
 | --- | --- | --- | --- |
-| GH-01 | GitHub — Administrator Sign In | Existing server-owner authentication | Unverified |
-| GH-02 | GitHub — Claim Owner | First-time server-owner setup | Unverified |
 | GH-03 | GitHub — Connect Account | No connected GitHub account | Unverified |
 | GH-04 | GitHub — Device Authorization | User code and GitHub handoff | Unverified |
 | GH-05 | GitHub — Choose Project Repository | Connected account with repository selection | Unverified |
@@ -1688,8 +1682,6 @@ seven-question review, not these historical labels, as verification evidence.
 
 | ID | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll and actions | Outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GH-01 | P/T/L/D: Fills the width of its `integrations-section` panel instead of a centered 640×318 dialog; grooved admin group unchanged. | P/T/L/D: Sign in is explicit; Chat's own workspace close (×) is the only exit, replacing the former dialog Close/title-bar close pair. | P/T/L/D: Pass; grooved admin group and classic form controls, unchanged from the dialog version. | P/T: touch fields/actions; L/D: compact 12px typography, unchanged. | P/T/L/D: Content-sized within its section; no full-editor blank canvas. | P/T/L/D: The shared page body owns scroll; actions persist. | P/T/L/D: Relocated into the Integrations page (#209); content and control-session gate unchanged, only the dialog chrome removed. Not independently re-reviewed at this pass's checkpoints. |
-| GH-02 | P/T/L/D: Claim fields remain in the same compact auth group, now inside the page section. | P/T/L/D: Claim owner is explicit; unavailable bootstrap explains itself; workspace close replaces dialog Close. | P/T/L/D: Pass; same classic auth group, unchanged. | P/T: stacked touch controls; L/D: compact form, unchanged. | P/T/L/D: No reserved integration panels behind setup. | P/T/L/D: Shared page body scrolls; actions remain fixed. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-03 | P/T/L/D: Two concepts only: account and project repository, now stacked above the OpenRouter section instead of alone in a dialog. | P/T/L/D: Connect account and conventional links are explicit; workspace close replaces dialog Close. | P/T/L/D: Pass; official mark local, group boxes/status lamp shared, unchanged. | P: two-column account summary collapses cleanly; T/L/D: compact row, unchanged. | P/T/L/D: Removed redundant third panel and internal metadata (unchanged from the dialog version). | P/T/L/D: Shared page body owns overflow. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-04 | P/T/L/D: Authorization code and handoff fit their group, unchanged. | P/T/L/D: GitHub handoff link and refresh/status are clear; workspace close replaces dialog Close. | P/T/L/D: Pass; inset yellow challenge and classic links, unchanged. | P: challenge wraps vertically; T/L/D: horizontal where space allows, unchanged. | P/T/L/D: Waiting state uses only necessary space. | P/T/L/D: Shared page body scrolls if provider copy expands. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-05 | P/T/L/D: Repository chooser occupies the project group only, unchanged. | P/T/L/D: Repository select/use and access link are explicit; workspace close replaces dialog Close. | P/T/L/D: Pass; inset repository field and raised action, unchanged. | P/T: full-width select/action; L/D: concise row, unchanged. | P/T/L/D: No disabled configured-state selector. | P/T/L/D: Shared page body owns overflow; actions remain reachable. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |

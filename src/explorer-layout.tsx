@@ -6,6 +6,7 @@ export interface ExplorerPage<Key extends string> {
   readonly label: string;
   readonly icon: string;
   readonly description?: string;
+  readonly locked?: boolean;
 }
 
 /**
@@ -40,7 +41,7 @@ export function ExplorerLayout<Key extends string>({ label, pages, selected, onS
   return <div className="explorer">
     <div className="explorer__pages" role="tablist" aria-label={label} aria-orientation="vertical" onKeyDown={onKeyDown}>
       {pages.map((page) => <button key={page.key} type="button" role="tab" id={`${id}-${page.key}`} aria-selected={page.key === current.key} aria-controls={`${id}-panel`} tabIndex={page.key === current.key ? 0 : -1} onClick={() => onSelect(page.key)}>
-        <span className="explorer__icon" aria-hidden="true">{page.icon}</span><span>{page.label}</span>
+        <span className="explorer__icon" aria-hidden="true">{page.icon}</span><span>{page.label}</span>{page.locked ? <span className="explorer__lock" aria-hidden="true" title="Sign in to open">🔒</span> : null}
       </button>)}
     </div>
     <div ref={contentRef} className="explorer__content classic-scrollbars" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${current.key}`} tabIndex={-1}>

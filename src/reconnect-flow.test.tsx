@@ -639,6 +639,9 @@ describe("rendered reconnect recovery", () => {
   });
 
   it("opens Server Administration as a window at the chosen Server menu page and restores focus on close", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input) === "/api/control/status"
+      ? Response.json({ claimed: true, bootstrapConfigured: true })
+      : Response.json({ error: "Sign in required" }, { status: 401 })));
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -657,7 +660,9 @@ describe("rendered reconnect recovery", () => {
     // Each Server command is named exactly like the window page it opens.
     expect(serverCommands).toEqual(within(administration).getAllByRole("tab").map((tab) => tab.querySelector(":scope > span:not([aria-hidden])")?.textContent));
     expect(within(administration).getByRole("tab", { name: "Diagnostics" }).getAttribute("aria-selected")).toBe("true");
-    expect(within(administration).getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
+    // Signed out, the window gates the page with its one Owner login form.
+    expect(await within(administration).findByRole("heading", { name: /Diagnostics needs a server administrator/ })).toBeTruthy();
+    expect(within(administration).getAllByRole("button", { name: /Sign in/ })).toHaveLength(1);
     // The chat window stays in place behind the administration window.
     expect(screen.getByRole("log", { name: "Room transcript" })).toBeTruthy();
     await user.click(within(administration).getByRole("button", { name: "Close server administration" }));
@@ -666,7 +671,7 @@ describe("rendered reconnect recovery", () => {
     expect(pushState).not.toHaveBeenCalled();
   });
 
-  it("returns from denied Diagnostics through administration and signs out without leaving the room", async () => {
+  it("unlocks Diagnostics in place after owner login and signs out without leaving the room", async () => {
     let authenticated = false;
     const session = { principal: { id: "durable-owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-control-csrf", expiresAt: new Date(Date.now() + 28_800_000).toISOString() };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -683,16 +688,15 @@ describe("rendered reconnect recovery", () => {
     await renderConnected();
     const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
     await chooseMenuItem(user, "Server", "Diagnostics...");
-    // The administration window has already checked the session, so Diagnostics starts gated.
-    expect((await screen.findByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).disabled).toBe(true);
-    await user.click(await screen.findByRole("button", { name: "Sign in to server administration" }));
-    expect(screen.queryByRole("heading", { name: "Owner diagnostics" })).toBeNull();
+    // Signed out, Diagnostics is locked and shows the window's Owner login form in place.
+    await screen.findByRole("heading", { name: /Diagnostics needs a server administrator/ });
+    expect(screen.queryByRole("button", { name: "Query diagnostics" })).toBeNull();
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
     await screen.findByRole("heading", { name: "Owner diagnostics" });
     await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByText("No matching records.");
-    await user.click(screen.getByRole("tab", { name: "Session" }));
+    await user.click(screen.getByRole("tab", { name: "Owner login" }));
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
     expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);
