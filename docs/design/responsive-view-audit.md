@@ -1,5 +1,38 @@
 # Responsive view audit
 
+## Menu restructure and Server Administration window — 2026-09-16 (independent review incomplete)
+
+Affected views: `CHAT-01`, `CHAT-02`, `CHAT-03`, `CHAT-04` (now Server Menu),
+`WORK-10`–`WORK-14`, `ROOM-01`, `ROOM-04`, `ROOM-05`–`ROOM-07`, `ROOM-10`,
+`ROOM-11`, `PERSON-01`, `GH-03`–`GH-08`, `APP-01`–`APP-03`, and `AUX-03`.
+`WORK-01`–`WORK-09` are hidden from navigation and excluded from capture; `GH-01`
+and `GH-02` were removed because the administration window now owns sign-in.
+
+Capture: `pnpm capture:visual` produced 762/762 Chromium and WebKit screenshots
+across all six matrix viewports with passing geometry checks (run `zRMidT`).
+Capture and layout success is not visual approval.
+
+Independent review: `pnpm review:visual` reviewed 54/762 images of that run
+(Chromium Phone scenarios) before the signed-in account reached its Codex usage
+limit; all 54 passed every question. The run failed closed and no API fallback
+was attempted. The remaining 708 images have no verdict, so no approval is
+claimed and `pnpm check:visual-review` has not passed. An earlier review of a
+superseded capture (167/762 images) found defects that were fixed before run
+`zRMidT`: truncated model names in the narrowest picker, a truncated
+administration status line on Phone, and large blue body headings on `APP-01`
+and `APP-02`.
+
+Open findings retained from that earlier review, not introduced by this change:
+Phone empty area below the short `ROOM-05` empty roster setup panel, below the
+`ROOM-01` General form (previously recorded as open), and below the
+`WORK-14` rooms table inside the full-height administration content pane.
+
+Live check: a claimed owner session on a local development server confirmed
+Owner login, Integrations (GitHub not connected, OpenRouter balance),
+Rooms & repositories, and Diagnostics, and exposed two defects fixed in the
+same change (Sign out spacing and a squeezed status-bar cell below 1050px).
+A connected GitHub repository was verified only with fixture data.
+
 ## Native CLI setup guide — 2026-09-13
 
 The native setup surface uses a rainbow ASCII banner, animated Consolio guide,
