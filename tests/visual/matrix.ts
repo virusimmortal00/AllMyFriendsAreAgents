@@ -19,14 +19,14 @@ export const ROSTER_SCENARIOS = [
 
 // Explicitly enumerate routes/states; adding a registry entry does not invent coverage.
 const APP_VIEW_KEYS = [
-  "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "windowMenu",
+  "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "serverMenu",
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
-  "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail", "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount",
-  "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation",
-  "yourProfile", "agentStatus", "githubAdminSignIn", "githubClaimOwner", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
+  "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories",
+  "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",
+  "yourProfile", "agentStatus", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
 ] as const satisfies readonly ViewKey[];
-const SCROLLING_VIEWS: readonly ViewKey[] = ["improvementDetail", "roomTaskDetail", "durableContinuations", "backgroundInvestigations", "reviewedContributionDetail", "ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
+const SCROLLING_VIEWS: readonly ViewKey[] = ["ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
 export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   id: key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), view: VIEWS[key],
   shots: SCROLLING_VIEWS.includes(key) ? ["top", "bottom"] : ["top"],
@@ -36,7 +36,7 @@ export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   { id: "server-administration-unclaimed", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
   { id: "your-profile-signed-out", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
   { id: "your-profile-unclaimed", view: VIEWS.yourProfile, shots: ["top", "bottom"] },
-  { id: "owner-diagnostics-sign-in", view: VIEWS.ownerDiagnosticsQuery, shots: ["top"] },
+  { id: "owner-diagnostics-sign-in", view: VIEWS.serverAdministration, shots: ["top"] },
   { id: "manage-agents-empty", view: VIEWS.manageAgentsRoster, shots: ["top"] },
 ];
 export const VISUAL_SCENARIOS = [...ROSTER_SCENARIOS, ...APP_SCENARIOS];

@@ -31,13 +31,23 @@ describe("shared responsive layout structure", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("routes every full workspace through the same header and scroll-body contract", () => {
-    for (const file of ["tasks.tsx", "contributions.tsx", "improvements.tsx", "continuations.tsx", "investigations.tsx", "diagnostics.tsx", "integrations.tsx"]) {
+  it("routes every retained full workspace through the same header and scroll-body contract", () => {
+    for (const file of ["tasks.tsx", "contributions.tsx", "improvements.tsx", "continuations.tsx", "investigations.tsx"]) {
       const source = readFileSync(resolve(process.cwd(), "src", file), "utf8");
       expect(source, file).toContain("workspace-view");
       expect(source, file).toContain("workspace-view__header");
       expect(source, file).toContain("workspace-view__body");
     }
+  });
+
+  it("hosts administration pages in the Explorer window with one page header and no nested workspace chrome", () => {
+    for (const file of ["server-administration.tsx", "diagnostics.tsx", "integrations.tsx", "rooms-repositories.tsx"]) {
+      const source = readFileSync(resolve(process.cwd(), "src", file), "utf8");
+      expect(source, file).toContain("administration-page");
+      expect(source, file).toContain("page-header");
+      expect(source, file).not.toContain("workspace-view__header");
+    }
+    expect(readFileSync(resolve(process.cwd(), "src", "administration-window.tsx"), "utf8")).toContain("<ExplorerLayout");
   });
 
   it("keeps full modal workflows on DialogFrame instead of bespoke window markup", () => {

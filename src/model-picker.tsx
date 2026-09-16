@@ -5,6 +5,7 @@ import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page";
 import { modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { loadModelOfferDetails, resolveOpenRouterModelPage } from "./api";
 import { ProviderMark } from "./provider-mark";
+import { ListView } from "./list-view";
 import { viewAttributes, type ViewDefinition } from "./view-registry";
 
 type ModelFilter = "all" | "popular" | "free" | "tools" | "vision" | "reasoning";
@@ -172,26 +173,33 @@ export function RichModelPicker({
         <label className="model-picker__filter-select"><span>Filter models</span><select value={filter} onChange={(event) => setFilter(event.target.value as ModelFilter)}>{FILTERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
       </div>
       <div className="model-picker__filters" aria-label="Filter models">{FILTERS.map((item) => <button type="button" className={filter === item.id ? "is-selected" : ""} aria-pressed={filter === item.id} key={item.id} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
-      <div className="model-picker__results" aria-label="Available models">
-        {filtered.slice(0, visibleCount).map((model) => {
-          const key = modelKey(model);
-          const checked = model.modelId === modelId && (model.providerId || "") === providerId;
-          const authorId = model.authorId || modelAuthorId(model.providerId, model.modelId);
-          return (
-            <button type="button" className={`model-card${checked ? " model-card--selected" : ""}`} aria-pressed={checked} key={key} onClick={() => onChange(model)}>
-              <ProviderMark authorId={authorId} accessProviderId={model.providerId} />
-              <span className="model-card__content">
-                <span className="model-card__heading"><strong>{model.displayName}</strong><span className="model-card__badges">{model.popularity?.rank && model.popularity.rank <= 50 ? <em className="model-badge model-badge--popular">Popular #{model.popularity.rank}</em> : null}{isFree(model) ? <em className="model-badge model-badge--free">Free</em> : null}{model.capabilities?.reasoning ? <em className="model-badge">Reasoning</em> : null}{model.capabilities?.toolCall ? <em className="model-badge">Tools</em> : null}</span></span>
-                <span className="model-card__provider">By {model.authorDisplayName || providerDisplayName(authorId)}{model.providerId && model.providerId !== authorId ? ` · via ${model.accessProviderDisplayName || providerDisplayName(model.providerId)}` : ""}</span>
-                {model.description ? <span className="model-card__description">{model.description}</span> : null}
-                <span className="model-card__facts"><span><b>Input</b> {formatMoney(model.pricing?.inputPerMillion)}/1M</span><span><b>Output</b> {formatMoney(model.pricing?.outputPerMillion)}/1M</span><span><b>Context</b> {formatTokens(model.limits?.context)}</span></span>
-                <span className="model-card__action">Choose this model&nbsp; →</span>
-              </span>
-            </button>
-          );
-        })}
-        {!filtered.length ? <p className="model-picker__empty">No available models match those filters.</p> : null}
-      </div>
+      <ListView
+        label="Available models"
+        className="model-picker__results"
+        rows={filtered.slice(0, visibleCount)}
+        rowKey={modelKey}
+        isSelected={(model) => model.modelId === modelId && (model.providerId || "") === providerId}
+        empty={<span className="model-picker__empty">No available models match those filters.</span>}
+        columns={[
+          { key: "model", label: "Model", width: "38%", render: (model) => {
+            const checked = model.modelId === modelId && (model.providerId || "") === providerId;
+            const authorId = model.authorId || modelAuthorId(model.providerId, model.modelId);
+            return <button type="button" className="model-row" aria-pressed={checked} title={model.description} onClick={() => onChange(model)}>
+              <ProviderMark authorId={authorId} accessProviderId={model.providerId} compact />
+              <span className="model-row__name"><strong>{model.displayName}</strong><small>{model.authorDisplayName || providerDisplayName(authorId)}{model.providerId && model.providerId !== authorId ? ` · via ${model.accessProviderDisplayName || providerDisplayName(model.providerId)}` : ""}</small><small className="model-row__price">In {formatMoney(model.pricing?.inputPerMillion)} · Out {formatMoney(model.pricing?.outputPerMillion)} /1M · {formatTokens(model.limits?.context)}</small></span>
+            </button>;
+          } },
+          { key: "input", label: "In $/1M", width: "12%", render: (model) => formatMoney(model.pricing?.inputPerMillion) },
+          { key: "output", label: "Out $/1M", width: "12%", render: (model) => formatMoney(model.pricing?.outputPerMillion) },
+          { key: "context", label: "Context", width: "11%", render: (model) => formatTokens(model.limits?.context) },
+          { key: "tags", label: "Capabilities", width: "27%", render: (model) => <span className="model-row__tags">
+            {model.popularity?.rank && model.popularity.rank <= 50 ? <span>Popular #{model.popularity.rank}</span> : null}
+            {isFree(model) ? <span>Free</span> : null}
+            {model.capabilities?.reasoning ? <span>Reasoning</span> : null}
+            {model.capabilities?.toolCall ? <span>Tools</span> : null}
+          </span> },
+        ]}
+      />
       {visibleCount < filtered.length ? <button type="button" className="classic-button model-picker__more" onClick={() => setVisibleCount((count) => count + 30)}>Show 30 more</button> : null}
       {selected ? (
         <div className="model-detail" aria-live="polite">

@@ -18,7 +18,7 @@ export const VIEWS = {
   roomChat: defineView({ id: "CHAT-01", name: "Room Chat", state: "Transcript, composer, status bar, and desktop Who’s Here rail", category: "chat" }),
   compactRoomChat: defineView({ id: "CHAT-02", name: "Compact Room Chat", state: "Narrow chat with room controls available through menus", category: "chat" }),
   roomMenu: defineView({ id: "CHAT-03", name: "Room Menu", state: "Room-scoped command menu", category: "chat" }),
-  windowMenu: defineView({ id: "CHAT-04", name: "Window Menu", state: "Workspace switcher and return-to-chat navigation", category: "chat" }),
+  serverMenu: defineView({ id: "CHAT-04", name: "Server Menu", state: "Opens the Server Administration window at a chosen page", category: "chat" }),
   mentionSuggestions: defineView({ id: "CHAT-05", name: "Mention Suggestions", state: "Composer mention results", category: "chat" }),
   textColorPalette: defineView({ id: "CHAT-06", name: "Text Color Palette", state: "Message text-color picker", category: "chat" }),
   highlightColorPalette: defineView({ id: "CHAT-07", name: "Highlight Color Palette", state: "Message highlight-color picker", category: "chat" }),
@@ -37,8 +37,9 @@ export const VIEWS = {
   reviewedContributionDetail: defineView({ id: "WORK-09", name: "Reviewed Contribution Detail", state: "Review gates and contribution detail", category: "workspace" }),
   ownerDiagnosticsQuery: defineView({ id: "WORK-10", name: "Owner Diagnostics Query", state: "Bounded diagnostic search controls", category: "workspace" }),
   ownerDiagnosticsResults: defineView({ id: "WORK-11", name: "Owner Diagnostics Results", state: "Result list and selected diagnostic detail", category: "workspace" }),
-  serverAdministration: defineView({ id: "WORK-12", name: "Server Administration", state: "Claim, sign-in, and active administrator session", category: "workspace" }),
-  openRouterAccount: defineView({ id: "WORK-13", name: "OpenRouter Account", state: "This room's spend window and per-agent chart, open to any member; the credits sub-panel above is gated by server administration", category: "workspace" }),
+  serverAdministration: defineView({ id: "WORK-12", name: "Server Administration", state: "Top-level window over chat with page list; Owner login page; administrator pages preview with disabled controls until sign-in", category: "workspace" }),
+  openRouterAccount: defineView({ id: "WORK-13", name: "OpenRouter Credits", state: "Administrator-gated remaining account balance on the Integrations page", category: "workspace" }),
+  roomsRepositories: defineView({ id: "WORK-14", name: "Rooms and Repositories", state: "Administrator list of rooms with repository, status, and project", category: "workspace" }),
   roomPropertiesGeneral: defineView({ id: "ROOM-01", name: "Room Properties — General", state: "Room name, topic, and conversation energy", category: "room" }),
   roomPropertiesAgentBehavior: defineView({ id: "ROOM-02", name: "Room Properties — Agent Behavior", state: "Base prompt, summarizer, and routing", category: "room" }),
   roomSummarizerModelPicker: defineView({ id: "ROOM-03", name: "Room Summarizer Model Picker", state: "Lazy-loaded model search, filters, and results", category: "room" }),
@@ -48,10 +49,10 @@ export const VIEWS = {
   manageAgentsModelPicker: defineView({ id: "ROOM-07", name: "Manage Room Agents — Model Picker", state: "Provider/model selection and model detail", category: "room" }),
   manageAgentsConflict: defineView({ id: "ROOM-08", name: "Manage Room Agents — Conflict", state: "Save conflict and recovery", category: "room" }),
   unsavedChangesConfirmation: defineView({ id: "ROOM-09", name: "Unsaved Changes Confirmation", state: "Destructive-close confirmation", category: "room" }),
+  assignTask: defineView({ id: "ROOM-10", name: "Assign Task", state: "Agent choice and bounded task text sent as /task", category: "room" }),
+  roomUsage: defineView({ id: "ROOM-11", name: "Room Usage and Spend", state: "This room's spend window and per-agent chart, open to any member", category: "room" }),
   yourProfile: defineView({ id: "PERSON-01", name: "Your Profile", state: "Name and avatar editor", category: "participant" }),
   agentStatus: defineView({ id: "PERSON-02", name: "Agent Status", state: "Individual agent availability, provider health, and recovery", category: "participant" }),
-  githubAdminSignIn: defineView({ id: "GH-01", name: "GitHub — Administrator Sign In", state: "Existing server-owner authentication", category: "github" }),
-  githubClaimOwner: defineView({ id: "GH-02", name: "GitHub — Claim Owner", state: "First-time server-owner setup", category: "github" }),
   githubConnect: defineView({ id: "GH-03", name: "GitHub — Connect Account", state: "No connected GitHub account", category: "github" }),
   githubDeviceAuth: defineView({ id: "GH-04", name: "GitHub — Device Authorization", state: "User code and GitHub handoff", category: "github" }),
   githubChooseRepo: defineView({ id: "GH-05", name: "GitHub — Choose Project Repository", state: "Connected account with repository selection", category: "github" }),
@@ -65,6 +66,15 @@ export const VIEWS = {
 } as const;
 
 export type ViewKey = keyof typeof VIEWS;
+
+/**
+ * Deprecated workspaces whose components are retained for repurposing but are no
+ * longer reachable from application navigation. They are excluded from visual capture.
+ */
+export const HIDDEN_VIEW_KEYS = [
+  "improvementsList", "improvementDetail", "improvementNotFound", "roomTasksList", "roomTaskDetail",
+  "durableContinuations", "backgroundInvestigations", "reviewedContributionsList", "reviewedContributionDetail",
+] as const satisfies readonly ViewKey[];
 export type ViewId = (typeof VIEWS)[ViewKey]["id"];
 
 export function viewAttributes(view: ViewDefinition) {

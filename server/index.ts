@@ -116,6 +116,7 @@ import { registerGitHubIntegrationRoutes } from "./github-integration-api.js";
 import { registerOpenRouterIntegrationRoutes } from "./openrouter-integration-api.js";
 import { ProjectGitHubBindingService } from "./project-github-binding.js";
 import { registerProjectGitHubBindingRoutes } from "./project-github-binding-api.js";
+import { registerRoomRepositoryRoutes, type RoomGitHubReadStatus } from "./room-repository-api.js";
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(serverDirectory, "..");
@@ -280,6 +281,17 @@ const projectRepositoryRegistry = new ProjectRepositoryServiceRegistry(projectRe
   return [...assignmentReferences, ...jobReferences, ...contributionReferences, ...brokerReferences];
 }, (projectId, reference) => githubCredentials.available(projectId, reference));
 const projectRepositoryScope = projectRepositoryRegistry.forProject(currentProjectId);
+
+/** Room-visible repository readiness. The repository name is public to members; paths and credentials stay server-side. */
+function projectGitHubReadStatus(projectId: string | null | undefined): RoomGitHubReadStatus {
+  if (!projectId) return { state: "unavailable", reason: "general-room" };
+  const connection = projectRepositoryRegistry.forProject(projectId).connection.inspectServer();
+  if (!connection) return { state: "unavailable", reason: "connection-missing" };
+  const repository = `${connection.remote.owner}/${connection.remote.repository}`;
+  if (connection.state !== "verified") return { state: "unavailable", reason: `connection-${connection.state}`, repository };
+  if (!githubCredentials.available(projectId, connection.credentialReference)) return { state: "unavailable", reason: "credential-missing", repository };
+  return { state: "ready", reason: "ready", repository };
+}
 const projectGitHubBindings = githubIntegrationRuntime
   ? new ProjectGitHubBindingService(githubIntegrationRuntime.integrations, (projectId) => projectRepositoryRegistry.forProject(projectId).connection)
   : undefined;
@@ -520,7 +532,7 @@ function reserveCanonicalGeneration(agent: import("../shared/participants.js").A
 }
 
 function publicRoomSnapshot(viewerHumanId?: string) {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), availability: runtimeAvailability(currentEnabledAgents(), openCodeRuntime), openCodeRuntime, activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), availability: runtimeAvailability(currentEnabledAgents(), openCodeRuntime), openCodeRuntime, githubReadStatus: projectGitHubReadStatus(currentProjectId), activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -1156,7 +1168,7 @@ const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>
   capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
   operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
 })):undefined;
-if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>{const projectId=room.projectAttachment?.projectId;if(!projectId)return{state:"unavailable",reason:"general-room"};const connection=projectRepositoryRegistry.forProject(projectId).connection.inspectServer();if(!connection)return{state:"unavailable",reason:"connection-missing"};if(connection.state!=="verified")return{state:"unavailable",reason:`connection-${connection.state}`};if(!githubCredentials.available(projectId,connection.credentialReference))return{state:"unavailable",reason:"credential-missing"};return{state:"ready",reason:"ready"};}});
+if(roomLifecycle&&roomRuntimes&&roomCommandDispatcher)registerRoomLifecycleRoutes({app,lifecycle:roomLifecycle,runtimes:roomRuntimes,humans,sessions:humanSessions,server:serverIdentity,commands:roomCommandDispatcher,githubReadStatus:(room)=>projectGitHubReadStatus(room.projectAttachment?.projectId)});
 
 const consultationRepository = await openConsultationRepository(projectRoot, storageConfiguration);
 const consultationRunner = new ConsultationRunner(
@@ -1259,6 +1271,7 @@ app.get("/api/state", async (request, response) => {
     activeGenerations: activeGenerations.snapshot(),
     agentHealth: agentHealth.snapshot(),
     providerHealth: providerHealth.snapshot(),
+    githubReadStatus: projectGitHubReadStatus(currentProjectId),
     server: serverIdentity,
   });
 });
@@ -1443,6 +1456,10 @@ if (projectGitHubBindings) registerProjectGitHubBindingRoutes({ app, control: co
     ? { checkoutPath: projectRepositoryPath, worktreeRoot: assignmentWorktreesDirectory, policyRevision: 1 }
     : undefined,
   projectExists: (projectId) => roomLifecycle ? roomLifecycle.projectRoomIds(projectId).length > 0 : projectId === currentProjectId });
+registerRoomRepositoryRoutes({ app, control: controlPlane, repositoryStatus: projectGitHubReadStatus,
+  listRooms: (includeArchived) => roomLifecycle
+    ? roomLifecycle.listAll(includeArchived).map((room) => ({ roomId: room.roomId, name: room.name, archivedAt: room.archivedAt, projectId: room.projectAttachment?.projectId ?? null }))
+    : [{ roomId: store.roomId, name: roomSnapshot().settings.roomName, archivedAt: null, projectId: currentProjectId }] });
 registerOwnerDiagnosticsRoutes({ app, control: controlPlane, service: diagnosticsQueryService });
 app.get("/api/control/capabilities", async (request, response) => {
   try { const session = controlPlane.require(request); if (session.principal.role !== "OWNER") throw new ControlError(403, "Only the owner can inspect capability audit records."); }

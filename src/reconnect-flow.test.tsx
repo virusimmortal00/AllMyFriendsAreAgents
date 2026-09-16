@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   loadRoom: vi.fn(),
   loadPolls: vi.fn(),
   loadWorkshop: vi.fn(),
-  runAction: vi.fn(),
   sendMessage: vi.fn(),
   updateMyAvatar: vi.fn(),
   updateMyProfile: vi.fn(),
@@ -144,7 +143,6 @@ beforeEach(() => {
   api.loadPolls.mockResolvedValue({ items: [] });
   api.voteOnPoll.mockResolvedValue({ kind: "accepted" });
   api.loadWorkshop.mockRejectedValue(new Error("not used"));
-  api.runAction.mockResolvedValue({ accepted: true });
   api.sendMessage.mockImplementation(async (_text: string, clientMessageId: string) => ({
     accepted: true, duplicate: false, clientMessageId, messageId: `server-${clientMessageId}`,
   }));
@@ -538,12 +536,12 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
   });
 
-  it("puts You first, removes People and Change name, and grays unavailable room actions", async () => {
+  it("puts You first, removes People and Change name, and drops retired room actions", async () => {
     const user = userEvent.setup();
     await renderConnected();
     const topLevelMenus = screen.getAllByRole("menuitem");
     expect(topLevelMenus[0]?.textContent).toBe("You");
-    expect((screen.getByRole("menuitem", { name: "Window" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(topLevelMenus.map((menu) => menu.textContent)).toEqual(["You", "Room", "Server", "View", "Help"]);
 
     await user.click(screen.getByRole("menuitem", { name: "Room" }));
     const roomMenu = within(screen.getByRole("menu", { name: "Room" }));
@@ -552,8 +550,48 @@ describe("rendered reconnect recovery", () => {
     expect(roomMenu.queryByRole("menuitem", { name: "Room settings..." })).toBeNull();
     expect(roomMenu.getByRole("menuitem", { name: "Manage agents..." })).toBeTruthy();
     for (const name of ["Continue discussion", "Start roundtable", "Review with all agents"]) {
-      expect((roomMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+      expect(roomMenu.queryByRole("menuitem", { name })).toBeNull();
     }
+    expect((roomMenu.getByRole("menuitem", { name: "Assign task..." }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("offers no workspace switcher and returns retired improvement links to Chat", async () => {
+    window.history.replaceState({}, "", "/improvements/known-id");
+    const user = userEvent.setup();
+    await renderConnected();
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByRole("menuitem", { name: "Window" })).toBeNull();
+    for (const name of ["Improvements", "Tasks", "Continuations", "Investigations", "Reviewed contributions"]) {
+      expect(screen.queryByRole("menuitem", { name })).toBeNull();
+    }
+  });
+
+  it("assigns a task to a chosen agent through the existing /task command", async () => {
+    api.sendMessage.mockResolvedValueOnce({ command: true, result: { kind: "accepted" } });
+    const user = userEvent.setup();
+    await renderConnected();
+    const roomTrigger = screen.getByRole("menuitem", { name: "Room" });
+    await chooseMenuItem(user, "Room", "Assign task...");
+    const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
+    const [agent] = legacyDefaultRoomAgentRoster().entries.filter((entry) => entry.enabled);
+    await user.selectOptions(dialog.getByRole("combobox", { name: "Agent" }), agent.agentId);
+    await user.type(dialog.getByRole("textbox", { name: "Task" }), "  inspect the error path  ");
+    await user.click(dialog.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledWith(`/task @${agent.agentId} inspect the error path`, expect.stringMatching(/^message_/), []));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Assign task" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(roomTrigger));
+  });
+
+  it("keeps the Assign task draft open and explains a rejected command", async () => {
+    api.sendMessage.mockResolvedValueOnce({ command: true, result: { kind: "private-error", message: "That participant is not in the room roster." } });
+    const user = userEvent.setup();
+    await renderConnected();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getAllByRole("button", { name: /^Configure / })[0] });
+    const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
+    await user.type(dialog.getByRole("textbox", { name: "Task" }), "check the retry path");
+    await user.click(dialog.getByRole("button", { name: "OK" }));
+    expect(await dialog.findByRole("alert")).toHaveProperty("textContent", "That participant is not in the room roster.");
+    expect((dialog.getByRole("textbox", { name: "Task" }) as HTMLTextAreaElement).value).toBe("check the retry path");
   });
 
   it("opens the existing Manage Agents dialog from the Room menu and restores focus", async () => {
@@ -598,7 +636,10 @@ describe("rendered reconnect recovery", () => {
     expect(screen.queryByRole("textbox", { name: "What should everyone call you?" })).toBeNull();
   });
 
-  it("keeps full-workspace destinations in Window and closes Diagnostics back to Chat", async () => {
+  it("opens Server Administration as a window at the chosen Server menu page and restores focus on close", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input) === "/api/control/status"
+      ? Response.json({ claimed: true, bootstrapConfigured: true })
+      : Response.json({ error: "Sign in required" }, { status: 401 })));
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -608,15 +649,36 @@ describe("rendered reconnect recovery", () => {
     expect(within(screen.getByRole("menu", { name: "View" })).queryByRole("menuitemradio", { name: "Diagnostics" })).toBeNull();
     await user.keyboard("{Escape}");
 
-    await chooseMenuItem(user, "Window", "Diagnostics");
-    expect(screen.getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close Diagnostics and return to Chat" }));
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    const serverTrigger = screen.getByRole("menuitem", { name: "Server" });
+    await user.click(serverTrigger);
+    const serverCommands = within(screen.getByRole("menu", { name: "Server" })).getAllByRole("menuitem").map((item) => item.textContent?.replace(/\.\.\.$/, ""));
+    await user.keyboard("{Escape}");
+    // Signed out, only Owner login is available; administrator commands are grayed out.
+    await user.click(serverTrigger);
+    const serverMenu = within(screen.getByRole("menu", { name: "Server" }));
+    expect((serverMenu.getByRole("menuitem", { name: "Owner login..." }) as HTMLButtonElement).disabled).toBe(false);
+    for (const name of ["Integrations...", "Rooms & repositories...", "Diagnostics..."]) expect((serverMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+    await user.keyboard("{Escape}");
+    await chooseMenuItem(user, "Server", "Owner login...");
+    const administration = screen.getByRole("dialog", { name: "Server Administration" });
+    // Each Server command is named exactly like the window page it opens.
+    expect(serverCommands).toEqual(within(administration).getAllByRole("tab").map((tab) => tab.querySelector(":scope > span:not([aria-hidden])")?.textContent));
+    expect(within(administration).getByRole("tab", { name: "Owner login" }).getAttribute("aria-selected")).toBe("true");
+    expect(await within(administration).findByRole("heading", { name: "Owner login" })).toBeTruthy();
+    // Signed out, other pages open as previews with every control disabled.
+    await user.click(within(administration).getByRole("tab", { name: "Integrations" }));
+    expect(within(administration).getByText(/Preview only/)).toBeTruthy();
+    expect((within(administration).getByRole("button", { name: "Connect GitHub" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+    expect((within(administration).getByRole("button", { name: "Refresh" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+    // The chat window stays in place behind the administration window.
+    expect(screen.getByRole("log", { name: "Room transcript" })).toBeTruthy();
+    await user.click(within(administration).getByRole("button", { name: "Close server administration" }));
+    expect(screen.queryByRole("dialog", { name: "Server Administration" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(serverTrigger));
     expect(pushState).not.toHaveBeenCalled();
   });
 
-  it("returns from denied Diagnostics through administration and signs out without leaving the room", async () => {
+  it("previews Diagnostics disabled until owner login and signs out without leaving the room", async () => {
     let authenticated = false;
     const session = { principal: { id: "durable-owner", username: "server-owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-control-csrf", expiresAt: new Date(Date.now() + 28_800_000).toISOString() };
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -632,22 +694,24 @@ describe("rendered reconnect recovery", () => {
     const user = userEvent.setup();
     await renderConnected();
     const savedIdentity = window.localStorage.getItem("all-my-friends-are-agents-human");
-    await chooseMenuItem(user, "Window", "Diagnostics");
-    await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
-    await screen.findByRole("alert");
-    await user.click(screen.getByRole("button", { name: "Sign in to server administration" }));
-    expect(screen.queryByRole("heading", { name: "Owner diagnostics" })).toBeNull();
+    await chooseMenuItem(user, "Server", "Owner login...");
+    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
+    expect((await screen.findByRole("button", { name: "Query diagnostics" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
+    await user.click(screen.getByRole("tab", { name: "Owner login" }));
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
+    await screen.findByRole("button", { name: "Sign out" });
+    await user.click(screen.getByRole("tab", { name: "Diagnostics" }));
     await screen.findByRole("heading", { name: "Owner diagnostics" });
+    expect(screen.queryByText(/Preview only/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Query diagnostics" }));
     await screen.findByText("No matching records.");
-    await chooseMenuItem(user, "Window", "Server Administration");
+    await user.click(screen.getByRole("tab", { name: "Owner login" }));
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
     await screen.findByRole("button", { name: "Sign in" });
     expect(window.localStorage.getItem("all-my-friends-are-agents-human")).toBe(savedIdentity);
-    await user.click(screen.getByRole("button", { name: "Close Server Administration and return to Chat" }));
-    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Close server administration" }));
+    expect(screen.queryByRole("dialog", { name: "Server Administration" })).toBeNull();
     expect(api.joinRoom).toHaveBeenCalledOnce();
     expect(window.location.pathname).toBe("/");
   });
@@ -769,7 +833,6 @@ describe("rendered reconnect recovery", () => {
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));
     await user.click(await screen.findByRole("button", { name: "Dismiss error" }));
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(api.runAction).not.toHaveBeenCalled();
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 1, version: 2, state: clearState }));
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 2, version: 3, state }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("Room action failed"));

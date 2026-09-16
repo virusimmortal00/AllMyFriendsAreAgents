@@ -1,5 +1,38 @@
 # Responsive view audit
 
+## Menu restructure and Server Administration window — 2026-09-16 (independent review incomplete)
+
+Affected views: `CHAT-01`, `CHAT-02`, `CHAT-03`, `CHAT-04` (now Server Menu),
+`WORK-10`–`WORK-14`, `ROOM-01`, `ROOM-04`, `ROOM-05`–`ROOM-07`, `ROOM-10`,
+`ROOM-11`, `PERSON-01`, `GH-03`–`GH-08`, `APP-01`–`APP-03`, and `AUX-03`.
+`WORK-01`–`WORK-09` are hidden from navigation and excluded from capture; `GH-01`
+and `GH-02` were removed because the administration window now owns sign-in.
+
+Capture: `pnpm capture:visual` produced 762/762 Chromium and WebKit screenshots
+across all six matrix viewports with passing geometry checks (run `zRMidT`).
+Capture and layout success is not visual approval.
+
+Independent review: `pnpm review:visual` reviewed 54/762 images of that run
+(Chromium Phone scenarios) before the signed-in account reached its Codex usage
+limit; all 54 passed every question. The run failed closed and no API fallback
+was attempted. The remaining 708 images have no verdict, so no approval is
+claimed and `pnpm check:visual-review` has not passed. An earlier review of a
+superseded capture (167/762 images) found defects that were fixed before run
+`zRMidT`: truncated model names in the narrowest picker, a truncated
+administration status line on Phone, and large blue body headings on `APP-01`
+and `APP-02`.
+
+Open findings retained from that earlier review, not introduced by this change:
+Phone empty area below the short `ROOM-05` empty roster setup panel, below the
+`ROOM-01` General form (previously recorded as open), and below the
+`WORK-14` rooms table inside the full-height administration content pane.
+
+Live check: a claimed owner session on a local development server confirmed
+Owner login, Integrations (GitHub not connected, OpenRouter balance),
+Rooms & repositories, and Diagnostics, and exposed two defects fixed in the
+same change (Sign out spacing and a squeezed status-bar cell below 1050px).
+A connected GitHub repository was verified only with fixture data.
+
 ## Native CLI setup guide — 2026-09-13
 
 The native setup surface uses a rainbow ASCII banner, animated Consolio guide,
@@ -1251,8 +1284,6 @@ below is not silently promoted to current approval.
 | ROOM-09 | Unsaved Changes Confirmation | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 | 1/12 |
 | PERSON-01 | Your Profile | 0/24 | — | — | — | — | — | — | — |
 | PERSON-02 | Agent Status | 0/12 | — | — | — | — | — | — | — |
-| GH-01 | GitHub — Administrator Sign In | 0/12 | — | — | — | — | — | — | — |
-| GH-02 | GitHub — Claim Owner | 0/12 | — | — | — | — | — | — | — |
 | GH-03 | GitHub — Connect Account | 0/12 | — | — | — | — | — | — | — |
 | GH-04 | GitHub — Device Authorization | 0/12 | — | — | — | — | — | — | — |
 | GH-05 | GitHub — Choose Project Repository | 12/12 | 11/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 11/12 |
@@ -1397,8 +1428,6 @@ uncaptured states.
 | ROOM-09 | Unsaved Changes Confirmation | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | PERSON-01 | Your Profile | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 | 24/24 |
 | PERSON-02 | Agent Status | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
-| GH-01 | GitHub — Administrator Sign In | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
-| GH-02 | GitHub — Claim Owner | 12/12 | 12/12 | 12/12 | 11/12 | 12/12 | 12/12 | 11/12 |
 | GH-03 | GitHub — Connect Account | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | GH-04 | GitHub — Device Authorization | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
 | GH-05 | GitHub — Choose Project Repository | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
@@ -1498,7 +1527,7 @@ app-wide visual certification is implied by this matrix.
 | CHAT-01 | Room Chat | Transcript, composer, status bar, and desktop Who’s Here rail | Unverified |
 | CHAT-02 | Compact Room Chat | Narrow chat with room controls available through menus | Unverified |
 | CHAT-03 | Room Menu | Room-scoped command menu | Unverified |
-| CHAT-04 | Window Menu | Workspace switcher and return-to-chat navigation | Unverified |
+| CHAT-04 | Server Menu | Opens the Server Administration window at a chosen page | Pending |
 | CHAT-05 | Mention Suggestions | Composer mention results | Unverified |
 | CHAT-06 | Text Color Palette | Message text-color picker | Unverified |
 | CHAT-07 | Highlight Color Palette | Message highlight-color picker | Unverified |
@@ -1555,8 +1584,9 @@ independent image review.
 | WORK-09 | Reviewed Contribution Detail | Review gates and contribution detail | Unverified |
 | WORK-10 | Owner Diagnostics Query | Bounded diagnostic search controls | Unverified |
 | WORK-11 | Owner Diagnostics Results | Result list and selected diagnostic detail | Unverified |
-| WORK-12 | Server Administration | Claim, sign-in, and active administrator session | Unverified |
-| WORK-13 | OpenRouter Account | This room's spend window and per-agent chart, open to any member; the credits sub-panel above is gated by server administration | Unverified |
+| WORK-12 | Server Administration | Top-level window over chat with page list; Owner login page; administrator pages preview with disabled controls until sign-in | Pending |
+| WORK-13 | OpenRouter Credits | Administrator-gated remaining account balance on the Integrations page | Pending |
+| WORK-14 | Rooms and Repositories | Administrator list of rooms with repository, status, and project | Pending |
 
 ### Room and participant dialogs
 
@@ -1571,6 +1601,8 @@ independent image review.
 | ROOM-07 | Manage Room Agents — Model Picker | Provider/model selection and model detail | Unverified |
 | ROOM-08 | Manage Room Agents — Conflict | Save conflict and recovery | Unverified |
 | ROOM-09 | Unsaved Changes Confirmation | Destructive-close confirmation | Unverified |
+| ROOM-10 | Assign Task | Agent choice and bounded task text sent as /task | Pending |
+| ROOM-11 | Room Usage and Spend | This room's spend window and per-agent chart, open to any member | Pending |
 | PERSON-01 | Your Profile | Name and avatar editor | Unverified |
 | PERSON-02 | Agent Status | Individual agent availability, provider health, and recovery | Unverified |
 
@@ -1588,8 +1620,6 @@ review was not run, so both inventory rows remain `Unverified`.
 
 | ID | Named view | Distinct state | Status |
 | --- | --- | --- | --- |
-| GH-01 | GitHub — Administrator Sign In | Existing server-owner authentication | Unverified |
-| GH-02 | GitHub — Claim Owner | First-time server-owner setup | Unverified |
 | GH-03 | GitHub — Connect Account | No connected GitHub account | Unverified |
 | GH-04 | GitHub — Device Authorization | User code and GitHub handoff | Unverified |
 | GH-05 | GitHub — Choose Project Repository | Connected account with repository selection | Unverified |
@@ -1635,7 +1665,7 @@ seven-question review, not these historical labels, as verification evidence.
 | CHAT-01 | P: Pass with menu-based room controls; T/L/D: Pass with transcript plus Who’s Here rail. | P/T/L/D: Top menus persist; Window destinations return through Chat/close. | P/T/L/D: Pass; AIM transcript inside Windows chrome. | P: One-column chat; T/L: 240px rail; D: capped 1400px shell. | P/T/L/D: Transcript receives flexible space; no unused grid track. | P/T/L/D: Transcript owns scroll; composer and status remain fixed. | P/T/L/D: Fixed shared frame centering and tablet touch sizing. |
 | CHAT-02 | P: Pass at 378×832 with 6px equal margins; T/L/D: shared shell also centered. | P/T: 40px menu targets; L/D: compact desktop menus. | P/T/L/D: Pass; restored visible desktop/window silhouette. | P: Uses 96.9% width and 98.6% height; T/L/D: proportional caps. | P/T/L/D: No accidental edge gap or dead inner area. | P/T/L/D: No page overflow; transcript owns vertical scroll. | P: Replaced top-left 100dvh block layout with centered safe-area grid; T/L/D: retained centered capped frame. |
 | CHAT-03 | P/T: Pass with 40px commands; L/D: pass with compact commands. | P/T/L/D: Room-scoped labels, disabled states, outside-click and Escape. | P/T/L/D: Pass; conventional menu and separators. | P/T: Wide enough for command labels; L/D: content-sized. | P/T/L/D: No decorative empty rows. | P/T/L/D: Dropdown is the owning overlay and remains in viewport. | P/T: Enlarged touch targets; L/D: no change. |
-| CHAT-04 | P/T: Pass with 40px destinations; L/D: compact workspace menu. | P/T/L/D: Current view marked and Chat is a persistent return path. | P/T/L/D: Pass; shared classic menu. | P/T/L/D: Labels fit without horizontal scrolling. | P/T/L/D: No unused menu space. | P/T/L/D: Menu remains viewport-contained. | P/T: Enlarged targets; L/D: retained compact commands; all sizes use unified workspace shell. |
+| CHAT-04 | P/T/L/D: Pending; four window commands named exactly like the window pages. | P/T/L/D: Every command opens the Server Administration window at its page; the chat window stays behind it. | P/T/L/D: Pending; shared classic menu with ellipsis for commands that open a window. | P/T: 44px rows; L/D: 20px rows. | P/T/L/D: No unused menu space. | P/T/L/D: Menu is not a scroll owner. | P/T/L/D: Replaces the retired Window workspace switcher; pending image review. |
 | CHAT-05 | P/T/L/D: Pass; suggestions use available composer width with a cap. | P/T/L/D: Keyboard selection, click selection, and dismissal are clear. | P/T/L/D: Pass; raised suggestion window and blue selection. | P/T/L/D: One-line identities truncate safely. | P/T/L/D: Result height is content-driven and capped. | P/T/L/D: Results scroll independently above the composer. | P/T/L/D: No additional change. |
 | CHAT-06 | P/T/L/D: Pass; palette is anchored above the toolbar and viewport-capped. | P/T/L/D: Trigger, swatches, pressed state, and dismissal are clear. | P/T/L/D: Pass; classic raised palette and inset selection. | P/T: Larger swatches; L/D: dense 8-column palette. | P/T/L/D: Palette height follows its content. | P/T/L/D: Palette scrolls internally when vertically constrained. | P/T/L/D: Retained shared fixed-position overlay behavior. |
 | CHAT-07 | P/T/L/D: Pass; shares Text Color geometry. | P/T/L/D: Highlight trigger and selected swatch are explicit. | P/T/L/D: Pass; same palette primitive. | P/T: Touch-sized swatches; L/D: compact density. | P/T/L/D: No accidental empty panel. | P/T/L/D: Internal scroll prevents composer clipping. | P/T/L/D: Retained shared palette primitive. |
@@ -1659,8 +1689,9 @@ seven-question review, not these historical labels, as verification evidence.
 | WORK-09 | P/T/L/D: Pass; review detail uses full workspace. | P/T/L/D: Back to list, gated actions, and workspace close are visible. | P/T/L/D: Pass; five-step classic review status. | P: five steps stack; T/L/D: five equal columns. | P/T/L/D: Gate spacing is informational and intentional. | P/T/L/D: Detail body owns scroll and actions stay reachable. | T/L: Applied full-width fix; P/D: retained step layouts. |
 | WORK-10 | P/T/L/D: Pass; bounded query controls receive full workspace. | P/T/L/D: Exact selector, query action, and Window/close return are clear. | P/T/L/D: Pass; compact owner-tool styling inside shared chrome. | P: controls wrap into two rows; T: controls usually fit one row; L/D: compact row. P/T/L/D: commands and fields use the shared pointer-capability density rather than viewport-specific overrides. | P/T/L/D: Pre-query empty area communicates that nothing loads implicitly. | P/T/L/D: Body owns results; page never scrolls. | P/T/L/D: Added the exact selector without introducing feature-local control heights or expanding the shared header. |
 | WORK-11 | P/T/L/D: Pass; results/detail use the full workspace canvas. | P/T/L/D: Result selection, whole-trace action, and workspace close/Chat return are clear. | P/T/L/D: Pass; inset result buttons, trace summary, and diagnostic detail. | P: result and detail stack; T/L/D: result and detail are adjacent when the diagnostics container permits. P/T/L/D: the summary uses two columns in a narrow result pane and four only when that pane itself is at least 500px wide. | P/T/L/D: The centered 1100px content bound protects readability without reserving a missing pane. | P/T/L/D: Results/detail scroll inside the workspace body; preformatted content scrolls locally. | P/T/L/D: Preserved the shared container-query split and density system while layering in a result-pane-aware trace summary and action. |
-| WORK-12 | P/T/L/D: 72 images reviewed; nine flags concern canvas allocation or text crossing the native scroll boundary. | P/T/L/D: All navigation verdicts pass; return flows exercised. | P/T/L/D: All classic-style verdicts pass. | P/T/L/D: One native-boundary observation retained as disputed. | P/T/L/D: Eight sparse-canvas flags retained with documented workspace rationale. | P/T/L/D: Visible native tracks replace weak cues; one normal boundary-clipping verdict remains disputed. | P/T/L/D: 63 images pass all questions; nine disputed flags retained. Exact receipts validated; no overall visual approval. |
-| WORK-13 | P/T/L/D: Section now stacks below `GH-01`–`GH-08` inside the shared Integrations page instead of filling its own workspace body; the credits card, window toolbar, and chart retain their own reused layout rules unchanged. | P/T/L/D: Reached only from Window > Integrations; workspace close (×) returns to Chat like every other destination. | P/T/L/D: Reuses the same shared workspace-view chrome, classic-select, and inset-panel treatment as before — no bespoke styling introduced by the relocation. | P/T/L/D: Unchanged internal card/toolbar/chart proportions (including the 720px desktop content cap from the prior pass); now one of two stacked sections rather than the sole content. | P/T/L/D: Same content-sized-card rationale as before, now also true of the panel's placement above/below the GitHub section. | P/T/L/D: The page's shared `workspace-view__body` owns scroll across both sections instead of one section owning it alone. | P/T/L/D: Split into a room-visible spend section (`WORK-13`) and an admin-gated `CreditsCard` sub-panel, then relocated into the shared Integrations page alongside GitHub (#209). Not independently re-reviewed at this pass's four checkpoints; structural reuse only. |
+| WORK-12 | P/T/L/D: Pending; top-level window up to 1040×760 over the inactive chat window; phones fill the screen. | P/T/L/D: Server menu commands open it at a page; the page list switches pages; title-bar close, Close, and Escape return focus to the opener. | P/T/L/D: Pending; one blue title strip, inset page list and content wells, sunken status line, raised Close. | P: page list wraps above content; T/L/D: 184px page list beside content. | P/T/L/D: Pages end where their content ends; no centered narrow column. | P/T/L/D: Content pane is the only vertical scroll owner; status and Close stay fixed. | P/T/L/D: Pending first independent image review. |
+| WORK-13 | P/T/L/D: Pending; a labeled group box on the Integrations page below GitHub, sized to its property rows. | P/T/L/D: Reached from Server Administration > Integrations; the window close control returns to Chat. | P/T/L/D: Pending; groove group box, inset value well, raised Refresh button; no brand card. | P/T/L/D: Balance row and Checked/Refresh row stay compact. | P/T/L/D: No stretched body; the group ends after its rows. | P/T/L/D: Scrolls with the Integrations page content pane. | P/T/L/D: Pending first independent image review of the relocated section. |
+| WORK-14 | P/T/L/D: Pending; Details list fills the content pane width beside the page list. | P/T/L/D: Server Administration > Rooms & repositories; status links open Integrations; window close returns to Chat. | P/T/L/D: Pending; raised sortable column headers over an inset white table. | P: page list wraps above the table; T/L/D: fixed page list beside the table. | P/T/L/D: Table ends after its rows; the status line reports counts. | P/T/L/D: Content pane owns vertical scroll; the table scrolls horizontally only when columns cannot fit. | P/T/L/D: Pending first independent image review. |
 
 ### Room and participant dialog audit
 
@@ -1675,6 +1706,8 @@ seven-question review, not these historical labels, as verification evidence.
 | ROOM-07 | P: one-column model results; T/L/D: responsive multi-column catalog. | P/T/L/D: Step heading, filters, selection, back/change-model actions. | P/T/L/D: Pass; classic result/summary surfaces with local provider marks. | P/T/L/D: Catalog height capped relative to dialog. | P/T/L/D: Empty/error catalog states are explicit. | P/T/L/D: Model results scroll locally; roster actions remain fixed. | P/T/L/D: Shared responsive model picker retained inside classic roster shell. |
 | ROOM-08 | P/T/L/D: Pass; conflict notice occupies roster error row without replacing draft. | P/T/L/D: Load latest roster, Cancel, and close behavior are explicit. | P/T/L/D: Pass; classic red notice and raised recovery. | P/T/L/D: Notice wraps within dialog width. | P/T/L/D: No reserved conflict space when absent. | P/T/L/D: Notice/action remain outside master/detail scroll. | P/T/L/D: No additional change. |
 | ROOM-09 | P/T/L/D: Pass; confirmation is content-sized and centered. | P/T/L/D: Cancel and discard action are explicit; no ambiguous close control. | P/T/L/D: Pass; alert dialog in shared classic frame. | P/T: buttons wrap/touch-size; L/D: compact action row. | P/T/L/D: No unused interior area. | P/T/L/D: Description scrolls only if needed; actions remain fixed. | P/T/L/D: Shared DialogFrame retained. |
+| ROOM-10 | P/T/L/D: Pending; content-sized DialogFrame with one agent select and a task field. | P/T/L/D: Opened from Room > Assign task... or right-click on an agent row; OK, Cancel, Escape, and close return focus to the trigger. | P/T/L/D: Pending; shared classic dialog frame, property row, select, and inset text field. | P: full-width touch controls; T/L/D: compact property row above a resizable field. | P/T/L/D: No stretched body; the dialog ends after the help text. | P/T/L/D: Body scrolls only when the field is resized; OK/Cancel stay in the fixed action row. | P/T/L/D: Pending first independent image review. |
+| ROOM-11 | P/T/L/D: Pending; content-sized DialogFrame with period selector, total, and spend chart well. | P/T/L/D: Room > Usage & spend... or the roster OpenRouter usage link; Close, Escape, and close return focus. | P/T/L/D: Pending; shared classic dialog frame, property row select, inset chart well. | P: chart legend wraps below the donut; T/L/D: donut beside legend. | P/T/L/D: No stretched body. | P/T/L/D: Body scrolls only for long legends; Close stays in the action row. | P/T/L/D: Pending first independent image review. |
 | PERSON-01 | P: 376×309; T/L/D: 480×280 centered. | P/T/L/D: Save/Cancel/close and avatar edit controls are explicit. | P/T/L/D: Pass; classic dialog chrome with identity artwork local to profile. | P: 54px avatar and stacked actions; T/L/D: 64px avatar. | P/T/L/D: Content-sized with balanced surrounding space. | P/T/L/D: No scroll at checkpoints; actions fixed. | P/T/L/D: Verified shared centered frame; no additional change. |
 | PERSON-02 | P/T/L/D: Pass; 470px content-sized status window. | P/T/L/D: Close and bounded provider retry are explicit. | P/T/L/D: Pass; group box, state lamp, classic close action. | P/T: touch close; L/D: compact. | P/T/L/D: Remaining fieldset space is informational. | P/T/L/D: Dialog body owns overflow; close action remains fixed. | P/T/L/D: Shared DialogFrame retained. |
 
@@ -1682,8 +1715,6 @@ seven-question review, not these historical labels, as verification evidence.
 
 | ID | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll and actions | Outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GH-01 | P/T/L/D: Fills the width of its `integrations-section` panel instead of a centered 640×318 dialog; grooved admin group unchanged. | P/T/L/D: Sign in is explicit; Chat's own workspace close (×) is the only exit, replacing the former dialog Close/title-bar close pair. | P/T/L/D: Pass; grooved admin group and classic form controls, unchanged from the dialog version. | P/T: touch fields/actions; L/D: compact 12px typography, unchanged. | P/T/L/D: Content-sized within its section; no full-editor blank canvas. | P/T/L/D: The shared page body owns scroll; actions persist. | P/T/L/D: Relocated into the Integrations page (#209); content and control-session gate unchanged, only the dialog chrome removed. Not independently re-reviewed at this pass's checkpoints. |
-| GH-02 | P/T/L/D: Claim fields remain in the same compact auth group, now inside the page section. | P/T/L/D: Claim owner is explicit; unavailable bootstrap explains itself; workspace close replaces dialog Close. | P/T/L/D: Pass; same classic auth group, unchanged. | P/T: stacked touch controls; L/D: compact form, unchanged. | P/T/L/D: No reserved integration panels behind setup. | P/T/L/D: Shared page body scrolls; actions remain fixed. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-03 | P/T/L/D: Two concepts only: account and project repository, now stacked above the OpenRouter section instead of alone in a dialog. | P/T/L/D: Connect account and conventional links are explicit; workspace close replaces dialog Close. | P/T/L/D: Pass; official mark local, group boxes/status lamp shared, unchanged. | P: two-column account summary collapses cleanly; T/L/D: compact row, unchanged. | P/T/L/D: Removed redundant third panel and internal metadata (unchanged from the dialog version). | P/T/L/D: Shared page body owns overflow. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-04 | P/T/L/D: Authorization code and handoff fit their group, unchanged. | P/T/L/D: GitHub handoff link and refresh/status are clear; workspace close replaces dialog Close. | P/T/L/D: Pass; inset yellow challenge and classic links, unchanged. | P: challenge wraps vertically; T/L/D: horizontal where space allows, unchanged. | P/T/L/D: Waiting state uses only necessary space. | P/T/L/D: Shared page body scrolls if provider copy expands. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |
 | GH-05 | P/T/L/D: Repository chooser occupies the project group only, unchanged. | P/T/L/D: Repository select/use and access link are explicit; workspace close replaces dialog Close. | P/T/L/D: Pass; inset repository field and raised action, unchanged. | P/T: full-width select/action; L/D: concise row, unchanged. | P/T/L/D: No disabled configured-state selector. | P/T/L/D: Shared page body owns overflow; actions remain reachable. | P/T/L/D: Relocated into the Integrations page (#209); not independently re-reviewed at this pass's checkpoints. |

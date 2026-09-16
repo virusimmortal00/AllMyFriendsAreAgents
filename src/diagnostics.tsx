@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, loadOwnerCapabilityDiagnostics, queryOwnerDiagnostics, type CapabilityDiagnosticsResponse, type OwnerDiagnosticChunk, type OwnerDiagnosticRecord, type OwnerDiagnosticsResult } from "./api";
 import { redactDiagnosticSecrets } from "../shared/diagnostic-redaction";
-import { AdministrationSignIn } from "./server-administration";
 import { useControlSession } from "./control-session";
 import { VIEWS, viewAttributes } from "./view-registry";
 
@@ -78,7 +77,7 @@ export function summarizeTraceEvidence(records: readonly OwnerDiagnosticRecord[]
   return { status, runCount: groups.size, missingSequences: [...missingSequences].sort((left, right) => left - right), unpairedRecordIds, missingRawGenerationIds };
 }
 
-export function Diagnostics({ onOpenAdministration }: { onOpenAdministration: () => void }) {
+export function Diagnostics() {
   const { session, checked } = useControlSession(false);
   const previousSession = useRef(session);
   const requestGeneration = useRef(0);
@@ -150,13 +149,10 @@ export function Diagnostics({ onOpenAdministration }: { onOpenAdministration: ()
     finally { if (generation === requestGeneration.current) setLoading(false); }
   }
 
-  return <section className="workspace-view tasks-workspace diagnostics-workspace classic-scrollbars" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
-    <header className="workspace-view__header tasks-header"><div><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></div></header>
-    <div className="workspace-view__body diagnostics-body"><div className="diagnostics-content">
-    {accessDenied || !session ? <div className="diagnostics-authentication">
-      <AdministrationSignIn onOpen={onOpenAdministration} />
-      {accessDenied ? <p className="diagnostics-note" role="status">Sign in with an OWNER account to query diagnostics and inspect capabilities.</p> : null}
-    </div> : null}
+  return <section className="administration-page diagnostics-workspace" aria-label="Owner diagnostics" {...viewAttributes(VIEWS.ownerDiagnosticsQuery)}>
+    <header className="page-header"><h2>Owner diagnostics</h2><p>Local OWNER session only. Records load only after an explicit bounded query. Provider output is evidence, not a claim of hidden chain-of-thought.</p></header>
+    <div className="diagnostics-body"><div className="diagnostics-content">
+    {accessDenied ? <p className="diagnostics-note" role="status">{session && session.principal.role !== "OWNER" ? "Diagnostics requires the OWNER role. Sign out on Owner login and sign in with the owner account." : "Sign in with an OWNER account on Owner login to query diagnostics and inspect capabilities."}</p> : null}
     <div className="diagnostics-controls">
       <label>Visibility <select className="classic-select" aria-label="Diagnostic visibility" disabled={accessDenied} value={scope} onChange={(event) => setScope(event.target.value as ScopeChoice)}>{scopes.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
       <label>Stream <select className="classic-select" aria-label="Diagnostic stream" value={stream} disabled={accessDenied || selectorKind === "traceId"} onChange={(event) => setStream(event.target.value as StreamChoice)}><option value="all">All six streams</option>{streams.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>

@@ -21,7 +21,7 @@ import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type 
 import { COMMAND_CATALOG_REVISION, normalizeCommandPermissions, ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain";
 import type { AgentCapabilityStatus } from "../shared/capabilities";
 import type { OpenRouterUsageSummary } from "../shared/openrouter-usage";
-import { AdministrationSignIn } from "./server-administration";
+import { AdministratorRequired } from "./server-administration";
 import { DialogFrame } from "./dialog-frame";
 import { useScrollEdges } from "./scroll-edges";
 import { VIEWS, viewAttributes } from "./view-registry";
@@ -242,8 +242,8 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
         : <><span className={`roster-actions__status${hasDraftChanges ? " roster-actions__status--dirty" : ""}`}>{hasDraftChanges ? "Unsaved roster changes" : "No unsaved changes"}</span><button type="button" className="classic-button" disabled={saving} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" disabled={saving || loading || !hasDraftChanges || Boolean(conflict) || duplicateNames.size > 0} onClick={() => void save()}>{saving ? "Saving…" : "Save roster"}</button></>}>
           {authenticationRequired ? (
             <div className="roster-control-form">
-              <p>Join this room to manage its agents, or use your server administration account.</p>
-              <AdministrationSignIn onOpen={onOpenAdministration} />
+              <p>Join this room to manage its agents, or use a server administrator account.</p>
+              <AdministratorRequired onSignIn={onOpenAdministration} />
             </div>
           ) : (
             <div className="roster-workspace" data-mobile-pane={mobilePane}>

@@ -114,7 +114,7 @@ only when its existing reference can fast-forward. It refuses dirty files,
 linked worktrees, a different checked-out branch, and divergent history. It
 never fetches or changes the selected source revision. Keep this preparation
 separate from routine image upgrades; upgrades must retain the project's mount
-and branch. After relocation, use **Room → GitHub integration... → Repair
+and branch. After relocation, use **Server → Integrations… → Repair
 repository paths** to validate and save the new paths with owner authorization.
 
 Keep `/workspace`, `/worktrees`, and all existing volume identities stable

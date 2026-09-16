@@ -9,6 +9,7 @@ export const fixtureTime = "2026-08-30T12:00:00.000Z";
 export const fixtureTraceId = "a".repeat(32);
 export const fixtureHuman: HumanPresence = { id: "visual-human", name: "Alex", style: DEFAULT_PARTICIPANT_STYLES.you };
 export const fixtureRoom: RoomState = {
+  githubReadStatus: { state: "ready", reason: "ready", repository: "example/navigation" },
   messages: [
     { id: "welcome", speaker: "you", speakerName: "Alex", text: "Let’s review the navigation and make every screen easier to use.", timestamp: fixtureTime },
     { id: "reply", speaker: visualRoster.entries[0].agentId, text: "Start with a clear route back to the conversation, then check the smaller screen sizes.\n\nSee [[improvement:navigation-review]] for the recorded evidence.", timestamp: fixtureTime },
@@ -76,6 +77,11 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
     // route from the room-visible spend above, gated the same as every other control route.
     if (route === "/api/control/integrations/openrouter") return unauthenticatedScenarios.includes(scenario) ? unauthorized : ok({ credits: { totalCreditsUsd: 75, totalUsageUsd: 48.83, remainingUsd: 26.17, fetchedAt: fixtureTime } });
     if (route === "/api/control/me") return unauthenticatedScenarios.includes(scenario) ? unauthorized : ok({ principal: { id: "visual-owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fictional-fixture-csrf", expiresAt: "2099-01-01T20:00:00.000Z" });
+    if (route === "/api/control/rooms") return unauthenticatedScenarios.includes(scenario) ? unauthorized : ok({ items: [
+      { roomId: "00000000-0000-4000-8000-000000000001", name: "Design Workshop", archived: false, projectId: "visual-project", repository: "example/navigation", state: "ready", reason: "ready" },
+      { roomId: "00000000-0000-4000-8000-000000000002", name: "Release review", archived: false, projectId: "visual-project", repository: "example/navigation", state: "ready", reason: "ready" },
+      { roomId: "00000000-0000-4000-8000-000000000003", name: "Open conversation", archived: false, projectId: null, repository: null, state: "unavailable", reason: "general-room" },
+    ] });
     if (route === "/api/control/status") return ok({ claimed: !["github-claim-owner", "server-administration-unclaimed", "your-profile-unclaimed"].includes(scenario), bootstrapConfigured: true });
     if (route === "/api/control/integrations/github") return ok({ app: { name: "Example application", slug: "example-application", clientId: "fictional-client" }, connections: ["github-connect", "github-device-auth"].includes(scenario) ? [] : [connection] });
     if (route === "/api/control/projects/current/repository") return ok({ binding: { projectId: "visual-project", revision: 1 }, readiness: { state: "available", authority: scenario === "github-repair-repo" ? "unverified" : "verified", reason: "explicit-path-validation-required" }, repository: ["github-configured-repo", "github-repair-repo"].includes(scenario) ? { configured: true, revision: 1, state: "verified", repository: "github.com/example/navigation" } : { configured: false }, defaults: { checkoutPath: "/example/checkout", worktreeRoot: "/example/worktrees", policyRevision: 1 } });

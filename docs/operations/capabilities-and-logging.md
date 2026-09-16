@@ -96,7 +96,7 @@ To disable or roll back, uncheck the roster `/gh` grant, remove the four `GITHUB
 
 The Owner diagnostics view is a Wave 1, explicit-query surface. It uses the durable control-plane OWNER session and CSRF protection; it never asks for, stores, or sends a diagnostic bearer token. The server accepts `/api/control/diagnostics/query` only from a direct loopback transport peer and an authenticated OWNER. Forwarded, real-IP, host, and origin headers cannot turn a remote peer into a local one. Responses use `Cache-Control: no-store` and fail closed without returning diagnostic evidence.
 
-Use **Window → Server Administration** or the **Server administration** card in your profile to sign in. A denied Diagnostics request offers **Sign in to server administration** and returns here after owner authentication. Sessions expire eight hours after sign-in and end on server restart. Signing out preserves the claimed owner and room membership.
+Use **Server → Owner login…** to sign in; every locked Server Administration page shows the same form in place. A denied Diagnostics request offers **Sign in to server administration** and returns here after owner authentication. Sessions expire eight hours after sign-in and end on server restart. Signing out preserves the claimed owner and room membership.
 
 The view starts empty and queries through the same bounded diagnostics contract used by room tooling. An OWNER can inspect self-, room-, project-, and operator-visible records without impersonating another agent or joining every room; this operator override does not alter ordinary project membership, room membership, self identity, lease, capability, or record-visibility checks. Choose a visibility ceiling and one of the six authoritative streams, optionally enter a correlation ID, and explicitly query. The service retains the existing time, selector, result (max 200), scan (max 8 MiB), serialized-response (max 1 MiB), cursor, and fixed-file bounds. Pagination preserves the original query context and a bounded backend scan position, so older evidence remains reachable after a large newest record. Oversized evidence is reassembled from bounded redacted chunks.
 
@@ -237,7 +237,7 @@ not a failed subprocess.
 
 ### Owner whole-trace workflow
 
-Open **Window → Diagnostics** from a loopback browser signed in to a local OWNER
+Open **Server → Diagnostics…** from a loopback browser signed in to a local OWNER
 session. Queries remain explicit and bounded to the last hour; the page does not
 load log evidence automatically.
 

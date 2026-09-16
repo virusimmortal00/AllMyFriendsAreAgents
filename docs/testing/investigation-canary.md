@@ -47,8 +47,9 @@ screenshot review required by `docs/testing/visual-review.md`.
 
 ## Protected work controls and executor termination
 
-In the canonical room, choose **Window → Investigations**, select a participant,
-and enter a bounded objective. Who’s Here and participant status show its work
+The Investigations workspace is hidden while it is repurposed, so the browser no
+longer starts protected work; use the room-scoped API below. Work that is already
+running stays visible and stoppable from the participant status window. Who’s Here and participant status show its work
 phase and elapsed execution time. **Stop and return to chat** preserves partial
 findings and waits for confirmed worker termination before catch-up. A blocked
 return retains its package and offers retry or an explicit no-update disposition.
@@ -105,7 +106,7 @@ the real application API, isolated JSON storage, and the deterministic executor
 and model fixtures from `server/protected-work-application.test.ts`. Browser
 requests were not intercepted or mocked. The manual smoke verified:
 
-1. Join, open Window → Investigations, and start protected work.
+1. Join and start protected work (historical run: through the since-hidden Investigations workspace).
 2. Return to Chat and mention the busy participant: the objective and elapsed
    timer remain visible, and no foreground model dispatch occurs.
 3. Complete the held worker: one return report appears automatically and the

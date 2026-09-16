@@ -8,12 +8,12 @@ import { measureControlDensity, measureScrollAffordances, measureScrollRegions }
 
 async function menu(page: Page, name: string, item?: string) {
   await page.getByRole("menuitem", { name, exact: true }).click();
-  if (item) await page.getByRole("menu", { name }).getByRole(name === "Window" ? "menuitemradio" : "menuitem", { name: item, exact: name !== "Help" }).click();
+  if (item) await page.getByRole("menu", { name }).getByRole("menuitem", { name: item, exact: name !== "Help" }).click();
 }
 
 async function openScenario(page: Page, id: string) {
   if (id.startsWith("server-administration")) {
-    await menu(page, "Window", "Server Administration");
+    await menu(page, "Server", "Owner login...");
     await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
   } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");
@@ -21,7 +21,7 @@ async function openScenario(page: Page, id: string) {
     if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
   } else if (id.startsWith("github-")) {
-    await menu(page, "Window", "Integrations");
+    await menu(page, "Server", "Integrations...");
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
   } else if (id.startsWith("manage-agents-") || id === "unsaved-changes-confirmation") {
     await menu(page, "Room", "Manage agents...");
@@ -39,33 +39,35 @@ async function openScenario(page: Page, id: string) {
   } else if (id.startsWith("your-profile")) await menu(page, "You", "Profile...");
   else if (id === "help") await menu(page, "Help", "Help topics");
   else if (id === "room-menu") await menu(page, "Room");
-  else if (id === "window-menu") await menu(page, "Window");
+  else if (id === "server-menu") await menu(page, "Server");
   else if (id === "mention-suggestions") await page.getByRole("textbox", { name: "Message", exact: true }).fill("@");
   else if (["text-color-palette", "highlight-color-palette", "classic-smiley-picker"].includes(id)) await page.getByRole("button", { name: id === "text-color-palette" ? "Text color" : id === "highlight-color-palette" ? "Message highlight color" : "Classic emojis", exact: true }).click();
-  else if (["improvements-list", "improvement-detail"].includes(id)) {
-    await menu(page, "Window", "Improvements");
-    if (id === "improvement-detail") await page.getByRole("link", { name: "navigation-review", exact: true }).click();
-  } else if (["room-tasks-list", "room-task-detail"].includes(id)) {
-    await menu(page, "Window", "Tasks");
-    if (id === "room-task-detail") await page.getByRole("button", { name: /Review navigation across screen sizes/ }).click();
-  } else if (id === "durable-continuations") await menu(page, "Window", "Continuations");
-  else if (id === "background-investigations") await menu(page, "Window", "Investigations");
-  else if (id.startsWith("reviewed-contribution")) {
-    await menu(page, "Window", "Reviewed contributions");
-    if (id === "reviewed-contribution-detail") await page.getByRole("button", { name: /Consistent navigation controls/ }).click();
+  else if (id === "assign-task") {
+    await menu(page, "Room", "Assign task...");
+    await page.getByRole("textbox", { name: "Task", exact: true }).fill("Check the smaller navigation layout for clipped controls.");
+  } else if (id === "rooms-repositories") {
+    await menu(page, "Server", "Rooms & repositories...");
+    await expect(page.getByRole("table", { name: "Rooms and repositories" })).toBeVisible();
+  } else if (id === "room-usage") {
+    await menu(page, "Room", "Usage & spend...");
+    await expect(page.getByText("$0.42 spent · 5 turns")).toBeVisible();
   } else if (id.startsWith("owner-diagnostics")) {
-    await menu(page, "Window", "Diagnostics");
     if (id === "owner-diagnostics-sign-in") {
-      await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
-      await expect(page.getByRole("alert")).toBeVisible();
-    }
+      // Signed out, Diagnostics is grayed out in the Server menu and the window's page list.
+      await menu(page, "Server");
+      await expect(page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Diagnostics...", exact: true })).toBeDisabled();
+      await page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Owner login...", exact: true }).click();
+      await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
+      await expect(page.getByText(/Preview only/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
+    } else await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");
       await page.getByLabel("Trace ID").fill(fixtureTraceId);
       await page.getByRole("button", { name: "Query diagnostics", exact: true }).click();
       await page.getByRole("button", { name: /conversation\.turn\.finished/ }).click();
     }
-  } else if (id === "open-router-account") await menu(page, "Window", "Integrations");
+  } else if (id === "open-router-account") await menu(page, "Server", "Integrations...");
 }
 
 async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIOS[number], shot: string) {
@@ -230,7 +232,7 @@ async function capture(page: Page, info: TestInfo, scenario: typeof APP_SCENARIO
       const bounds = popup.getBoundingClientRect();
       if (bounds.top < toolbar.bottom && bounds.bottom > toolbar.top) issues.push("A formatting popup overlaps the formatting toolbar.");
     }
-    for (const el of document.querySelectorAll<HTMLElement>(".app-window, .loading-window, .dialog-window, .workspace-surface__titlebar, .status-bar, .dialog-titlebar, .dialog-actions")) {
+    for (const el of document.querySelectorAll<HTMLElement>(".app-window, .loading-window, .dialog-window, .status-bar, .dialog-titlebar, .dialog-actions")) {
       if (visible(el) && !contained(el)) issues.push(`${el.className} extends outside the viewport.`);
     }
     for (const el of document.querySelectorAll<HTMLElement>(".dialog-body, .workspace-view__body, .chat-panel, .dialog-window")) {
@@ -269,7 +271,7 @@ for (const scenario of APP_SCENARIOS) {
       }
       return route.continue();
     });
-    if (["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
+    if (["room-chat", "compact-room-chat", "agent-status"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
     await page.goto(`/tests/visual/index.html?scenario=${scenario.id}`);
     if (scenario.view.category !== "application") await expect(page.locator(".app-window")).toBeVisible();
     await openScenario(page, scenario.id);
@@ -308,7 +310,6 @@ for (const scenario of APP_SCENARIOS) {
     await expect(surface).toBeVisible();
     if (scenario.id === "room-summarizer-model-picker") await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
     await expect(page.getByText(/^(Loading roster…|Loading configuration…|Loading settings…|Loading contribution…|Loading tasks…|Loading improvements…)$/)).toHaveCount(0);
-    if (scenario.id === "improvement-not-found") await expect(page.getByRole("region", { name: "Bounded heartbeat controls" })).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     await capture(page, info, scenario, "top");
     if (scenario.id === "room-properties-shared-behavior") {
@@ -360,16 +361,6 @@ for (const scenario of APP_SCENARIOS) {
       await expect(surface).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Choose model…", exact: true })).toBeFocused();
     }
-    if (["durable-continuations", "background-investigations"].includes(scenario.id)) {
-      const policy = surface.getByRole("checkbox");
-      await policy.focus();
-      // Enter keyboard modality without mutating this read-only policy fixture.
-      // WebKit's Tab traversal depends on the host's full-keyboard-access setting.
-      await policy.press("ArrowRight");
-      await expect(policy).toBeFocused();
-      await expect(policy).toHaveCSS("outline-style", "dotted");
-      await expect(policy).toHaveCSS("box-shadow", /rgb\(255, 255, 255\)/);
-    }
     if (scenario.id === "github-choose-repo") {
       const repository = surface.getByRole("combobox", { name: "Repository", exact: true });
       await expect(repository).toHaveCSS("border-radius", "0px");
@@ -404,12 +395,12 @@ for (const scenario of APP_SCENARIOS) {
       await page.getByRole("button", { name: "Dismiss error" }).click();
       await expect(surface).toHaveCount(0);
     }
-    // Every workspace must retain a visible, functioning route back to Chat.
-    const exit = page.getByRole("button", { name: /^Close .* and return to Chat$/ });
-    if (await exit.count()) {
-      await expect(exit).toBeInViewport({ ratio: 1 });
-      await exit.click();
-      await expect(page.locator(".chat-panel")).toBeVisible();
+    // Every administration window keeps a visible, functioning close control.
+    const administrationClose = page.getByRole("button", { name: "Close server administration", exact: true });
+    if (await administrationClose.count()) {
+      await expect(administrationClose).toBeInViewport({ ratio: 1 });
+      await administrationClose.click();
+      await expect(page.getByRole("dialog", { name: "Server Administration" })).toHaveCount(0);
     }
     expect(errors).toEqual([]);
   });

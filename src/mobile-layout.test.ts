@@ -89,10 +89,10 @@ describe("mobile layout contract", () => {
     expect(mobileStyles).not.toMatch(/(^|\n)\s*\.message time \{[^}]*display: none;/s);
   });
 
-  it("gives non-chat workflows the full workspace", () => {
+  it("gives large tool windows the full phone viewport instead of replacing chat", () => {
     expect(mobileStyles).toMatch(/\.tasks-panel \{[^}]*width: 100%;[^}]*height: 100%;/s);
-    expect(styles).toMatch(/\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
-    expect(styles).toMatch(/@media \(max-width: 1050px\) \{[\s\S]*?\.workspace--single \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
+    expect(styles).not.toMatch(/\.workspace--single/);
+    expect(mobileStyles).toMatch(/\.agent-settings-window\.administration-dialog \{[^}]*width: 100%;[^}]*height: 100%;/s);
     expect(mobileStyles).toMatch(/\.task-columns form \{[^}]*grid-template-columns: 1fr;/s);
   });
 

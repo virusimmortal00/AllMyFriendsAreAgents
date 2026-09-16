@@ -1,6 +1,6 @@
 import { useProtectedWork } from "./protected-work";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
-import { ApiRequestError, checkReady, clearControlSessionState, closePoll, joinRoom, loadImprovement, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, runAction, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { ApiRequestError, checkReady, clearControlSessionState, closePoll, joinRoom, loadPolls, loadRoom, loadWorkshop, requestProviderRecovery, roomEventsPath, sendMessage, updateMyProfile, updateMyStyle, updateSettings, voteOnPoll } from "./api";
 import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, WorkshopDialog, type RoomSettingsInput } from "./components";
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
@@ -13,15 +13,11 @@ import { DEFAULT_PARTICIPANT_STYLES, sanitizeChatStyle, type ChatStyle } from ".
 import { agentScreenName, type ActiveAgentId } from "../shared/participants";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol";
 import type { AgentId, HumanPresence, PublicPollProjection, RoomState, WorkshopResponse } from "./types";
-import { Improvements, improvementsRoute as readImprovementsRoute, resolveImprovementsAlias, type ImprovementsRoute } from "./improvements";
 import { roomMentionCandidates } from "../shared/mentions";
 import { reconcileRoomEvent } from "./room-reconciliation";
 import type { RoomProtocolPosition } from "../shared/protocol";
-import { Tasks } from "./tasks";
-import { Continuations } from "./continuations";
-import { Investigations } from "./investigations";
-import { Contributions } from "./contributions";
 import { RosterManagerDialog } from "./roster-manager";
+import { AssignTaskDialog, NEXT_AVAILABLE_AGENT } from "./assign-task-dialog";
 import { emptyRoomAgentRoster, enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster";
 import { ClassicMenuBar, type ClassicMenuDefinition } from "./classic-menu";
 import { loadAgentListSort, saveAgentListSort, type AgentListSort } from "./agent-list-sort";
@@ -29,15 +25,13 @@ import { HumanProfileDialog } from "./human-avatar";
 import { validHumanAvatarDataUrl } from "../shared/human-avatar";
 import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomPropertiesDialog } from "./room-configuration-dialog";
-import { refreshControlSession } from "./control-session";
-import { ServerAdministration, type AdministrationDestination } from "./server-administration";
-import { Diagnostics } from "./diagnostics";
-import { IntegrationsPage } from "./integrations";
-import { defineViewMenu, defineWindowMenu, presentationCommand, workspaceCommand } from "./application-menu-policy";
-import { WorkspaceSurface, type WorkspaceName } from "./workspace-surface";
+import { refreshControlSession, useControlSession } from "./control-session";
+import type { AdministrationDestination } from "./server-administration";
+import { ADMINISTRATION_PAGES, AdministrationWindow, type AdministrationPage } from "./administration-window";
+import { RoomUsageDialog } from "./room-usage-dialog";
+import { GitHubMark } from "./github-mark";
+import { defineViewMenu, presentationCommand } from "./application-menu-policy";
 import { VIEWS, viewAttributes } from "./view-registry";
-
-type LocalWorkspaceName = Exclude<WorkspaceName, "Improvements">;
 
 const EMPTY_ROOM: RoomState = {
   messages: [],
@@ -53,16 +47,8 @@ const EMPTY_ROOM: RoomState = {
 const MINIMUM_LOADING_MS = 450;
 const HUMAN_PROFILE_KEY = "all-my-friends-are-agents-human";
 const ROOM_EVENT_STALE_MS = 9_000;
-type RoomAction = "ask" | "review" | "roundtable" | "continue";
-type ActionFailure = { action: RoomAction; target: AgentId | "all"; attempt: number; message: string; retrySafe: boolean };
-
-function roomActionLabel(action: RoomAction, target: AgentId | "all") {
-  const subject = target === "all" ? "all agents" : agentScreenName(target);
-  if (action === "continue") return "Continue discussion";
-  if (action === "roundtable") return "Start roundtable";
-  if (action === "review") return `Review with ${subject}`;
-  return `Ask ${subject}`;
-}
+// Deprecated workspace routes are no longer navigable; old links land in Chat.
+const RETIRED_WORKSPACE_PATH = /^\/improvements(?:\/|$)/;
 
 function loadHumanProfile(): HumanPresence | null {
   if (typeof window === "undefined") return null;
@@ -158,9 +144,15 @@ export default function App() {
   const [workshopMissing, setWorkshopMissing] = useState(false);
   const [workshopError, setWorkshopError] = useState("");
   const [workshopRequestRevision, setWorkshopRequestRevision] = useState(0);
-  const [improvementsView, setImprovementsView] = useState<ImprovementsRoute | null>(() => typeof window === "undefined" ? null : readImprovementsRoute());
+  const [assignTaskAgentId, setAssignTaskAgentId] = useState<ActiveAgentId | typeof NEXT_AVAILABLE_AGENT | null>(null);
+  const assignTaskTrigger = useRef<HTMLElement | null>(null);
   const [administrationDestination, setAdministrationDestination] = useState<AdministrationDestination | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<LocalWorkspaceName | null>(null);
+  const [administrationPage, setAdministrationPage] = useState<AdministrationPage>("Login");
+  const [usageOpen, setUsageOpen] = useState(false);
+  const usageTrigger = useRef<HTMLElement | null>(null);
+  const [administrationOpen, setAdministrationOpen] = useState(false);
+  const { session: administratorSession } = useControlSession();
+  const administrationTrigger = useRef<HTMLElement | null>(null);
   const [clientError, setClientError] = useState("");
   const [dismissedRoomError, setDismissedRoomError] = useState<string | null>(null);
   useEffect(() => setDismissedRoomError(null), [room.error]);
@@ -178,8 +170,6 @@ export default function App() {
   const [joinError, setJoinError] = useState("");
   const [joinPending, setJoinPending] = useState(false);
   const [joinRequestRevision, setJoinRequestRevision] = useState(0);
-  const [actionPending, setActionPending] = useState<{ action: RoomAction; target: AgentId | "all" } | null>(null);
-  const [actionFailure, setActionFailure] = useState<ActionFailure | null>(null);
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const [showTimestamps, setShowTimestamps] = useState(loadTranscriptTimestamps);
   const [showMessagePrices, setShowMessagePrices] = useState(loadTranscriptMessagePrices);
@@ -194,9 +184,6 @@ export default function App() {
   const restoreDistance = useRef<number | undefined>(undefined);
   const styleSaveRevision = useRef(0);
   const joinRequestId = useRef(0);
-  const actionRequestId = useRef(0);
-  const actionInFlight = useRef(false);
-  const focusRouteHeading = useRef(Boolean(improvementsView));
 
   useEffect(() => {
     if (!savedHuman) return;
@@ -429,32 +416,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const updateRoute = (moveFocus = true) => { focusRouteHeading.current = moveFocus; setImprovementsView(readImprovementsRoute()); };
-    const resolveAlias = () => {
-      const alias = window.location.hash.slice(1);
-      if (!alias || readImprovementsRoute()) return;
-      // Hash aliases are accepted only after the API verifies the exact canonical ID.
-      void resolveImprovementsAlias(alias, loadImprovement).then((resolved) => {
-        if (!resolved) return;
-        if (resolved.view === "detail") {
-          window.history.replaceState({}, "", `/improvements/${encodeURIComponent(alias)}`);
-          updateRoute(true);
-        } else { focusRouteHeading.current = true; setImprovementsView(resolved); }
-      });
-    };
-    const onClick = (event: MouseEvent) => {
-      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="/improvements"]');
-      if (!anchor || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || anchor.target || anchor.hasAttribute("download") || anchor.origin !== window.location.origin) return;
-      event.preventDefault();
-      window.history.pushState({}, "", anchor.href);
-      updateRoute(event.detail === 0);
-    };
-    resolveAlias();
-    const onPopState = () => updateRoute(true);
-    window.addEventListener("popstate", onPopState);
-    window.addEventListener("hashchange", resolveAlias);
-    document.addEventListener("click", onClick);
-    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener("hashchange", resolveAlias); document.removeEventListener("click", onClick); };
+    if (RETIRED_WORKSPACE_PATH.test(window.location.pathname)) window.history.replaceState({}, "", "/");
   }, []);
 
   useEffect(() => {
@@ -667,28 +629,18 @@ export default function App() {
     setPendingSend(null);
   }
 
-  function invoke(action: RoomAction, agent: AgentId | "all", attempt = 0) {
-    if (!human || !connected || actionInFlight.current) return;
-    const requestId = actionRequestId.current + 1;
-    actionRequestId.current = requestId;
-    actionInFlight.current = true;
-    setActionPending({ action, target: agent });
-    setActionFailure(null);
-    setClientError("");
-    void runAction(action, agent).catch((error) => {
-      if (actionRequestId.current !== requestId) return;
-      setActionFailure({
-        action,
-        target: agent,
-        attempt,
-        message: error instanceof Error ? error.message : String(error),
-        retrySafe: !(error instanceof ApiRequestError && error.outcomeUnknown),
-      });
-    }).finally(() => {
-      if (actionRequestId.current !== requestId) return;
-      actionInFlight.current = false;
-      setActionPending(null);
-    });
+  // Assign task sends the same private `/task` command a member could type; the
+  // server remains authoritative for eligibility, routing, and the public outcome.
+  async function assignTask(command: string): Promise<string | undefined> {
+    if (!human || !connected) return "Reconnect to the room before assigning a task.";
+    try {
+      const acknowledgement = await sendMessage(command, `message_${crypto.randomUUID()}`, []);
+      if ("command" in acknowledgement && acknowledgement.result.kind === "private-error") return acknowledgement.result.message || "The task was rejected.";
+      return undefined;
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.outcomeUnknown) return "The room may already have received this task. Check the transcript before sending it again.";
+      return error instanceof Error ? error.message : String(error);
+    }
   }
 
   function joinWithName(name: string) {
@@ -710,30 +662,6 @@ export default function App() {
     saveHumanProfile(null);
   }
 
-  function navigateImprovements(next: ImprovementsRoute | null, options: { focusHeading?: boolean } = {}) {
-    setWorkshopId(null);
-    focusRouteHeading.current = options.focusHeading ?? Boolean(!next || next.view === "missing" || next.view === "detail");
-    if (!next) {
-      if (!improvementsView) return;
-      window.history.pushState({}, "", "/");
-      setImprovementsView(null);
-      return;
-    }
-    const path = next.view === "list" ? `/improvements${next.scope === "all" ? "?scope=all" : ""}` : `/improvements/${encodeURIComponent(next.id)}`;
-    window.history.pushState({}, "", path);
-    setImprovementsView(next);
-  }
-
-  function showChat() {
-    setWorkspaceView(null);
-    navigateImprovements(null);
-  }
-
-  function showWorkspace(name: LocalWorkspaceName) {
-    setWorkspaceView(name);
-    navigateImprovements(null);
-  }
-
   const statusText = working
     ? activeTypingAgents.length === 1
       ? `${agentScreenName(activeTypingAgents[0])} is typing...`
@@ -741,31 +669,29 @@ export default function App() {
     : room.status === "error"
       ? "Room needs attention"
       : "Room is idle";
-  function openAdministration(destination: AdministrationDestination | null = null) {
+  function openAdministration(destination: AdministrationDestination | null = null, page: AdministrationPage = "Login", trigger: HTMLElement | null = null) {
+    administrationTrigger.current = trigger;
     setAdministrationDestination(destination);
+    setAdministrationPage(page);
     setProfileOpen(false);
     setRosterOpen(false);
-    showWorkspace("Server Administration");
+    setWorkshopId(null);
+    setAdministrationOpen(true);
   }
 
-  function openIntegrations() {
+  function openUsage(trigger: HTMLElement | null = null) {
+    usageTrigger.current = trigger;
     setRosterOpen(false);
-    if (workspaceView !== "Integrations") showWorkspace("Integrations");
+    setUsageOpen(true);
   }
 
   function continueFromAdministration(destination: AdministrationDestination) {
     setAdministrationDestination(null);
-    if (destination === "Diagnostics") showWorkspace("Diagnostics");
-    else if (destination === "Integrations") showWorkspace("Integrations");
-    else {
-      showChat();
-      if (destination === "Manage room agents") setRosterOpen(true);
-      else setRoomPropertiesOpen(true);
-    }
+    setAdministrationOpen(false);
+    if (destination === "Manage room agents") setRosterOpen(true);
+    else setRoomPropertiesOpen(true);
   }
 
-  const activeWorkspaceName: WorkspaceName | null = improvementsView ? "Improvements" : workspaceView;
-  const chatActive = activeWorkspaceName === null;
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const agentLabels = useMemo<Readonly<Record<string, string>>>(() => Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.conversationalName || entry.agentId])), [roster.entries]);
@@ -789,6 +715,11 @@ export default function App() {
     roomPropertiesTrigger.current = trigger;
     setRoomPropertiesOpen(true);
   }, []);
+  const openAssignTask = useCallback((trigger: HTMLElement, agentId: ActiveAgentId | typeof NEXT_AVAILABLE_AGENT = NEXT_AVAILABLE_AGENT) => {
+    assignTaskTrigger.current = trigger;
+    setAssignTaskAgentId(agentId);
+  }, []);
+  const assignableAgents = useMemo(() => roster.entries.filter((entry) => entry.enabled).map((entry) => ({ agentId: entry.agentId, alias: entry.conversationalName || agentScreenName(entry.agentId) })), [roster.entries]);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
     setWorkshopRequestRevision((current) => current + 1);
@@ -798,8 +729,8 @@ export default function App() {
   // Application menu contract:
   // - You changes the current member's profile.
   // - Room changes this room or invokes room-scoped actions.
-  // - View changes the presentation of the current workspace; it never navigates.
-  // - Window switches between whole-workspace destinations.
+  // - Server opens the Server Administration window, optionally at a specific page.
+  // - View changes the presentation of the chat window; it never opens windows.
   // - Help contains documentation and support entry points.
   const menus: ClassicMenuDefinition[] = [
     {
@@ -819,10 +750,17 @@ export default function App() {
         { label: "Room properties...", accessKey: "P", onSelect: openRoomProperties },
         { label: "Manage agents...", accessKey: "M", onSelect: openRoster },
         { type: "separator" },
-        { label: "Continue discussion", accessKey: "d", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("continue", "all"); } },
-        { label: "Start roundtable", accessKey: "S", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("roundtable", "all"); } },
-        { label: "Review with all agents", accessKey: "R", disabled: true, onSelect: () => { setWorkspaceView(null); invoke("review", "all"); } },
+        { label: "Assign task...", accessKey: "A", disabled: !connected, onSelect: (trigger) => openAssignTask(trigger) },
+        { label: "Usage & spend...", accessKey: "U", onSelect: (trigger) => openUsage(trigger) },
       ],
+    },
+    {
+      id: "server",
+      label: "Server",
+      accessKey: "S",
+      view: VIEWS.serverMenu,
+      // One command per window page, named exactly like the page it opens.
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
@@ -832,17 +770,6 @@ export default function App() {
         presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
         presentationCommand({ label: "Actual size", accessKey: "A", shortcut: "Ctrl+0", disabled: transcriptMagnification === 100, onSelect: resetTranscriptMagnification }),
     ]),
-    { ...defineWindowMenu([
-        workspaceCommand({ label: "Chat", accessKey: "C", checked: chatActive, onSelect: () => { if (!chatActive) showChat(); } }),
-        workspaceCommand({ label: "Improvements", accessKey: "I", checked: Boolean(improvementsView), onSelect: () => { if (improvementsView) return; setWorkspaceView(null); navigateImprovements({ view: "list", scope: "active" }); } }),
-        workspaceCommand({ label: "Tasks", accessKey: "T", checked: workspaceView === "Tasks", onSelect: () => { if (workspaceView !== "Tasks") showWorkspace("Tasks"); } }),
-        workspaceCommand({ label: "Continuations", accessKey: "o", checked: workspaceView === "Continuations", onSelect: () => { if (workspaceView !== "Continuations") showWorkspace("Continuations"); } }),
-        workspaceCommand({ label: "Investigations", accessKey: "n", checked: workspaceView === "Investigations", onSelect: () => { if (workspaceView !== "Investigations") showWorkspace("Investigations"); } }),
-        workspaceCommand({ label: "Reviewed contributions", accessKey: "R", checked: workspaceView === "Reviewed contributions", onSelect: () => { if (workspaceView !== "Reviewed contributions") showWorkspace("Reviewed contributions"); } }),
-        workspaceCommand({ label: "Server Administration", accessKey: "S", checked: workspaceView === "Server Administration", onSelect: () => openAdministration() }),
-        workspaceCommand({ label: "Diagnostics", accessKey: "D", checked: workspaceView === "Diagnostics", onSelect: () => { if (workspaceView !== "Diagnostics") showWorkspace("Diagnostics"); } }),
-        workspaceCommand({ label: "Integrations", accessKey: "g", checked: workspaceView === "Integrations", onSelect: () => openIntegrations() }),
-    ]), view: VIEWS.windowMenu },
     {
       id: "help",
       label: "Help",
@@ -854,31 +781,8 @@ export default function App() {
   ];
 
   useEffect(() => {
-    const routeTitle = !improvementsView ? room.settings.roomName : improvementsView.view === "detail" ? improvementsView.id : improvementsView.view === "missing" ? "Improvement not found" : `Improvements — ${improvementsView.scope === "all" ? "All" : "Active"}`;
-    document.title = `AllMyFriendsAreAgents — ${routeTitle}`;
-  }, [room.settings.roomName, improvementsView]);
-
-  useEffect(() => {
-    if (!focusRouteHeading.current) return;
-    const heading = document.querySelector<HTMLElement>("[data-route-heading]");
-    if (heading) heading.focus();
-    focusRouteHeading.current = false;
-  }, [improvementsView]);
-
-  let workspaceContent: ReactNode = null;
-  if (improvementsView) workspaceContent = <Improvements route={improvementsView} onNavigate={navigateImprovements} />;
-  else if (workspaceView) {
-    switch (workspaceView) {
-      case "Tasks": workspaceContent = <Tasks refreshKey={connectionEpoch} />; break;
-      case "Continuations": workspaceContent = <Continuations refreshKey={connectionEpoch} />; break;
-      case "Investigations": workspaceContent = <Investigations refreshKey={connectionEpoch} protectedWork={protectedWork} agents={roster.entries.filter((entry) => entry.enabled)} />; break;
-      case "Reviewed contributions": workspaceContent = <Contributions refreshKey={connectionEpoch} />; break;
-      case "Diagnostics": workspaceContent = <Diagnostics onOpenAdministration={() => openAdministration("Diagnostics")} />; break;
-      case "Integrations": workspaceContent = <IntegrationsPage agentLabels={agentLabels} refreshKey={connectionEpoch} onOpenAdministration={() => openAdministration("Integrations")} />; break;
-      case "Server Administration": workspaceContent = <ServerAdministration destination={administrationDestination} onContinue={continueFromAdministration} />; break;
-      default: workspaceView satisfies never;
-    }
-  }
+    document.title = `AllMyFriendsAreAgents — ${room.settings.roomName}`;
+  }, [room.settings.roomName]);
 
   if (!savedHuman) return <NameEntry error={joinError} onJoin={joinWithName} />;
   if (!human) return <LoadingScreen error={joinError || "Joining the room"} joining={Boolean(joinError)} retrying={joinPending} onRetry={retryJoin} onCancel={cancelJoin} />;
@@ -894,16 +798,13 @@ export default function App() {
         <ClassicMenuBar menus={menus} onHelp={() => { setRoomPropertiesOpen(false); setHelpOpen(true); }} />
 
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true" {...viewAttributes(VIEWS.connectionNotices)}>{connectionNotice}</div> : null}
-        <div className={`workspace${chatActive ? "" : " workspace--single"}`} data-primary-workspace tabIndex={-1}>
-          {activeWorkspaceName ? <WorkspaceSurface name={activeWorkspaceName} onClose={showChat}>
-            {workspaceContent}
-          </WorkspaceSurface> : <>
+        <div className="workspace" data-primary-workspace tabIndex={-1}>
           <section className="chat-panel beveled-inset" {...viewAttributes(VIEWS.roomChat)} data-responsive-view-id={VIEWS.compactRoomChat.id} data-responsive-view-name={VIEWS.compactRoomChat.name} data-responsive-view-state={VIEWS.compactRoomChat.state}>
             <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} showMessagePrices={showMessagePrices} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} openCodeRuntime={room.openCodeRuntime} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} />
+            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} openCodeRuntime={room.openCodeRuntime} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} onAssignTask={connected ? openAssignTask : undefined} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -924,11 +825,11 @@ export default function App() {
               onSubmit={submitMessage}
             />
           </div>
-          </>}
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={workspaceView !== "Server Administration"} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
-        {profileOpen ? <HumanProfileDialog onOpenAdministration={() => openAdministration()} human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} repository={room.githubReadStatus?.repository} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
+        {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
           <AgentSettingsDialog
@@ -949,7 +850,7 @@ export default function App() {
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
-          onOpenOpenRouterAccount={openIntegrations}
+          onOpenOpenRouterAccount={() => openUsage(rosterTrigger)}
           initialRoster={roster}
           initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}
@@ -960,17 +861,16 @@ export default function App() {
         /> : null}
         {workshopId ? <WorkshopDialog data={workshop} loading={workshopLoading} missing={workshopMissing} error={workshopError} connected={connected} returnFocusTo={workshopTrigger.current} onRetry={() => setWorkshopRequestRevision((current) => current + 1)} onClose={() => setWorkshopId((current) => nextWorkshopId(current, { type: "close" }))} /> : null}
         {helpOpen ? <HelpDialog onClose={() => setHelpOpen(false)} /> : null}
+        {usageOpen ? <RoomUsageDialog agentLabels={agentLabels} refreshKey={connectionEpoch} returnFocusTo={usageTrigger.current} onClose={() => setUsageOpen(false)} /> : null}
+        {assignTaskAgentId !== null ? <AssignTaskDialog agents={assignableAgents} initialAgentId={assignTaskAgentId} disabled={!connected} returnFocusTo={assignTaskTrigger.current} onSubmit={assignTask} onClose={() => setAssignTaskAgentId(null)} /> : null}
 
-        {actionPending ? <div className="error-strip error-strip--pending" role="status" {...viewAttributes(VIEWS.connectionNotices)}><span>{roomActionLabel(actionPending.action, actionPending.target)} is being requested. Other room actions are unavailable until it finishes.</span></div> : null}
-        {actionFailure ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}>
-          <span><strong>{roomActionLabel(actionFailure.action, actionFailure.target)} failed.</strong> {actionFailure.message} {!connected ? "Retry is unavailable while reconnecting." : !actionFailure.retrySafe ? "The result may be unknown, so retrying could duplicate the action." : actionFailure.attempt > 0 ? "The retry failed; close this error or choose a new action." : ""}</span>
-          {actionFailure.retrySafe && actionFailure.attempt === 0 ? <button type="button" className="error-strip__retry" disabled={!connected || Boolean(actionPending)} onClick={() => invoke(actionFailure.action, actionFailure.target, 1)}>Retry once</button> : null}
-          <button type="button" aria-label="Dismiss action error" disabled={Boolean(actionPending)} onClick={() => setActionFailure(null)}>×</button>
-        </div> : clientError || room.error && room.error !== dismissedRoomError ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span><button type="button" aria-label="Dismiss error" onClick={() => clientError ? setClientError("") : setDismissedRoomError(room.error || null)}>×</button></div> : null}
+        {clientError || room.error && room.error !== dismissedRoomError ? <div className="error-strip" role="alert" {...viewAttributes(VIEWS.connectionNotices)}><span>{clientError || room.error}</span><button type="button" aria-label="Dismiss error" onClick={() => clientError ? setClientError("") : setDismissedRoomError(room.error || null)}>×</button></div> : null}
         <footer className="status-bar">
           <div className="status-cell"><span className="people-icon" aria-hidden="true">♟♟♟♟♟</span> {peopleHere} here</div>
           <div className="status-cell">{statusText}</div>
-          {room.githubReadStatus ? <div className="status-cell" aria-label="Room GitHub read status">GitHub read: {room.githubReadStatus.state === "ready" ? "Ready for this room" : room.githubReadStatus.reason.replaceAll("-", " ")}</div> : null}
+          {room.githubReadStatus ? <div className="status-cell status-cell--repository" aria-label="Room repository" title={room.githubReadStatus.state === "ready" ? "GitHub reads are ready for this room" : `GitHub reads unavailable: ${room.githubReadStatus.reason.replaceAll("-", " ")}`}><GitHubMark size={12} />{room.githubReadStatus.repository
+            ? <>{room.githubReadStatus.repository}{room.githubReadStatus.state === "ready" ? "" : ` (${room.githubReadStatus.reason.replace(/^connection-/, "").replaceAll("-", " ")})`}</>
+            : "No repository connected"}</div> : null}
           <div className="status-cell status-cell--connection"><span className="connection-lights"><i /><i /><i /></span> {connected ? "Connected" : "Reconnecting..."}</div>
         </footer>
       </section>

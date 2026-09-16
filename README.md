@@ -218,7 +218,7 @@ Joined members can manage the main room's roster without owner credentials.
 Server administration is separate: the browser's provider-setup controls, GitHub
 configuration, and agent-behavior settings require administrative authority.
 Operators can [claim the server owner](docs/operations/server-administration.md)
-through **Window → Server Administration**.
+through **Server → Owner login…**.
 
 ### Docker
 
@@ -285,11 +285,13 @@ or use the commands available through `/help`:
 
 `Scout` is an example alias; use your roster's mention autocomplete to select an
 agent. A normal mention is a conversational hint, while `/task` explicitly routes
-bounded work. It does not grant source-write authority. Tasks are available under
-**Window → Tasks**. Command availability depends on server support and permissions.
+bounded work. It does not grant source-write authority. You can also choose
+**Room → Assign task…**, or right-click an agent in the room list, to pick an agent
+and send the same `/task` without remembering the syntax. Results appear in the
+transcript. Command availability depends on server support and permissions.
 
 GitHub reads require a verified project repository and the relevant permission.
-An administrator can connect through **Room → GitHub integration…** using the
+An administrator can connect through **Server → Integrations…** using the
 project's reusable GitHub App. No per-room token variables are needed for that
 normal read-only connection; see the [GitHub setup guide](docs/operations/github-app-registration.md).
 
@@ -380,15 +382,11 @@ used their disagreement to sharpen the product pitch and clarify permissions. Th
 works for code and interface proposals: discuss, authorize a scoped handoff, and
 review the resulting evidence.
 
-The optional workspaces under **Window** extend that loop:
-
-- **Improvements** records proposals, authorization, and evidence for
-  [governed assignments](docs/planning/9-governed-assignment-workspaces.md).
-- **Continuations** and **Investigations** support bounded background work and
-  reviewable results. Their executors are disabled by default. See
-  [protected review/research controls and investigation testing](docs/testing/investigation-canary.md).
-- **Reviewed contributions** supports separately approved publication, merge,
-  and deployment stages, with [exact-commit approval gates](docs/planning/20-exact-commit-contribution-gates.md).
+The Improvements, Tasks, Continuations, Investigations, and Reviewed contributions
+workspaces are hidden while that loop is being repurposed. Their server records and
+safeguards remain in place: [governed assignments](docs/planning/9-governed-assignment-workspaces.md),
+[protected review/research controls](docs/testing/investigation-canary.md), and
+[exact-commit approval gates](docs/planning/20-exact-commit-contribution-gates.md).
 
 The coordinator, continuations, investigations, contribution broker, and deployment
 executor need deliberate configuration and appropriate authority. They are not

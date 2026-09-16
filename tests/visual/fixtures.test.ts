@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeRoomAgentRoster } from "../../shared/roster";
-import { VIEWS } from "../../src/view-registry";
+import { HIDDEN_VIEW_KEYS, VIEWS } from "../../src/view-registry";
 import { visualRoster } from "./fixtures";
 import { APP_SCENARIOS, expectedVisualKeys, VISUAL_SCENARIOS } from "./matrix";
 import { appFixtureResponse, fixtureRoom } from "./app-fixtures";
@@ -10,10 +10,12 @@ describe("visual fixture fidelity", () => {
     expect(normalizeRoomAgentRoster(visualRoster).entries.map((entry) => entry.agentId)).toEqual(visualRoster.entries.map((entry) => entry.agentId));
     expect(fixtureRoom.roster?.entries).toHaveLength(9);
   });
-  it("explicitly maps every registered view and additional settings and administration states", () => {
-    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...Object.values(VIEWS), VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.ownerDiagnosticsQuery, VIEWS.manageAgentsRoster, VIEWS.roomPropertiesAgentBehavior].map((view) => view.id).sort());
+  it("explicitly maps every reachable registered view and additional settings and administration states", () => {
+    const hidden = new Set<string>(HIDDEN_VIEW_KEYS);
+    const reachable = Object.entries(VIEWS).filter(([key]) => !hidden.has(key)).map(([, view]) => view);
+    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...reachable,VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.serverAdministration, VIEWS.manageAgentsRoster, VIEWS.roomPropertiesAgentBehavior].map((view) => view.id).sort());
     expect(new Set(APP_SCENARIOS.map((scenario) => scenario.id)).size).toBe(APP_SCENARIOS.length);
-    expect(expectedVisualKeys()).toHaveLength(918);
+    expect(expectedVisualKeys()).toHaveLength(762);
     expect(expectedVisualKeys().filter((key) => key.includes("--compact-room-chat--"))).toHaveLength(6);
   });
   it("rejects unmocked external-state mutations", () => {

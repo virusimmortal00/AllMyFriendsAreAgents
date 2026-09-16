@@ -88,6 +88,6 @@ export interface PublicRoomState extends Omit<RoomState, "sessions" | "settings"
   providerHealth?: Record<string, ProviderHealth>;
   server?: ServerIdentity;
   preflightEvidence?: PreflightEvidence;
-  githubReadStatus?: { state: "ready" | "unavailable"; reason: string };
+  githubReadStatus?: { state: "ready" | "unavailable"; reason: string; repository?: string };
   openCodeRuntime?: OpenCodeRuntimeStatus;
 }

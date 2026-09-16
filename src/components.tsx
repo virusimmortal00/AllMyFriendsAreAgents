@@ -1,3 +1,4 @@
+import { GitHubMark, RepositoryName } from "./github-mark";
 import type { ProtectedWorkView } from "../shared/protected-work";
 import { ProtectedWorkControls, ProtectedWorkStatus } from "./protected-work";
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type RefObject } from "react";
@@ -102,6 +103,7 @@ export function RoomRoster({
   onManageRoster,
   onConfigureAgent,
   onConfigureHumanAvatar,
+  onAssignTask,
 }: {
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   openCodeRuntime?: OpenCodeRuntimeStatus;
@@ -118,6 +120,8 @@ export function RoomRoster({
   onManageRoster?: (trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => void;
   onConfigureAgent?: (agent: ActiveAgentId) => void;
   onConfigureHumanAvatar?: (trigger: HTMLButtonElement) => void;
+  /** Right-click (or the keyboard context-menu key) on an agent opens Assign task for that agent. */
+  onAssignTask?: (trigger: HTMLElement, agent: ActiveAgentId) => void;
 }) {
   const presenceList = useRef<HTMLDivElement>(null);
   useScrollEdges(presenceList);
@@ -161,9 +165,16 @@ export function RoomRoster({
               role={configurable ? "button" : "listitem"}
               tabIndex={configurable ? 0 : undefined}
               aria-label={configurable ? `Configure ${availableLabel}` : undefined}
+              aria-keyshortcuts={onAssignTask ? "ContextMenu Shift+F10" : undefined}
+              title={onAssignTask ? "Double-click to configure · right-click to assign a task" : undefined}
               onDoubleClick={configurable ? (event) => {
                 event.currentTarget.focus({ preventScroll: true });
                 onManageRoster?.(event.currentTarget, agent);
+              } : undefined}
+              onContextMenu={onAssignTask ? (event) => {
+                event.preventDefault();
+                event.currentTarget.focus({ preventScroll: true });
+                onAssignTask(event.currentTarget, agent);
               } : undefined}
               onKeyDown={configurable ? (event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
@@ -595,7 +606,9 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         <p>Menus close when you choose an action, click elsewhere, or press Escape. Panels and dialogs also have a visible close button.</p>
         <h3>Reading the room</h3>
         <p>Use the View menu to show or hide timestamps and change the transcript size on this device.</p>
-        <p>Use the Window menu to switch between Chat and full-workspace destinations. Every full-workspace destination has a visible close button that returns to Chat.</p>
+        <p>Use the Server menu to open Server Administration for sign-in, integrations, rooms and repositories, and diagnostics. It opens in its own window; close it to return to the chat.</p>
+        <h3>Assigning work</h3>
+        <p>Choose Room → Assign task…, or right-click an agent in the room list, to send an agent bounded work. You can also type /task @agent followed by the work. Results appear in the transcript.</p>
         <h3>Project work</h3>
         <p>Use the gear beside an agent to manage project permissions. File changes require an authorized assignment worktree; reviews always remain read-only.</p>
   </DialogFrame>;
@@ -953,6 +966,8 @@ interface RoomControlsProps extends RoomSettingsInput {
   onSaved?: () => void;
   showTitle?: boolean;
   propertySheet?: boolean;
+  /** `owner/name` this room reads from, shown read-only; undefined when no repository is attached. */
+  repository?: string;
 }
 
 export function RoomControls({
@@ -966,6 +981,7 @@ export function RoomControls({
   onSaved,
   showTitle = true,
   propertySheet = false,
+  repository,
 }: RoomControlsProps) {
   const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
   const [saving, setSaving] = useState(false);
@@ -1065,6 +1081,9 @@ export function RoomControls({
         ))}
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
+      {propertySheet ? <><hr /><span className="field-label" id="room-repository-label">Repository</span>
+      <p className="classic-summary room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
+      <p className="field-help">Visible to everyone in the room. A server administrator connects it from the Server menu, under Integrations.</p></> : null}
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
       {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
       {saving ? <p className="room-settings-status" role="status">Saving room properties…</p> : saved ? <p className="room-settings-status" role="status">Room properties saved.</p> : null}

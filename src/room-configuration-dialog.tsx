@@ -8,13 +8,14 @@ import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type Pr
 import { DialogFrame } from "./dialog-frame";
 import { RoomControls, type RoomSettingsInput } from "./components";
 import { VIEWS, viewAttributes } from "./view-registry";
-import { AdministrationSignIn } from "./server-administration";
+import { AdministratorRequired } from "./server-administration";
 
 type PropertiesPage = "general" | "agent-behavior";
 
 interface RoomPropertiesDialogProps extends RoomSettingsInput {
   active?: boolean;
   onOpenAdministration: () => void;
+  repository?: string;
   disabled: boolean;
   returnFocusTo: HTMLElement | null;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;
@@ -116,7 +117,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
     } catch (failure) {
       const requiresSignIn = failure instanceof ApiRequestError && [401, 403].includes(failure.status || 0);
       setSignInRequired(requiresSignIn);
-      setError(requiresSignIn ? "Sign in to server administration, then apply your changes again. Your draft will stay open." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
+      setError(requiresSignIn ? "Saving agent behavior needs a server administrator. Sign in, then apply your changes again; your draft stays open." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
     } finally { setSaving(false); }
   }
 
@@ -128,7 +129,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   return <section className="room-configuration-panel" role="tabpanel" id="room-properties-agent-panel" aria-labelledby="room-properties-agent-tab" hidden={!active}>
     <div className="room-properties-page-content">
       {loading ? <p role="status">Loading agent behavior…</p> : null}
-      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{signInRequired ? <AdministrationSignIn onOpen={onSignIn} /> : null}{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
+      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{signInRequired ? <AdministratorRequired onSignIn={onSignIn} /> : null}{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
       {!loading && saved ? <>
         <section className="room-configuration-card classic-property-section" aria-labelledby="base-prompt-heading">
           <h3 id="base-prompt-heading">Base Prompt</h3>
