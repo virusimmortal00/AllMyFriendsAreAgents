@@ -37,7 +37,7 @@ export const VIEWS = {
   reviewedContributionDetail: defineView({ id: "WORK-09", name: "Reviewed Contribution Detail", state: "Review gates and contribution detail", category: "workspace" }),
   ownerDiagnosticsQuery: defineView({ id: "WORK-10", name: "Owner Diagnostics Query", state: "Bounded diagnostic search controls", category: "workspace" }),
   ownerDiagnosticsResults: defineView({ id: "WORK-11", name: "Owner Diagnostics Results", state: "Result list and selected diagnostic detail", category: "workspace" }),
-  serverAdministration: defineView({ id: "WORK-12", name: "Server Administration", state: "Top-level window over chat with page list; Owner login page with administrator pages disabled until sign-in", category: "workspace" }),
+  serverAdministration: defineView({ id: "WORK-12", name: "Server Administration", state: "Top-level window over chat with page list; Owner login page; administrator pages preview with disabled controls until sign-in", category: "workspace" }),
   openRouterAccount: defineView({ id: "WORK-13", name: "OpenRouter Credits", state: "Administrator-gated remaining account balance on the Integrations page", category: "workspace" }),
   roomsRepositories: defineView({ id: "WORK-14", name: "Rooms and Repositories", state: "Administrator list of rooms with repository, status, and project", category: "workspace" }),
   roomPropertiesGeneral: defineView({ id: "ROOM-01", name: "Room Properties — General", state: "Room name, topic, and conversation energy", category: "room" }),

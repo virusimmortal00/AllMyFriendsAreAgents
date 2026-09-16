@@ -179,7 +179,21 @@ export function GitHubIntegrationPanel() {
     {repairMessage ? <p role="status">{repairMessage}</p> : null}
     {authentication === "ready" && permissionDenied ? <p>Your administrator account does not have permission to manage GitHub. Ask the server owner.</p> : null}
     {sessionError ? <p role="alert">{sessionError}</p> : null}
-    {authentication === "required" ? <p role="status">Server administrator sign-in required.</p> : null}
+    {authentication === "required" ? <>
+      <fieldset className="github-integration-card classic-group">
+        <legend>GitHub account</legend>
+        <div className="github-account-summary">
+          <span className="github-brand-mark"><GitHubMark size={32} /></span>
+          <span className="github-account-copy"><h3>Connect GitHub</h3><p>Connect an account to choose a repository for this project.</p></span>
+          <button type="button" className="classic-button github-connect-button" disabled>Connect GitHub</button>
+        </div>
+      </fieldset>
+      <fieldset className="github-integration-card classic-group">
+        <legend>Project repository</legend>
+        <label>Repository<select className="classic-select" disabled value=""><option value="">Sign in to choose a repository</option></select></label>
+        <button type="button" className="classic-button github-use-repository-button" disabled>Use repository</button>
+      </fieldset>
+    </> : null}
     {authentication === "ready" && integration ? <>
       <fieldset className="github-integration-card classic-group">
         <legend>GitHub account</legend>

@@ -129,10 +129,11 @@ describe("GitHubIntegrationPanel", () => {
     });
   });
 
-  it.each([true, false])("leaves claimed=%s sign-in to the administration window without duplicate credentials", async (claimed) => {
+  it.each([true, false])("previews claimed=%s GitHub controls disabled and leaves sign-in to the administration window", async (claimed) => {
     vi.stubGlobal("fetch", vi.fn(async (input) => String(input).endsWith("/status") ? json({ claimed, bootstrapConfigured: true }) : json({ error: "Authentication required." }, 401)));
     render(<GitHubIntegrationPanel />);
-    expect(await screen.findByText("Server administrator sign-in required.")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Connect GitHub" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Use repository" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
     expect(screen.queryByLabelText("Password")).toBeNull();
   });

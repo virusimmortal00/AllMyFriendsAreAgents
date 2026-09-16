@@ -42,7 +42,9 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Diagnostics...", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");
   await menu("Server", "Owner login...");
-  await expect(page.getByRole("tab", { name: "Diagnostics", exact: true })).toBeDisabled();
+  await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
+  await page.getByRole("tab", { name: "Owner login", exact: true }).click();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByLabel("Password", { exact: true }).press("Enter");
@@ -78,7 +80,9 @@ test("administration recovery and room membership", async ({ page }) => {
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await menu("Server", "Owner login...");
-  await expect(page.getByRole("tab", { name: "Integrations", exact: true })).toBeDisabled();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Connect GitHub", exact: true })).toBeDisabled();
+  await page.getByRole("tab", { name: "Owner login", exact: true }).click();
   await page.getByLabel("Username", { exact: true }).fill("server-owner");
   await page.getByLabel("Password", { exact: true }).fill("fictional-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();

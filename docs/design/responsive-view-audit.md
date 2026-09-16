@@ -1551,7 +1551,7 @@ independent image review.
 | WORK-09 | Reviewed Contribution Detail | Review gates and contribution detail | Unverified |
 | WORK-10 | Owner Diagnostics Query | Bounded diagnostic search controls | Unverified |
 | WORK-11 | Owner Diagnostics Results | Result list and selected diagnostic detail | Unverified |
-| WORK-12 | Server Administration | Top-level window over chat with page list; Owner login page with administrator pages disabled until sign-in | Pending |
+| WORK-12 | Server Administration | Top-level window over chat with page list; Owner login page; administrator pages preview with disabled controls until sign-in | Pending |
 | WORK-13 | OpenRouter Credits | Administrator-gated remaining account balance on the Integrations page | Pending |
 | WORK-14 | Rooms and Repositories | Administrator list of rooms with repository, status, and project | Pending |
 

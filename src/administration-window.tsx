@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useControlSession } from "./control-session";
 import { DialogFrame } from "./dialog-frame";
 import { Diagnostics } from "./diagnostics";
@@ -20,7 +20,7 @@ export const ADMINISTRATION_PAGES: readonly (ExplorerPage<AdministrationPage> & 
 /**
  * Server menu: one top-level window over the chat window for everything that needs
  * server-administrator authority, like a Windows 95 Control Panel applet. The window
- * owns sign-in: administrator pages are disabled until Owner login succeeds, and pages
+ * owns sign-in: signed out, administrator pages open as disabled previews, and pages
  * themselves never render their own sign-in controls.
  */
 export function AdministrationWindow({ page, destination, refreshKey, active = true, returnFocusTo = null, onSelectPage, onContinue, onClose }: {
@@ -36,20 +36,23 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const { session, checked } = useControlSession();
   const [roomsSummary, setRoomsSummary] = useState("");
   const openIntegrations = useCallback(() => onSelectPage("Integrations"), [onSelectPage]);
-  const requested = ADMINISTRATION_PAGES.find((candidate) => candidate.key === page) ?? ADMINISTRATION_PAGES[0];
-  // Administrator pages stay disabled until sign-in; a signed-out window always shows Owner login.
-  const current = requested.requiresAdministrator && !session ? ADMINISTRATION_PAGES[0] : requested;
-  useEffect(() => { if (checked && current.key !== page) onSelectPage(current.key); }, [checked, current.key, page, onSelectPage]);
-  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in. Sign in to open the other pages." : "Checking sign-in…";
-  const pages = ADMINISTRATION_PAGES.map((candidate) => ({ ...candidate, disabled: candidate.requiresAdministrator && !session }));
+  const current = ADMINISTRATION_PAGES.find((candidate) => candidate.key === page) ?? ADMINISTRATION_PAGES[0];
+  // Signed out, administrator pages still open as read-only previews: every control is disabled.
+  const preview = current.requiresAdministrator && !session;
+  const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in. Other pages are previews until you sign in on Owner login." : "Checking sign-in…";
+  const content = current.key === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
+    : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
+      : <Diagnostics />;
 
   return <DialogFrame title="Server Administration" closeLabel="Close server administration" active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={onClose}
     actions={<button type="button" className="classic-button" onClick={onClose}>Close</button>}>
-    <ExplorerLayout label="Administration pages" pages={pages} selected={current.key} onSelect={onSelectPage} status={current.key === "Rooms" && roomsSummary ? `${signInState} · ${roomsSummary}` : signInState}>
+    <ExplorerLayout label="Administration pages" pages={ADMINISTRATION_PAGES} selected={current.key} onSelect={onSelectPage} status={current.key === "Rooms" && roomsSummary && !preview ? `${signInState} · ${roomsSummary}` : signInState}>
       {current.key === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
-        : current.key === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
-          : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
-            : <Diagnostics />}
+        : preview ? <fieldset className="administration-preview" disabled aria-describedby="administration-preview-note">
+          <p id="administration-preview-note" className="administration-preview__note"><span aria-hidden="true">🔒</span> Preview only. Sign in on <strong>Owner login</strong> to use this page.</p>
+          {content}
+        </fieldset>
+          : content}
     </ExplorerLayout>
   </DialogFrame>;
 }

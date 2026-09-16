@@ -57,7 +57,9 @@ async function openScenario(page: Page, id: string) {
       await menu(page, "Server");
       await expect(page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Diagnostics...", exact: true })).toBeDisabled();
       await page.getByRole("menu", { name: "Server" }).getByRole("menuitem", { name: "Owner login...", exact: true }).click();
-      await expect(page.getByRole("tab", { name: "Diagnostics", exact: true })).toBeDisabled();
+      await page.getByRole("tab", { name: "Diagnostics", exact: true }).click();
+      await expect(page.getByText(/Preview only/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Query diagnostics", exact: true })).toBeDisabled();
     } else await menu(page, "Server", "Diagnostics...");
     if (id === "owner-diagnostics-results") {
       await page.getByLabel("Diagnostic selector").selectOption("traceId");

@@ -48,7 +48,9 @@ describe("OpenRouter credits and room spend", () => {
     render(<><OpenRouterCreditsSection /><RoomSpendPanel agentLabels={{ "codex-sol": "Sol" }} /></>);
     await screen.findByText("$0.05 spent · 2 turns");
     expect(screen.getByText("Sol")).toBeTruthy();
-    expect(await screen.findByText("Server administrator sign-in required.")).toBeTruthy();
+    // Signed out, the balance section previews its layout with no value and a disabled refresh.
+    expect((await screen.findByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("—")).toBeTruthy();
     expect(screen.queryByText(/available/)).toBeNull();
   });
 

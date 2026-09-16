@@ -1067,8 +1067,6 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .explorer__pages { display: flex; flex-direction: column; gap: 1px; min-width: 0; min-height: 0; padding: 2px; overflow: auto; border: 2px inset white; background: #fff; }
 .explorer__pages [role="tab"] { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 2px 6px; border: 0; background: transparent; color: #111; font: 12px/1.2 "MS Sans Serif", Arial, sans-serif; text-align: left; }
 .explorer__pages [role="tab"][aria-selected="true"] { background: var(--blue); color: #fff; }
-.explorer__pages [role="tab"]:disabled { color: #808080; text-shadow: 1px 1px #fff; cursor: default; }
-.explorer__pages [role="tab"]:disabled .explorer__icon { filter: grayscale(1); opacity: .55; }
 .explorer__pages [role="tab"]:focus-visible { outline: 1px dotted currentColor; outline-offset: -3px; }
 .explorer__icon { flex: 0 0 18px; font-size: 14px; line-height: 1; text-align: center; }
 .explorer__content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 10px 12px; border: 2px inset white; background: var(--chrome); }
@@ -1082,6 +1080,13 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .diagnostics-workspace .diagnostics-body { padding: 0; }
 .diagnostics-workspace .diagnostics-content { max-width: none; }
 
+.administration-preview { min-width: 0; margin: 0; padding: 0; border: 0; }
+.administration-preview__note { margin: 0 0 8px; padding: 4px 8px; border: 1px solid; border-color: #808080 #fff #fff #808080; color: #111; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.administration-preview .administration-page :is(h2, h3, p, span, strong, small, label, legend, td, th, dt, dd) { color: #808080; text-shadow: 1px 1px #fff; }
+.administration-preview .administration-page :is(.github-mark, .openrouter-mark, img, svg) { filter: grayscale(1); opacity: .5; }
+.administration-preview .administration-page .classic-summary, .administration-preview .list-view { background: var(--chrome); }
+.administration-preview .administration-page :is(input, select, textarea) { color: #808080; background-color: var(--chrome); }
+.administration-preview .administration-page .diagnostics-content :is(.task-empty, .diagnostic-detail) { background: var(--chrome); color: #808080; text-shadow: 1px 1px #fff; }
 .administrator-required { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0; padding: 6px 8px; border: 2px groove white; background: var(--chrome); color: #111; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
 .administrator-required__lock { font-size: 13px; }
 .administrator-required .classic-button { margin-left: auto; }

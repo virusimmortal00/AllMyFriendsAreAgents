@@ -68,7 +68,13 @@ export function RoomsRepositories({ refreshKey = 0, onOpenIntegrations, onCountC
   return <div className="administration-page rooms-repositories" {...viewAttributes(VIEWS.roomsRepositories)}>
     <header className="page-header"><h2>Rooms &amp; repositories</h2><p>Rooms get repository access from their project. Rooms in the same project share one repository.</p></header>
     {!checked ? <p role="status">Checking server administration…</p>
-      : !session ? <p role="status">Server administrator sign-in required.</p>
+      : !session ? <>
+        <div className="page-toolbar">
+          <label className="classic-check"><input type="checkbox" disabled checked={false} readOnly />Show archived rooms</label>
+          <button type="button" className="classic-button" disabled>Refresh</button>
+        </div>
+        <ListView label="Rooms and repositories" columns={columns} rows={[]} rowKey={(room) => room.roomId} empty="Sign in to list rooms and their repositories." />
+      </>
         : denied ? <p className="classic-summary">Your administrator account does not have permission to list rooms. Ask the server owner.</p> : <>
         <div className="page-toolbar">
           <label className="classic-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} />Show archived rooms</label>

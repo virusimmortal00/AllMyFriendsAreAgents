@@ -45,7 +45,10 @@ export function OpenRouterCreditsSection({ refreshKey = 0 }: { refreshKey?: numb
   return <fieldset className="classic-group openrouter-credits" aria-label="Remaining OpenRouter credits" {...viewAttributes(VIEWS.openRouterAccount)}>
     <legend><span className="openrouter-credits__legend"><OpenRouterMark size={14} />OpenRouter account</span></legend>
     {!checked ? <p role="status">Checking server administration…</p>
-      : !session ? <p role="status">Server administrator sign-in required.</p>
+      : !session ? <div className="openrouter-credits__summary">
+        <span className="classic-property-row"><span>Remaining balance</span><strong className="classic-summary openrouter-credits__balance">—</strong></span>
+        <span className="openrouter-credits__meta"><small>Not checked</small><button type="button" className="classic-button" disabled>Refresh</button></span>
+      </div>
         : notConfigured ? <p>OpenRouter credit tracking is not configured on this server.</p>
           : error ? <p role="alert">{error}</p>
             : loading && !credits ? <p role="status">Checking balance…</p>
