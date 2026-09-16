@@ -18,7 +18,7 @@ export const ADMINISTRATION_PAGES: readonly ExplorerPage<AdministrationPage>[] =
 ];
 
 /**
- * Server → Administration…: one top-level window over the chat window for everything
+ * Server menu (one command per page): one top-level window over the chat window for everything
  * that needs server-administrator authority, like a Windows 95 Control Panel applet.
  */
 export function AdministrationWindow({ page, destination, refreshKey, active = true, returnFocusTo = null, onSelectPage, onOpenAdministration, onContinue, onClose }: {

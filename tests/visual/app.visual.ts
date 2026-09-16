@@ -13,7 +13,7 @@ async function menu(page: Page, name: string, item?: string) {
 
 async function openScenario(page: Page, id: string) {
   if (id.startsWith("server-administration")) {
-    await menu(page, "Server", "Administration...");
+    await menu(page, "Server", "Session...");
     await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
   } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
     await menu(page, "Room", "Room properties...");

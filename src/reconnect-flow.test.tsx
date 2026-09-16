@@ -649,8 +649,13 @@ describe("rendered reconnect recovery", () => {
     await user.keyboard("{Escape}");
 
     const serverTrigger = screen.getByRole("menuitem", { name: "Server" });
+    await user.click(serverTrigger);
+    const serverCommands = within(screen.getByRole("menu", { name: "Server" })).getAllByRole("menuitem").map((item) => item.textContent?.replace(/\.\.\.$/, ""));
+    await user.keyboard("{Escape}");
     await chooseMenuItem(user, "Server", "Diagnostics...");
     const administration = screen.getByRole("dialog", { name: "Server Administration" });
+    // Each Server command is named exactly like the window page it opens.
+    expect(serverCommands).toEqual(within(administration).getAllByRole("tab").map((tab) => tab.querySelector(":scope > span:not([aria-hidden])")?.textContent));
     expect(within(administration).getByRole("tab", { name: "Diagnostics" }).getAttribute("aria-selected")).toBe("true");
     expect(within(administration).getByRole("heading", { name: "Owner diagnostics" })).toBeTruthy();
     // The chat window stays in place behind the administration window.

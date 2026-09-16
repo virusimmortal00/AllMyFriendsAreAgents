@@ -27,7 +27,7 @@ import { DEFAULT_CONVERSATION_ENERGY } from "../shared/conversation-energy";
 import { RoomPropertiesDialog } from "./room-configuration-dialog";
 import { refreshControlSession } from "./control-session";
 import type { AdministrationDestination } from "./server-administration";
-import { AdministrationWindow, type AdministrationPage } from "./administration-window";
+import { ADMINISTRATION_PAGES, AdministrationWindow, type AdministrationPage } from "./administration-window";
 import { RoomUsageDialog } from "./room-usage-dialog";
 import { defineViewMenu, presentationCommand } from "./application-menu-policy";
 import { VIEWS, viewAttributes } from "./view-registry";
@@ -760,13 +760,8 @@ export default function App() {
       label: "Server",
       accessKey: "S",
       view: VIEWS.serverMenu,
-      items: [
-        { label: "Administration...", accessKey: "A", onSelect: (trigger) => openAdministration(null, "Session", trigger) },
-        { type: "separator" },
-        { label: "Integrations...", accessKey: "I", onSelect: (trigger) => openAdministration(null, "Integrations", trigger) },
-        { label: "Rooms & repositories...", accessKey: "R", onSelect: (trigger) => openAdministration(null, "Rooms", trigger) },
-        { label: "Diagnostics...", accessKey: "D", onSelect: (trigger) => openAdministration(null, "Diagnostics", trigger) },
-      ],
+      // One command per window page, named exactly like the page it opens.
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
