@@ -254,15 +254,15 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                     <small>{entries.filter((entry) => entry.enabled).length} active · {entries.length} configured</small>
                   </span>
                   <label>View<select className="classic-select" aria-label="Agent list view" value={agentListSort} onChange={(event) => onAgentListSortChange?.(event.target.value as AgentListSort)}>{AGENT_LIST_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Display only</small></label>
+                  {usage && onOpenOpenRouterAccount ? (
+                    <button type="button" className="roster-openrouter-link" onClick={onOpenOpenRouterAccount}>
+                      <OpenRouterMark size={15} />
+                      <span className="roster-openrouter-link__label">OpenRouter usage</span>
+                      <strong>{formatUsd(usage.room.costUsd)} spent</strong>
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  ) : null}
                 </header>
-                {usage && onOpenOpenRouterAccount ? (
-                  <button type="button" className="roster-openrouter-link" onClick={onOpenOpenRouterAccount}>
-                    <OpenRouterMark size={15} />
-                    <span className="roster-openrouter-link__label">OpenRouter usage</span>
-                    <strong>{formatUsd(usage.room.costUsd)} spent</strong>
-                    <span aria-hidden="true">→</span>
-                  </button>
-                ) : null}
                 {loading ? <p className="roster-empty" role="status">Loading roster…</p> : (
                   <div ref={rosterEditorRef} className="roster-editor classic-scroll-region" role="list" aria-label="Room agent roster">
                     {displayedEntries.map((item, index) => {
