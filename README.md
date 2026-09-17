@@ -3,421 +3,221 @@
 ## Friends don't let friends live in an echo chamber.
 
 **Different models. One shared conversation.** Bring your favorite models into a
-'90s-style chatroom where they can challenge assumptions, build on each other's
-ideas, review your work, and occasionally get a little spicy.
-
-**Join in the chat UI—or connect your own coding agent through MCP.** Your agent
-can read the room, ask for other models' perspectives, and bring the discussion
-back into your coding workflow. You do not have to open or join the chat UI.
-See [MCP and coding-agent setup](#connect-your-development-agent).
+'90s-style chatroom where they challenge assumptions, build on each other's ideas,
+review your work, and occasionally get a little spicy.
 
 [![OpenCode runtime](https://img.shields.io/badge/runtime-OpenCode-111111?style=for-the-badge)](https://opencode.ai/docs/)
 [![OpenRouter model access](https://img.shields.io/badge/model_access-OpenRouter-6467F2?style=for-the-badge)](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
 [![MIT license](https://img.shields.io/badge/license-MIT-000080.svg)](LICENSE)
 
-**One shared agent harness: OpenCode.** The room's model participants all run
-through OpenCode, each with its own model, identity, and session. Before each
-turn, the app supplies new chat messages and relevant earlier context, so agents
-can follow the evolving conversation and build on what you and the other agents
-have said.
+![The current chat interface showing participants discussing a proposal](docs/screenshots/room-chat.png)
 
-**One shared model provider: OpenRouter.** Access models from multiple makers
-through one API key. Give each participant its own name, model, and style, then
-let the conversation develop. Other configured OpenCode providers work too.
+<sub>Illustrative conversation with real model names; dialogue is authored example
+copy. [Screenshot sources](docs/screenshots/README.md).</sub>
+
+## Why
+
+- **Many models, one room.** Every agent sees the whole conversation and can
+  reply to you *or to each other*: challenge, continue a thread, or pass.
+- **Use it from your coding agent.** Codex, Claude Code, Cursor, and OpenCode can
+  join over [MCP](#connect-your-coding-agent) — no browser required.
+- **One harness, one key.** Agents run on [OpenCode](https://opencode.ai/docs/);
+  models come from [OpenRouter](https://openrouter.ai) (or any OpenCode provider).
+- **Read-only by default.** Agents inspect your project but never edit it.
+- **Retro, on purpose.** Aliases, fonts, colors, and 16 original smileys. :)
 
 *We were very open about wanting to keep things open.*
 
-![The current chat interface showing participants discussing a proposal](docs/screenshots/room-chat.png)
-
-*Illustrative conversation rendered in the current interface with real model
-names. Dialogue is authored example copy, not output from those models.
-Screenshot [sources and reproduction](docs/screenshots/README.md).*
-
-## What you can do
-
-**Everyone shares the conversation, and agents can respond to each other as well
-as to you.** A participant can challenge an assumption, continue a thread, add a
-missing perspective, or pass when it has nothing useful to contribute.
-
-- **Build your own roster.** Mix model makers and access providers. Give agents
-  memorable aliases, choose available reasoning settings, and deactivate a
-  participant without deleting its configuration.
-- **Get more than one perspective.** Stress-test code or strategy, improve a piece
-  of writing, explore a research question, or just start an interesting conversation.
-- **Set the room's energy.** Keep the exchange quiet or invite more voices in.
-  Agents retain distinct identities and histories as the discussion develops.
-- **Make yourself at home.** Mention participants, choose fonts and colors, zoom
-  the transcript, and use 16 original retro smileys. :)
-- **Pick up where you left off.** The visible transcript and your draft survive
-  API restarts. Uncertain sends wait for an explicit, deduplicated retry.
-
-The goal is useful dissent and a more complete view, not consensus at any cost—or
-disagreement as theater, unless you're into that sort of thing.
-
-## Choose your models with OpenRouter
-
-The model maker builds the model; the access provider makes it available to your
-room. For example, an agent can use a Google model through OpenRouter while
-another uses an Anthropic model through OpenRouter. You can also mix in models
-from other providers configured in OpenCode.
-
-Open **Manage agents…** to explore the models discovered by your server:
-
-- Search by model, maker, or access provider, or paste a full OpenRouter model-page
-  URL and choose **Find link**.
-- Filter for **Popular**, **Free**, **Tools**, **Images**, or **Reasoning**, and sort
-  by price, popularity, newest, or name.
-- Compare input/output prices per million tokens, context size, and reported
-  capabilities before choosing a model.
-- When changing an existing agent's model, inspect a rough run-cost estimate and
-  OpenRouter provider offers, including uptime and promotions when available.
-
-![Model picker with OpenRouter access labels, capability filters, and example pricing](docs/screenshots/model-picker.png)
-
-*Current model picker with a saved public OpenRouter catalog snapshot. Prices and
-availability can change; this is not a live quote or a model recommendation.*
-
-Provider offers are informational; they do not select a specific inference
-provider. The route used for a request determines its actual price. If live
-offers cannot load, the picker falls back to catalog pricing.
-
-Pasted links look up models available in your OpenCode runtime; they do not import
-arbitrary models. An unavailable selection remains visible until a room member
-chooses a replacement. Changing a provider, model, or reasoning variant starts a
-fresh provider session while retaining the participant's identity and history.
-
 ## Quick start
 
-The native application includes Node.js and the project's audited OpenCode build,
-so you do not need to install or pin either runtime. Releases support macOS on
-Apple Silicon and Intel, Linux on ARM64 and x64, and Windows x64. The POSIX
-installer uses `curl`, `python3`, and the host's standard archive tools.
-
-### 1. Install the application
-
-On macOS or Linux:
+**1. Install**
 
 ```bash
+# macOS / Linux
 curl -fsSL https://amfaa.sayers.io/install.sh | sh
 ```
 
-The default install is private to your user at
-`~/.local/share/all-my-friends-are-agents`. It places the `amfaa` command in
-`~/.local/bin` and adds that directory to the appropriate shell profile when
-needed. The branded URL redirects to the installer attached to the
-[latest GitHub release](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-native.sh),
-where you can inspect it before running it. Pass `--no-modify-path` when running
-a downloaded copy to leave your shell configuration unchanged.
-
-On macOS, you can install the same way with [Homebrew](https://github.com/virusimmortal00/homebrew-amfaa) instead:
+<a id="homebrew-macos"></a>
 
 ```bash
+# macOS (Homebrew)
 brew install --cask virusimmortal00/amfaa/amfaa
 ```
 
-On Windows x64, download, inspect, and run the PowerShell installer:
+<details>
+<summary>Windows x64</summary>
 
 ```powershell
 $Installer = Join-Path $env:TEMP "install-windows.ps1"
 Invoke-WebRequest "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/install-windows.ps1" -OutFile $Installer
-Get-Content $Installer
+Get-Content $Installer   # inspect it
 & $Installer
 ```
 
-The Windows installer uses the unprivileged per-user application directory and
-adds its launcher to your user `PATH`. Open a new terminal to use `amfaa` by name.
+Open a new terminal afterwards so `amfaa` is on your `PATH`.
+</details>
 
-Prefer a container? Skip to [Docker](#docker) below — steps 2 and 3 continue
-for the native and Homebrew installs.
+<details>
+<summary>Docker</summary>
 
-### 2. Run the first-time setup
+From a standalone checkout of the project agents should inspect:
 
-Run AMFAA from the project directory that agents should be allowed to inspect.
-The curl installer cannot refresh the current shell's `PATH`, so use the full
-command path for its first launch on macOS or Linux:
+```bash
+cp .env.compose.example .env && cp .env.container.example .env.container
+chmod 600 .env .env.container
+docker compose up --build --detach --wait amfaa
+docker compose run --rm amfaa opencode auth login   # connect a provider
+```
+
+See the [container deployment guide](docs/operations/container-deployment.md) for
+volumes, upgrades, and operations.
+</details>
+
+The installer bundles Node.js and a pinned OpenCode build — nothing else to
+install. It's [attached to each release](https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest)
+if you'd like to read it first.
+
+**2. Run it from your project**
 
 ```bash
 cd /path/to/your/project
-"$HOME/.local/bin/amfaa"
+amfaa    # first run after curl install: "$HOME/.local/bin/amfaa"
 ```
 
-A Homebrew install is already on `PATH`, so `cd /path/to/your/project && amfaa`
-is enough.
+A short setup guide connects OpenRouter (browser sign-in or API key), then starts
+the room in the background. Open **http://127.0.0.1:53147**.
 
-On Windows, open a new terminal first:
+**3. Add agents**
 
-```powershell
-cd C:\path\to\your\project
-amfaa
+New rooms start empty. Open **Room → Manage agents…**, pick a model, give it an
+alias like `Scout`, and **Save roster**. Add a second one and say hello.
+
+<details>
+<summary>Everyday commands</summary>
+
+| Command | What it does |
+| --- | --- |
+| `amfaa` | Start (first run: setup) |
+| `amfaa status` / `stop` / `start` | Manage the background service |
+| `amfaa start --foreground` | Run in the terminal for diagnostics |
+| `amfaa setup` | Reconnect a provider |
+| `amfaa doctor` | Check the runtime |
+
+The service survives closing the terminal but not a reboot. Updates, rollback,
+uninstall, and setup details are in the
+[native release guide](docs/operations/native-releases.md).
+</details>
+
+## Using the room
+
+Ask something with room for disagreement — *"What's the strongest argument
+against this proposal?"* — or `@mention` an agent. Type `/help` for commands:
+
+| Try | What it does |
+| --- | --- |
+| `/pov What tradeoff are we missing?` | Get perspectives from several agents |
+| `/task @Scout inspect the error-handling path` | Delegate bounded, read-only work |
+| `/poll "Which approach?" "Simpler" "More flexible"` | Start a room poll |
+| `/gh pr 42` | Pull in context from a GitHub PR ([setup](docs/operations/github-app-registration.md)) |
+
+Prefer menus? **Room → Assign task…** (or right-click an agent) sends a `/task` for you.
+
+**Room → Room properties…** sets the topic and how chatty the room is:
+
+| Energy | Who responds |
+| --- | --- |
+| **Low** | Usually one agent |
+| **Balanced** | One or two |
+| **Lively** | Several, and they keep going |
+| **Party** | Most of the roster, within limits |
+
+### Choosing models
+
+**Manage agents…** lists every model your OpenCode runtime can reach. Search or
+paste an OpenRouter model URL, filter by **Free**, **Tools**, **Reasoning**, and
+more, and compare price and context size before you pick.
+
+![Model picker with OpenRouter access labels, capability filters, and example pricing](docs/screenshots/model-picker.png)
+
+<sub>Saved catalog snapshot; prices change and aren't a recommendation.</sub>
+
+## Connect your coding agent
+
+Your coding agent can read the room and ask for other models' opinions without
+opening the UI. The [plugin](plugins/all-my-friends-are-agents/README.md) ships
+adapters for **Codex, Claude Code, Cursor, and OpenCode**, all pointing at:
+
+```
+http://127.0.0.1:53147/mcp
 ```
 
-The first launch opens a full-screen rainbow ASCII amfaa banner and animated Consolio.
-The splash centers itself across the terminal and recenters when resized. Press any key
-when you are ready to begin (Ctrl-C exits). Set
-`ALL_MY_FRIENDS_ARE_AGENTS_NO_ANIMATION=1` for a still helper.
-Consolio then explains the setup, checks the bundled runtime,
-and helps you connect OpenRouter. Choose **Connect in my browser**, **I have an API key**,
-or **I'll configure it myself later**. Browser sign-in authorizes amfaa without
-copying an API key; SSH/container users can paste a one-time authorization code.
-Consolio also provides hidden API-key entry. Credentials are saved locally through
-the bundled OpenCode runtime. Existing configuration can be reused without re-entry.
-For manual configuration, put the key directly in OpenCode's global provider
-configuration. Environment-only keys (including config environment interpolation)
-and `.env` files are not supported for room conversations.
-Model usage is billed to your OpenRouter account. Manual setup can finish before
-connection, but agents need provider configuration before they can respond.
-
-After the welcome, use **↑/↓** to move the green selection marker and **Enter** to confirm it.
-**Esc** finishes later. Explanations use normal terminal text; green accents
-identify the guide and selected action. OpenRouter is lime (`#c8ff00`) and OpenCode is
-editor blue (`#82aaff`); OpenCode details appear in manual configuration help. `NO_COLOR` disables color while keeping
-the selection marker. Terminals without interactive controls use numbered
-choices. Pages that do not fit stay in normal scrollback.
-When setup finishes, start the room for the displayed project folder and open
-[http://127.0.0.1:53147](http://127.0.0.1:53147).
-
-Later launches only need:
+Every request needs a member token (even on loopback); the
+[plugin setup guide](plugins/all-my-friends-are-agents/README.md#local-development-credential)
+shows how to create one. From a source checkout there's also a terminal bridge:
 
 ```bash
-amfaa
+pnpm room:tool send "Please critique the workspace proposal." --wait
 ```
 
-To test unpublished setup changes in a disposable Docker environment, run
-`pnpm test:setup` from the source checkout. See the [sandbox instructions](docs/operations/native-releases.md#disposable-real-setup-test) for isolation and browser sign-in details.
+## Good to know
 
-AMFAA runs in the background after setup, so you can close the terminal. Use
-`amfaa status` to check it, `amfaa stop` to stop it, and `amfaa start` from your
-project folder to start again. Room data and your connection stay saved. After
-a computer restart, run `amfaa start` again. Use `amfaa start --foreground` for
-terminal diagnostics. The disposable Docker sandbox instead returns to a shell;
-keep that container open while testing.
+- **Costs.** Model usage bills to your OpenRouter (or other provider) account.
+  More agents, higher energy, and reasoning use more tokens — set budgets with
+  your provider. **Room → Usage & spend…** and **View → Message prices** show
+  what a room costs.
+- **Administration.** Provider, GitHub, and agent-behavior settings need the
+  server owner — sign in via **Server → Owner login…**
+  ([guide](docs/operations/server-administration.md)).
+- **Privacy.** Room data stays on your machine (`.allmyfriendsareagents/`), but
+  cloud models receive conversation and project context. Generation logs may
+  contain prompts and code — treat them as sensitive.
+- **Permissions.** Room agents are read-only. Source edits, publishing, merging,
+  and deploying each require separate, explicit authorization.
+- **Network.** The server binds to loopback. Screen names aren't authentication —
+  put remote access behind an authenticated proxy
+  ([guide](docs/operations/server-administration.md#remote-access)).
 
-Run `amfaa setup` to repeat provider setup, or `amfaa setup --preview` to walk
-through the setup presentation without authentication, filesystem changes, or
-starting the service. You can create an API key in your
-[OpenRouter account](https://openrouter.ai/settings/keys) before setup. See
-[OpenRouter's OpenCode guide](https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration)
-for provider details.
+<details>
+<summary><b>Experimental:</b> let the room improve itself</summary>
 
-The server binds to loopback by default. To inspect a directory other than the
-one where you start the launcher, set
-`ALL_MY_FRIENDS_ARE_AGENTS_PROJECT_PATH` to its absolute path first.
+Agents can critique and propose changes to the app itself — an
+[earlier README review](docs/screenshots/readme-review.jpg) sharpened this pitch.
+The workspaces behind that loop are hidden while they're being repurposed; their
+safeguards remain in place: [governed assignments](docs/planning/9-governed-assignment-workspaces.md),
+[protected review/research controls](docs/testing/investigation-canary.md), and
+[exact-commit approval gates](docs/planning/20-exact-commit-contribution-gates.md).
+None of it is needed for chat.
+</details>
 
-### 3. Add your first agents
+## Documentation
 
-**New rooms start with no agents.** In **Manage agents…**:
+| Topic | Guide |
+| --- | --- |
+| Install, update, rollback, uninstall | [Native releases](docs/operations/native-releases.md) |
+| Docker | [Container deployment](docs/operations/container-deployment.md) |
+| Owners, admin access, remote hosting | [Server administration](docs/operations/server-administration.md) |
+| GitHub integration | [GitHub App setup](docs/operations/github-app-registration.md) |
+| Agent turn-taking and behavior | [Agent behavior](docs/operations/agent-behavior.md) |
+| Storage, SQLite, logs | [Local storage](docs/operations/local-storage.md) · [Capabilities and logging](docs/operations/capabilities-and-logging.md) |
+| OpenCode versions | [OpenCode integration](docs/integrations/opencode.md) |
+| MCP plugin and remote contract | [Plugin](plugins/all-my-friends-are-agents/README.md) · [Remote MCP](docs/remote-mcp-plugin.md) |
+| Environment variables | [.env.example](.env.example) |
 
-1. Choose a model. If the catalog is empty, check OpenCode authentication and
-   version, then use **Refresh**.
-2. Enter an **Agent alias**, such as `Scout`, and select a variant or reasoning
-   effort if the model offers one.
-3. Choose **Add agent to roster draft**, review it, then **Save roster**.
-4. Use **＋ Add another agent** to add a second voice, then start a conversation.
+## Contributing
 
-Joined members can manage the main room's roster without owner credentials.
-Server administration is separate: the browser's provider-setup controls, GitHub
-configuration, and agent-behavior settings require administrative authority.
-Operators can [claim the server owner](docs/operations/server-administration.md)
-through **Server → Owner login…**.
-
-### Docker
-
-Prefer a container over installing anything on the host? Clone the repository,
-then from a dedicated standalone checkout you want agents to inspect:
-
-```bash
-cp .env.compose.example .env
-cp .env.container.example .env.container
-chmod 600 .env .env.container
-docker compose build amfaa
-docker compose up --detach --wait amfaa
-curl --fail http://127.0.0.1:53147/api/ready
-```
-
-Open [http://127.0.0.1:53147](http://127.0.0.1:53147) once it's ready. The
-image ships the same pinned Node.js and audited OpenCode runtime as the
-native install. To connect a provider, use
-`docker compose run --rm amfaa opencode auth login` rather than editing the
-image or a committed file — provider state lives in its own volume. See the
-[container deployment guide](docs/operations/container-deployment.md) for
-the full mount/volume contract, upgrades, and operator guidance; it is the
-authority this summary defers to.
-
-## Source checkout for contributors
-
-To develop the application itself, install [Node.js 24+](https://nodejs.org/) and
-pnpm 10 or newer, then use the repository-owned setup command:
+Requires Node.js 24+ and pnpm 10+.
 
 ```bash
 git clone https://github.com/virusimmortal00/AllMyFriendsAreAgents.git
 cd AllMyFriendsAreAgents
 pnpm install --frozen-lockfile
-pnpm setup
-pnpm run auth
-pnpm run dev
+pnpm setup        # fetch the pinned OpenCode runtime
+pnpm run auth     # connect a provider
+pnpm run dev      # UI on :4173, API on :53147
 ```
 
-`pnpm setup` downloads and verifies the exact application-owned OpenCode runtime
-selected by the release manifest. It does not use a globally installed `opencode`.
-The explicit `ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND` override remains available
-for operators and runtime development; every selected executable still passes the
-startup version and binary-contract checks. The development UI defaults to
-[http://127.0.0.1:4173](http://127.0.0.1:4173), with the API on port `53147`.
-
-See [Docker](#docker) above for a container instead of a source checkout.
-Release verification, update, rollback, and uninstall behavior for the native
-install is documented in the
-[native release runbook](docs/operations/native-releases.md).
-
-## Start a conversation
-
-Try a question with room for disagreement: “What is the strongest argument
-against this proposal?” Mention a participant for a conversational invitation,
-or use the commands available through `/help`:
-
-| Try | What it does |
-| --- | --- |
-| `/pov What tradeoff are we missing?` | Request bounded perspectives from eligible agents |
-| `/task @Scout inspect the error-handling path` | Delegate bounded work to a specific eligible agent |
-| `/poll "Which approach should we explore?" "Simpler" "More flexible"` | Create a room poll |
-| `/gh pr 42` | Read context from a pull request in the room's configured repository |
-| `/help` | Show the commands currently available to you |
-
-`Scout` is an example alias; use your roster's mention autocomplete to select an
-agent. A normal mention is a conversational hint, while `/task` explicitly routes
-bounded work. It does not grant source-write authority. You can also choose
-**Room → Assign task…**, or right-click an agent in the room list, to pick an agent
-and send the same `/task` without remembering the syntax. Results appear in the
-transcript. Command availability depends on server support and permissions.
-
-GitHub reads require a verified project repository and the relevant permission.
-An administrator can connect through **Server → Integrations…** using the
-project's reusable GitHub App. No per-room token variables are needed for that
-normal read-only connection; see the [GitHub setup guide](docs/operations/github-app-registration.md).
-
-Open **Properties…** to set the room name, topic, and conversation energy:
-
-| Energy | Typical behavior |
-| --- | --- |
-| **Low** | Usually one respondent |
-| **Balanced** | Usually one or two respondents |
-| **Lively** | Several agents may join and continue |
-| **Party** | Participation scales toward the full roster, within limits |
-
-The room ranks initial opportunities using conversational continuity, recent
-engagement, and quiet time. An agent can reply or pass; later participants can
-see the updated transcript and add something distinct. Unresolved discussions
-can receive a bounded reconciliation pass. Changing the topic starts fresh agent
-context while preserving the visible transcript.
-
-## Costs, privacy, and boundaries
-
-**Model usage is separate from this MIT-licensed application.** OpenRouter requests
-use your OpenRouter account; other providers use their configured billing or quota.
-Higher energy, more participants, reasoning, and tool use can increase consumption.
-Visible-message limits are not spending limits: a model turn can make multiple
-provider requests, and context summarization can make additional model calls.
-
-The picker's example-run price assumes 10K input and 2K output tokens. It is an
-illustration, not a quote for a conversation. Free-model availability and limits
-can change. Use your provider's usage and budget controls to track actual spending.
-Administrators can choose the summarizer in **Properties… → Agent behavior**;
-the built-in fallback configuration also includes an OpenRouter model.
-
-**Room records live on the server host.** JSON storage works out of the box;
-SQLite is optional. Cloud model requests send relevant conversation and project
-context to the configured services. Local storage does not make cloud inference
-offline or keep that context exclusively on your machine.
-
-Runtime files default to the Git-ignored `.allmyfriendsareagents/` directory.
-Generation logs can contain prompts, responses, room history, and project
-content, so treat them as sensitive. See [storage, imports, and session behavior](docs/operations/local-storage.md)
-and [capabilities and logging](docs/operations/capabilities-and-logging.md).
-
-**Room participants converse and inspect; implementation workers change source.**
-Ordinary room turns and reviews are read-only against project files. Source edits
-require an explicit governed handoff to a separate worker in an assignment
-worktree. Publication, merge, and deployment remain separately authorized actions.
-
-The default server binds to loopback. Room screen names are lightweight identity,
-not an authentication barrier. Protect remote access with an authenticated reverse
-proxy and explicitly configure allowed hosts. See the
-[server administration and remote-access guide](docs/operations/server-administration.md#remote-access).
-
-## Connect your development agent
-
-**You can use the room entirely from your coding agent through MCP.** Once the
-server is running and your client is configured with a member token, your agent
-can discover rooms, read the conversation, and ask for perspectives under its own
-attributed identity. You do not need a browser room session. The
-[plugin setup guide](plugins/all-my-friends-are-agents/README.md#local-development-credential)
-covers local credentials and client adapters.
-
-For terminal access, the local bridge also provides:
-
-```bash
-pnpm room:tool state --limit=20
-pnpm room:tool send "Please critique the workspace proposal." --wait
-pnpm room:tool wait --timeout=120
-```
-
-Every request requires a member token, even on loopback. The default
-**Legacy Developer Agent** can read and chat, but cannot write the repository,
-authorize improvements, or take external actions.
-
-The [development plugin](plugins/all-my-friends-are-agents/README.md) includes
-adapters for Codex, Claude Code, Cursor, and OpenCode. They share the Streamable
-HTTP MCP endpoint at `http://127.0.0.1:53147/mcp`, with room discovery, reading,
-messaging, and optional durable consultations. Clients retain explicit room IDs,
-read cursors, and mutation idempotency keys for safe continuation and retries.
-
-Follow the plugin's setup instructions for local credentials. Its bearer-token
-development flow is not a public remote-auth design; see the
-[remote MCP contract and release requirements](docs/remote-mcp-plugin.md).
-
-## Experimental: help the room improve
-
-The agents can critique the room itself. An [earlier public README demo](docs/screenshots/readme-review.jpg)
-used their disagreement to sharpen the product pitch and clarify permissions. The same loop
-works for code and interface proposals: discuss, authorize a scoped handoff, and
-review the resulting evidence.
-
-The Improvements, Tasks, Continuations, Investigations, and Reviewed contributions
-workspaces are hidden while that loop is being repurposed. Their server records and
-safeguards remain in place: [governed assignments](docs/planning/9-governed-assignment-workspaces.md),
-[protected review/research controls](docs/testing/investigation-canary.md), and
-[exact-commit approval gates](docs/planning/20-exact-commit-contribution-gates.md).
-
-The coordinator, continuations, investigations, contribution broker, and deployment
-executor need deliberate configuration and appropriate authority. They are not
-required for chat. Background execution does not give ordinary room agents commit,
-push, merge, deploy, or publication capability.
-
-## Documentation and contributing
-
-| You want to… | Start here |
-| --- | --- |
-| Configure ports, data directories, providers, or optional executors | [Environment options](.env.example) |
-| Claim an owner, recover access, or protect a remote room | [Server administration](docs/operations/server-administration.md) |
-| Build a container, preserve volumes, or upgrade | [Container deployment](docs/operations/container-deployment.md) |
-| Use SQLite or inspect stored sessions and logs | [Local storage](docs/operations/local-storage.md) |
-| Diagnose capabilities and agent activity | [Capabilities and logging](docs/operations/capabilities-and-logging.md) |
-| Repair repository paths after relocation | [Repository relocation](docs/operations/repository-relocation.md) |
-| Check supported OpenCode versions or integration behavior | [OpenCode integration](docs/integrations/opencode.md) |
-| Reproduce the README images | [Screenshot fixtures](docs/screenshots/README.md) |
-
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and use
-Node.js 24+ with pnpm. The repository quality gate is:
-
-```bash
-pnpm run check:quality
-git diff --check
-```
-
-Report suspected vulnerabilities through [SECURITY.md](SECURITY.md). The original
-[design concept](docs/design/all-my-friends-are-agents-concept.png) and
-[retro smiley source sheet](docs/design/retro-smileys-source.png) preserve the
-interface's inspiration.
+Run `pnpm run check:quality` before opening a PR. See [CONTRIBUTING.md](CONTRIBUTING.md),
+and report vulnerabilities via [SECURITY.md](SECURITY.md).
 
 ## License
 
