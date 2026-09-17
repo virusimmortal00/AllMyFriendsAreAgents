@@ -519,11 +519,12 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .roster-rail__header > label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1px 5px; color: #4e5865; font-size: 10px; font-weight: 700; }
 .roster-rail__header select { grid-column: 2; width: 100%; min-width: 0; height: 25px; font-size: 11px; }
 .roster-rail__header label small { grid-column: 2; font-size: 9px; font-weight: 400; }
-.roster-openrouter-link { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 6px; padding: 7px 10px; border: 2px outset white; background: var(--chrome); color: #111; font: 11px/1.3 "MS Sans Serif", Arial, sans-serif; text-align: left; cursor: pointer; }
+.roster-openrouter-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px; grid-column: 1 / -1; width: 100%; min-height: 26px; margin: 6px 0 0; padding: 3px 8px; border: 2px outset white; background: var(--chrome); color: #111; font: 11px/1.2 "MS Sans Serif", Arial, sans-serif; text-align: left; cursor: pointer; }
 .roster-openrouter-link:focus-visible { outline: 1px dotted #111; outline-offset: -4px; }
 .roster-openrouter-link:active { border-style: inset; }
-.roster-openrouter-link__label { flex: 0 0 auto; font-weight: 700; }
-.roster-openrouter-link strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: #333; }
+.roster-openrouter-link__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.roster-openrouter-link strong { white-space: nowrap; font-weight: 400; color: #333; font-variant-numeric: tabular-nums; }
+.roster-openrouter-link > span[aria-hidden="true"] { color: #4e5865; }
 @container roster-rail (max-width: 290px) {
   .roster-rail__header { grid-template-columns: 1fr; }
   .roster-rail__header > label { grid-template-columns: auto minmax(0, 1fr); }
