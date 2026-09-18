@@ -389,12 +389,7 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({
-        ...current,
-        ...(next.availability !== undefined ? { availability: next.availability } : {}),
-        ...(next.githubReadStatus !== undefined ? { githubReadStatus: next.githubReadStatus } : {}),
-        ...(next.openCodeRuntime !== undefined ? { openCodeRuntime: next.openCodeRuntime } : {}),
-      }));
+      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus, openCodeRuntime: next.openCodeRuntime || current.openCodeRuntime }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });
@@ -677,7 +672,7 @@ export default function App() {
   }
 
   const statusText = working
-    ? activeTypingAgents.length === 1 && activeTypingAgents[0]
+    ? activeTypingAgents.length === 1
       ? `${agentScreenName(activeTypingAgents[0])} is typing...`
       : "Agents are typing..."
     : room.status === "error"
@@ -703,16 +698,12 @@ export default function App() {
     setAdministrationDestination(null);
     setAdministrationOpen(false);
     if (destination === "Manage room agents") setRosterOpen(true);
-    else setRoomPropertiesOpen(true);
   }
 
   const roster = normalizeRoomAgentRoster(room.roster);
   const enabledAgents = enabledRoomAgentIds(roster);
   const agentLabels = useMemo<Readonly<Record<string, string>>>(() => Object.fromEntries(roster.entries.map((entry) => [entry.agentId, entry.conversationalName || entry.agentId])), [roster.entries]);
   const configuredProviderId = configuredAgent ? roster.entries.find((entry) => entry.agentId === configuredAgent)?.providerId || "opencode" : undefined;
-  const configuredProtectedWork = configuredAgent
-    ? protectedWork.work.find((work) => work.owner === configuredAgent && work.phase !== "available")
-    : undefined;
   const peopleHere = (room.humans?.length || 0) + enabledAgents.length;
   const mentionCandidates = useMemo(() => roomMentionCandidates(room.humans || [], enabledAgents), [room.humans, room.roster]);
   const openRoster = useCallback((trigger: HTMLElement, selectedAgentId?: ActiveAgentId) => {
@@ -736,13 +727,6 @@ export default function App() {
     assignTaskTrigger.current = trigger;
     setAssignTaskAgentId(agentId);
   }, []);
-  const roomRosterStateProps = {
-    ...(room.availability !== undefined ? { availability: room.availability } : {}),
-    ...(room.openCodeRuntime !== undefined ? { openCodeRuntime: room.openCodeRuntime } : {}),
-    ...(room.agentHealth !== undefined ? { agentHealth: room.agentHealth } : {}),
-    ...(room.providerHealth !== undefined ? { providerHealth: room.providerHealth } : {}),
-    ...(connected ? { onAssignTask: openAssignTask } : {}),
-  };
   const assignableAgents = useMemo(() => roster.entries.filter((entry) => entry.enabled).map((entry) => ({ agentId: entry.agentId, alias: entry.conversationalName || agentScreenName(entry.agentId) })), [roster.entries]);
   const openImprovement = useCallback((id: string, trigger: HTMLButtonElement) => {
     workshopTrigger.current = trigger;
@@ -784,7 +768,7 @@ export default function App() {
       accessKey: "S",
       view: VIEWS.serverMenu,
       // One command per window page, named exactly like the page it opens.
-      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label.charAt(0), disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
@@ -829,7 +813,7 @@ export default function App() {
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
-            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} {...roomRosterStateProps} />
+            <RoomRoster protectedWork={protectedWork.work} roster={roster} agents={enabledAgents} agentListSort={agentListSort} availability={room.availability} openCodeRuntime={room.openCodeRuntime} agentHealth={room.agentHealth} providerHealth={room.providerHealth} activeAgents={activeAgentSet} humans={room.humans || []} currentHumanId={human.id} onConfigureAgent={setConfiguredAgent} onConfigureHumanAvatar={openProfile} onOpenRoomProperties={openRoomProperties} onManageRoster={openRoster} onAssignTask={connected ? openAssignTask : undefined} />
           </div>
           <div className="chat-composer">
             {pendingSend ? (
@@ -852,32 +836,32 @@ export default function App() {
           </div>
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
         {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 
         {configuredAgent ? (
           <AgentSettingsDialog
             agent={configuredAgent}
+            protectedWork={protectedWork.work.find((work) => work.owner === configuredAgent && work.phase !== "available")}
             onProtectedWorkChanged={protectedWork.refresh}
             available={room.availability?.[configuredAgent] !== false}
+            openCodeRuntime={room.openCodeRuntime}
+            health={room.agentHealth?.[configuredAgent]}
+            providerHealth={configuredProviderId ? room.providerHealth?.[configuredProviderId] : undefined}
+            providerId={configuredProviderId}
+            implementationCapability={room.implementationCapabilities?.[configuredAgent]}
             recoveryPending={providerRecoveryPending}
             recoveryError={providerRecoveryError}
             onRequestProviderRecovery={allowProviderRecovery}
             onClose={() => { setConfiguredAgent(null); setProviderRecoveryError(""); }}
-            {...(configuredProtectedWork ? { protectedWork: configuredProtectedWork } : {})}
-            {...(room.openCodeRuntime ? { openCodeRuntime: room.openCodeRuntime } : {})}
-            {...(room.agentHealth?.[configuredAgent] ? { health: room.agentHealth[configuredAgent] } : {})}
-            {...(configuredProviderId && room.providerHealth?.[configuredProviderId] ? { providerHealth: room.providerHealth[configuredProviderId] } : {})}
-            {...(configuredProviderId ? { providerId: configuredProviderId } : {})}
-            {...(room.implementationCapabilities?.[configuredAgent] ? { implementationCapability: room.implementationCapabilities[configuredAgent] } : {})}
           />
         ) : null}
         {rosterOpen ? <RosterManagerDialog
           onOpenAdministration={() => openAdministration("Manage room agents")}
           onOpenOpenRouterAccount={() => openUsage(rosterTrigger)}
           initialRoster={roster}
-          {...(rosterSelectedAgentId ? { initialSelectedAgentId: rosterSelectedAgentId } : {})}
+          initialSelectedAgentId={rosterSelectedAgentId || undefined}
           agentListSort={agentListSort}
           onAgentListSortChange={changeAgentListSort}
           returnFocusTo={rosterTrigger}

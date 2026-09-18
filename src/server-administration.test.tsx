@@ -41,13 +41,13 @@ describe("canonical server administration", () => {
   it.each([true, false])("authenticates claimed=%s with Enter and returns to the requested destination", async (claimed) => {
     const { fetchMock } = fixture({ claimed });
     const onContinue = vi.fn();
-    render(<ServerAdministration destination="Room Properties" onContinue={onContinue} />);
+    render(<ServerAdministration destination="Manage room agents" onContinue={onContinue} />);
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Username"), "server-owner");
     if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "fictional-bootstrap-proof");
     else expect(screen.queryByLabelText("Local bootstrap secret")).toBeNull();
     await user.type(screen.getByLabelText("Password"), "fictional-password{enter}");
-    await waitFor(() => expect(onContinue).toHaveBeenCalledWith("Room Properties"));
+    await waitFor(() => expect(onContinue).toHaveBeenCalledWith("Manage room agents"));
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith(claimed ? "/login" : "/bootstrap"))).toHaveLength(1);
     expect(screen.getByText("server-owner")).toBeTruthy();
     expect(screen.queryByLabelText("Password")).toBeNull();

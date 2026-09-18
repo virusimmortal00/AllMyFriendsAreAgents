@@ -19,7 +19,7 @@ alias `~typesafe/jev-latest`) advises the existing deterministic pre-flight
 gate so that clearly irrelevant invocations never reach prompt construction,
 while deterministic signals (mentions, structured targets, explicit
 invitations) always remain authoritative. The classifier is enabled by
-default; rooms disable it per-room in Room Properties → Agent Routing, and a
+default; administrators disable it per-room in Server Administration → Room behavior → Agent Routing, and a
 server-owned environment kill switch disables it everywhere. Routing evidence
 records the classifier's cost, latency, and per-agent probabilities together
 with a no-classifier baseline decision, so the pre/post impact on cost and

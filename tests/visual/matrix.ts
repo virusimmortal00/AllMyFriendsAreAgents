@@ -21,17 +21,17 @@ export const ROSTER_SCENARIOS = [
 const APP_VIEW_KEYS = [
   "startup", "joinRoom", "joinRecovery", "roomChat", "compactRoomChat", "roomMenu", "serverMenu",
   "mentionSuggestions", "textColorPalette", "highlightColorPalette", "classicSmileyPicker", "pollCards", "pendingSendRecovery", "connectionNotices",
-  "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories",
-  "roomPropertiesGeneral", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",
+  "ownerDiagnosticsQuery", "ownerDiagnosticsResults", "serverAdministration", "openRouterAccount", "roomsRepositories", "roomAgentBehavior",
+  "roomPropertiesGeneral", "roomSummarizerModelPicker", "manageAgentsSignIn", "manageAgentsModelPicker", "manageAgentsConflict", "unsavedChangesConfirmation", "assignTask", "roomUsage",
   "yourProfile", "agentStatus", "githubConnect", "githubDeviceAuth", "githubChooseRepo", "githubConfiguredRepo", "githubEmptyRepo", "githubRepairRepo",
   "improvementWorkshop", "improvementWorkshopRecovery", "help", "confirmation",
 ] as const satisfies readonly ViewKey[];
-const SCROLLING_VIEWS: readonly ViewKey[] = ["ownerDiagnosticsResults", "roomPropertiesAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
+const SCROLLING_VIEWS: readonly ViewKey[] = ["ownerDiagnosticsResults", "roomAgentBehavior", "roomSummarizerModelPicker", "manageAgentsModelPicker", "yourProfile", "improvementWorkshop", "serverAdministration", "githubRepairRepo"];
 export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   id: key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), view: VIEWS[key],
   shots: SCROLLING_VIEWS.includes(key) ? ["top", "bottom"] : ["top"],
 })),
-  { id: "room-properties-shared-behavior", view: VIEWS.roomPropertiesAgentBehavior, shots: ["top", "bottom"] },
+  { id: "room-agent-behavior-shared-behavior", view: VIEWS.roomAgentBehavior, shots: ["top", "bottom"] },
   { id: "server-administration-sign-in", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
   { id: "server-administration-unclaimed", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
   { id: "your-profile-signed-out", view: VIEWS.yourProfile, shots: ["top", "bottom"] },

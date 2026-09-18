@@ -51,9 +51,9 @@ capture run must never be reported as a visually approved interface.
   the full application at that supplemental viewport.
   Every matrix capture also rejects a formatting popup overlapping any row of
   the composer toolbar, including the font row above a wrapped popup trigger.
-  Room Properties captures General after an Agent behavior round trip. The
-  transition must retain identical window and action bounds and remove inactive
-  pages from layout. All app captures reject hidden elements that still paint;
+  Room Properties captures only its member-editable General fields. Room behavior
+  is captured separately from Server Administration. All app captures reject hidden
+  elements that still paint;
   accessibility-tree visibility alone cannot detect that CSS failure.
   Agent Behavior also checks shared compact headings, separator-only sections,
   a non-stretched prompt reset, resizable prompt editors, and the square classic

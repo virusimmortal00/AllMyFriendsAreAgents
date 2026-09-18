@@ -477,8 +477,8 @@ describe("rendered reconnect recovery", () => {
 
     await chooseMenuItem(user, "Room", "Room properties...");
     const dialog = screen.getByRole("dialog", { name: "Room Properties" });
-    expect(within(dialog).getByRole("tab", { name: "General" })).toBeTruthy();
-    expect(within(dialog).getByRole("tab", { name: "Agent behavior" })).toBeTruthy();
+    expect(within(dialog).queryByRole("tab", { name: "Agent behavior" })).toBeNull();
+    expect(within(dialog).queryByRole("combobox", { name: "Pre-flight mode" })).toBeNull();
     const roomName = within(dialog).getByRole("textbox", { name: "Room name" });
     await user.clear(roomName);
     await user.type(roomName, "Editable Room");
@@ -649,9 +649,16 @@ describe("rendered reconnect recovery", () => {
   });
 
   it("opens Server Administration as a window at the chosen Server menu page and restores focus on close", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input) === "/api/control/status"
-      ? Response.json({ claimed: true, bootstrapConfigured: true })
-      : Response.json({ error: "Sign in required" }, { status: 401 })));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const path = String(input);
+      if (path === "/api/control/status") return Response.json({ claimed: true, bootstrapConfigured: true });
+      if (path === "/api/room/settings") return Response.json({ settings: {
+        configurationRevision: 1, basePromptRevision: 1, basePromptText: "Room prompt", summarizerModel: null,
+        summarizerPromptText: "Summarize {{transcript}}", summarizerPromptRevision: 1, featureFlags: {},
+        preflightMode: "enforce", intentClassifierEnabled: true, updatedAt: null,
+      }, defaults: { basePromptText: "Room prompt" } });
+      return Response.json({ error: "Sign in required" }, { status: 401 });
+    }));
     const user = userEvent.setup();
     const pushState = vi.spyOn(window.history, "pushState");
     await renderConnected();
@@ -669,7 +676,7 @@ describe("rendered reconnect recovery", () => {
     await user.click(serverTrigger);
     const serverMenu = within(screen.getByRole("menu", { name: "Server" }));
     expect((serverMenu.getByRole("menuitem", { name: "Owner login..." }) as HTMLButtonElement).disabled).toBe(false);
-    for (const name of ["Integrations...", "Rooms & repositories...", "Diagnostics..."]) expect((serverMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
+    for (const name of ["Integrations...", "Rooms & repositories...", "Room behavior...", "Diagnostics..."]) expect((serverMenu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(true);
     await user.keyboard("{Escape}");
     await chooseMenuItem(user, "Server", "Owner login...");
     const administration = screen.getByRole("dialog", { name: "Server Administration" });
@@ -680,6 +687,10 @@ describe("rendered reconnect recovery", () => {
     // Signed out, other pages open as previews with every control disabled.
     await user.click(within(administration).getByRole("tab", { name: "Integrations" }));
     expect(within(administration).getByText(/Preview only/)).toBeTruthy();
+    await user.click(within(administration).getByRole("tab", { name: "Room behavior" }));
+    expect(await within(administration).findByRole("heading", { name: "Room behavior" })).toBeTruthy();
+    expect((await within(administration).findByRole("combobox", { name: "Pre-flight mode" }) as HTMLSelectElement).matches(":disabled")).toBe(true);
+    await user.click(within(administration).getByRole("tab", { name: "Integrations" }));
     expect((within(administration).getByRole("button", { name: "Connect GitHub" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
     expect((within(administration).getByRole("button", { name: "Refresh" }) as HTMLButtonElement).matches(":disabled")).toBe(true);
     // The chat window stays in place behind the administration window.

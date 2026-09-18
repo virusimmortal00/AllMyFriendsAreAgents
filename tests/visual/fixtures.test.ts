@@ -13,7 +13,7 @@ describe("visual fixture fidelity", () => {
   it("explicitly maps every reachable registered view and additional settings and administration states", () => {
     const hidden = new Set<string>(HIDDEN_VIEW_KEYS);
     const reachable = Object.entries(VIEWS).filter(([key]) => !hidden.has(key)).map(([, view]) => view);
-    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...reachable,VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.serverAdministration, VIEWS.manageAgentsRoster, VIEWS.roomPropertiesAgentBehavior].map((view) => view.id).sort());
+    expect(VISUAL_SCENARIOS.map((scenario) => scenario.view.id).sort()).toEqual([...reachable,VIEWS.serverAdministration, VIEWS.serverAdministration, VIEWS.yourProfile, VIEWS.yourProfile, VIEWS.serverAdministration, VIEWS.manageAgentsRoster, VIEWS.roomAgentBehavior].map((view) => view.id).sort());
     expect(new Set(APP_SCENARIOS.map((scenario) => scenario.id)).size).toBe(APP_SCENARIOS.length);
     expect(expectedVisualKeys()).toHaveLength(762);
     expect(expectedVisualKeys().filter((key) => key.includes("--compact-room-chat--"))).toHaveLength(6);

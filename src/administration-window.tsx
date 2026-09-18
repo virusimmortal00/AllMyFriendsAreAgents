@@ -5,15 +5,17 @@ import { Diagnostics } from "./diagnostics";
 import { ExplorerLayout, type ExplorerPage } from "./explorer-layout";
 import { IntegrationsPage } from "./integrations";
 import { RoomsRepositories } from "./rooms-repositories";
+import { RoomConfigurationPanel } from "./room-configuration-dialog";
 import { ServerAdministration, type AdministrationDestination } from "./server-administration";
-import { VIEWS } from "./view-registry";
+import { VIEWS, viewAttributes } from "./view-registry";
 
-export type AdministrationPage = "Login" | "Integrations" | "Rooms" | "Diagnostics";
+export type AdministrationPage = "Login" | "Integrations" | "Rooms" | "RoomBehavior" | "Diagnostics";
 
 export const ADMINISTRATION_PAGES = [
   { key: "Login", label: "Owner login", icon: "🔑", requiresAdministrator: false },
   { key: "Integrations", label: "Integrations", icon: "🔌", requiresAdministrator: true },
   { key: "Rooms", label: "Rooms & repositories", icon: "📁", requiresAdministrator: true },
+  { key: "RoomBehavior", label: "Room behavior", icon: "🤖", requiresAdministrator: true },
   { key: "Diagnostics", label: "Diagnostics", icon: "🩺", requiresAdministrator: true },
 ] as const satisfies readonly [
   ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean },
@@ -45,6 +47,10 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const signInState = session ? `Signed in as ${session.principal.username} (${session.principal.role})` : checked ? "Not signed in · other pages are previews" : "Checking sign-in…";
   const content = current.key === "Integrations" ? <IntegrationsPage refreshKey={refreshKey} />
     : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
+      : current.key === "RoomBehavior" ? <section className="administration-page administration-room-behavior" {...viewAttributes(VIEWS.roomAgentBehavior)}>
+        <header className="page-header"><h2>Room behavior</h2><p>Administrator-managed prompts, summarization, and agent routing for this room.</p></header>
+        <RoomConfigurationPanel active onClose={onClose} />
+      </section>
       : <Diagnostics />;
 
   return <DialogFrame title="Server Administration" closeLabel="Close server administration" active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={onClose}
