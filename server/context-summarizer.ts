@@ -117,7 +117,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         if (summary) {
           this.routeCooldowns.delete(selection);
           if (model.providerId && this.health && await this.health.providers.recordSuccess(model.providerId)) this.health.onChange?.();
-          await input.onUsage?.({ model: selection, ...(costUsd === undefined ? {} : { costUsd }) });
+          await input.onUsage?.({ model: selection, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(costUsd === undefined ? {} : { costUsd }) });
           return summary;
         }
         this.routeCooldowns.set(selection, Date.now() + 60_000);

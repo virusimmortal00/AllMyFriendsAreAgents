@@ -66,8 +66,10 @@ export interface AgentContextSummarizer {
 
 /** Observed provider spend for one newly generated room-context summary. */
 export interface AgentContextSummarizerUsage {
-  readonly model: string;
+  readonly model?: string;
   readonly costUsd?: number;
+  readonly cached?: boolean;
+  readonly fallbackModels?: readonly string[];
 }
 
 export interface AgentScopedTranscriptOptions {
@@ -151,6 +153,7 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
   const key = { agentId: options.agentId, spanStartId: older[0].id, spanEndId: older.at(-1)!.id, configRevision };
   try {
     let summary = await options.summaryStore.getAgentContextSummary(key);
+    if (summary) await options.onSummaryUsage?.({ cached: true });
     if (!summary) {
       const pending = options.summarizer.summarize({
         transcript: transcriptMessages(older),

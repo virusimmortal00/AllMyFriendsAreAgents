@@ -819,7 +819,20 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         summarizer: contextSummarizer,
         onSummaryUsage: async (summarizedAgent, usage) => {
           const name = AGENT_PROFILES[summarizedAgent].conversationalName;
-          await store.addMessage("system", `Room context summarizer generated context for ${name} using ${usage.model}.`, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
+          const text = usage.cached
+            ? `Room context summarizer reused cached context for ${name}; no new spend.`
+            : `Room context summarizer generated context for ${name} using ${usage.model || "the configured model"}${usage.fallbackModels?.length ? ` after fallback from ${usage.fallbackModels.join(", ")}` : ""}.`;
+          await store.addMessage("system", text, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
+          broadcast();
+        },
+        onGenerationActivity: async (activityAgent, activity) => {
+          const name = AGENT_PROFILES[activityAgent].conversationalName;
+          const text = activity.kind === "retry"
+            ? `${name}'s generation retried after a provider or session error.`
+            : activity.kind === "failed"
+              ? `${name}'s generation failed before posting a reply.`
+              : `${name}'s generation was cancelled before posting a reply.`;
+          await store.addMessage("system", text, "status", undefined, undefined, undefined, { generationId: activity.generationId, costUsd: activity.costUsd });
           broadcast();
         },
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
@@ -864,7 +877,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
-    if (providerRecovered) broadcast();
+    const name = AGENT_PROFILES[agent].conversationalName;
+    await store.addMessage("system", `${name}'s completed generation was discarded because the agent was disabled before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+    broadcast();
     return { cancelled: true, outcomeReason: "agent-disabled" };
   }
   const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
@@ -909,6 +924,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:diagnosticText,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
       await store.clearSession(agent);
+      const name = AGENT_PROFILES[agent].conversationalName;
+      await store.addMessage("system", `${name}'s completed generation was discarded because room activity changed before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+      broadcast();
       delivery.finish("cancelled", "activity-changed-before-delivery");
       return { cancelled: true, interpretation: parsed.diagnostics };
     }

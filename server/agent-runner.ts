@@ -48,6 +48,7 @@ export interface AgentContextRuntime {
   readonly summaryStore?: AgentContextSummaryStore;
   readonly summarizer?: AgentContextSummarizer;
   readonly onSummaryUsage?: (agent: AgentId, usage: AgentContextSummarizerUsage) => Promise<void> | void;
+  readonly onGenerationActivity?: (agent: AgentId, activity: { readonly kind: "retry" | "failed" | "cancelled"; readonly generationId: string; readonly attemptOrdinal: number; readonly costUsd?: number }) => Promise<void> | void;
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
@@ -761,6 +762,9 @@ export async function runAgent(
         isActive: () => toolsActive && attemptOrdinal === ordinal && !signal?.aborted });
     };
     const append = (event: GenerationJournalEvent) => journal?.append({ ...conversationLogFields(), ...event, attemptOrdinal });
+    const publishGenerationActivity = async (kind: "retry" | "failed" | "cancelled", costUsd?: number) => {
+      await context?.onGenerationActivity?.(agent, { kind, generationId, attemptOrdinal, ...(costUsd === undefined ? {} : { costUsd }) });
+    };
     const startedAt = Date.now();
     const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
     // Review turns deliberately stay rooted at the configured project and retain
@@ -890,6 +894,7 @@ export async function runAgent(
           await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
           activeContext = refreshAgentScopedTools(context, toolAttempt());
           await append({ type: "generation.retry", generationId, agent, reason: "structured session was unavailable", staleSessionId: existing.id });
+          await publishGenerationActivity("retry");
           structuredResult = await invokeStructured();
         }
         const text = structuredResult.structured.action === "speak" ? structuredResult.structured.messages.join("\n\n") : "";
@@ -954,6 +959,8 @@ export async function runAgent(
           reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
           ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
         });
+        const retryCostUsd = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout).cost : undefined;
+        await publishGenerationActivity("retry", retryCostUsd);
         resumedSessionId = undefined;
         attemptOrdinal += 1;
         toolsActive = true;
@@ -996,9 +1003,11 @@ export async function runAgent(
           cliStdout: error.process.stdout,
           cliStderr: error.process.stderr,
         });
+        await publishGenerationActivity("cancelled", parsed.cost);
         throw new AgentGenerationCancelledError();
       }
       const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
+      if (failedProtocol) await publishGenerationActivity("failed", failedProtocol.cost);
       await append({
         type: "generation.failed",
         generationId,

@@ -15,6 +15,7 @@ describe("OpenCode context summarizer", () => {
       return { stdout: `${JSON.stringify({ type: "text", part: { type: "text", text: "Fallback summary" } })}\n`, stderr: "" };
     });
     const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+    const onUsage = vi.fn();
     await expect(summarizer.summarize({
       transcript: "[YOU | one]\nExact text",
       tokenTarget: 200,
@@ -24,9 +25,11 @@ describe("OpenCode context summarizer", () => {
         { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free" },
         { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest" },
       ],
+      onUsage,
     })).resolves.toBe("Fallback summary");
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[1][1]).toContain("openrouter/~deepseek/deepseek-v4-flash-latest");
+    expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/~deepseek/deepseek-v4-flash-latest", fallbackModels: ["opencode/muse-spark-1.2-contributor-free"] });
   });
 
   it("coalesces simultaneous summaries for the same cold-start span", async () => {
