@@ -476,6 +476,7 @@ export const Transcript = memo(function Transcript({
   magnification,
   showTimestamps = true,
   showMessagePrices = true,
+  showSystemActivity = true,
   transcriptRef,
   onOpenImprovement,
 }: {
@@ -483,6 +484,7 @@ export const Transcript = memo(function Transcript({
   magnification: number;
   showTimestamps?: boolean;
   showMessagePrices?: boolean;
+  showSystemActivity?: boolean;
   transcriptRef: RefObject<HTMLDivElement | null>;
   onOpenImprovement?: (id: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -545,7 +547,7 @@ export const Transcript = memo(function Transcript({
         }}
       >
         <div ref={contentRef} className="transcript-content">
-          {messages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+          {messages.filter((message) => showSystemActivity || !(message.speaker === "system" && message.kind === "status")).map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
         </div>
       </div>
       {hasNewMessages ? (

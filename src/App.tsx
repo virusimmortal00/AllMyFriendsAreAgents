@@ -5,7 +5,7 @@ import { AgentSettingsDialog, HelpDialog, PollCards, RoomRoster, Transcript, Wor
 import { ComposerBoundary, type ComposerBoundaryHandle, type ComposerSubmission } from "./composer";
 import { preferredScrollBehavior, scrollTranscriptToEnd } from "./scroll";
 import { appendOptimisticHumanMessage, discardOptimisticMessage } from "./optimistic-message";
-import { adjacentTranscriptMagnification, loadTranscriptMagnification, loadTranscriptMessagePrices, loadTranscriptTimestamps, saveTranscriptMagnification, saveTranscriptMessagePrices, saveTranscriptTimestamps } from "./transcript-view";
+import { adjacentTranscriptMagnification, loadTranscriptMagnification, loadTranscriptMessagePrices, loadTranscriptSystemActivity, loadTranscriptTimestamps, saveTranscriptMagnification, saveTranscriptMessagePrices, saveTranscriptSystemActivity, saveTranscriptTimestamps } from "./transcript-view";
 import { loadDraftSnapshot, loadPendingSend, saveDraftSnapshot, savePendingSend, type PendingSend } from "./client-persistence";
 import { reconnectDelayMs, restoreScrollDistance, scrollDistanceFromBottom } from "./reconnect";
 import { nextWorkshopId } from "./workshop-dialog";
@@ -173,6 +173,7 @@ export default function App() {
   const [transcriptMagnification, setTranscriptMagnification] = useState(loadTranscriptMagnification);
   const [showTimestamps, setShowTimestamps] = useState(loadTranscriptTimestamps);
   const [showMessagePrices, setShowMessagePrices] = useState(loadTranscriptMessagePrices);
+  const [showSystemActivity, setShowSystemActivity] = useState(loadTranscriptSystemActivity);
   const transcript = useRef<HTMLDivElement>(null);
   const composer = useRef<ComposerBoundaryHandle>(null);
   const workshopTrigger = useRef<HTMLButtonElement | null>(null);
@@ -539,6 +540,14 @@ export default function App() {
     });
   }
 
+  function toggleTranscriptSystemActivity() {
+    setShowSystemActivity((current) => {
+      const next = !current;
+      saveTranscriptSystemActivity(next);
+      return next;
+    });
+  }
+
   useEffect(() => {
     const onTranscriptShortcut = (event: globalThis.KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -765,6 +774,7 @@ export default function App() {
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
         presentationCommand({ label: "Message prices", accessKey: "M", checked: showMessagePrices, checkType: "checkbox", onSelect: toggleTranscriptMessagePrices }),
+        presentationCommand({ label: "System activity", accessKey: "Y", checked: showSystemActivity, checkType: "checkbox", onSelect: toggleTranscriptSystemActivity }),
         { type: "separator" },
         presentationCommand({ label: "Larger transcript", accessKey: "L", shortcut: "Ctrl++", disabled: transcriptMagnification >= 150, onSelect: () => changeTranscriptMagnification(1) }),
         presentationCommand({ label: "Smaller transcript", accessKey: "S", shortcut: "Ctrl+-", disabled: transcriptMagnification <= 75, onSelect: () => changeTranscriptMagnification(-1) }),
@@ -800,7 +810,7 @@ export default function App() {
         {connectionNotice ? <div className="connection-banner" role="status" aria-live="polite" aria-atomic="true" {...viewAttributes(VIEWS.connectionNotices)}>{connectionNotice}</div> : null}
         <div className="workspace" data-primary-workspace tabIndex={-1}>
           <section className="chat-panel beveled-inset" {...viewAttributes(VIEWS.roomChat)} data-responsive-view-id={VIEWS.compactRoomChat.id} data-responsive-view-name={VIEWS.compactRoomChat.name} data-responsive-view-state={VIEWS.compactRoomChat.state}>
-            <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} showMessagePrices={showMessagePrices} transcriptRef={transcript} onOpenImprovement={openImprovement} />
+            <Transcript messages={room.messages} magnification={transcriptMagnification} showTimestamps={showTimestamps} showMessagePrices={showMessagePrices} showSystemActivity={showSystemActivity} transcriptRef={transcript} onOpenImprovement={openImprovement} />
             <PollCards polls={polls} disabled={!connected || Boolean(pollVotePending)} pending={pollVotePending} error={pollError} onVote={vote} onClose={endPoll} />
           </section>
           <div className="right-rail">
