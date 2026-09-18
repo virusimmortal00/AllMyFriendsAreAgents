@@ -1007,7 +1007,7 @@ export async function runAgent(
         throw new AgentGenerationCancelledError();
       }
       const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
-      if (failedProtocol) await publishGenerationActivity("failed", failedProtocol.cost);
+      await publishGenerationActivity("failed", failedProtocol?.cost);
       await append({
         type: "generation.failed",
         generationId,
