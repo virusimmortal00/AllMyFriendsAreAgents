@@ -494,9 +494,10 @@ export const Transcript = memo(function Transcript({
   const resizeFrame = useRef<number | undefined>(undefined);
   const previousContent = useRef("");
   const [hasNewMessages, setHasNewMessages] = useState(false);
-  const lastMessage = messages.at(-1);
+  const visibleMessages = showSystemActivity ? messages : messages.filter((message) => !(message.speaker === "system" && message.kind === "status"));
+  const lastMessage = visibleMessages.at(-1);
   const lastText = lastMessage?.text || "";
-  const contentSignature = `${messages.length}:${lastMessage?.id || ""}:${lastText.length}:${lastText.slice(-64)}`;
+  const contentSignature = `${visibleMessages.length}:${lastMessage?.id || ""}:${lastText.length}:${lastText.slice(-64)}`;
 
   const followEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     following.current = true;
@@ -547,7 +548,7 @@ export const Transcript = memo(function Transcript({
         }}
       >
         <div ref={contentRef} className="transcript-content">
-          {messages.filter((message) => showSystemActivity || !(message.speaker === "system" && message.kind === "status")).map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+          {visibleMessages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
         </div>
       </div>
       {hasNewMessages ? (

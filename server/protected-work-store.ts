@@ -22,7 +22,7 @@ const recordSchema = z.object({
   returnAttempts: z.number().int().min(0).max(3),
   package: z.object({ summary: z.string().max(16_000), evidenceRefs: z.array(evidence).max(32), unresolvedQuestions: z.array(z.string().max(500)).max(16),
     status: z.enum(["completed", "interrupted", "failed"]), createdAt: timestamp }).strict().nullable(),
-  report: z.object({ text: text.nullable(), relevance: z.enum(["relevant", "superseded", "qualified"]), cursor: z.string().nullable() }).strict().nullable(),
+  report: z.object({ text: text.nullable(), relevance: z.enum(["relevant", "superseded", "qualified"]), cursor: z.string().nullable(), generationId: z.string().min(1).max(100).optional(), costUsd: z.number().finite().nonnegative().optional() }).strict().nullable(),
 }).strict();
 export type ProtectedWorkRecord = z.infer<typeof recordSchema>;
 export type ProtectedReturnReport = NonNullable<ProtectedWorkRecord["report"]>;

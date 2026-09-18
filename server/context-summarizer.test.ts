@@ -53,6 +53,15 @@ describe("OpenCode context summarizer", () => {
     expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/summary-model", costUsd: 0.0025 });
   });
 
+  it("does not retry a successful provider route when activity disclosure fails", async () => {
+    const execute = vi.fn(async () => ({ stdout: `${JSON.stringify({ type: "text", part: { type: "text", text: "Generated summary" } })}\n`, stderr: "" }));
+    const onUsage = vi.fn(async () => { throw new Error("status storage unavailable"); });
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }, { providerId: "openrouter", modelId: "fallback-model" }], onUsage })).rejects.toThrow("status storage unavailable");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a failed summary attempt and any provider-reported spend", async () => {
     const execute = vi.fn(async () => {
       throw Object.assign(new Error("provider disconnected"), {

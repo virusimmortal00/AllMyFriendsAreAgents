@@ -25,7 +25,7 @@ it("normalizes report field order before auditing, round-trips, and rejects tamp
       requestDigest: "a".repeat(64), phase: "report-pending", createdAt: now, startedAt: now, stoppedAt: now,
       updatedAt: now, blocker: null, disposition: null, departureCursor: null, returnAttempts: 1,
       package: { summary: "Finding", evidenceRefs: [], unresolvedQuestions: [], status: "completed", createdAt: now },
-      report: { relevance: "qualified", text: "Bounded finding", cursor: "current" },
+      report: { relevance: "qualified", text: "Bounded finding", cursor: "current", generationId: "generation-1", costUsd: 0.0025 },
     };
     const store = await ProtectedWorkStore.open(directory);
     expect(await store.put(record, 0)).toBe(true);

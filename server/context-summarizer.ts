@@ -110,6 +110,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         failures.push(`${selection}: provider unavailable`);
         continue;
       }
+      let completed: { readonly summary: string; readonly usage: { readonly model: string; readonly fallbackModels?: readonly string[]; readonly costUsd?: number } } | undefined;
       try {
         const { stdout } = await this.execute(command, [
           "run", "--format", "json", "--dir", input.projectPath, "--agent", "plan",
@@ -129,11 +130,12 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         if (summary) {
           this.routeCooldowns.delete(selection);
           if (model.providerId && this.health && await this.health.providers.recordSuccess(model.providerId)) this.health.onChange?.();
-          await input.onUsage?.({ model: selection, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(hasObservedCost ? { costUsd: observedCostUsd } : {}) });
-          return summary;
+          completed = { summary, usage: { model: selection, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(hasObservedCost ? { costUsd: observedCostUsd } : {}) } };
         }
-        this.routeCooldowns.set(selection, Date.now() + 60_000);
-        failures.push(`${selection}: empty response`);
+        if (!completed) {
+          this.routeCooldowns.set(selection, Date.now() + 60_000);
+          failures.push(`${selection}: empty response`);
+        }
       } catch (error) {
         const stdout = error && typeof error === "object" && "stdout" in error ? (error as { stdout?: unknown }).stdout : undefined;
         if (typeof stdout === "string") observeCost(summaryFromJsonLines(stdout).costUsd);
@@ -157,6 +159,10 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         const retryAt = local.status === "cooldown" && local.retryAt ? Date.parse(local.retryAt) : Date.now() + 5 * 60_000;
         this.routeCooldowns.set(selection, retryAt);
         failures.push(`${selection}: route unavailable`);
+      }
+      if (completed) {
+        await input.onUsage?.(completed.usage);
+        return completed.summary;
       }
     }
     await input.onUsage?.({ failed: true, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(hasObservedCost ? { costUsd: observedCostUsd } : {}) });
