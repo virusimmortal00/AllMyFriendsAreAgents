@@ -821,6 +821,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
           const name = AGENT_PROFILES[summarizedAgent].conversationalName;
           const text = usage.cached
             ? `Room context summarizer reused cached context for ${name}; no new spend.`
+            : usage.failed
+              ? `Room context summarizer could not generate context for ${name}.`
             : `Room context summarizer generated context for ${name} using ${usage.model || "the configured model"}${usage.fallbackModels?.length ? ` after fallback from ${usage.fallbackModels.join(", ")}` : ""}.`;
           await store.addMessage("system", text, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
           broadcast();

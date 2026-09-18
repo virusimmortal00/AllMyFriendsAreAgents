@@ -69,6 +69,7 @@ export interface AgentContextSummarizerUsage {
   readonly model?: string;
   readonly costUsd?: number;
   readonly cached?: boolean;
+  readonly failed?: boolean;
   readonly fallbackModels?: readonly string[];
 }
 

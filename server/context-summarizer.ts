@@ -82,11 +82,21 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
 
   private async summarizeUncached(input: Parameters<AgentContextSummarizer["summarize"]>[0]) {
     const command = typeof this.command === "function" ? this.command() : this.command;
-    if (!command) throw new Error("Context summarization unavailable (verified OpenCode runtime unavailable).");
+    if (!command) {
+      await input.onUsage?.({ failed: true });
+      throw new Error("Context summarization unavailable (verified OpenCode runtime unavailable).");
+    }
     const prompt = input.promptTemplate
       .replaceAll("{{tokenTarget}}", String(input.tokenTarget))
       .replaceAll("{{transcript}}", input.transcript);
     const failures: string[] = [];
+    let observedCostUsd = 0;
+    let hasObservedCost = false;
+    const observeCost = (costUsd: number | undefined) => {
+      if (costUsd === undefined) return;
+      observedCostUsd += costUsd;
+      hasObservedCost = true;
+    };
     for (const model of input.models) {
       const selection = model.providerId ? `${model.providerId}/${model.modelId}` : model.modelId;
       const routeRetryAt = this.routeCooldowns.get(selection);
@@ -111,19 +121,22 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
           maxBuffer: OUTPUT_LIMIT,
           env: summarizerEnvironment(),
         });
+        const parsed = summaryFromJsonLines(stdout);
+        observeCost(parsed.costUsd);
         const protocolFailure = providerFailuresFromOpenCodeOutput(stdout, 1)[0];
         if (protocolFailure) throw new ProviderInvocationError(protocolFailure);
-        const { text: summary, costUsd } = summaryFromJsonLines(stdout);
+        const { text: summary } = parsed;
         if (summary) {
           this.routeCooldowns.delete(selection);
           if (model.providerId && this.health && await this.health.providers.recordSuccess(model.providerId)) this.health.onChange?.();
-          await input.onUsage?.({ model: selection, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(costUsd === undefined ? {} : { costUsd }) });
+          await input.onUsage?.({ model: selection, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(hasObservedCost ? { costUsd: observedCostUsd } : {}) });
           return summary;
         }
         this.routeCooldowns.set(selection, Date.now() + 60_000);
         failures.push(`${selection}: empty response`);
       } catch (error) {
         const stdout = error && typeof error === "object" && "stdout" in error ? (error as { stdout?: unknown }).stdout : undefined;
+        if (typeof stdout === "string") observeCost(summaryFromJsonLines(stdout).costUsd);
         const protocolFailure = providerFailuresFromOpenCodeOutput(stdout, 1)[0];
         const classifiedError = protocolFailure ? new ProviderInvocationError(protocolFailure) : error;
         const providerFailure = model.providerId ? classifyProviderScopedFailure(classifiedError, model.providerId) : undefined;
@@ -146,6 +159,7 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         failures.push(`${selection}: route unavailable`);
       }
     }
+    await input.onUsage?.({ failed: true, ...(failures.length ? { fallbackModels: failures.map((failure) => failure.split(":", 1)[0]!) } : {}), ...(hasObservedCost ? { costUsd: observedCostUsd } : {}) });
     throw new Error(`Context summarization unavailable (${failures.join("; ")}).`);
   }
 }

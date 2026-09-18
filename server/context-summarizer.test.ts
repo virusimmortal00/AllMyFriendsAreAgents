@@ -53,6 +53,19 @@ describe("OpenCode context summarizer", () => {
     expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/summary-model", costUsd: 0.0025 });
   });
 
+  it("reports a failed summary attempt and any provider-reported spend", async () => {
+    const execute = vi.fn(async () => {
+      throw Object.assign(new Error("provider disconnected"), {
+        stdout: JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0.00125 } }),
+      });
+    });
+    const onUsage = vi.fn();
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }], onUsage })).rejects.toThrow("Context summarization unavailable");
+    expect(onUsage).toHaveBeenCalledWith({ failed: true, fallbackModels: ["openrouter/summary-model"], costUsd: 0.00125 });
+  });
+
   it("fans out account-scoped cooldowns while retaining an unrelated fallback", async () => {
     const providers = ProviderHealthRegistry.memory();
     const changed = vi.fn();
