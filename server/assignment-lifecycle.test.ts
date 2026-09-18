@@ -46,7 +46,7 @@ async function repositoryFixture(kind: "json" | "sqlite" = "json", implementatio
   await git(root, "config", "user.name", "Test");
   await writeFile(path.join(root, "tracked.txt"), "base\n");
   await git(root, "add", "tracked.txt");
-  await git(root, "commit", "-m", "base");
+  await git(root, "commit", "--no-verify", "-m", "base");
   const base = await git(root, "rev-parse", "HEAD");
   const state = path.join(root, ".state");
   const repository = kind === "json"
@@ -132,7 +132,7 @@ describe("trusted single-writer assignment lifecycle", () => {
     const container = await mkdtemp(path.join(os.tmpdir(), "amfaa-linked-repository-")); directories.push(container);
     const source = path.join(container, "source"); const repository = path.join(container, "repository"); const worktrees = path.join(container, "worktrees");
     await mkdir(source); await git(source, "init", "-b", "main"); await git(source, "config", "user.email", "test@example.com"); await git(source, "config", "user.name", "Test");
-    await writeFile(path.join(source, "tracked.txt"), "base\n"); await git(source, "add", "tracked.txt"); await git(source, "commit", "-m", "base");
+    await writeFile(path.join(source, "tracked.txt"), "base\n"); await git(source, "add", "tracked.txt"); await git(source, "commit", "--no-verify", "-m", "base");
     await git(source, "worktree", "add", "-b", "candidate", repository, "HEAD"); await mkdir(worktrees);
     const workspace = path.join(worktrees, "assignment"); await git(repository, "worktree", "add", "-b", "assignment-branch", workspace, "HEAD");
     const record = { ...assignmentRecord(await realpath(workspace)), branch: "assignment-branch" };
@@ -272,8 +272,8 @@ describe("trusted single-writer assignment lifecycle", () => {
     const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-conflict", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
     if (created.kind !== "ok") throw new Error(created.kind);
     await writeFile(path.join(created.value.workspacePath, "tracked.txt"), "assignment\n");
-    await git(created.value.workspacePath, "add", "tracked.txt"); await git(created.value.workspacePath, "commit", "-m", "assignment");
-    await writeFile(path.join(root, "tracked.txt"), "main\n"); await git(root, "add", "tracked.txt"); await git(root, "commit", "-m", "main");
+    await git(created.value.workspacePath, "add", "tracked.txt"); await git(created.value.workspacePath, "commit", "--no-verify", "-m", "assignment");
+    await writeFile(path.join(root, "tracked.txt"), "main\n"); await git(root, "add", "tracked.txt"); await git(root, "commit", "--no-verify", "-m", "main");
     await expect(git(created.value.workspacePath, "merge", "main")).rejects.toBeTruthy();
     expect((await service.cleanup())[0]).toMatchObject({ lifecycleStatus: "RECOVERABLE", recovery: { classification: "unmerged" }, workspacePath: created.value.workspacePath });
     expect(await stat(created.value.workspacePath)).toBeTruthy();
@@ -283,7 +283,7 @@ describe("trusted single-writer assignment lifecycle", () => {
     const { root, service } = await repositoryFixture();
     const created = await service.create(`Bearer ${token}`, { assignmentId: "assignment-merged", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1 });
     if (created.kind !== "ok") throw new Error(created.kind);
-    await writeFile(path.join(created.value.workspacePath, "done.txt"), "done\n"); await git(created.value.workspacePath, "add", "done.txt"); await git(created.value.workspacePath, "commit", "-m", "done");
+    await writeFile(path.join(created.value.workspacePath, "done.txt"), "done\n"); await git(created.value.workspacePath, "add", "done.txt"); await git(created.value.workspacePath, "commit", "--no-verify", "-m", "done");
     await git(root, "merge", "--ff-only", created.value.branch);
     expect((await service.reconcile())[0]).toMatchObject({ lifecycleStatus: "COMPLETED", recovery: { classification: "merged" } });
   });

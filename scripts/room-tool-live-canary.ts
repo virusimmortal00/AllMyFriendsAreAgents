@@ -93,7 +93,7 @@ try {
   await chmod(auth, 0o600);
   const git = (args: string[]) => exec("git", ["-C", checkout, ...args], { signal: interrupted.signal, timeout: 10_000, env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
   await git(["init", "-b", "main"]);
-  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Fixture"]);
+  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--no-verify", "--allow-empty", "-m", "Fixture"]);
   const store = await RoomStore.open(checkout, data);
   await store.updateRoster(store.snapshot().roster!.revision, [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openrouter", modelId: selection.slice("openrouter/".length), enabled: true, configurationRevision: 1, commandPermissions: { allowAll: false, allowed: ["help"] } }]);
   const generations: string[] = [];

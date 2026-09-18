@@ -47,6 +47,8 @@ jobs:
           INTEGRATION_CONTRACT_HEAD_SHA: ${{ github.sha }}
           INTEGRATION_CONTRACT_REQUIRE_REVIEW: ${{ github.event_name == 'pull_request' }}
           INTEGRATION_CONTRACT_PR_BODY: ${{ github.event.pull_request.body }}
+      - name: Enforce client-server API route contracts
+        run: pnpm run check:api-contracts
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
       - name: Type-check screenshot and review tooling

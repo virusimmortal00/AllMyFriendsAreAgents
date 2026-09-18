@@ -40,7 +40,7 @@ async function fixture(backend: "json" | "sqlite") {
   await mkdir(checkout);
   const git = (args: string[]) => exec("git", ["-C", checkout, ...args], { env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } });
   await git(["init", "-b", "main"]);
-  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Fixture"]);
+  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--no-verify", "--allow-empty", "-m", "Fixture"]);
   const store = backend === "json" ? await RoomStore.open(checkout, data) : await SqliteRoomRepository.open(checkout, database);
   await store.updateRoster(store.snapshot().roster!.revision, [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1, commandPermissions: { allowAll: false, allowed: ["help", "task"] } }]);
   if (store instanceof SqliteRoomRepository) store.close();
