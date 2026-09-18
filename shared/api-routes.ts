@@ -1,0 +1,237 @@
+/**
+ * The client↔server API route contract.
+ *
+ * Every Express registration under `server/` and every browser call in
+ * `src/api.ts` must appear here, in the same change that adds or moves it.
+ * `scripts/check-api-route-contracts.ts` fails closed on drift in either
+ * direction.
+ *
+ * Root scope meanings, as seen from the browser client in `src/api.ts`
+ * (`scopedRequestPath`):
+ * - "global": installation-scoped. Never rewritten under `/rooms/:roomId` views.
+ * - "room": room-scoped. The client rewrites it under `/rooms/:roomId` views,
+ *   and the server registers both `/api/<path>` and `/api/rooms/:roomId/<path>`.
+ * - "canonical": the client still rewrites it under `/rooms/:roomId` views, but
+ *   the server serves only the canonical room today, so the room form would 404.
+ *   The note records why the twin is missing; completing the twin flips the root
+ *   to "room" and the guardrail then enforces twin completeness.
+ */
+export type ApiRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type ApiRootScope = "global" | "room" | "canonical";
+
+export interface ApiRootDefinition {
+  readonly root: string;
+  readonly scope: ApiRootScope;
+  /** Required for canonical roots: why the room-scoped twin is missing and what completes it. */
+  readonly note?: string;
+}
+
+export interface ApiRouteDefinition {
+  readonly method: ApiRouteMethod;
+  /** Literal Express registration path; template parameters use `:name`. */
+  readonly path: string;
+}
+
+export const API_ROOTS: readonly ApiRootDefinition[] = [
+  // Installation-scoped and control-plane roots: never rewritten by the browser.
+  { root: "agent-tools", scope: "global" },
+  { root: "avatar", scope: "global" },
+  { root: "continuation-executor", scope: "global" },
+  { root: "control", scope: "global" },
+  { root: "developer", scope: "global" },
+  { root: "humans", scope: "global" },
+  { root: "investigation-executor", scope: "global" },
+  { root: "model-details", scope: "global" },
+  { root: "model-discovery", scope: "global" },
+  { root: "openrouter-model-page", scope: "global" },
+  { root: "openrouter-usage", scope: "global" },
+  { root: "protected-work", scope: "global" },
+  { root: "provider-setup", scope: "global" },
+  { root: "ready", scope: "global" },
+  { root: "rooms", scope: "global" },
+  { root: "style", scope: "global" },
+  // Room-scoped: both bare and /api/rooms/:roomId forms are registered.
+  { root: "events", scope: "room" },
+  { root: "messages", scope: "room" },
+  { root: "state", scope: "room" },
+  // Canonical-room only today; the browser rewrite under /rooms/:roomId views
+  // would 404 until the multi-room migration (#60) completes each twin.
+  { root: "actions", scope: "canonical", note: "Agent direction acts on the canonical room roster; a room form needs per-room rosters (#60)." },
+  { root: "commands", scope: "canonical", note: "Submission targets canonical-room command state; only the GitHub diagnostic read has a room form." },
+  { root: "contributions", scope: "canonical", note: "Contribution records are canonical-room state; a room form needs per-room contribution stores (#60)." },
+  { root: "continuations", scope: "canonical", note: "Continuation jobs and policy are canonical-room state; a room form needs per-room continuation stores (#60)." },
+  { root: "heartbeat", scope: "canonical", note: "The bounded heartbeat executor runs against the canonical room." },
+  { root: "improvements", scope: "canonical", note: "Workshop improvements are canonical-room records; a room form needs per-room stores (#60)." },
+  { root: "investigations", scope: "canonical", note: "Investigation jobs and policy are canonical-room state; a room form needs per-room investigation stores (#60)." },
+  { root: "polls", scope: "canonical", note: "Poll listing has a room form, but vote and close mutations still target canonical-room command state." },
+  { root: "preflight", scope: "canonical", note: "Routing evidence is recorded for the canonical room." },
+  { root: "provider-health", scope: "canonical", note: "Provider recovery acts on the canonical room roster." },
+  { root: "room", scope: "canonical", note: "Room configuration and history are canonical-room records; a room form needs per-room configuration (#60)." },
+  { root: "roster", scope: "canonical", note: "The roster projection reads the canonical room roster; a room form needs per-room rosters (#60)." },
+  { root: "settings", scope: "canonical", note: "Settings PATCH writes the canonical room." },
+  { root: "tasks", scope: "canonical", note: "Task storage is scoped to the canonical room; a room form needs per-room task storage (#60)." },
+];
+
+/**
+ * Every literal Express registration, as `method` + `path`. Room-form twins
+ * under `/api/rooms/:roomId` appear as their own rows.
+ */
+export const API_ROUTES: readonly ApiRouteDefinition[] = [
+  { method: "POST", path: "/api/actions" },
+  { method: "POST", path: "/api/agent-tools/room-command" },
+  { method: "POST", path: "/api/agent-tools/room-diagnostics" },
+  { method: "PATCH", path: "/api/avatar" },
+  { method: "POST", path: "/api/commands" },
+  { method: "GET", path: "/api/commands/:submissionId/github-diagnostic" },
+  { method: "POST", path: "/api/continuation-executor/progress/:jobId/:attempt" },
+  { method: "GET", path: "/api/continuations" },
+  { method: "GET", path: "/api/continuations/:jobId/audit" },
+  { method: "POST", path: "/api/continuations/:jobId/cancel" },
+  { method: "POST", path: "/api/continuations/:jobId/resume" },
+  { method: "POST", path: "/api/continuations/inbox/:entryId/acknowledge" },
+  { method: "GET", path: "/api/continuations/inbox/:owner" },
+  { method: "PATCH", path: "/api/continuations/policy" },
+  { method: "GET", path: "/api/contributions" },
+  { method: "GET", path: "/api/contributions/:id" },
+  { method: "POST", path: "/api/contributions/:id/approve/:kind" },
+  { method: "POST", path: "/api/contributions/:id/execute/:kind" },
+  { method: "GET", path: "/api/control/audit" },
+  { method: "POST", path: "/api/control/bootstrap" },
+  { method: "GET", path: "/api/control/capabilities" },
+  { method: "POST", path: "/api/control/diagnostics/query" },
+  { method: "GET", path: "/api/control/integrations/github" },
+  { method: "POST", path: "/api/control/integrations/github/catalog-refreshes" },
+  { method: "POST", path: "/api/control/integrations/github/device-authorizations" },
+  { method: "GET", path: "/api/control/integrations/github/device-authorizations/:flowId" },
+  { method: "POST", path: "/api/control/integrations/github/device-authorizations/:flowId/poll" },
+  { method: "GET", path: "/api/control/integrations/github/repositories" },
+  { method: "GET", path: "/api/control/integrations/openrouter" },
+  { method: "POST", path: "/api/control/login" },
+  { method: "POST", path: "/api/control/logout" },
+  { method: "GET", path: "/api/control/me" },
+  { method: "GET", path: "/api/control/preflight/decisions" },
+  { method: "GET", path: "/api/control/principals" },
+  { method: "POST", path: "/api/control/principals" },
+  { method: "PUT", path: "/api/control/principals/:id/grants" },
+  { method: "GET", path: "/api/control/projects/:projectId/repository" },
+  { method: "PUT", path: "/api/control/projects/:projectId/repository" },
+  { method: "GET", path: "/api/control/projects/:projectId/repository/repair" },
+  { method: "POST", path: "/api/control/projects/:projectId/repository/repair" },
+  { method: "GET", path: "/api/control/projects/current/repository" },
+  { method: "PUT", path: "/api/control/projects/current/repository" },
+  { method: "GET", path: "/api/control/projects/current/repository/repair" },
+  { method: "POST", path: "/api/control/projects/current/repository/repair" },
+  { method: "GET", path: "/api/control/rooms" },
+  { method: "GET", path: "/api/control/status" },
+  { method: "GET", path: "/api/developer/assignments" },
+  { method: "POST", path: "/api/developer/assignments" },
+  { method: "POST", path: "/api/developer/assignments/:id/cancel" },
+  { method: "POST", path: "/api/developer/assignments/:id/dispose" },
+  { method: "POST", path: "/api/developer/assignments/cleanup" },
+  { method: "POST", path: "/api/developer/assignments/reconcile" },
+  { method: "POST", path: "/api/developer/commands" },
+  { method: "POST", path: "/api/developer/continuations" },
+  { method: "GET", path: "/api/developer/continuations/context/:owner" },
+  { method: "GET", path: "/api/developer/contributions" },
+  { method: "POST", path: "/api/developer/contributions" },
+  { method: "GET", path: "/api/developer/contributions/:id" },
+  { method: "POST", path: "/api/developer/contributions/:id/review" },
+  { method: "GET", path: "/api/developer/diagnostics" },
+  { method: "GET", path: "/api/developer/diagnostics/:recordId" },
+  { method: "POST", path: "/api/developer/github" },
+  { method: "GET", path: "/api/developer/github/audit" },
+  { method: "GET", path: "/api/developer/improvements/:id" },
+  { method: "GET", path: "/api/developer/improvements/:id/claims" },
+  { method: "POST", path: "/api/developer/improvements/:id/claims" },
+  { method: "POST", path: "/api/developer/improvements/:id/claims/:operation" },
+  { method: "POST", path: "/api/developer/improvements/:id/evidence" },
+  { method: "POST", path: "/api/developer/improvements/:id/reviews" },
+  { method: "POST", path: "/api/developer/improvements/:id/transitions" },
+  { method: "POST", path: "/api/developer/messages" },
+  { method: "GET", path: "/api/developer/project/repository" },
+  { method: "POST", path: "/api/developer/project/repository/connect" },
+  { method: "POST", path: "/api/developer/project/repository/disable" },
+  { method: "POST", path: "/api/developer/project/repository/reconcile" },
+  { method: "GET", path: "/api/developer/room" },
+  { method: "GET", path: "/api/developer/tasks" },
+  { method: "POST", path: "/api/developer/tasks" },
+  { method: "GET", path: "/api/developer/tasks/:taskId" },
+  { method: "PATCH", path: "/api/developer/tasks/:taskId" },
+  { method: "GET", path: "/api/events" },
+  { method: "GET", path: "/api/heartbeat" },
+  { method: "POST", path: "/api/heartbeat/authorize" },
+  { method: "POST", path: "/api/heartbeat/emergency-stop" },
+  { method: "POST", path: "/api/humans" },
+  { method: "GET", path: "/api/improvements" },
+  { method: "GET", path: "/api/improvements/:id" },
+  { method: "POST", path: "/api/improvements/manifest" },
+  { method: "POST", path: "/api/improvements/references" },
+  { method: "POST", path: "/api/investigation-executor/progress/:id/:attempt" },
+  { method: "GET", path: "/api/investigations" },
+  { method: "POST", path: "/api/investigations" },
+  { method: "GET", path: "/api/investigations/:id/audit" },
+  { method: "POST", path: "/api/investigations/:id/cancel" },
+  { method: "POST", path: "/api/investigations/:id/resume" },
+  { method: "POST", path: "/api/investigations/inbox/:id/acknowledge" },
+  { method: "GET", path: "/api/investigations/inbox/:owner" },
+  { method: "PATCH", path: "/api/investigations/policy" },
+  { method: "POST", path: "/api/messages" },
+  { method: "GET", path: "/api/model-details" },
+  { method: "POST", path: "/api/model-discovery/refresh" },
+  { method: "GET", path: "/api/openrouter-model-page" },
+  { method: "GET", path: "/api/openrouter-usage" },
+  { method: "GET", path: "/api/polls" },
+  { method: "GET", path: "/api/polls/:pollId" },
+  { method: "POST", path: "/api/polls/:pollId/close" },
+  { method: "POST", path: "/api/polls/:pollId/votes" },
+  { method: "GET", path: "/api/preflight/evidence" },
+  { method: "GET", path: "/api/protected-work" },
+  { method: "POST", path: "/api/protected-work" },
+  { method: "POST", path: "/api/protected-work/:id/:action" },
+  { method: "POST", path: "/api/provider-health/:providerId/recover" },
+  { method: "GET", path: "/api/provider-setup" },
+  { method: "POST", path: "/api/provider-setup/initiate" },
+  { method: "POST", path: "/api/provider-setup/refresh" },
+  { method: "GET", path: "/api/ready" },
+  { method: "GET", path: "/api/ready/repositories" },
+  { method: "GET", path: "/api/room/history" },
+  { method: "GET", path: "/api/room/settings" },
+  { method: "PUT", path: "/api/room/settings" },
+  { method: "GET", path: "/api/room/settings/models" },
+  { method: "GET", path: "/api/rooms" },
+  { method: "POST", path: "/api/rooms" },
+  { method: "GET", path: "/api/rooms/:roomId" },
+  { method: "PATCH", path: "/api/rooms/:roomId" },
+  { method: "POST", path: "/api/rooms/:roomId/archive" },
+  { method: "GET", path: "/api/rooms/:roomId/commands/:submissionId/github-diagnostic" },
+  { method: "GET", path: "/api/rooms/:roomId/events" },
+  { method: "POST", path: "/api/rooms/:roomId/fork" },
+  { method: "POST", path: "/api/rooms/:roomId/messages" },
+  { method: "GET", path: "/api/rooms/:roomId/polls" },
+  { method: "PUT", path: "/api/rooms/:roomId/project-attachment" },
+  { method: "GET", path: "/api/rooms/:roomId/project-attachment/events" },
+  { method: "GET", path: "/api/rooms/:roomId/state" },
+  { method: "GET", path: "/api/roster" },
+  { method: "PUT", path: "/api/roster" },
+  { method: "PATCH", path: "/api/settings" },
+  { method: "GET", path: "/api/state" },
+  { method: "PATCH", path: "/api/style" },
+  { method: "GET", path: "/api/tasks" },
+  { method: "POST", path: "/api/tasks" },
+  { method: "GET", path: "/api/tasks/:taskId" },
+  { method: "PATCH", path: "/api/tasks/:taskId" },
+  { method: "POST", path: "/api/tasks/:taskId/abandon" },
+  { method: "POST", path: "/api/tasks/:taskId/approve" },
+  { method: "POST", path: "/api/tasks/:taskId/archive" },
+  { method: "POST", path: "/api/tasks/:taskId/assign" },
+  { method: "POST", path: "/api/tasks/:taskId/block" },
+  { method: "POST", path: "/api/tasks/:taskId/complete" },
+  { method: "POST", path: "/api/tasks/:taskId/dependencies" },
+  { method: "POST", path: "/api/tasks/:taskId/fork" },
+  { method: "POST", path: "/api/tasks/:taskId/participants" },
+  { method: "POST", path: "/api/tasks/:taskId/propose" },
+  { method: "POST", path: "/api/tasks/:taskId/references" },
+  { method: "POST", path: "/api/tasks/:taskId/reopen" },
+  { method: "POST", path: "/api/tasks/:taskId/start" },
+  { method: "POST", path: "/api/tasks/:taskId/unblock" },
+];

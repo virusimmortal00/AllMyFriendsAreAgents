@@ -1,6 +1,7 @@
 import type { ProtectedWorkRequest, ProtectedWorkView } from "../shared/protected-work";
 import type { ControlPrincipal, ControlSessionResponse, ControlStatus } from "../shared/control-session";
 import { controlSessionRevision, updateControlSession } from "./control-session-state";
+import { API_ROOTS } from "../shared/api-routes";
 export type { ControlPrincipal } from "../shared/control-session";
 import type { AgentId, GovernedImprovementDetail, GovernedImprovementSummary, HeartbeatStatus, HumanPresence, RoomState, WorkshopResponse } from "./types";
 import type { ChatStyle } from "../shared/chat-style";
@@ -37,7 +38,7 @@ function roomPath(endpoint:"state"|"messages"|"events"){
 }
 export function roomEventsPath(){return roomPath("events");}
 
-const GLOBAL_API_ROOTS=new Set(["protected-work","ready","humans","style","avatar","control","provider-setup","model-discovery","model-details","openrouter-model-page","openrouter-usage","rooms"]);
+const GLOBAL_API_ROOTS=new Set(API_ROOTS.filter((root)=>root.scope==="global").map((root)=>root.root));
 export function scopedRequestPath(path:string){
   const roomId=routedRoomId();
   if(!roomId||!path.startsWith("/api/")||path.startsWith("/api/rooms/"))return path;
