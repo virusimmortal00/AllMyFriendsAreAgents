@@ -80,6 +80,7 @@ export interface PreflightClassificationAudit {
  */
 export interface PreflightClassificationEvidence {
   calls: number;
+  /** Source model when every consult agrees, otherwise the explicit value `mixed`. */
   model: string;
   totalInputTokens: number;
   totalOutputTokens: number;

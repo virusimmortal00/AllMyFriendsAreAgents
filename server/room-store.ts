@@ -53,6 +53,7 @@ import type { RosterChangeResult } from "./storage/room-repository.js";
 import { normalizeDeploymentEpoch, normalizeDeploymentProvenance, type DeploymentProvenance } from "./deployment-provenance.js";
 import type { AgentContextSummaryKey } from "./transcript.js";
 import { defaultRoomConfiguration, normalizeRoomConfiguration, type RoomConfigurationUpdate } from "./room-configuration.js";
+import { isPreflightMode } from "../shared/preflight.js";
 import { emptyJsonCommandState, normalizeJsonCommandState, validAttempt, validAudit, validCommandAcceptance, validCommandReassignment, validDiagnostic, validGhExecution, validPoll, validPovExecution, validRoundRobin, validSubmission, validVote, type JsonCommandState } from "./storage/command-storage.js";
 import { COMMAND_RECORD_RETENTION_MS, DIAGNOSTIC_RETENTION_MS, MAX_COMMAND_SUBMISSIONS_PER_ROOM, MAX_COMMAND_TOMBSTONES_PER_ROOM, MAX_DIAGNOSTICS_PER_ROOM_AGENT, MAX_DIAGNOSTIC_QUERY_LIMIT, MAX_DIAGNOSTIC_SEARCH_LENGTH, MAX_OPEN_POLLS_PER_ROOM, MAX_RECENT_POLLS, parseCommandPollCursor, type AcceptCommandResult, type CloseCommandPollResult, type CommandAcceptance, type CommandAttempt, type CommandAuditIdentity, type CommandGhExecution, type CommandInvoker, type CommandPoll, type CommandPovExecution, type CommandReassignment, type CommandSubmission, type CommandVote, type CreateCommandSubmissionResult, type CreateCommandVoteResult, type DiagnosticQuery, type DiagnosticRecord, type RoundRobinState } from "./command-record.js";
 import type { SourceWorkKind } from "./storage/identity-domain.js";
@@ -283,6 +284,14 @@ export class RoomStore implements RoomRepository {
       const configurationRevisionWasMissing = !Number.isSafeInteger(
         (stored.roomConfiguration as { configurationRevision?: unknown } | undefined)?.configurationRevision,
       );
+      const legacyPreflightMode = Boolean(stored.roomConfiguration
+        && !isPreflightMode((stored.roomConfiguration as { preflightMode?: unknown }).preflightMode));
+      const roomConfiguration = stored.roomConfiguration
+        ? normalizeRoomConfiguration({
+          ...stored.roomConfiguration,
+          ...(legacyPreflightMode ? { preflightMode: "off" } : {}),
+        })
+        : undefined;
       const state: RoomState = {
         ...stored,
         messages,
@@ -302,7 +311,7 @@ export class RoomStore implements RoomRepository {
         activeAgent: undefined,
         error: undefined,
         ...(deployment ? { deployment } : {}),
-        ...(stored.roomConfiguration ? { roomConfiguration: normalizeRoomConfiguration(stored.roomConfiguration) } : {}),
+        ...(roomConfiguration ? { roomConfiguration } : {}),
         ...(configurationRevisionWasMissing ? { agentContextSummaries: [] } : {}),
       };
       const store = new RoomStore(stateDirectory, state, improvementState, assignments, taskState, continuationState, commandState);
@@ -316,6 +325,7 @@ export class RoomStore implements RoomRepository {
         || JSON.stringify(state.sessions) !== JSON.stringify(stored.sessions)
         || state.settings.writableAgent !== stored.settings.writableAgent
         || configurationRevisionWasMissing && Boolean(stored.agentContextSummaries?.length)
+        || legacyPreflightMode
         || JSON.stringify(roster) !== JSON.stringify(stored.roster)
         || messages.some((message, index) => message !== stored.messages[index])) {
         await store.save();

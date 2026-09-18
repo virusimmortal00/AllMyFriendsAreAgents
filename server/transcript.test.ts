@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
-import { transcriptFor } from "./transcript.js";
+import { classificationTranscriptThrough, transcriptFor } from "./transcript.js";
 import type { RoomMessage, RoomState } from "./types.js";
 import { commandMessageText } from "../shared/command-message.js";
 
@@ -21,6 +21,17 @@ function state(messages: RoomMessage[]): RoomState {
 }
 
 describe("agent transcript context", () => {
+  it("bounds classifier context at the selected trigger", () => {
+    const transcript = classificationTranscriptThrough(state([
+      { id: "context", speaker: "you", text: "Earlier context", timestamp: "2026-08-19T12:00:00Z" },
+      { id: "trigger", speaker: "you", text: "Sol, please investigate this.", timestamp: "2026-08-19T12:00:01Z" },
+      { id: "later", speaker: "system", kind: "status", text: "Continuation queued: task-1", timestamp: "2026-08-19T12:00:02Z" },
+    ]), "trigger");
+
+    expect(transcript).toContain("Sol, please investigate this.");
+    expect(transcript).not.toContain("Continuation queued");
+  });
+
   it("groups consecutive chunks from one logical burst", () => {
     const messages: RoomMessage[] = [
       { id: "1", speaker: "codex-sol", text: "yeah, a little", timestamp: "2026-08-19T12:00:00Z", burstId: "burst", sequence: 0 },

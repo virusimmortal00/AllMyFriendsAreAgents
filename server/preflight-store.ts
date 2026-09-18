@@ -283,6 +283,7 @@ export class PreflightStore {
  */
 function classificationEvidence(decisions: PreflightAuditRecord[]): { classification: PreflightClassificationEvidence } | Record<string, never> {
   if (!decisions.length) return {};
+  const models = new Set<string>();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCostUsd = 0;
@@ -296,6 +297,7 @@ function classificationEvidence(decisions: PreflightAuditRecord[]): { classifica
   let counterfactualSavedDurationMs = 0;
   for (const decision of decisions) {
     const classification = decision.classification!;
+    models.add(classification.model);
     totalInputTokens += classification.inputTokens;
     totalOutputTokens += classification.outputTokens;
     totalCostUsd += classification.costUsd;
@@ -321,7 +323,7 @@ function classificationEvidence(decisions: PreflightAuditRecord[]): { classifica
   return {
     classification: {
       calls: decisions.length,
-      model: decisions[decisions.length - 1].classification!.model,
+      model: models.size === 1 ? models.values().next().value! : "mixed",
       totalInputTokens,
       totalOutputTokens,
       totalCostUsd,

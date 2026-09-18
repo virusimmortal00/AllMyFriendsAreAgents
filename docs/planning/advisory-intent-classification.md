@@ -63,6 +63,14 @@ model call.
   is unchanged.
 - [x] Classifier diagnostics log model, latency, token counts, and error
   messages only; message text and credentials never appear in logs.
+- [x] The configured classifier endpoint must use HTTPS before a transcript or
+  authorization credential can be sent.
+- [x] Legacy JSON rooms that predate `preflightMode` persist an explicit `off`
+  migration value; only newly created rooms default to `enforce`.
+- [x] Classification context ends at the selected human trigger, and a room
+  activity change while the consult is pending cancels the stale routing job.
+- [x] Aggregate evidence reports `mixed` instead of mislabeling multi-model
+  totals with a single model identifier.
 - [x] Focused unit tests cover fail-open paths (no key, HTTP failure, malformed
   answers, cooldown), gate composition, persistence round-trips, and the
   evidence aggregate.
@@ -82,7 +90,11 @@ Properties → Agent Routing, default on, SQLite migration 0030) is true. The
 pure gate consumes only a probabilities-only projection; the audit store
 persists the full consult, including OpenRouter-reported `usage.cost`. The
 pre-flight audit store gained optional fields that normalize away for older
-records.
+records. Its endpoint override is HTTPS-only. Classifier context is bounded at
+the selected trigger message and activity-revision checks cancel a stale route
+when a newer room message arrives during a consult. JSON rooms that were saved
+before pre-flight modes retain `off`; aggregate evidence reports `mixed` when
+its totals contain more than one resolved classifier model.
 
 Pre-flight mode defaults to `enforce`: new rooms gate invocations from birth,
 with the classifier advising the deterministic gate. Rooms with a persisted

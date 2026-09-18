@@ -278,6 +278,18 @@ describe("pre-flight classification persistence and evidence", () => {
     });
   });
 
+  it("marks aggregate evidence as mixed when decisions use different models", async () => {
+    const routing = await store();
+    for (const [index, model] of ["jev-v1", "jev-v2"].entries()) {
+      await routing.recordDecision({
+        triggerMessageId: `message-${index}`, mode: "shadow", energy: "balanced",
+        decision: { qualifyingForStarvation: true, decisions: baselineDecisions.map((entry) => ({ ...entry })) },
+        classification: { ...classification, model },
+      });
+    }
+    expect((await routing.evidence()).classification).toMatchObject({ calls: 2, model: "mixed" });
+  });
+
   it("omits classification evidence when no classified decisions exist", async () => {
     const routing = await store();
     await routing.recordDecision({

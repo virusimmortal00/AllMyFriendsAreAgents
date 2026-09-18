@@ -30,6 +30,10 @@ const agents = [
 ];
 
 describe("intent classifier", () => {
+  it("rejects non-HTTPS endpoints before a request can be made", () => {
+    expect(() => new IntentClassifier({ endpoint: "http://localhost:8787/api/alpha/decisions" })).toThrow("must use HTTPS");
+  });
+
   it("returns undefined without any network attempt when no OpenRouter credential is readable", async () => {
     const fetchImpl = vi.fn();
     const classifier = new IntentClassifier({ apiKey: async () => undefined, fetchImpl: fetchImpl as unknown as typeof fetch });

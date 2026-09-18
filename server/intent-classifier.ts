@@ -92,7 +92,9 @@ export class IntentClassifier {
   constructor(options: IntentClassifierOptions = {}) {
     this.apiKey = options.apiKey;
     this.model = options.model?.trim() || DEFAULT_MODEL;
-    this.endpoint = options.endpoint?.trim() || DEFAULT_ENDPOINT;
+    const endpoint = new URL(options.endpoint?.trim() || DEFAULT_ENDPOINT);
+    if (endpoint.protocol !== "https:") throw new Error("The intent classifier endpoint must use HTTPS.");
+    this.endpoint = endpoint.toString();
     this.disabled = options.disabled === true;
     this.timeoutMs = Math.max(250, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     this.fetchImpl = (options.fetchImpl ?? fetch) as unknown as FetchLike;

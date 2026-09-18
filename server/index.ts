@@ -89,7 +89,7 @@ import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { IntentClassifier, classificationAudit } from "./intent-classifier.js";
-import { classificationTranscript } from "./transcript.js";
+import { classificationTranscriptThrough } from "./transcript.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
 import { ConsultationRunner } from "./consultation-service.js";
 import { DurableConsultationMcpService } from "./consultation-mcp.js";
@@ -551,6 +551,7 @@ async function refreshPreflightEvidence() {
 }
 
 async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
+  const activityRevision = roomActivity.current();
   const turns = roomMessageTurns(state);
   const mode = normalizeRoomConfiguration(state.roomConfiguration).preflightMode;
   // This is intentionally a literal bypass. Do not calculate, persist, annotate,
@@ -561,8 +562,10 @@ async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
   const continuationTargets = trigger.continuationRequest
     ? (await store.listContinuations()).filter(({ roomOrigin }) => roomOrigin?.messageId === trigger.id).map(({ owner }) => owner)
     : [];
+  if (!roomActivity.isCurrent(activityRevision)) return [];
   const rankedAgents = turns.map(({ agent }) => agent);
-  const classification = await classifyTrigger(state, rankedAgents);
+  const classification = await classifyTrigger(state, trigger.id, rankedAgents);
+  if (!roomActivity.isCurrent(activityRevision)) return [];
   const gateInput = {
     trigger,
     room: state,
@@ -588,11 +591,12 @@ async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
     ...(classification && baseline ? { classification: classificationAudit(classification, baseline.decisions) } : {}),
   });
   await refreshPreflightEvidence();
+  if (!roomActivity.isCurrent(activityRevision)) return [];
   return routePreflightTurns(turns, mode, decision, record.decisionId);
 }
 
 /** Consults the advisory address classifier; any failure or absence yields undefined. */
-async function classifyTrigger(state: ReturnType<typeof roomSnapshot>, rankedAgents: readonly AgentId[]) {
+async function classifyTrigger(state: ReturnType<typeof roomSnapshot>, triggerMessageId: string, rankedAgents: readonly AgentId[]) {
   // The room toggle is the participant-visible switch; the server-owned
   // environment kill switch is consulted inside the classifier itself.
   if (!normalizeRoomConfiguration(state.roomConfiguration).intentClassifierEnabled || !rankedAgents.length) return undefined;
@@ -603,7 +607,7 @@ async function classifyTrigger(state: ReturnType<typeof roomSnapshot>, rankedAge
     return entry ? [{ agentId, name: entry.conversationalName || entry.agentId }] : [];
   });
   if (!agents.length) return undefined;
-  return intentClassifier.classify({ transcript: classificationTranscript(state), agents });
+  return intentClassifier.classify({ transcript: classificationTranscriptThrough(state, triggerMessageId), agents });
 }
 
 async function refreshImplementationCapabilities() {
