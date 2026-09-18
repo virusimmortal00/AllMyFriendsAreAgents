@@ -475,11 +475,11 @@ describe("room prompt context", () => {
       const sourcePath = path.join(projectPath, "source.txt");
       await writeFile(sourcePath, "deployed\n", "utf8");
       await execFileAsync("git", ["-C", projectPath, "add", "source.txt"]);
-      await execFileAsync("git", ["-C", projectPath, "commit", "-m", "deployed"]);
+      await execFileAsync("git", ["-C", projectPath, "commit", "--no-verify", "-m", "deployed"]);
       const deployedCommit = (await execFileAsync("git", ["-C", projectPath, "rev-parse", "HEAD"])).stdout.trim();
       await writeFile(sourcePath, "new head\n", "utf8");
       await execFileAsync("git", ["-C", projectPath, "add", "source.txt"]);
-      await execFileAsync("git", ["-C", projectPath, "commit", "-m", "advance head"]);
+      await execFileAsync("git", ["-C", projectPath, "commit", "--no-verify", "-m", "advance head"]);
       const moved = { ...state, settings: { ...state.settings, projectPath }, deployment: { schemaVersion: 1 as const, commitSha: deployedCommit, reference: { kind: "branch" as const, name: "main" }, worktree: "clean" as const, epoch: `deployment-v1:${"f".repeat(64)}`, observedAt: "2026-08-26T00:00:00.000Z" } };
 
       const prompt = await __testing.buildPrompt("codex-sol", moved, "Review the changes.", true, "read-only");

@@ -18,7 +18,7 @@ async function fixture() {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "amfaa-repair-"))); roots.push(root);
   const checkout = path.join(root, "original"); await mkdir(checkout);
   await git(checkout, ["init", "-b", "main"]);
-  await git(checkout, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Initial"]);
+  await git(checkout, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--no-verify", "--allow-empty", "-m", "Initial"]);
   await git(checkout, ["remote", "add", "origin", "https://github.com/example/repository.git"]);
   const data = path.join(root, "state"); const store = await ProjectRepositoryConnectionStore.open(data);
   let references: readonly DurableRepositoryReference[] = [];

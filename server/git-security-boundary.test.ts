@@ -39,7 +39,7 @@ async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-git-boundary-")); directories.push(root);
   await git(root, "init", "-b", "main");
   await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
-  await writeFile(path.join(root, "tracked.txt"), "base\n"); await git(root, "add", "tracked.txt"); await git(root, "commit", "-m", "base");
+  await writeFile(path.join(root, "tracked.txt"), "base\n"); await git(root, "add", "tracked.txt"); await git(root, "commit", "--no-verify", "-m", "base");
   const base = await git(root, "rev-parse", "HEAD");
   const state = path.join(root, ".state"); const worktrees = path.join(state, "worktrees");
   const store = await RoomStore.open(root, state); await store.updateRoster(1, legacyDefaultRoomAgentRoster().entries); await store.updateSettings({ writableAgent: "codex-sol" });

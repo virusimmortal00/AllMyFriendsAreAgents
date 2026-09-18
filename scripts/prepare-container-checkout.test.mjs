@@ -10,8 +10,8 @@ function fixture() {
   const root = mkdtempSync(path.join(os.tmpdir(), "checkout-preparation-")); roots.push(root);
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   git("init", "-b", "main"); git("config", "user.name", "Example"); git("config", "user.email", "example@example.test");
-  git("commit", "--allow-empty", "-m", "Initial fixture");
-  git("checkout", "--detach"); git("commit", "--allow-empty", "-m", "Next fixture");
+  git("commit", "--no-verify", "--allow-empty", "-m", "Initial fixture");
+  git("checkout", "--detach"); git("commit", "--no-verify", "--allow-empty", "-m", "Next fixture");
   return { root, git };
 }
 it("attaches a detached checkout without changing its commit and is repeatable", () => {
@@ -27,7 +27,7 @@ it("refuses dirty files without changing branch state", () => {
 });
 it("refuses divergent branch history", () => {
   const { root, git } = fixture(); const detached = git("rev-parse", "HEAD");
-  git("switch", "main"); git("commit", "--allow-empty", "-m", "Divergent fixture"); git("checkout", "--detach", detached);
+  git("switch", "main"); git("commit", "--no-verify", "--allow-empty", "-m", "Divergent fixture"); git("checkout", "--detach", detached);
   expect(() => prepareContainerCheckout(root, "main")).toThrow("divergent");
   expect(git("branch", "--show-current")).toBe("");
 });

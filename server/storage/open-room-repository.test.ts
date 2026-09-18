@@ -50,7 +50,7 @@ describe("room repository factory", () => {
     await execFileAsync("git", ["-C", projectRoot, "config", "user.name", "Tests"]);
     await writeFile(sourcePath, "first\n", "utf8");
     await execFileAsync("git", ["-C", projectRoot, "add", "source.txt"]);
-    await execFileAsync("git", ["-C", projectRoot, "commit", "-m", "first"]);
+    await execFileAsync("git", ["-C", projectRoot, "commit", "--no-verify", "-m", "first"]);
     const configuration = resolveStorageConfiguration(projectRoot, { ALL_MY_FRIENDS_ARE_AGENTS_DATA_DIR: path.join(base, "state") });
 
     const first = await openRoomRepository(projectRoot, configuration);
@@ -65,7 +65,7 @@ describe("room repository factory", () => {
 
     await writeFile(sourcePath, "second\n", "utf8");
     await execFileAsync("git", ["-C", projectRoot, "add", "source.txt"]);
-    await execFileAsync("git", ["-C", projectRoot, "commit", "-m", "second"]);
+    await execFileAsync("git", ["-C", projectRoot, "commit", "--no-verify", "-m", "second"]);
     const updated = await openRoomRepository(projectRoot, configuration);
     const staleSession = updated.snapshot().sessions["codex-sol"]!;
     expect(updated.snapshot().deployment?.epoch).not.toBe(firstEpoch);

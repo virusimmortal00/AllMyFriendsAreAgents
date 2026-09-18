@@ -42,12 +42,12 @@ class FakeGitHub implements GitHubContributionClient {
 async function fixture(capabilities: readonly DeveloperCapability[] = ["GITHUB_READ", "GITHUB_COMMENT", "GITHUB_PUBLISH_DRAFT", "GITHUB_PR_METADATA", "GITHUB_REQUEST_REVIEW"]) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-github-broker-")); roots.push(root);
   await git(root, ["init", "-b", "main"]); await git(root, ["config", "user.name", "Test"]); await git(root, ["config", "user.email", "test@example.com"]);
-  await writeFile(path.join(root, "README.md"), "base\n"); await git(root, ["add", "README.md"]); await git(root, ["commit", "-m", "base"]);
+  await writeFile(path.join(root, "README.md"), "base\n"); await git(root, ["add", "README.md"]); await git(root, ["commit", "--no-verify", "-m", "base"]);
   const baseSha = await git(root, ["rev-parse", "HEAD"]); await git(root, ["remote", "add", "origin", "https://github.com/virusimmortal00/AllMyFriendsAreAgents.git"]);
   await git(root, ["update-ref", "refs/remotes/origin/main", baseSha]);
   const workspace = path.join(root, "..", `${path.basename(root)}-worktree`); roots.push(workspace);
   const branch = "amfaa/assignment-task-12345678"; await git(root, ["worktree", "add", "-b", branch, workspace, baseSha]);
-  await writeFile(path.join(workspace, "change.txt"), "bounded\n"); await git(workspace, ["add", "change.txt"]); await git(workspace, ["commit", "-m", "bounded"]);
+  await writeFile(path.join(workspace, "change.txt"), "bounded\n"); await git(workspace, ["add", "change.txt"]); await git(workspace, ["commit", "--no-verify", "-m", "bounded"]);
   const headSha = await git(workspace, ["rev-parse", "HEAD"]); const now = new Date(Date.now() + 60_000).toISOString();
   const assignment: AssignmentRecord = {
     assignmentId: "assignment-1", improvementId: "improvement-1", developerMemberId: "developer-1", developerMemberConfigRevision: 1,

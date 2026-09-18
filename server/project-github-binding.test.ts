@@ -25,7 +25,7 @@ async function fixture(repository = "one", projectId = "project-one") {
   roots.push(root);
   const checkout = path.join(root, repository); const worktreeRoot = path.join(root, "worktrees");
   await mkdir(checkout); await git(checkout, ["init", "-b", "main"]); await git(checkout, ["config", "user.email", "tests@example.test"]);
-  await git(checkout, ["config", "user.name", "Tests"]); await git(checkout, ["commit", "--allow-empty", "-m", "initial"]);
+  await git(checkout, ["config", "user.name", "Tests"]); await git(checkout, ["commit", "--no-verify", "--allow-empty", "-m", "initial"]);
   await git(checkout, ["remote", "add", "origin", `git@github.com:example/${repository}.git`]);
   const integrations = await GitHubIntegrationStore.open(path.join(root, "integrations"));
   await integrations.saveConnection({ expectedRevision: 0, connectionId: "github-server-one", authMode: "github-device-user", state: "ready",

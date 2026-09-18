@@ -21,7 +21,7 @@ async function repository() {
   await execFileAsync("git", ["-C", directory, "config", "user.name", "Tests"]);
   await writeFile(path.join(directory, "source.txt"), "current source\n", "utf8");
   await execFileAsync("git", ["-C", directory, "add", "source.txt"]);
-  await execFileAsync("git", ["-C", directory, "commit", "-m", "initial"]);
+  await execFileAsync("git", ["-C", directory, "commit", "--no-verify", "-m", "initial"]);
   return directory;
 }
 

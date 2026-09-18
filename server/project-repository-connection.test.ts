@@ -24,7 +24,7 @@ async function fixture(name = "repo") {
   const root = await realpath(createdRoot); roots.push(root);
   const checkout = path.join(root, name); const worktrees = path.join(root, `${name}-worktrees`); const data = path.join(root, "data");
   await mkdir(checkout); await git(checkout, ["init", "-b", "main"]); await git(checkout, ["config", "user.email", "tests@example.test"]);
-  await git(checkout, ["config", "user.name", "Tests"]); await git(checkout, ["commit", "--allow-empty", "-m", "initial"]);
+  await git(checkout, ["config", "user.name", "Tests"]); await git(checkout, ["commit", "--no-verify", "--allow-empty", "-m", "initial"]);
   await git(checkout, ["remote", "add", "origin", `git@github.com:example/${name}.git`]);
   return { root, checkout: await realpath(checkout), worktrees, data, store: await ProjectRepositoryConnectionStore.open(data) };
 }
@@ -108,7 +108,7 @@ describe("verified project repository connections", () => {
   it("does not allow two projects to share checkout, worktree root, credential reference, capacity, audit, or policy state", async () => {
     const first = await fixture("one"); const secondCheckout = path.join(first.root, "two"); await mkdir(secondCheckout);
     await git(secondCheckout, ["init", "-b", "main"]); await git(secondCheckout, ["config", "user.email", "tests@example.test"]);
-    await git(secondCheckout, ["config", "user.name", "Tests"]); await git(secondCheckout, ["commit", "--allow-empty", "-m", "initial"]);
+    await git(secondCheckout, ["config", "user.name", "Tests"]); await git(secondCheckout, ["commit", "--no-verify", "--allow-empty", "-m", "initial"]);
     await git(secondCheckout, ["remote", "add", "origin", "https://github.com/example/two.git"]);
     const registry = new ProjectRepositoryServiceRegistry(first.store, (projectId) => ({ policy: new Map<string, number>([[projectId, 1]]) }), undefined, () => true);
     const one = registry.forProject("project-one"); const two = registry.forProject("project-two");

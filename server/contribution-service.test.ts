@@ -26,9 +26,9 @@ class FakeExternal implements ContributionExternalExecutor {
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-contribution-")); roots.push(root); await git(root, ["init", "-b", "main"]); await git(root, ["config", "user.name", "Test"]); await git(root, ["config", "user.email", "test@example.com"]);
-  await writeFile(path.join(root, "base.txt"), "base\n"); await git(root, ["add", "."]); await git(root, ["commit", "-m", "base"]); const base = await git(root, ["rev-parse", "HEAD"]);
+  await writeFile(path.join(root, "base.txt"), "base\n"); await git(root, ["add", "."]); await git(root, ["commit", "--no-verify", "-m", "base"]); const base = await git(root, ["rev-parse", "HEAD"]);
   const workspace = `${root}-worktree`; roots.push(workspace); const branch = "amfaa/assignment-contribution-12345678"; await git(root, ["worktree", "add", "-b", branch, workspace, base]);
-  await writeFile(path.join(workspace, "change.txt"), "change\n"); await git(workspace, ["add", "."]); await git(workspace, ["commit", "-m", "change"]); const head = await git(workspace, ["rev-parse", "HEAD"]);
+  await writeFile(path.join(workspace, "change.txt"), "change\n"); await git(workspace, ["add", "."]); await git(workspace, ["commit", "--no-verify", "-m", "change"]); const head = await git(workspace, ["rev-parse", "HEAD"]);
   const now = "2026-08-24T21:00:00.000Z"; let clock = 0; const timestamp = () => new Date(Date.parse(now) + clock++ * 1_000).toISOString();
   let assignment: AssignmentRecord = { assignmentId: "assignment-1", improvementId: "improvement-1", developerMemberId: "author", developerMemberConfigRevision: 1, agent: "codex-sol",
     fencingToken: 7, manifestRevision: 3, pinnedBaseSha: base, branch, observedHeadSha: head, workspacePath: workspace, lifecycleStatus: "ACTIVE", lifecycleRevision: 2,

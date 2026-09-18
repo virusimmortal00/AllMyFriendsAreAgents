@@ -53,7 +53,7 @@ async function fixture(backend: "json" | "sqlite") {
     env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
   });
   await git(["init", "-b", "main"]);
-  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Fixture"]);
+  await git(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--no-verify", "--allow-empty", "-m", "Fixture"]);
   await git(["remote", "add", "origin", "https://github.com/example/repository.git"]);
   const room = backend === "json" ? await RoomStore.open(checkout, data) : await SqliteRoomRepository.open(checkout, databasePath);
   const roster = room.snapshot().roster!;

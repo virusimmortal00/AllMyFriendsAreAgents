@@ -123,13 +123,13 @@ describe("read-only source-control adapter", () => {
     await run(root, ["config", "user.email", "test@example.com"]);
     await writeFile(path.join(root, "first.txt"), "one\n", "utf8");
     await run(root, ["add", "first.txt"]);
-    await run(root, ["commit", "-m", "base"]);
+    await run(root, ["commit", "--no-verify", "-m", "base"]);
     const base = (await run(root, ["rev-parse", "HEAD"])).trim();
     await run(root, ["checkout", "-b", "feature/read-only"]);
     await writeFile(path.join(root, "first.txt"), "one\ntwo\n", "utf8");
     await writeFile(path.join(root, "second.txt"), "new\n", "utf8");
     await run(root, ["add", "."]);
-    await run(root, ["commit", "-m", "head"]);
+    await run(root, ["commit", "--no-verify", "-m", "head"]);
     const head = (await run(root, ["rev-parse", "HEAD"])).trim();
     await run(root, ["worktree", "add", "--detach", worktree, head]);
 
