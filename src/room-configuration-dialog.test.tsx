@@ -87,6 +87,10 @@ describe("RoomPropertiesDialog", () => {
     render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByRole("textbox", { name: "Room name" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "General" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Identity" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Conversation" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Repository" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Agent behavior" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Pre-flight mode" })).toBeNull();
     expect(screen.queryByRole("checkbox", { name: "Intent classifier (Jev via OpenRouter)" })).toBeNull();
