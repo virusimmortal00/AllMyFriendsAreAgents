@@ -15,6 +15,7 @@ describe("OpenCode context summarizer", () => {
       return { stdout: `${JSON.stringify({ type: "text", part: { type: "text", text: "Fallback summary" } })}\n`, stderr: "" };
     });
     const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+    const onUsage = vi.fn();
     await expect(summarizer.summarize({
       transcript: "[YOU | one]\nExact text",
       tokenTarget: 200,
@@ -24,9 +25,11 @@ describe("OpenCode context summarizer", () => {
         { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free" },
         { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest" },
       ],
+      onUsage,
     })).resolves.toBe("Fallback summary");
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[1][1]).toContain("openrouter/~deepseek/deepseek-v4-flash-latest");
+    expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/~deepseek/deepseek-v4-flash-latest", fallbackModels: ["opencode/muse-spark-1.2-contributor-free"] });
   });
 
   it("coalesces simultaneous summaries for the same cold-start span", async () => {
@@ -36,6 +39,40 @@ describe("OpenCode context summarizer", () => {
     await expect(Promise.all([summarizer.summarize(input), summarizer.summarize(input), summarizer.summarize(input)])).resolves.toEqual(["Shared summary", "Shared summary", "Shared summary"]);
     await expect(summarizer.summarize(input)).resolves.toBe("Shared summary");
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports observed summary spend to the room activity callback", async () => {
+    const execute = vi.fn(async () => ({ stdout: [
+      JSON.stringify({ type: "text", part: { type: "text", text: "Priced summary" } }),
+      JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0.0025 } }),
+    ].join("\n"), stderr: "" }));
+    const onUsage = vi.fn();
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }], onUsage })).resolves.toBe("Priced summary");
+    expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/summary-model", costUsd: 0.0025 });
+  });
+
+  it("does not retry a successful provider route when activity disclosure fails", async () => {
+    const execute = vi.fn(async () => ({ stdout: `${JSON.stringify({ type: "text", part: { type: "text", text: "Generated summary" } })}\n`, stderr: "" }));
+    const onUsage = vi.fn(async () => { throw new Error("status storage unavailable"); });
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }, { providerId: "openrouter", modelId: "fallback-model" }], onUsage })).rejects.toThrow("status storage unavailable");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a failed summary attempt and any provider-reported spend", async () => {
+    const execute = vi.fn(async () => {
+      throw Object.assign(new Error("provider disconnected"), {
+        stdout: JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0.00125 } }),
+      });
+    });
+    const onUsage = vi.fn();
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }], onUsage })).rejects.toThrow("Context summarization unavailable");
+    expect(onUsage).toHaveBeenCalledWith({ failed: true, fallbackModels: ["openrouter/summary-model"], costUsd: 0.00125 });
   });
 
   it("fans out account-scoped cooldowns while retaining an unrelated fallback", async () => {

@@ -75,6 +75,24 @@ describe("measured transcript anchoring", () => {
     expect(scrollTop).toBe(1_180);
     expect(screen.queryByRole("button", { name: "New messages ↓" })).toBeNull();
   });
+
+  it("does not announce hidden system activity as a new message", () => {
+    const transcriptRef = createRef<HTMLDivElement>();
+    let scrollTop = 450;
+    const { rerender } = render(<Transcript messages={[message("visible")]} magnification={100} showSystemActivity={false} transcriptRef={transcriptRef} />);
+    const transcript = transcriptRef.current!;
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, get: () => 1_000 },
+      clientHeight: { configurable: true, get: () => 300 },
+      scrollTop: { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } },
+      scrollTo: { configurable: true, value: vi.fn() },
+    });
+    transcript.dispatchEvent(new Event("scroll"));
+
+    rerender(<Transcript messages={[message("visible"), { id: "hidden-status", speaker: "system", kind: "status", text: "Hidden activity", timestamp: "2026-08-24T12:01:00.000Z" }]} magnification={100} showSystemActivity={false} transcriptRef={transcriptRef} />);
+
+    expect(screen.queryByRole("button", { name: "New messages ↓" })).toBeNull();
+  });
 });
 
 describe("transcript render budget", () => {

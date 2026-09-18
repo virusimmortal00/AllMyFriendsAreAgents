@@ -366,7 +366,7 @@ describe("Transcript message styling", () => {
           { id: "free", speaker: "codex-sol", text: "Free turn.", timestamp: "2026-08-19T12:01:00.000Z", openRouterCostUsd: 0 },
           { id: "unpriced", speaker: "codex-sol", text: "No cost recorded.", timestamp: "2026-08-19T12:02:00.000Z" },
           { id: "human", speaker: "you", text: "From a human.", timestamp: "2026-08-19T12:03:00.000Z" },
-          { id: "system", speaker: "system", kind: "status", text: "Status line.", timestamp: "2026-08-19T12:04:00.000Z" },
+          { id: "system", speaker: "system", kind: "status", text: "Status line.", timestamp: "2026-08-19T12:04:00.000Z", openRouterCostUsd: 0.001 },
         ]}
         magnification={100}
         transcriptRef={createRef<HTMLDivElement>()}
@@ -375,8 +375,9 @@ describe("Transcript message styling", () => {
 
     expect(html).toContain('<span class="message-cost-badge"');
     expect(html).toContain('<span class="message-cost-badge message-cost-badge--free"');
-    expect(html.match(/message-cost-badge/g)).toHaveLength(3); // one plain + one free (with its modifier repeating the base class)
+    expect(html.match(/message-cost-badge/g)).toHaveLength(4); // two priced + one free (whose modifier repeats the base class)
     expect(html).toContain("$0.0042");
+    expect(html).toContain("$0.0010");
     expect(html).toContain(">Free<");
   });
 

@@ -3,6 +3,7 @@ export const DEFAULT_TRANSCRIPT_MAGNIFICATION = 100;
 export const TRANSCRIPT_MAGNIFICATION_STORAGE_KEY = "allmyfriendsareagents.transcript-magnification";
 export const TRANSCRIPT_TIMESTAMPS_STORAGE_KEY = "allmyfriendsareagents.transcript-timestamps";
 export const TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY = "allmyfriendsareagents.transcript-message-prices";
+export const TRANSCRIPT_SYSTEM_ACTIVITY_STORAGE_KEY = "allmyfriendsareagents.transcript-system-activity";
 
 export function sanitizeTranscriptMagnification(value: unknown) {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -67,6 +68,24 @@ export function saveTranscriptMessagePrices(visible: boolean) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(TRANSCRIPT_MESSAGE_PRICES_STORAGE_KEY, String(visible));
+  } catch {
+    // A blocked localStorage should not make the room unusable.
+  }
+}
+
+export function loadTranscriptSystemActivity() {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(TRANSCRIPT_SYSTEM_ACTIVITY_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveTranscriptSystemActivity(visible: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TRANSCRIPT_SYSTEM_ACTIVITY_STORAGE_KEY, String(visible));
   } catch {
     // A blocked localStorage should not make the room unusable.
   }

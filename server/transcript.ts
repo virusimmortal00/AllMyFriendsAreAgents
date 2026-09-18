@@ -61,7 +61,16 @@ export interface AgentContextSummaryStore {
 }
 
 export interface AgentContextSummarizer {
-  summarize(input: { readonly transcript: string; readonly tokenTarget: number; readonly promptTemplate: string; readonly projectPath: string; readonly models: ReturnType<typeof normalizeAgentContextConfig>["summarizerModels"]; readonly configRevision?: number }): Promise<string>;
+  summarize(input: { readonly transcript: string; readonly tokenTarget: number; readonly promptTemplate: string; readonly projectPath: string; readonly models: ReturnType<typeof normalizeAgentContextConfig>["summarizerModels"]; readonly configRevision?: number; readonly onUsage?: (usage: AgentContextSummarizerUsage) => Promise<void> | void }): Promise<string>;
+}
+
+/** Observed provider spend for one newly generated room-context summary. */
+export interface AgentContextSummarizerUsage {
+  readonly model?: string;
+  readonly costUsd?: number;
+  readonly cached?: boolean;
+  readonly failed?: boolean;
+  readonly fallbackModels?: readonly string[];
 }
 
 export interface AgentScopedTranscriptOptions {
@@ -69,6 +78,8 @@ export interface AgentScopedTranscriptOptions {
   readonly summaryStore?: AgentContextSummaryStore;
   readonly summarizer?: AgentContextSummarizer;
   readonly activeAssignment?: string;
+  /** Non-sensitive room activity emitted only when a new summary invokes a provider. */
+  readonly onSummaryUsage?: (usage: AgentContextSummarizerUsage) => Promise<void> | void;
 }
 
 export interface AgentScopedTranscript {
@@ -143,6 +154,7 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
   const key = { agentId: options.agentId, spanStartId: older[0].id, spanEndId: older.at(-1)!.id, configRevision };
   try {
     let summary = await options.summaryStore.getAgentContextSummary(key);
+    if (summary) await options.onSummaryUsage?.({ cached: true });
     if (!summary) {
       const pending = options.summarizer.summarize({
         transcript: transcriptMessages(older),
@@ -151,6 +163,7 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
         projectPath: state.settings.projectPath,
         models: config.summarizerModels,
         configRevision,
+        onUsage: options.onSummaryUsage,
       });
       const outcome = await foregroundSummary(pending);
       if (outcome.kind === "pending") {

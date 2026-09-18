@@ -11,7 +11,7 @@ import type { PreflightEvidence } from "../shared/preflight.js";
 import type { ConversationJobSource } from "../shared/conversation-observability.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
-import { AgentProcessSupervisor, isAgentGenerationCancelledError, runAgent } from "./agent-runner.js";
+import { AgentProcessSupervisor, isAgentGenerationCancelledError, runAgent, type AgentContextRuntime } from "./agent-runner.js";
 import { AgentHealthRegistry } from "./agent-health.js";
 import { classifyProviderScopedFailure, ProviderHealthRegistry } from "./provider-health.js";
 import { deliverBurst } from "./burst-delivery.js";
@@ -627,6 +627,29 @@ function broadcast() {
   for (const [viewerHumanId, stream] of roomEvents) stream.broadcast(publicRoomSnapshot(viewerHumanId));
 }
 
+const spendActivityRuntime: Pick<AgentContextRuntime, "onSummaryUsage" | "onGenerationActivity"> = {
+  onSummaryUsage: async (summarizedAgent, usage) => {
+    const name = AGENT_PROFILES[summarizedAgent].conversationalName;
+    const text = usage.cached
+      ? `Room context summarizer reused cached context for ${name}; no new spend.`
+      : usage.failed
+        ? `Room context summarizer could not generate context for ${name}.`
+        : `Room context summarizer generated context for ${name} using ${usage.model || "the configured model"}${usage.fallbackModels?.length ? ` after fallback from ${usage.fallbackModels.join(", ")}` : ""}.`;
+    await store.addMessage("system", text, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
+    broadcast();
+  },
+  onGenerationActivity: async (activityAgent, activity) => {
+    const name = AGENT_PROFILES[activityAgent].conversationalName;
+    const text = activity.kind === "retry"
+      ? `${name}'s generation retried after a provider or session error.`
+      : activity.kind === "failed"
+        ? `${name}'s generation failed before posting a reply.`
+        : `${name}'s generation was cancelled before posting a reply.`;
+    await store.addMessage("system", text, "status", undefined, undefined, undefined, { generationId: activity.generationId, costUsd: activity.costUsd });
+    broadcast();
+  },
+};
+
 const runtimeRecoveryTimer = setInterval(() => {
   if (![...roomEvents.values()].some((stream) => stream.clientCount > 0)) return;
   refreshOpenCodeRuntimeInBackground();
@@ -817,6 +840,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         runtimeCommand,
         summaryStore: store,
         summarizer: contextSummarizer,
+        ...spendActivityRuntime,
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
@@ -859,7 +883,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
-    if (providerRecovered) broadcast();
+    const name = AGENT_PROFILES[agent].conversationalName;
+    await store.addMessage("system", `${name}'s completed generation was discarded because the agent was disabled before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+    broadcast();
     return { cancelled: true, outcomeReason: "agent-disabled" };
   }
   const participantRecovered = activeAgent ? await agentHealth.recordSuccess(activeAgent) : false;
@@ -904,6 +930,9 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:diagnosticText,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
       await store.clearSession(agent);
+      const name = AGENT_PROFILES[agent].conversationalName;
+      await store.addMessage("system", `${name}'s completed generation was discarded because room activity changed before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+      broadcast();
       delivery.finish("cancelled", "activity-changed-before-delivery");
       return { cancelled: true, interpretation: parsed.diagnostics };
     }
@@ -976,6 +1005,11 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         delivery.finish("cancelled", "activity-changed-during-style-save");
         return { cancelled: true, interpretation: parsed.diagnostics };
       }
+      broadcast();
+    }
+    if (parsed.visibleMessages.length === 0) {
+      const name = AGENT_PROFILES[agent].conversationalName;
+      await store.addMessage("system", `${name} considered the message but did not reply to the chat.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
       broadcast();
     }
     delivery.finish(parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
@@ -1073,6 +1107,9 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
       undefined, undefined, modelDiscovery,
       {
         runtimeCommand,
+        summaryStore: store,
+        summarizer: contextSummarizer,
+        ...spendActivityRuntime,
         historyTool: roomHistoryTool,
         refreshScopedTools: (attempt) => ({ commandTool: commandToolContext(agent, before, attempt), diagnosticsTool: diagnosticsToolContext(agent, attempt) }),
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
@@ -1421,13 +1458,13 @@ const protectedWorkService = new ProtectedWorkService(protectedWorkStore, invest
       const result = await runAgent(agent, { ...before, sessions: {}, settings: { ...before.settings, writableAgent: "nobody" } },
         protectedReturnInstruction(record), false, generationJournal, AbortSignal.any([signal, activity.signal]),
         undefined, activeGenerations, { invalidate: async (owner) => store.clearSession(owner) }, agentProcesses,
-        undefined, undefined, modelDiscovery, { runtimeCommand, summaryStore: store, summarizer: contextSummarizer, historyTool: roomHistoryTool,
+        undefined, undefined, modelDiscovery, { runtimeCommand, summaryStore: store, summarizer: contextSummarizer, ...spendActivityRuntime, historyTool: roomHistoryTool,
           operationLog: (level, event, fields) => structuredLogger.log(level, event, fields) },
         { onGenerationStart: async (id) => reservation.activate(id) });
       const parsed = result.structuredTurn
         ? interpretStructuredRoomTurn(agent, result.structuredTurn, before.settings.participantStyles[agent], 1, currentEnabledAgents())
         : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 1, currentEnabledAgents());
-      const report = parseProtectedReturn(parsed.visibleMessages.join("\n"), cursor);
+      const report = { ...parseProtectedReturn(parsed.visibleMessages.join("\n"), cursor), generationId: result.generationId, ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }) };
       if (signal.aborted || activity.signal.aborted) throw new Error("Conversation changed during catch-up.");
       // Keep worker and chat sessions separate. The return uses authoritative
       // transcript context; its private assessment is not persisted as chat history.
@@ -1436,7 +1473,7 @@ const protectedWorkService = new ProtectedWorkService(protectedWorkStore, invest
   },
   deliver: async (record) => {
     if (!record.report?.text || record.report.cursor !== protectedReturnCursor(store.snapshot())) return false;
-    await store.addCommandDeliveryMessageOnce(record.workId, 0, record.owner as AgentId, record.report.text);
+    await store.addCommandDeliveryMessageOnce(record.workId, 0, record.owner as AgentId, record.report.text, undefined, undefined, { generationId: record.report.generationId, costUsd: record.report.costUsd });
     broadcast();
     return true;
   },

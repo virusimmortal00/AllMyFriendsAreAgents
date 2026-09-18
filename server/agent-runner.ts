@@ -8,7 +8,7 @@ import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfiguration
 import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type { GenerationJournal, GenerationJournalEvent } from "./generation-journal.js";
 import { conversationLogFields, withLogContext } from "./structured-logger.js";
-import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
+import { transcriptFor, type AgentContextSummarizer, type AgentContextSummarizerUsage, type AgentContextSummaryStore } from "./transcript.js";
 import { agentBehaviorContext } from "./agent-behavior.js";
 import { roomBasePrompt } from "./room-configuration.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -47,6 +47,8 @@ export interface AgentContextRuntime {
   readonly runtimeCommand?: () => string | undefined;
   readonly summaryStore?: AgentContextSummaryStore;
   readonly summarizer?: AgentContextSummarizer;
+  readonly onSummaryUsage?: (agent: AgentId, usage: AgentContextSummarizerUsage) => Promise<void> | void;
+  readonly onGenerationActivity?: (agent: AgentId, activity: { readonly kind: "retry" | "failed" | "cancelled"; readonly generationId: string; readonly attemptOrdinal: number; readonly costUsd?: number }) => Promise<void> | void;
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
@@ -264,7 +266,7 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
     ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
     : "";
   const deploymentContext = `\nDEPLOYMENT SOURCE PROVENANCE (server-derived, read-only snapshot)\n${deploymentPromptContext(state.deployment)}\n- Reading a current file establishes only its current contents. It is not evidence of what another commit contained.\n- Claim a commit-to-commit or worktree diff only when explicit diff evidence is present in this prompt.\n`;
-  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment });
+  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment, onSummaryUsage: context?.onSummaryUsage ? (usage) => context.onSummaryUsage!(agent, usage) : undefined });
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
   const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";
@@ -760,6 +762,9 @@ export async function runAgent(
         isActive: () => toolsActive && attemptOrdinal === ordinal && !signal?.aborted });
     };
     const append = (event: GenerationJournalEvent) => journal?.append({ ...conversationLogFields(), ...event, attemptOrdinal });
+    const publishGenerationActivity = async (kind: "retry" | "failed" | "cancelled", costUsd?: number) => {
+      await context?.onGenerationActivity?.(agent, { kind, generationId, attemptOrdinal, ...(costUsd === undefined ? {} : { costUsd }) });
+    };
     const startedAt = Date.now();
     const permission = resolvePermission(agent, state, includeDiff, assignmentWorkspace);
     // Review turns deliberately stay rooted at the configured project and retain
@@ -889,6 +894,7 @@ export async function runAgent(
           await sessionLifecycle?.invalidate(agent, existing.id, error instanceof Error ? error.message : String(error));
           activeContext = refreshAgentScopedTools(context, toolAttempt());
           await append({ type: "generation.retry", generationId, agent, reason: "structured session was unavailable", staleSessionId: existing.id });
+          await publishGenerationActivity("retry");
           structuredResult = await invokeStructured();
         }
         const text = structuredResult.structured.action === "speak" ? structuredResult.structured.messages.join("\n\n") : "";
@@ -953,6 +959,8 @@ export async function runAgent(
           reason: error instanceof Error ? error.message : String(error), staleSessionId: existing.id,
           ...(error instanceof ProcessExecutionError ? { exitCode: error.process.exitCode, cliStdout: error.process.stdout, cliStderr: error.process.stderr } : {}),
         });
+        const retryCostUsd = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout).cost : undefined;
+        await publishGenerationActivity("retry", retryCostUsd);
         resumedSessionId = undefined;
         attemptOrdinal += 1;
         toolsActive = true;
@@ -995,9 +1003,11 @@ export async function runAgent(
           cliStdout: error.process.stdout,
           cliStderr: error.process.stderr,
         });
+        await publishGenerationActivity("cancelled", parsed.cost);
         throw new AgentGenerationCancelledError();
       }
       const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
+      await publishGenerationActivity("failed", failedProtocol?.cost);
       await append({
         type: "generation.failed",
         generationId,

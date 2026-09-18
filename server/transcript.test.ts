@@ -143,12 +143,14 @@ describe("agent transcript context", () => {
       async putAgentContextSummary(key: { agentId: string; spanStartId: string; spanEndId: string }, summary: string) { cache.set(JSON.stringify(key), summary); },
     };
     const summarize = vi.fn(async () => "A cached bounded summary.");
-    const first = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
-    const second = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
+    const onSummaryUsage = vi.fn();
+    const first = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize }, onSummaryUsage });
+    const second = await transcriptFor(room, { agentId: "codex-sol", summaryStore, summarizer: { summarize }, onSummaryUsage });
     expect(first.mode).toBe("summary");
     expect(first.text).toContain("A cached bounded summary.");
     expect(first.text).toContain("verbatim 20");
     expect(summarize).toHaveBeenCalledTimes(1);
+    expect(onSummaryUsage).toHaveBeenCalledWith({ cached: true });
     expect(second.text).toBe(first.text);
   });
 

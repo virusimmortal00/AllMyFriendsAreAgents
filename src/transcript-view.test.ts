@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   adjacentTranscriptMagnification,
   DEFAULT_TRANSCRIPT_MAGNIFICATION,
+  loadTranscriptSystemActivity,
   sanitizeTranscriptMagnification,
 } from "./transcript-view";
 
@@ -16,5 +17,9 @@ describe("local transcript magnification", () => {
     expect(adjacentTranscriptMagnification(100, 1)).toBe(110);
     expect(adjacentTranscriptMagnification(75, -1)).toBe(75);
     expect(adjacentTranscriptMagnification(150, 1)).toBe(150);
+  });
+
+  it("shows system activity by default", () => {
+    expect(loadTranscriptSystemActivity()).toBe(true);
   });
 });

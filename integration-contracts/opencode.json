@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 40,
+    "revision": 42,
     "reviewedOn": "2026-09-18",
-    "result": "Refresh trigger: package.json (a contract-mapped file) changed to wire a new internal quality gate, check:api-contracts, into the check:quality chain and the required CI workflow. The change adds a repository-local script entry only; it does not add, remove, or re-version any dependency — the pinned audited @opencode-ai/plugin production dependency and the frozen lockfile are untouched. No file that consumes OpenCode public source changed, so the standing findings from the prior re-inspection records (revisions 38-39) remain the compatibility evidence: authenticated loopback startup, mode 0600 credential persistence, provider listing as recognition rather than live connection, runtime plugin/tool discovery against the public @opencode-ai/plugin contract, and the pinned downstream runtime through 6883ca5bd35a5494fb2759018373308911c79e01. The four recorded contract tests were re-run and pass.",
+    "result": "Refresh trigger: server/index.ts, server/agent-runner.ts, and server/context-summarizer.ts changed to publish application-owned spend activity after OpenCode runs, including summary use, retries, cancellation, and failed attempts. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, cli-jsonl, model-discovery, permissions-and-tools, mcp-adapter, and native-setup-auth, and compared the affected upstream paths with v1.18.18 (31406ccc51b4bd2a4e1e086b2bcaa5f7f804f26d). Confirmed: CLI JSON event generation, session/provider telemetry, loopback server/SDK contracts, model listing, credential control routes, inline permission, and custom-tool discovery remain consumed through the existing invocation and parser boundaries. The local callbacks only record already-observed results; they do not change OpenCode arguments, transport selection, permissions, tool schemas, provider transforms, credentials, or upstream session semantics. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
