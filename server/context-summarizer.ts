@@ -16,18 +16,20 @@ interface SummarizerHealthIntegration {
   readonly onChange?: () => void;
 }
 
-function textFromJsonLines(stdout: string) {
+function summaryFromJsonLines(stdout: string) {
   const text: string[] = [];
+  let costUsd: number | undefined;
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const event = JSON.parse(line) as { type?: string; part?: { type?: string; text?: string } };
+      const event = JSON.parse(line) as { type?: string; part?: { type?: string; text?: string; cost?: unknown } };
       if (event.type === "text" && event.part?.type === "text" && event.part.text) text.push(event.part.text);
+      if (event.type === "step_finish" && event.part?.type === "step-finish" && typeof event.part.cost === "number" && Number.isFinite(event.part.cost) && event.part.cost >= 0) costUsd = (costUsd || 0) + event.part.cost;
     } catch {
       // Non-protocol progress is ignored.
     }
   }
-  return text.join("").trim();
+  return { text: text.join("").trim(), costUsd };
 }
 
 function summarizerEnvironment(environment: NodeJS.ProcessEnv = process.env) {
@@ -111,10 +113,11 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
         });
         const protocolFailure = providerFailuresFromOpenCodeOutput(stdout, 1)[0];
         if (protocolFailure) throw new ProviderInvocationError(protocolFailure);
-        const summary = textFromJsonLines(stdout);
+        const { text: summary, costUsd } = summaryFromJsonLines(stdout);
         if (summary) {
           this.routeCooldowns.delete(selection);
           if (model.providerId && this.health && await this.health.providers.recordSuccess(model.providerId)) this.health.onChange?.();
+          await input.onUsage?.({ model: selection, ...(costUsd === undefined ? {} : { costUsd }) });
           return summary;
         }
         this.routeCooldowns.set(selection, Date.now() + 60_000);
@@ -147,4 +150,4 @@ export class OpenCodeContextSummarizer implements AgentContextSummarizer {
   }
 }
 
-export const __testing = { textFromJsonLines, summarizerEnvironment };
+export const __testing = { summaryFromJsonLines, summarizerEnvironment };

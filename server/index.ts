@@ -817,6 +817,11 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         runtimeCommand,
         summaryStore: store,
         summarizer: contextSummarizer,
+        onSummaryUsage: async (summarizedAgent, usage) => {
+          const name = AGENT_PROFILES[summarizedAgent].conversationalName;
+          await store.addMessage("system", `Room context summarizer generated context for ${name} using ${usage.model}.`, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
+          broadcast();
+        },
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
@@ -976,6 +981,11 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         delivery.finish("cancelled", "activity-changed-during-style-save");
         return { cancelled: true, interpretation: parsed.diagnostics };
       }
+      broadcast();
+    }
+    if (parsed.visibleMessages.length === 0) {
+      const name = AGENT_PROFILES[agent].conversationalName;
+      await store.addMessage("system", `${name} considered the message but did not reply to the chat.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
       broadcast();
     }
     delivery.finish(parsed.visibleMessages.length === 0 ? "no_response" : "delivered",

@@ -8,7 +8,7 @@ import { enabledRoomAgentIds, normalizeRoomAgentRoster, participantConfiguration
 import type { RoomToolAttempt } from "./room-tool-attempt.js";
 import type { GenerationJournal, GenerationJournalEvent } from "./generation-journal.js";
 import { conversationLogFields, withLogContext } from "./structured-logger.js";
-import { transcriptFor, type AgentContextSummarizer, type AgentContextSummaryStore } from "./transcript.js";
+import { transcriptFor, type AgentContextSummarizer, type AgentContextSummarizerUsage, type AgentContextSummaryStore } from "./transcript.js";
 import { agentBehaviorContext } from "./agent-behavior.js";
 import { roomBasePrompt } from "./room-configuration.js";
 import type { AgentId, RoomState } from "./types.js";
@@ -47,6 +47,7 @@ export interface AgentContextRuntime {
   readonly runtimeCommand?: () => string | undefined;
   readonly summaryStore?: AgentContextSummaryStore;
   readonly summarizer?: AgentContextSummarizer;
+  readonly onSummaryUsage?: (agent: AgentId, usage: AgentContextSummarizerUsage) => Promise<void> | void;
   readonly activeAssignment?: string;
   readonly historyTool?: { readonly configDirectory: string; readonly url: string; readonly token: string };
   readonly commandTool?: { readonly url: string; readonly token: string; readonly allowedCommands: readonly string[]; readonly guide: string };
@@ -264,7 +265,7 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
     ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
     : "";
   const deploymentContext = `\nDEPLOYMENT SOURCE PROVENANCE (server-derived, read-only snapshot)\n${deploymentPromptContext(state.deployment)}\n- Reading a current file establishes only its current contents. It is not evidence of what another commit contained.\n- Claim a commit-to-commit or worktree diff only when explicit diff evidence is present in this prompt.\n`;
-  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment });
+  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment, onSummaryUsage: context?.onSummaryUsage ? (usage) => context.onSummaryUsage!(agent, usage) : undefined });
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
   const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";

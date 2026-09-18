@@ -38,6 +38,18 @@ describe("OpenCode context summarizer", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it("reports observed summary spend to the room activity callback", async () => {
+    const execute = vi.fn(async () => ({ stdout: [
+      JSON.stringify({ type: "text", part: { type: "text", text: "Priced summary" } }),
+      JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0.0025 } }),
+    ].join("\n"), stderr: "" }));
+    const onUsage = vi.fn();
+    const summarizer = new OpenCodeContextSummarizer("opencode", 1_000, execute);
+
+    await expect(summarizer.summarize({ transcript: "source", tokenTarget: 200, promptTemplate: "{{transcript}}", projectPath: "/tmp/project", models: [{ providerId: "openrouter", modelId: "summary-model" }], onUsage })).resolves.toBe("Priced summary");
+    expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/summary-model", costUsd: 0.0025 });
+  });
+
   it("fans out account-scoped cooldowns while retaining an unrelated fallback", async () => {
     const providers = ProviderHealthRegistry.memory();
     const changed = vi.fn();

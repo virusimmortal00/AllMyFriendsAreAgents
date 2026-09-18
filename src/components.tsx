@@ -432,7 +432,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
   const visibleText = isAgentId(message.speaker)
     ? visibleAgentChatText(message.text)
     : visibleAgentText(message.text);
-  const showCost = isAgentId(message.speaker) && message.openRouterCostUsd !== undefined;
+  const showCost = message.speaker !== "you" && message.openRouterCostUsd !== undefined;
+  const costTitle = isAgentId(message.speaker)
+    ? "OpenRouter's observed cost for this whole turn, shown on every message it produced."
+    : "OpenRouter's observed cost for this system activity.";
   return (
     <article className={`message message--${commandDisclosure ? "command" : message.kind || "chat"}`}>
       <time>[{formatTime(message.timestamp)}]</time>
@@ -448,7 +451,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
         ) : (
           <>
             <strong className={`speaker speaker--${message.speaker}`}>{message.speakerName || participantScreenName(message.speaker)}:</strong>{" "}
-            {showCost ? <><span className={`message-cost-badge${message.openRouterCostUsd === 0 ? " message-cost-badge--free" : ""}`} title="OpenRouter's observed cost for this whole turn, shown on every message it produced.">{message.openRouterCostUsd === 0 ? "Free" : formatUsd(message.openRouterCostUsd)}</span>{" "}</> : null}
+            {showCost ? <><span className={`message-cost-badge${message.openRouterCostUsd === 0 ? " message-cost-badge--free" : ""}`} title={costTitle}>{message.openRouterCostUsd === 0 ? "Free" : formatUsd(message.openRouterCostUsd)}</span>{" "}</> : null}
             <span className="message__bubble" style={message.style ? chatStyleProperties(message.style, magnification) : undefined}>
               <span className="message__text">{messageText(visibleText, onOpenImprovement)}</span>
             </span>
