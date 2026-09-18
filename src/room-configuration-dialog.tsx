@@ -32,6 +32,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   const [summarizerPromptText, setSummarizerPromptText] = useState("");
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({ preflightInvocationGating: false });
   const [preflightMode, setPreflightMode] = useState<PreflightMode>("off");
+  const [intentClassifierEnabled, setIntentClassifierEnabled] = useState(true);
   const [routingEvidence, setRoutingEvidence] = useState<PreflightEvidence>();
   const [models, setModels] = useState<readonly DiscoveredModel[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -47,7 +48,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [signInRequired, setSignInRequired] = useState(false);
-  const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode]);
+  const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode, intentClassifierEnabled }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode, intentClassifierEnabled: saved?.intentClassifierEnabled }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode, intentClassifierEnabled]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -67,6 +68,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
       setSummarizerPromptText(result.settings.summarizerPromptText);
       setFeatureFlags(result.settings.featureFlags);
       setPreflightMode(result.settings.preflightMode || "off");
+      setIntentClassifierEnabled(result.settings.intentClassifierEnabled !== false);
       setRoutingEvidence(result.routingEvidence);
       setDefaultBasePrompt(result.defaults?.basePromptText || "");
     }).catch((failure) => { if (current) setError(failure instanceof Error ? failure.message : "Could not load agent behavior."); }).finally(() => { if (current) setLoading(false); });
@@ -110,6 +112,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
         ...(saved?.summarizerPromptText !== summarizerPromptText ? { summarizerPromptText } : {}),
         ...(JSON.stringify(saved?.featureFlags) !== JSON.stringify(featureFlags) ? { featureFlags } : {}),
         ...(saved?.preflightMode !== preflightMode ? { preflightMode } : {}),
+        ...(saved?.intentClassifierEnabled !== intentClassifierEnabled ? { intentClassifierEnabled } : {}),
       };
       const result = await updateRoomConfiguration(update);
       setSaved(result.settings);
@@ -160,9 +163,12 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
             {PREFLIGHT_MODES.map((mode) => <option value={mode} key={mode}>{PREFLIGHT_MODE_LABELS[mode].label}</option>)}
           </select></label>
           <p>{PREFLIGHT_MODE_LABELS[preflightMode].description}</p>
+          <label className="classic-check"><input type="checkbox" checked={intentClassifierEnabled} onChange={(event) => setIntentClassifierEnabled(event.target.checked)} /><span>Intent classifier (Jev via OpenRouter)</span></label>
+          <p>When pre-flight routing is Shadow or Enforce, a fast typed-decision model checks whether each message directly addresses each agent before any agent is invoked. On by default; disable to route with deterministic signals only. Routing evidence records classifier cost and latency either way.</p>
+
           <small data-testid="preflight-evidence">{routingEvidence?.recordedDecisions
-            ? `${routingEvidence.evaluatedShadowSuppressions} evaluated shadow suppressions; ${routingEvidence.falseSuppressionRate === null ? "false-suppression rate unavailable" : `${(routingEvidence.falseSuppressionRate * 100).toFixed(1)}% false-suppression rate`}. ${routingEvidence.promotionEligible ? "Eligible for explicit owner/admin promotion." : "Not yet eligible for enforcement."}`
-            : "No shadow routing evidence has been recorded yet."}</small>
+            ? `${routingEvidence.evaluatedShadowSuppressions} evaluated shadow suppressions; ${routingEvidence.falseSuppressionRate === null ? "false-suppression rate unavailable" : `${(routingEvidence.falseSuppressionRate * 100).toFixed(1)}% false-suppression rate`}. Mode changes take effect immediately.`
+            : "No routing evidence has been recorded yet. Mode changes take effect immediately."}</small>
         </section>
       </> : null}
     </div>

@@ -1851,3 +1851,23 @@ Evidence for source-input digest
 Physical-device behavior, native browser chrome, software keyboards, and text
 enlargement remain unverified. The preview has not been verified in a deployed
 container; these checks use production components with fictional API fixtures.
+
+## Intent classifier control — 2026-09-18
+
+The Room Properties → Agent Behavior page (`ROOM-02`) gained the advisory
+intent-classifier control and explanatory text. Evidence for source-input
+digest `eee5a31e12dbc6fef1c31a72a0b2b3c5929379fd7da4fd1f1344c6c754ef457c`:
+
+- `pnpm run capture:visual` captured 762/762 screenshots with no layout
+  failures (`run-4K9YdX`).
+- Independent review `codex-review-6cc5kt` inspected all 24 `ROOM-02` top and
+  bottom images in Chromium and WebKit across Phone, Short phone, Minimum
+  phone, Tablet, Short laptop, and Desktop. Every image passed all seven
+  questions; the routed control, wrapped explanation, scroll boundary, and
+  persistent actions remained readable and reachable.
+- `pnpm check:visual-review` exits 1 only because the other 738 capture images
+  were intentionally not independently reviewed. This is scoped affected-view
+  evidence, not whole-matrix visual approval.
+
+Physical-device behavior, native browser chrome, software keyboards, and text
+enlargement remain outside this browser-matrix evidence.

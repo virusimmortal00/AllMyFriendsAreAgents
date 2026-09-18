@@ -20,6 +20,8 @@ export interface RoomConfiguration {
   readonly summarizerPromptRevision: number;
   readonly featureFlags: Readonly<Record<string, boolean>>;
   readonly preflightMode: PreflightMode;
+  /** Whether the advisory Jev intent classifier is consulted during shadow/enforce pre-flight. */
+  readonly intentClassifierEnabled: boolean;
   readonly updatedAt: string | null;
 }
 
@@ -29,6 +31,7 @@ export interface RoomConfigurationUpdate {
   readonly summarizerPromptText?: string;
   readonly featureFlags?: Readonly<Record<string, boolean>>;
   readonly preflightMode?: PreflightMode;
+  readonly intentClassifierEnabled?: boolean;
 }
 
 export interface RoomConfigurationAuditEvent {
@@ -51,6 +54,7 @@ export function defaultRoomConfiguration(): RoomConfiguration {
     summarizerPromptRevision: 0,
     featureFlags: { ...DEFAULT_ROOM_FEATURE_FLAGS },
     preflightMode: DEFAULT_PREFLIGHT_MODE,
+    intentClassifierEnabled: true,
     updatedAt: null,
   };
 }
@@ -96,6 +100,7 @@ export function normalizeRoomConfiguration(input: unknown): RoomConfiguration {
     preflightMode: isPreflightMode(value.preflightMode)
       ? value.preflightMode
       : value.featureFlags?.preflightInvocationGating === true ? "shadow" : DEFAULT_PREFLIGHT_MODE,
+    intentClassifierEnabled: value.intentClassifierEnabled !== false,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
   };
 }

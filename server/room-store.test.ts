@@ -39,8 +39,23 @@ describe("room style persistence", () => {
     const configured = await store.updateRoomConfiguration({ basePromptText: null, summarizerPromptText: "Changed {{transcript}}" }, "owner");
     expect(configured).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
-    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1, preflightMode: "off" });
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1, preflightMode: "enforce" });
     expect(reopened.snapshot().roomConfigurationAudit).toHaveLength(1);
+  });
+
+  it("preserves off mode when opening a JSON room created before pre-flight modes", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-legacy-preflight-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const initial = await RoomStore.open(projectRoot, stateDirectory);
+    const statePath = path.join(stateDirectory, "room.json");
+    const legacy = initial.snapshot();
+    const { preflightMode: _preflightMode, ...legacyConfiguration } = legacy.roomConfiguration!;
+    await writeFile(statePath, JSON.stringify({ ...legacy, roomConfiguration: legacyConfiguration }));
+
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ preflightMode: "off" });
+    expect(JSON.parse(await readFile(statePath, "utf8")).roomConfiguration).toMatchObject({ preflightMode: "off" });
   });
 
   it("invalidates summary caches on every room-configuration change", async () => {

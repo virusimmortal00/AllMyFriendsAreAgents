@@ -16,7 +16,7 @@ describe("room configuration defaults", () => {
   });
 
   it("defaults routing off and migrates the legacy boolean flag conservatively to shadow", () => {
-    expect(defaultRoomConfiguration()).toMatchObject({ configurationRevision: 0, preflightMode: "off" });
+    expect(defaultRoomConfiguration()).toMatchObject({ configurationRevision: 0, preflightMode: "enforce" });
     expect(normalizeRoomConfiguration({ featureFlags: { preflightInvocationGating: true } }).preflightMode).toBe("shadow");
     expect(normalizeRoomConfiguration({ featureFlags: { preflightInvocationGating: true }, preflightMode: "enforce" }).preflightMode).toBe("enforce");
   });

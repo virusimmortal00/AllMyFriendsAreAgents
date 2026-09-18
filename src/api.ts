@@ -208,6 +208,7 @@ export interface RoomConfiguration {
   summarizerPromptRevision: number;
   featureFlags: Record<string, boolean>;
   preflightMode: import("../shared/preflight").PreflightMode;
+  intentClassifierEnabled: boolean;
   updatedAt: string | null;
 }
 
@@ -225,7 +226,7 @@ export async function loadRoomConfigurationModels(): Promise<ModelDiscoveryResul
   return request("/api/room/settings/models", { method: "GET", cache: "no-store" }, 15_000).then((response) => response.json());
 }
 
-export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean>; preflightMode: import("../shared/preflight").PreflightMode }>): Promise<{ settings: RoomConfiguration }> {
+export async function updateRoomConfiguration(update: Partial<{ basePromptText: string | null; summarizerModel: ModelReference | null; summarizerPromptText: string; featureFlags: Record<string, boolean>; preflightMode: import("../shared/preflight").PreflightMode; intentClassifierEnabled: boolean }>): Promise<{ settings: RoomConfiguration }> {
   await loadControlMe();
   return request("/api/room/settings", { method: "PUT", headers: { "X-AMFAA-CSRF": controlCsrfToken }, body: JSON.stringify(update) }).then((response) => response.json());
 }

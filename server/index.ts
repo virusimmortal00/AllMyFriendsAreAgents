@@ -69,6 +69,7 @@ import { registerContributionRoutes } from "./contribution-api.js";
 import { registerRosterRoutes } from "./roster-api.js";
 import { ModelDiscoveryService } from "./model-discovery.js";
 import { OPEN_CODE_RUNTIME_REFRESH_TTL_MS, publicOpenCodeRuntimeStatus, resolveOpenCodeRuntime, OpenCodeRuntimeMonitor, runtimeAvailability } from "./opencode-runtime.js";
+import { readOpenRouterApiKey } from "./openrouter-credentials.js";
 import { OpenRouterCatalogService } from "./openrouter-catalog.js";
 import { OpenRouterSpendStore } from "./openrouter-spend-store.js";
 import { ControlError, ControlPlaneStore, setControlRouteErrorReporter } from "./control-plane.js";
@@ -87,6 +88,8 @@ import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
 import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
+import { IntentClassifier, classificationAudit } from "./intent-classifier.js";
+import { classificationTranscriptThrough } from "./transcript.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
 import { ConsultationRunner } from "./consultation-service.js";
 import { DurableConsultationMcpService } from "./consultation-mcp.js";
@@ -202,6 +205,14 @@ const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
+const intentClassifier = new IntentClassifier({
+  apiKey: readOpenRouterApiKey,
+  model: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL,
+  endpoint: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_ENDPOINT,
+  disabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED === "true",
+  log: (level, event, fields) => { void structuredLogger.log(level, event, fields); },
+});
+if (await intentClassifier.available()) await structuredLogger.log("info", "intent.classification.configured", { model: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL || "~typesafe/jev-latest" });
 let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
 let healthRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 const providerHealth = await ProviderHealthRegistry.open(storageConfiguration.dataDirectory);
@@ -540,6 +551,7 @@ async function refreshPreflightEvidence() {
 }
 
 async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
+  const activityRevision = roomActivity.current();
   const turns = roomMessageTurns(state);
   const mode = normalizeRoomConfiguration(state.roomConfiguration).preflightMode;
   // This is intentionally a literal bypass. Do not calculate, persist, annotate,
@@ -550,24 +562,52 @@ async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
   const continuationTargets = trigger.continuationRequest
     ? (await store.listContinuations()).filter(({ roomOrigin }) => roomOrigin?.messageId === trigger.id).map(({ owner }) => owner)
     : [];
-  const decision = decidePreflight({
+  if (!roomActivity.isCurrent(activityRevision)) return [];
+  const rankedAgents = turns.map(({ agent }) => agent);
+  const classification = await classifyTrigger(state, trigger.id, rankedAgents);
+  if (!roomActivity.isCurrent(activityRevision)) return [];
+  const gateInput = {
     trigger,
     room: state,
-    rankedAgents: turns.map(({ agent }) => agent),
+    rankedAgents,
     health: agentHealth.snapshot(),
     routing: await preflightStore.routingState(),
     energy: state.settings.conversationEnergy,
     wholeRoomInvitation: latestHumanBroadcastPolicy(state).inviteAll,
     structuredTargets: continuationTargets,
-  });
+  };
+  const decision = decidePreflight(classification
+    ? { ...gateInput, classification: { agents: classification.agents, wholeRoom: classification.wholeRoom } }
+    : gateInput);
+  // The baseline decision, computed without classification, is recorded so
+  // routing evidence can attribute suppression and invocation changes to the
+  // classifier rather than to drift in the deterministic signals.
+  const baseline = classification ? decidePreflight(gateInput) : undefined;
   const record = await preflightStore.recordDecision({
     triggerMessageId: trigger.id,
     mode,
     energy: state.settings.conversationEnergy,
     decision,
+    ...(classification && baseline ? { classification: classificationAudit(classification, baseline.decisions) } : {}),
   });
   await refreshPreflightEvidence();
+  if (!roomActivity.isCurrent(activityRevision)) return [];
   return routePreflightTurns(turns, mode, decision, record.decisionId);
+}
+
+/** Consults the advisory address classifier; any failure or absence yields undefined. */
+async function classifyTrigger(state: ReturnType<typeof roomSnapshot>, triggerMessageId: string, rankedAgents: readonly AgentId[]) {
+  // The room toggle is the participant-visible switch; the server-owned
+  // environment kill switch is consulted inside the classifier itself.
+  if (!normalizeRoomConfiguration(state.roomConfiguration).intentClassifierEnabled || !rankedAgents.length) return undefined;
+  if (!(await intentClassifier.available())) return undefined;
+  const roster = normalizeRoomAgentRoster(state.roster);
+  const agents = rankedAgents.flatMap((agentId) => {
+    const entry = roster.entries.find((candidate) => candidate.agentId === agentId);
+    return entry ? [{ agentId, name: entry.conversationalName || entry.agentId }] : [];
+  });
+  if (!agents.length) return undefined;
+  return intentClassifier.classify({ transcript: classificationTranscriptThrough(state, triggerMessageId), agents });
 }
 
 async function refreshImplementationCapabilities() {
@@ -1023,7 +1063,14 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         .map(({ text }) => text.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
       const spoke = parsed.visibleMessages.length > 0;
       const distinct = spoke && parsed.visibleMessages.some((message) => !existing.has(message.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
-      await preflightStore.recordDisposition(preflight.decisionId, agent, spoke ? { action: "speak", distinct } : { action: "yield" });
+      // Provider-reported cost and wall-clock duration ride along so routing
+      // evidence can attribute counterfactual savings to suppressed turns.
+      const metrics = {
+        durationMs: result.durationMs,
+        ...(typeof result.costUsd === "number" ? { costUsd: result.costUsd } : {}),
+      };
+      await preflightStore.recordDisposition(preflight.decisionId, agent,
+        spoke ? { action: "speak", distinct, ...metrics } : { action: "yield", ...metrics });
       await refreshPreflightEvidence();
     }
     return {

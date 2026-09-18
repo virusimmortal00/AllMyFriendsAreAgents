@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
-import type { PreflightEvidence, PreflightMode } from "../shared/preflight.js";
+import type { PreflightClassificationAudit, PreflightClassificationEvidence, PreflightEvidence, PreflightMode } from "../shared/preflight.js";
+
 import { isAgentId, type AgentId } from "../shared/participants.js";
 import type { AgentRoutingDecision, PreflightDecision, PreflightRoutingState } from "./preflight-gate.js";
 import { PREFLIGHT_REASONS } from "./preflight-gate.js";
@@ -11,6 +12,10 @@ import { isConversationEnergy } from "../shared/conversation-energy.js";
 export interface ShadowDisposition {
   action: "speak" | "yield";
   distinct?: boolean;
+  /** Provider-reported cost of the turn that produced this disposition, when available. */
+  costUsd?: number;
+  /** Wall-clock generation duration of the turn, when available. */
+  durationMs?: number;
 }
 
 export interface PreflightAuditRecord {
@@ -21,7 +26,10 @@ export interface PreflightAuditRecord {
   energy: ConversationEnergy;
   qualifyingForStarvation: boolean;
   agents: Array<AgentRoutingDecision & { disposition?: ShadowDisposition }>;
+  /** Advisory classifier consult behind this decision, absent when unconfigured or failed. */
+  classification?: PreflightClassificationAudit;
 }
+
 
 interface PreflightState {
   schemaVersion: 1;
@@ -33,6 +41,48 @@ const AUDIT_LIMIT = 10_000;
 
 function emptyState(): PreflightState {
   return { schemaVersion: 1, routing: {}, decisions: [] };
+}
+
+function normalizeClassification(value: unknown): PreflightClassificationAudit | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<PreflightClassificationAudit>;
+  const latencyMs = Number(candidate.latencyMs);
+  const inputTokens = Number(candidate.inputTokens);
+  const outputTokens = Number(candidate.outputTokens);
+  const costUsd = Number(candidate.costUsd);
+  const wholeRoomProbability = Number(candidate.wholeRoomProbability);
+  if (typeof candidate.model !== "string" || !candidate.model || candidate.model.length > 100
+    || !Number.isFinite(latencyMs) || latencyMs < 0
+    || !Number.isFinite(inputTokens) || inputTokens < 0
+    || !Number.isFinite(outputTokens) || outputTokens < 0
+    || !Number.isFinite(costUsd) || costUsd < 0
+    || !Number.isFinite(wholeRoomProbability) || wholeRoomProbability < 0 || wholeRoomProbability > 1) return undefined;
+  const addressProbabilities: Partial<Record<AgentId, number>> = {};
+  if (candidate.addressProbabilities && typeof candidate.addressProbabilities === "object") {
+    for (const [agent, probability] of Object.entries(candidate.addressProbabilities)) {
+      const value = Number(probability);
+      if (isAgentId(agent) && Number.isFinite(value) && value >= 0 && value <= 1) addressProbabilities[agent] = value;
+    }
+  }
+  const baseline = Array.isArray(candidate.baseline) ? candidate.baseline.slice(0, 200).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const decision = entry as { agent?: unknown; outcome?: unknown; reason?: unknown };
+    const outcome: "invoke" | "suppress" | "unavailable" | undefined = decision.outcome === "invoke" || decision.outcome === "suppress" || decision.outcome === "unavailable"
+      ? decision.outcome
+      : undefined;
+    if (!isAgentId(decision.agent) || !outcome || typeof decision.reason !== "string" || !PREFLIGHT_REASONS.includes(decision.reason as AgentRoutingDecision["reason"])) return [];
+    return [{ agent: decision.agent, outcome, reason: decision.reason }];
+  }) : [];
+  return {
+    model: candidate.model,
+    latencyMs,
+    inputTokens,
+    outputTokens,
+    costUsd,
+    wholeRoomProbability,
+    addressProbabilities,
+    baseline,
+  };
 }
 
 function normalizeState(value: unknown): PreflightState {
@@ -57,13 +107,17 @@ function normalizeState(value: unknown): PreflightState {
       if (!entry || !isAgentId(entry.agent) || !["invoke", "suppress", "unavailable"].includes(entry.outcome)
         || !PREFLIGHT_REASONS.includes(entry.reason)) return [];
       const shadow = entry.disposition;
+      const metrics: { costUsd?: number; durationMs?: number } = {};
+      if (typeof shadow?.costUsd === "number" && Number.isFinite(shadow.costUsd) && shadow.costUsd >= 0) metrics.costUsd = shadow.costUsd;
+      if (typeof shadow?.durationMs === "number" && Number.isFinite(shadow.durationMs) && shadow.durationMs >= 0) metrics.durationMs = shadow.durationMs;
       const shadowDisposition = shadow?.action === "yield"
-        ? { action: "yield" as const }
+        ? { action: "yield" as const, ...metrics }
         : shadow?.action === "speak" && typeof shadow.distinct === "boolean"
-          ? { action: "speak" as const, distinct: shadow.distinct }
+          ? { action: "speak" as const, distinct: shadow.distinct, ...metrics }
           : undefined;
       return [{ agent: entry.agent, outcome: entry.outcome, reason: entry.reason, ...(shadowDisposition ? { disposition: shadowDisposition } : {}) } as AgentRoutingDecision & { disposition?: ShadowDisposition }];
     });
+    const classification = normalizeClassification(candidate.classification);
     return [{
       decisionId: candidate.decisionId,
       triggerMessageId: candidate.triggerMessageId,
@@ -72,6 +126,7 @@ function normalizeState(value: unknown): PreflightState {
       energy: candidate.energy,
       qualifyingForStarvation: candidate.qualifyingForStarvation === true,
       agents,
+      ...(classification ? { classification } : {}),
     } satisfies PreflightAuditRecord];
   }).slice(-AUDIT_LIMIT) : [];
   return { schemaVersion: 1, routing, decisions };
@@ -110,6 +165,7 @@ export class PreflightStore {
     mode: Exclude<PreflightMode, "off">;
     energy: ConversationEnergy;
     decision: PreflightDecision;
+    classification?: PreflightClassificationAudit;
     at?: string;
   }) {
     const record: PreflightAuditRecord = {
@@ -120,6 +176,7 @@ export class PreflightStore {
       energy: input.energy,
       qualifyingForStarvation: input.decision.qualifyingForStarvation,
       agents: structuredClone(input.decision.decisions),
+      ...(input.classification ? { classification: structuredClone(input.classification) } : {}),
     };
     return this.mutate((state) => {
       if (input.decision.qualifyingForStarvation) {
@@ -170,10 +227,7 @@ export class PreflightStore {
     const shadowDaysRecorded = firstShadowDecisionAt && lastShadowDecisionAt
       ? Math.max(0, (new Date(lastShadowDecisionAt).getTime() - new Date(firstShadowDecisionAt).getTime()) / 86_400_000)
       : 0;
-    const enoughTraffic = evaluated.length >= 200;
-    const enoughTime = shadowDaysRecorded >= 7;
     const falseSuppressionRate = evaluated.length ? falseSuppressions / evaluated.length : null;
-    const promotionEligible = evaluated.length > 0 && (enoughTraffic || enoughTime) && falseSuppressionRate !== null && falseSuppressionRate < 0.05;
     return {
       recordedDecisions: this.state.decisions.length,
       recordedAgents: agents.length,
@@ -183,12 +237,6 @@ export class PreflightStore {
       falseSuppressionRate,
       firstShadowDecisionAt,
       shadowDaysRecorded,
-      promotionEligible,
-      promotionEligibilityReasons: [
-        ...(evaluated.length === 0 ? ["no_evaluable_suppressions"] : []),
-        ...(!enoughTraffic && !enoughTime ? ["minimum_shadow_window_not_reached"] : []),
-        ...(falseSuppressionRate !== null && falseSuppressionRate >= 0.05 ? ["false_suppression_rate_too_high"] : []),
-      ],
       outcomeTallies: {
         invoke: agents.filter(({ outcome }) => outcome === "invoke").length,
         suppress: agents.filter(({ outcome }) => outcome === "suppress").length,
@@ -199,6 +247,7 @@ export class PreflightStore {
         speak: observedDispositions.filter(({ disposition }) => disposition?.action === "speak").length,
         yield: observedDispositions.filter(({ disposition }) => disposition?.action === "yield").length,
       },
+      ...classificationEvidence(this.state.decisions.filter((decision) => decision.classification)),
     };
   }
 
@@ -225,4 +274,67 @@ export class PreflightStore {
     this.queue.catch(() => undefined);
     return result;
   }
+}
+
+/**
+ * Aggregates classified decisions into the pre/post measurement surface.
+ * Counterfactual savings only count turns that actually ran and reported
+ * metrics, so gross savings and false suppressions are both observable.
+ */
+function classificationEvidence(decisions: PreflightAuditRecord[]): { classification: PreflightClassificationEvidence } | Record<string, never> {
+  if (!decisions.length) return {};
+  const models = new Set<string>();
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCostUsd = 0;
+  let totalLatencyMs = 0;
+  let additionalSuppressions = 0;
+  let additionalInvocations = 0;
+  let suppressedSpoke = 0;
+  let suppressedYield = 0;
+  let rescuedSpoke = 0;
+  let counterfactualSavedCostUsd = 0;
+  let counterfactualSavedDurationMs = 0;
+  for (const decision of decisions) {
+    const classification = decision.classification!;
+    models.add(classification.model);
+    totalInputTokens += classification.inputTokens;
+    totalOutputTokens += classification.outputTokens;
+    totalCostUsd += classification.costUsd;
+    totalLatencyMs += classification.latencyMs;
+    const baseline = new Map(classification.baseline.map((entry) => [entry.agent, entry]));
+    for (const agent of decision.agents) {
+      const before = baseline.get(agent.agent);
+      if (!before) continue;
+      if (before.outcome === "invoke" && agent.outcome === "suppress") {
+        additionalSuppressions += 1;
+        if (agent.disposition) {
+          if (agent.disposition.action === "speak") suppressedSpoke += 1;
+          else suppressedYield += 1;
+          counterfactualSavedCostUsd += agent.disposition.costUsd || 0;
+          counterfactualSavedDurationMs += agent.disposition.durationMs || 0;
+        }
+      } else if (before.outcome === "suppress" && agent.outcome === "invoke") {
+        additionalInvocations += 1;
+        if (agent.disposition?.action === "speak") rescuedSpoke += 1;
+      }
+    }
+  }
+  return {
+    classification: {
+      calls: decisions.length,
+      model: models.size === 1 ? models.values().next().value! : "mixed",
+      totalInputTokens,
+      totalOutputTokens,
+      totalCostUsd,
+      averageLatencyMs: totalLatencyMs / decisions.length,
+      additionalSuppressions,
+      additionalInvocations,
+      suppressedSpoke,
+      suppressedYield,
+      rescuedSpoke,
+      counterfactualSavedCostUsd,
+      counterfactualSavedDurationMs,
+    },
+  };
 }
