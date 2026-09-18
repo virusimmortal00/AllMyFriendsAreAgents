@@ -96,6 +96,16 @@ function transcriptMessages(messages: RoomMessage[]) {
   return entriesFor(messages.filter((message) => !message.recipientHumanId), true).map((entry) => formatEntry(entry)).join("\n\n");
 }
 
+/**
+ * Bounded, redacted recent-window transcript used as classifier state for
+ * advisory address classification. Applies the same visibility, disclosure,
+ * and agent-text redaction rules as agent-facing transcripts.
+ */
+export function classificationTranscript(state: RoomState, messageWindow = 10, characterBudget = 6_000): string {
+  const transcript = transcriptMessages(state.messages.slice(-messageWindow));
+  return transcript.length > characterBudget ? transcript.slice(transcript.length - characterBudget) : transcript;
+}
+
 function pinnedState(state: RoomState, options: AgentScopedTranscriptOptions) {
   const roster = normalizeRoomAgentRoster(state.roster);
   const roomConfiguration = normalizeRoomConfiguration(state.roomConfiguration);

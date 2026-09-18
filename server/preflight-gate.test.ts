@@ -22,7 +22,7 @@ function room(trigger: RoomMessage, earlier: RoomMessage[] = []): RoomState {
       projectPath: process.cwd(),
       participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES),
     },
-    roomConfiguration: { configurationRevision: 1, basePromptRevision: 0, basePromptText: "default", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "shadow", updatedAt: null },
+    roomConfiguration: { configurationRevision: 1, basePromptRevision: 0, basePromptText: "default", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "shadow", intentClassifierEnabled: true, updatedAt: null },
     status: "idle",
   };
 }
@@ -162,5 +162,77 @@ describe("pre-flight responder selection", () => {
     const trigger = humanMessage();
     const decision = decidePreflight({ trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "party", wholeRoomInvitation: false });
     expect(decision.decisions.every(({ outcome }) => outcome === "invoke")).toBe(true);
+  });
+});
+
+describe("pre-flight advisory classification", () => {
+  it("makes a confidently addressed agent a required participant without a mention", () => {
+    const trigger = humanMessage({ text: "Sol, can you take a look at this?" });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "low", wholeRoomInvitation: false,
+      classification: { agents: { "codex-sol": 0.93 }, wholeRoom: 0.02 },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
+      agent: "codex-sol", outcome: "invoke", reason: "classified_addressed",
+    });
+    expect(decision.qualifyingForStarvation).toBe(false);
+  });
+
+  it("keeps a canonical mention ahead of a low classified address probability", () => {
+    const trigger = humanMessage({ mentions: [mention("claude-sonnet")], text: "@Claude what changed?" });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "low", wholeRoomInvitation: false,
+      classification: { agents: { "claude-sonnet": 0.01 }, wholeRoom: 0.0 },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "claude-sonnet")).toEqual({
+      agent: "claude-sonnet", outcome: "invoke", reason: "required_mention",
+    });
+  });
+
+  it("excludes a classified-irrelevant agent from ambient selection and reports the reason", () => {
+    const trigger = humanMessage();
+    const earlier = [{ id: "agent-1", speaker: "cursor-composer" as const, text: "Earlier thought", timestamp: "2026-08-27T11:59:00.000Z", kind: "chat" as const }];
+    const decision = decidePreflight({
+      trigger, room: room(trigger, earlier), rankedAgents: agents, health: {}, routing: {}, energy: "balanced", wholeRoomInvitation: false,
+      classification: { agents: { "cursor-composer": 0.02, "codex-sol": 0.5, "cursor-grok": 0.5 }, wholeRoom: 0.0 },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "cursor-composer")).toEqual({
+      agent: "cursor-composer", outcome: "suppress", reason: "classified_irrelevant",
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
+      agent: "codex-sol", outcome: "invoke", reason: "ambient_selection",
+    });
+  });
+
+  it("still selects a fallback agent when every healthy agent is classified irrelevant", () => {
+    const trigger = humanMessage();
+    const classification = { agents: Object.fromEntries(agents.map((agent) => [agent, 0.01])), wholeRoom: 0.0 };
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "low", wholeRoomInvitation: false,
+      classification,
+    });
+    expect(decision.decisions.filter(({ outcome }) => outcome === "invoke")).toEqual([
+      { agent: "codex-sol", outcome: "invoke", reason: "fallback" },
+    ]);
+  });
+
+  it("selects the whole roster when classified whole-room probability crosses the threshold", () => {
+    const trigger = humanMessage({ text: "Thoughts from the group?" });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "low", wholeRoomInvitation: false,
+      classification: { agents: {}, wholeRoom: 0.88 },
+    });
+    expect(decision.decisions.every(({ outcome }) => outcome === "invoke")).toBe(true);
+    expect(decision.decisions.filter(({ reason }) => reason === "explicit_broadcast")).toHaveLength(agents.length);
+  });
+
+  it("treats an unclassified agent exactly as the deterministic gate would", () => {
+    const trigger = humanMessage();
+    const baseline = decidePreflight({ trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced", wholeRoomInvitation: false });
+    const withPartialClassification = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced", wholeRoomInvitation: false,
+      classification: { agents: { "claude-sonnet": 0.5 }, wholeRoom: 0.3 },
+    });
+    expect(withPartialClassification.decisions).toEqual(baseline.decisions);
   });
 });

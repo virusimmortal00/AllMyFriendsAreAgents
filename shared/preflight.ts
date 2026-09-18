@@ -1,13 +1,15 @@
+import type { AgentId } from "./participants.js";
+
 export const PREFLIGHT_MODES = ["off", "shadow", "enforce"] as const;
 
 export type PreflightMode = (typeof PREFLIGHT_MODES)[number];
 
-export const DEFAULT_PREFLIGHT_MODE: PreflightMode = "off";
+export const DEFAULT_PREFLIGHT_MODE: PreflightMode = "enforce";
 
 export const PREFLIGHT_MODE_LABELS: Record<PreflightMode, { label: string; description: string }> = {
   off: {
     label: "Off",
-    description: "Preserve the current full-room fan-out exactly.",
+    description: "Disable pre-flight gating and preserve the current full-room fan-out exactly.",
   },
   shadow: {
     label: "Shadow",
@@ -15,7 +17,7 @@ export const PREFLIGHT_MODE_LABELS: Record<PreflightMode, { label: string; descr
   },
   enforce: {
     label: "Enforce",
-    description: "Invoke only agents selected by the energy-aware pre-flight gate.",
+    description: "Default. Invoke only agents selected by the energy-aware pre-flight gate, advised by the intent classifier.",
   },
 };
 
@@ -32,9 +34,62 @@ export interface PreflightEvidence {
   falseSuppressionRate: number | null;
   firstShadowDecisionAt: string | null;
   shadowDaysRecorded: number;
-  promotionEligible: boolean;
-  promotionEligibilityReasons: string[];
   outcomeTallies: Record<"invoke" | "suppress" | "unavailable", number>;
   reasonTallies: Partial<Record<string, number>>;
   dispositionTallies: Record<"speak" | "yield", number>;
+  /** Aggregate advisory-classifier evidence, present once a classified decision is recorded. */
+  classification?: PreflightClassificationEvidence;
+}
+
+/**
+ * Address classification for one trigger message, supplied by an optional
+ * intent classifier consulted before pre-flight routing. Probabilities are
+ * 0–1. Only the deterministic gate consumes `agents` and `wholeRoom`; the
+ * remaining fields are observability payload for routing evidence.
+ */
+export interface PreflightClassificationSnapshot {
+  model: string;
+  /** Probability that the trigger directly addresses each roster agent. */
+  agents: Partial<Record<AgentId, number>>;
+  /** Probability that the trigger invites every participant to respond. */
+  wholeRoom: number;
+  /** Classifier's primary addressee choice, when it ranked one above the rest. */
+  primaryAddressee?: string;
+  usage: { inputTokens: number; outputTokens: number };
+  costUsd: number;
+  latencyMs: number;
+}
+
+/** Durable routing-audit projection of one classification consult. */
+export interface PreflightClassificationAudit {
+  model: string;
+  latencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  wholeRoomProbability: number;
+  addressProbabilities: Partial<Record<AgentId, number>>;
+  /** Deterministic decision computed without classification, for attribution. */
+  baseline: Array<{ agent: AgentId; outcome: "invoke" | "suppress" | "unavailable"; reason: string }>;
+}
+
+/**
+ * Aggregate classification evidence. `counterfactualSavedCostUsd` and
+ * `counterfactualSavedDurationMs` only sum dispositions of turns that actually
+ * ran, so they measure shadow-mode counterfactuals rather than estimates.
+ */
+export interface PreflightClassificationEvidence {
+  calls: number;
+  model: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+  averageLatencyMs: number;
+  additionalSuppressions: number;
+  additionalInvocations: number;
+  suppressedSpoke: number;
+  suppressedYield: number;
+  rescuedSpoke: number;
+  counterfactualSavedCostUsd: number;
+  counterfactualSavedDurationMs: number;
 }

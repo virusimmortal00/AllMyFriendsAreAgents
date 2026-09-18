@@ -56,7 +56,9 @@ export function registerRoomSettingsRoutes(input: {
     const hasSummaryPrompt = Object.prototype.hasOwnProperty.call(body, "summarizerPromptText");
     const hasFlags = Object.prototype.hasOwnProperty.call(body, "featureFlags");
     const hasPreflightMode = Object.prototype.hasOwnProperty.call(body, "preflightMode");
-    if (!hasBase && !hasModel && !hasSummaryPrompt && !hasFlags && !hasPreflightMode) return response.status(400).json({ error: "At least one room setting is required." });
+    const hasIntentClassifier = Object.prototype.hasOwnProperty.call(body, "intentClassifierEnabled");
+    if (!hasBase && !hasModel && !hasSummaryPrompt && !hasFlags && !hasPreflightMode && !hasIntentClassifier) return response.status(400).json({ error: "At least one room setting is required." });
+
     if (hasBase && body.basePromptText !== null && typeof body.basePromptText !== "string") return response.status(400).json({ error: "basePromptText must be text or null." });
     if (typeof body.basePromptText === "string" && body.basePromptText.length > 4_000) return response.status(400).json({ error: "The room base prompt must be at most 4,000 characters." });
     const model = hasModel ? modelReference(body.summarizerModel) : undefined;
@@ -67,6 +69,8 @@ export function registerRoomSettingsRoutes(input: {
     const featureFlags = hasFlags ? flags(body.featureFlags) : undefined;
     if (hasFlags && !featureFlags) return response.status(400).json({ error: "Feature flags must be a bounded object of boolean values." });
     if (hasPreflightMode && !isPreflightMode(body.preflightMode)) return response.status(400).json({ error: "Choose a valid pre-flight routing mode." });
+    if (hasIntentClassifier && typeof body.intentClassifierEnabled !== "boolean") return response.status(400).json({ error: "The intent-classifier setting must be a boolean." });
+
     const actorId = authorizeEdit(request, response, hasModel);
     if (!actorId) return;
     if (model) {
@@ -74,16 +78,13 @@ export function registerRoomSettingsRoutes(input: {
       const known = discovered.models.find((candidate) => candidate.modelId === model.modelId && (candidate.providerId || "") === (model.providerId || ""));
       if (!known || model.variant && !known.variants?.some(({ id }) => id === model.variant)) return response.status(400).json({ error: "The selected summarizer model is not in the current model catalog." });
     }
-    if (body.preflightMode === "enforce" && (await store.getRoomConfiguration()).preflightMode !== "enforce") {
-      const evidence = await routingEvidence?.();
-      if (!evidence?.promotionEligible) return response.status(409).json({ error: "This room has not met the recorded shadow-evidence threshold for enforcement.", evidence });
-    }
     const update: RoomConfigurationUpdate = {
       ...(hasBase ? { basePromptText: body.basePromptText as string | null } : {}),
       ...(hasModel ? { summarizerModel: model! } : {}),
       ...(hasSummaryPrompt ? { summarizerPromptText: body.summarizerPromptText as string } : {}),
       ...(hasFlags ? { featureFlags: featureFlags! } : {}),
       ...(hasPreflightMode ? { preflightMode: body.preflightMode } : {}),
+      ...(hasIntentClassifier ? { intentClassifierEnabled: body.intentClassifierEnabled } : {}),
     };
     const settings = await store.updateRoomConfiguration(update, actorId);
     broadcast();

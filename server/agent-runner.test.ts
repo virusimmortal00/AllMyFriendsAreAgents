@@ -424,7 +424,7 @@ describe("room prompt context", () => {
   });
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {
-    const prompt = await __testing.buildPrompt("codex-sol", { ...state, roomConfiguration: { configurationRevision: 1, basePromptRevision: 1, basePromptText: "Treat evidence as primary.", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: { preflightInvocationGating: false }, preflightMode: "off", updatedAt: "2026-08-27T00:00:00.000Z" } }, "Join if useful.", false, "read-only");
+    const prompt = await __testing.buildPrompt("codex-sol", { ...state, roomConfiguration: { configurationRevision: 1, basePromptRevision: 1, basePromptText: "Treat evidence as primary.", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: { preflightInvocationGating: false }, preflightMode: "off", intentClassifierEnabled: true, updatedAt: "2026-08-27T00:00:00.000Z" } }, "Join if useful.", false, "read-only");
     expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
     expect(prompt).toContain("ROOM BASE PROMPT\nTreat evidence as primary.");
     expect(prompt.indexOf("You are OpenCode")).toBeLessThan(prompt.indexOf("ROOM BASE PROMPT"));

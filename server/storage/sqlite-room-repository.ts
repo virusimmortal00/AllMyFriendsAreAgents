@@ -95,6 +95,7 @@ interface RoomSettingsRow {
   summarizer_prompt_revision: number;
   feature_flags_json: string;
   preflight_mode: string;
+  intent_classifier_enabled: number;
   updated_at: string;
 }
 
@@ -578,7 +579,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
     const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
     const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
-    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode");
+    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode") || Object.prototype.hasOwnProperty.call(update, "intentClassifierEnabled");
     const now = new Date().toISOString();
     const next = normalizeRoomConfiguration({
       ...current,
@@ -1659,14 +1660,15 @@ export class SqliteRoomRepository implements RoomRepository {
       summarizerPromptRevision: row.summarizer_prompt_revision,
       featureFlags: parseJson(row.feature_flags_json, {}),
       preflightMode: row.preflight_mode,
+      intentClassifierEnabled: row.intent_classifier_enabled !== 0,
       updatedAt: row.updated_at,
     });
   }
 
   private persistRoomConfiguration(configuration: RoomConfiguration) {
     this.database.prepare(`
-      INSERT INTO room_settings(room_id, configuration_revision, base_prompt_revision, base_prompt_text, summarizer_model, summarizer_prompt_text, summarizer_prompt_revision, feature_flags_json, preflight_mode, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO room_settings(room_id, configuration_revision, base_prompt_revision, base_prompt_text, summarizer_model, summarizer_prompt_text, summarizer_prompt_revision, feature_flags_json, preflight_mode, intent_classifier_enabled, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(room_id) DO UPDATE SET
         configuration_revision = excluded.configuration_revision,
         base_prompt_revision = excluded.base_prompt_revision,
@@ -1676,8 +1678,9 @@ export class SqliteRoomRepository implements RoomRepository {
         summarizer_prompt_revision = excluded.summarizer_prompt_revision,
         feature_flags_json = excluded.feature_flags_json,
         preflight_mode = excluded.preflight_mode,
+        intent_classifier_enabled = excluded.intent_classifier_enabled,
         updated_at = excluded.updated_at
-    `).run(this.roomId, configuration.configurationRevision, configuration.basePromptRevision, configuration.basePromptText, configuration.summarizerModel ? JSON.stringify(configuration.summarizerModel) : null, configuration.summarizerPromptText, configuration.summarizerPromptRevision, JSON.stringify(configuration.featureFlags), configuration.preflightMode, configuration.updatedAt || new Date().toISOString());
+    `).run(this.roomId, configuration.configurationRevision, configuration.basePromptRevision, configuration.basePromptText, configuration.summarizerModel ? JSON.stringify(configuration.summarizerModel) : null, configuration.summarizerPromptText, configuration.summarizerPromptRevision, JSON.stringify(configuration.featureFlags), configuration.preflightMode, configuration.intentClassifierEnabled ? 1 : 0, configuration.updatedAt || new Date().toISOString());
   }
 
   private upsertSession(agent: AgentId, id: string, permission: "read-only" | "writable", fingerprint?: string, configurationRevision?: number, codeEpoch?: string) {

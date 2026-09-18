@@ -22,11 +22,11 @@ describe("RoomConfigurationDialog", () => {
           summarizerPromptText: "Summarize {{transcript}}",
           summarizerPromptRevision: 0,
           featureFlags: { preflightInvocationGating: false },
-          preflightMode: "off",
+          preflightMode: "off", intentClassifierEnabled: true,
           updatedAt: null,
         },
         defaults: { basePromptText: "Default merit rule" },
-        routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0, promotionEligible: false },
+        routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0 },
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "control-proof" }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ settings: { basePromptRevision: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -67,7 +67,7 @@ describe("RoomConfigurationDialog", () => {
   });
 
   it.each([true, false])("preserves drafts through administrator recovery (claimed=%s)", async (claimed) => {
-    const settings = { configurationRevision: 0, basePromptRevision: 0, basePromptText: "Default rule", summarizerModel: null, summarizerPromptText: "Summarize {{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "off", updatedAt: null };
+    const settings = { configurationRevision: 0, basePromptRevision: 0, basePromptText: "Default rule", summarizerModel: null, summarizerPromptText: "Summarize {{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "off", intentClassifierEnabled: true, updatedAt: null };
     let authenticated = false;
     let loginAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -141,7 +141,7 @@ describe("RoomConfigurationDialog", () => {
           summarizerPromptText: "Summarize {{transcript}}",
           summarizerPromptRevision: 0,
           featureFlags: {},
-          preflightMode: "off",
+          preflightMode: "off", intentClassifierEnabled: true,
           updatedAt: null,
         },
         defaults: { basePromptText: "Default merit rule" },
@@ -181,7 +181,7 @@ describe("RoomConfigurationDialog", () => {
         summarizerPromptText: "Summarize {{transcript}}",
         summarizerPromptRevision: 0,
         featureFlags: {},
-        preflightMode: "off",
+        preflightMode: "off", intentClassifierEnabled: true,
         updatedAt: null,
       },
       defaults: { basePromptText: "Default merit rule" },
@@ -213,7 +213,7 @@ describe("RoomConfigurationDialog", () => {
         summarizerPromptText: "Summarize {{transcript}}",
         summarizerPromptRevision: 0,
         featureFlags: {},
-        preflightMode: "off",
+        preflightMode: "off", intentClassifierEnabled: true,
         updatedAt: null,
       },
       defaults: { basePromptText: "Default merit rule" },
@@ -246,7 +246,7 @@ describe("RoomConfigurationDialog", () => {
           summarizerPromptText: "Summarize {{transcript}}",
           summarizerPromptRevision: 0,
           featureFlags: {},
-          preflightMode: "off",
+          preflightMode: "off", intentClassifierEnabled: true,
           updatedAt: null,
         },
         defaults: { basePromptText: "Default merit rule" },

@@ -39,7 +39,7 @@ describe("room style persistence", () => {
     const configured = await store.updateRoomConfiguration({ basePromptText: null, summarizerPromptText: "Changed {{transcript}}" }, "owner");
     expect(configured).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1 });
     const reopened = await RoomStore.open(projectRoot, stateDirectory);
-    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1, preflightMode: "off" });
+    expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, basePromptRevision: 1, basePromptText: null, summarizerPromptRevision: 1, preflightMode: "enforce" });
     expect(reopened.snapshot().roomConfigurationAudit).toHaveLength(1);
   });
 

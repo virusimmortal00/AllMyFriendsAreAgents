@@ -163,7 +163,7 @@ describe("agent transcript context", () => {
       async putAgentContextSummary(key: object, summary: string) { cache.set(JSON.stringify(key), summary); },
     };
     const summarize = vi.fn(async () => "Revision-sensitive summary.");
-    const configuration = { basePromptRevision: 0, basePromptText: "default", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 1, featureFlags: {}, preflightMode: "off" as const, updatedAt: null };
+    const configuration = { basePromptRevision: 0, basePromptText: "default", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 1, featureFlags: {}, preflightMode: "off" as const, intentClassifierEnabled: true, updatedAt: null };
     await transcriptFor({ ...room, roomConfiguration: { ...configuration, configurationRevision: 1 } }, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
     await transcriptFor({ ...room, roomConfiguration: { ...configuration, configurationRevision: 2 } }, { agentId: "codex-sol", summaryStore, summarizer: { summarize } });
     expect(summarize).toHaveBeenCalledTimes(2);

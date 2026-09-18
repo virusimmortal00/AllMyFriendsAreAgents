@@ -410,7 +410,7 @@ export class RoomStore implements RoomRepository {
     const baseChanged = Object.prototype.hasOwnProperty.call(update, "basePromptText");
     const summarizerChanged = Object.prototype.hasOwnProperty.call(update, "summarizerModel") || Object.prototype.hasOwnProperty.call(update, "summarizerPromptText");
     const flagsChanged = Object.prototype.hasOwnProperty.call(update, "featureFlags");
-    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode");
+    const routingChanged = Object.prototype.hasOwnProperty.call(update, "preflightMode") || Object.prototype.hasOwnProperty.call(update, "intentClassifierEnabled");
     const now = new Date().toISOString();
     const next = normalizeRoomConfiguration({
       ...current,
