@@ -74,6 +74,27 @@ describe("server route extraction", () => {
     expect(routes).toEqual([]);
     expect(problems[0]?.message).toContain("route paths must be static literals");
   });
+
+  it("rejects concatenated and identifier route paths on Express apps, but not Map-style lookups or exempted non-API loops", () => {
+    const text = `
+      app.get("/api/" + kind, handler);
+      app.get(routePath, handler);
+      input.app.post(endpoint, handler);
+      router.get("/api/" + prefix, handler);
+      const mapped = cache.get(key);
+      store.getTask(id);
+    `;
+    const { routes, problems } = extractServerRoutes(text, "server/example-api.ts");
+    expect(routes).toEqual([]);
+    expect(problems.map((problem) => problem.message)).toEqual([
+      "dynamic route path statically mentions /api and cannot be verified; route paths must be static literals",
+      "dynamic route registration on an Express app cannot be contract-verified; use a static /api literal",
+      "dynamic route registration on an Express app cannot be contract-verified; use a static /api literal",
+      "dynamic route path statically mentions /api and cannot be verified; route paths must be static literals",
+    ]);
+    const exempted = extractServerRoutes("app.get(route, handler);", "server/installer-redirects.ts");
+    expect(exempted.problems).toEqual([]);
+  });
 });
 
 describe("client call extraction", () => {
@@ -97,6 +118,26 @@ describe("client call extraction", () => {
     expect(problems).toEqual([]);
   });
 
+  it("treats method-less request calls as GET and rejects unresolvable method values", () => {
+    const text = `
+      request("/api/widgets");
+      request("/api/widgets", { cache: "no-store" });
+      request("/api/widgets", { method });
+      request("/api/widgets", options);
+    `;
+    const { calls, problems } = extractClientRequests(text, "src/api.ts");
+    expect(calls.map((call) => [call.variants[0], call.method])).toEqual([
+      ["/api/widgets", "GET"],
+      ["/api/widgets", "GET"],
+      ["/api/widgets", undefined],
+      ["/api/widgets", undefined],
+    ]);
+    expect(problems.map((problem) => problem.message)).toEqual([
+      "request method must be a string literal",
+      "request options must be an object literal so the HTTP method is verifiable",
+    ]);
+  });
+
   it("flags request arguments that are not statically resolvable", () => {
     const { calls, problems } = extractClientRequests("request(buildPath(), { method: 'GET' });", "src/api.ts");
     expect(calls).toEqual([]);
@@ -109,6 +150,12 @@ describe("browser boundary", () => {
     const problems = extractBoundaryViolations('fetch("/api/tasks");', "src/components.tsx");
     expect(problems[0]?.message).toContain("shared client boundary");
     expect(extractBoundaryViolations('fetch("/assets/data.json");', "src/components.tsx")).toEqual([]);
+  });
+
+  it("flags interpolated /api template paths outside the shared client module", () => {
+    const problems = extractBoundaryViolations("fetch(`/api/tasks/${taskId}`);", "src/components.tsx");
+    expect(problems[0]?.message).toContain("shared client boundary");
+    expect(extractBoundaryViolations("fetch(`/tasks/${taskId}`);", "src/components.tsx")).toEqual([]);
   });
 });
 

@@ -55,11 +55,25 @@ function parse(file: string, text: string): ts.SourceFile {
   return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
 }
 
+/** Files whose non-literal registrations are exempt because they provably never mount /api paths. */
+const NON_API_DYNAMIC_REGISTRATIONS: Record<string, string> = {
+  "server/installer-redirects.ts": "registers /install.sh and /install.ps1 redirects from INSTALLER_DOWNLOADS; never /api",
+};
+
+/** True when a non-literal expression statically mentions /api in any of its string leaves. */
+function mentionsApi(node: ts.Expression): boolean {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text.includes("/api");
+  if (ts.isTemplateExpression(node)) return node.head.text.includes("/api") || node.templateSpans.some((span) => span.literal.text.includes("/api"));
+  if (ts.isBinaryExpression(node)) return mentionsApi(node.left) || mentionsApi(node.right);
+  return false;
+}
+
 /** Extracts static Express registrations such as app.get("/api/tasks/:taskId", handler). */
 export function extractServerRoutes(text: string, file: string): { routes: ObservedRoute[]; problems: SourceProblem[] } {
   const sourceFile = parse(file, text);
   const routes: ObservedRoute[] = [];
   const problems: SourceProblem[] = [];
+  const exempt = Object.keys(NON_API_DYNAMIC_REGISTRATIONS).some((suffix) => file.endsWith(suffix));
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ROUTE_METHODS[node.expression.name.text]) {
       const first = node.arguments[0];
@@ -67,8 +81,11 @@ export function extractServerRoutes(text: string, file: string): { routes: Obser
         const literal = literalOf(first);
         if (literal !== null) {
           if (literal.startsWith("/api")) routes.push({ method: node.expression.name.text.toUpperCase(), path: literal, file, line: lineOf(sourceFile, node) });
-        } else if (ts.isTemplateExpression(first) && first.head.text.startsWith("/api")) {
-          problems.push({ file, line: lineOf(sourceFile, node), message: `dynamic route path ${JSON.stringify(first.head.text)}… cannot be verified; route paths must be static literals` });
+        } else {
+          const receiver = node.expression.expression;
+          const appReceiver = ts.isIdentifier(receiver) ? receiver.text === "app" : ts.isPropertyAccessExpression(receiver) && receiver.name.text === "app";
+          if (mentionsApi(first)) problems.push({ file, line: lineOf(sourceFile, node), message: "dynamic route path statically mentions /api and cannot be verified; route paths must be static literals" });
+          else if (!exempt && appReceiver) problems.push({ file, line: lineOf(sourceFile, node), message: "dynamic route registration on an Express app cannot be contract-verified; use a static /api literal" });
         }
       }
     }
@@ -129,16 +146,19 @@ export function matchesRoutePattern(clientPath: string, routePath: string): bool
   return left.length === right.length && left.every((segment, index) => segment === right[index] || segment === ":*" || right[index].startsWith(":"));
 }
 
-function methodOfCall(sourceFile: ts.SourceFile, node: ts.CallExpression): { method?: string } {
+/** Runtime fetch defaults to GET, so absent options mean GET; a present-but-unresolvable method is a contract problem, not a wildcard. */
+function methodOfCall(sourceFile: ts.SourceFile, node: ts.CallExpression): { method?: string; problem?: string } {
   const options = node.arguments[1];
-  if (options && ts.isObjectLiteralExpression(options)) {
-    for (const property of options.properties) {
-      if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === "method" && ts.isStringLiteral(property.initializer)) {
-        return { method: property.initializer.text.toUpperCase() };
-      }
+  if (!options) return { method: "GET" };
+  if (!ts.isObjectLiteralExpression(options)) return { problem: "request options must be an object literal so the HTTP method is verifiable" };
+  for (const property of options.properties) {
+    const name = ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) ? property.name : undefined;
+    if (name && ts.isIdentifier(name) && name.text === "method") {
+      if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)) return { method: property.initializer.text.toUpperCase() };
+      return { problem: "request method must be a string literal" };
     }
   }
-  return {};
+  return { method: "GET" };
 }
 
 /** Extracts browser client calls: request("…") / request(`/api/…`) / request(roomPath("state"), …) plus standalone roomPath(…) wrappers. */
@@ -165,11 +185,13 @@ export function extractClientRequests(text: string, file: string): { calls: Clie
       const endpoint = roomPathEndpoint(node);
       if (endpoint) {
         const isRequestArgument = ts.isCallExpression(node.parent) && ts.isIdentifier(node.parent.expression) && node.parent.expression.text === "request" && node.parent.arguments[0] === node;
-        const method = isRequestArgument ? methodOfCall(sourceFile, node.parent) : { method: "GET" };
+        const method = isRequestArgument ? methodOfCall(sourceFile, node.parent) : { method: "GET" as const };
+        if (method.problem) problems.push({ file, line: lineOf(sourceFile, node.parent), message: method.problem });
         calls.push({ raw: `roomPath("${endpoint}")`, variants: [`/api/${endpoint}`, `${ROOM_PREFIX}/${endpoint}`], method: method.method, file, line: lineOf(sourceFile, node) });
       } else if (node.arguments.length && ts.isIdentifier(node.expression) && node.expression.text === "request") {
         const argument = node.arguments[0];
         const method = methodOfCall(sourceFile, node);
+        if (method.problem) problems.push({ file, line: lineOf(sourceFile, node), message: method.problem });
         const literal = literalOf(argument);
         const raw = literal !== null ? literal : ts.isTemplateExpression(argument) ? templateRaw(argument) : ts.isIdentifier(argument) ? resolveArgumentLiterals(node, argument) : null;
         if (typeof raw === "string" && raw.startsWith("/api")) {
@@ -187,12 +209,14 @@ export function extractClientRequests(text: string, file: string): { calls: Clie
   return { calls, problems };
 }
 
-/** Any /api string literal outside src/api.ts in browser code bypasses the shared client boundary. */
+/** Any /api path — literal or interpolated template — outside src/api.ts in browser code bypasses the shared client boundary. */
 export function extractBoundaryViolations(text: string, file: string): SourceProblem[] {
   const sourceFile = parse(file, text);
   const problems: SourceProblem[] = [];
   const visit = (node: ts.Node): void => {
-    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text.includes("/api/")) {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      if (node.text.includes("/api/")) problems.push({ file, line: lineOf(sourceFile, node), message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths" });
+    } else if (ts.isTemplateExpression(node) && (node.head.text.includes("/api/") || node.templateSpans.some((span) => span.literal.text.includes("/api/")))) {
       problems.push({ file, line: lineOf(sourceFile, node), message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths" });
     }
     ts.forEachChild(node, visit);
