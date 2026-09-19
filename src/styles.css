@@ -356,6 +356,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 }
 .dialog-window { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
 .dialog-window--property-sheet { width: min(640px, calc(100vw - 32px)); height: min(560px, calc(100dvh - 36px)); }
+.dialog-window--property-sheet.room-properties-window { height: min(680px, calc(100dvh - 36px)); }
 .dialog-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .dialog-actions { min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; border-top: 1px solid #fff; background: var(--chrome); }
 .classic-group { min-width: 0; margin: 0; padding: 12px; border: 2px groove white; background: var(--chrome); }
