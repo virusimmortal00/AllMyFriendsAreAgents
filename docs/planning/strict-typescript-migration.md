@@ -83,6 +83,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Centralize provider-mark prop construction so unknown maker and access-provider identities are omitted consistently across roster and model views. The component contract remains exact rather than accepting present `undefined`. | `src/provider-mark.tsx`, `src/provider-mark.test.ts`, `src/components.tsx`, `src/model-picker.tsx`, `src/roster-manager.tsx` |
 | 2026-09-19 | `client-runtime` | Move roster draft transitions into pure helpers. Model replacement removes stale variant and confirmation state, selecting the default removes both modern and legacy variant fields, and confirmation removes its diagnostic fields rather than persisting empty sentinels. | `src/roster-entry-edit.ts`, `src/roster-entry-edit.test.ts`, `src/roster-manager.tsx`, `src/roster-manager.test.tsx` |
 | 2026-09-19 | `client-runtime` | Treat removal of a human avatar as property absence in profile mutations and presentation props. The initials fallback is selected by an omitted image rather than a present `undefined` value. | `src/human-avatar.tsx`, `src/human-avatar.test.tsx`, `src/components.tsx` |
+| 2026-09-19 | `client-runtime` | Keep optional refresh counters and agent-label maps absent across integration and usage composition boundaries. Child defaults now distinguish omission from an explicitly supplied value without widening their contracts. | `src/integrations.tsx`, `src/openrouter-integration-section.tsx`, `src/room-usage-dialog.tsx` |
 
 # Next action
 

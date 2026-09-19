@@ -12,6 +12,9 @@ export function RoomUsageDialog({ agentLabels, refreshKey, returnFocusTo = null,
   return <DialogFrame title="Usage & spend" closeLabel="Close usage and spend" className="room-usage-window" bodyClassName="room-usage-body" returnFocusTo={returnFocusTo} view={VIEWS.roomUsage} onClose={onClose}
     actions={<button type="button" className="classic-button" data-default-button onClick={onClose}>Close</button>}>
     <p className="room-usage-intro">OpenRouter spend for this room. The account balance is in Server Administration → Integrations.</p>
-    <RoomSpendPanel agentLabels={agentLabels} refreshKey={refreshKey} />
+    <RoomSpendPanel
+      {...(agentLabels ? { agentLabels } : {})}
+      {...(refreshKey === undefined ? {} : { refreshKey })}
+    />
   </DialogFrame>;
 }
