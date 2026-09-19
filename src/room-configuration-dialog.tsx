@@ -4,7 +4,7 @@ import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
 import { ApiRequestError, loadRoomConfiguration, loadRoomConfigurationModels, updateRoomConfiguration, type RoomConfiguration } from "./api";
 import { RichModelPicker } from "./model-picker";
-import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
+import { DEFAULT_PREFLIGHT_MODE, PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
 import { DialogFrame } from "./dialog-frame";
 import { RoomControls, type RoomSettingsInput } from "./components";
 import { VIEWS, viewAttributes } from "./view-registry";
@@ -28,7 +28,7 @@ export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { act
   const [summarizerModel, setSummarizerModel] = useState<ModelReference | null>(null);
   const [summarizerPromptText, setSummarizerPromptText] = useState("");
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({ preflightInvocationGating: false });
-  const [preflightMode, setPreflightMode] = useState<PreflightMode>("off");
+  const [preflightMode, setPreflightMode] = useState<PreflightMode>(DEFAULT_PREFLIGHT_MODE);
   const [intentClassifierEnabled, setIntentClassifierEnabled] = useState(true);
   const [routingEvidence, setRoutingEvidence] = useState<PreflightEvidence>();
   const [models, setModels] = useState<readonly DiscoveredModel[]>([]);
@@ -63,7 +63,7 @@ export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { act
       setSummarizerModel(result.settings.summarizerModel);
       setSummarizerPromptText(result.settings.summarizerPromptText);
       setFeatureFlags(result.settings.featureFlags);
-      setPreflightMode(result.settings.preflightMode || "off");
+      setPreflightMode(result.settings.preflightMode || DEFAULT_PREFLIGHT_MODE);
       setIntentClassifierEnabled(result.settings.intentClassifierEnabled !== false);
       setRoutingEvidence(result.routingEvidence);
       setDefaultBasePrompt(result.defaults?.basePromptText || "");
