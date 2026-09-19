@@ -138,7 +138,15 @@ export function RoomRoster({
     const alias = rosterEntry?.conversationalName || profile?.conversationalName || participantScreenName(agent);
     const providerId = rosterEntry?.providerId || profile?.provider;
     const modelId = rosterEntry?.modelId || profile?.modelId || "configured";
-    return { agentId: agent, alias, providerId, modelId, authorId: modelAuthorId(providerId, modelId), available: availability?.[agent] !== false };
+    const authorId = modelAuthorId(providerId, modelId);
+    return {
+      agentId: agent,
+      alias,
+      ...(providerId ? { providerId } : {}),
+      modelId,
+      ...(authorId ? { authorId } : {}),
+      available: availability?.[agent] !== false,
+    };
   }), agentListSort);
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
@@ -150,13 +158,14 @@ export function RoomRoster({
           const { alias, providerId, modelId, authorId, available } = item;
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
-          const health = providerHealth?.[providerId] || agentHealth?.[agent];
+          const health = (providerId ? providerHealth?.[providerId] : undefined) || agentHealth?.[agent];
           const availableLabel = `${alias}: ${modelName} via ${routeName}`;
           const connectionLabel = !available ? openCodeRuntimeStatusMessage(openCodeRuntime) : health?.message || "available";
           const connectionState = !available ? "offline" : health?.status;
           const configurable = Boolean(onManageRoster);
           const groupLabel = agentListGroupLabel(item, agentListSort);
-          const previousGroupLabel = index > 0 ? agentListGroupLabel(presentAgents[index - 1], agentListSort) : undefined;
+          const previousItem = index > 0 ? presentAgents[index - 1] : undefined;
+          const previousGroupLabel = previousItem ? agentListGroupLabel(previousItem, agentListSort) : undefined;
           return (
             <Fragment key={agent}>
             {groupLabel && groupLabel !== previousGroupLabel ? <div className="presence-group-label" role="presentation">{groupLabel}</div> : null}

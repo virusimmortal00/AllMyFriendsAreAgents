@@ -111,13 +111,14 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     const profile = catalogById.get(entry.agentId);
     const providerId = entry.providerId || profile?.provider;
     const modelId = entry.modelId || profile?.modelId || "configured";
+    const authorId = modelAuthorId(providerId, modelId);
     return {
       entry,
       agentId: entry.agentId,
       alias: entry.conversationalName || profile?.conversationalName || entry.agentId,
-      providerId,
+      ...(providerId ? { providerId } : {}),
       modelId,
-      authorId: modelAuthorId(providerId, modelId),
+      ...(authorId ? { authorId } : {}),
     };
   }), agentListSort), [entries, catalogById, agentListSort]);
   // These panes can be mounted after the dialog body's initial scroll-edge scan.
@@ -271,7 +272,8 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       const routeName = providerDisplayName(providerId);
                       const isSelected = entry.agentId === selectedAgentId;
                       const groupLabel = agentListGroupLabel(item, agentListSort);
-                      const previousGroupLabel = index > 0 ? agentListGroupLabel(displayedEntries[index - 1], agentListSort) : undefined;
+                      const previousItem = index > 0 ? displayedEntries[index - 1] : undefined;
+                      const previousGroupLabel = previousItem ? agentListGroupLabel(previousItem, agentListSort) : undefined;
                       return (
                         <Fragment key={entry.agentId}>
                         {groupLabel && groupLabel !== previousGroupLabel ? <div className="roster-group-label" role="presentation">{groupLabel}</div> : null}
