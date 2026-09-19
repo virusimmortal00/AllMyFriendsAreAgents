@@ -48,6 +48,21 @@ describe("OpenCode model discovery", () => {
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", variant: "fast", reasoningEffort: "high" }, result)).toMatchObject({ available: false, reason: "variant_conflict" });
   });
 
+  it("omits unavailable runtime diagnostics when discovery did not provide one", () => {
+    const unavailable = { status: "error" as const, discoveredAt: new Date(0).toISOString(), models: [] };
+    const diagnosed = { ...unavailable, diagnostic: "runtime failed" };
+
+    expect(selectedModelAvailability({ modelId: "model" }, unavailable)).toEqual({
+      available: false,
+      reason: "runtime_unavailable",
+    });
+    expect(selectedModelAvailability({ modelId: "model" }, diagnosed)).toEqual({
+      available: false,
+      reason: "runtime_unavailable",
+      diagnostic: "runtime failed",
+    });
+  });
+
   it("discovers OpenCode models with their provider identity", async () => {
     const execute = vi.fn<DiscoveryExecutor>(async (_command, args) => ({ stdout: args[0] === "--version" ? `${MINIMUM_OPENCODE_VERSION}\n` : "provider/model variants:fast\n", stderr: "" }));
     await expect(new ModelDiscoveryService(execute).discover()).resolves.toMatchObject({

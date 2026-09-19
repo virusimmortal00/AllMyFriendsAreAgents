@@ -46,7 +46,7 @@ silently missed.
 
 | Wave | Slice | Owned paths | Status | Depends on | Completion evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `shared-contracts` | `shared/**` | In progress: parsing and registry invariants | — | Focused shared tests and strict inventory |
+| 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
 | 2 | `client-runtime` | Non-test `src/**` | Not started | `shared-contracts` | — |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
@@ -76,12 +76,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | Planning | Use a compiler-derived inventory and fail on unassigned diagnostics instead of maintaining a copied file checklist that can drift. | `scripts/strict-type-inventory.ts` |
 | 2026-09-19 | `shared-contracts` | Preserve complete registries as exact object shapes, and validate regex captures and URL segments at runtime where input is external. This represents the actual boundary invariant instead of asserting indexed values exist. | `shared/chat-style.ts`, `shared/command-domain.ts`, `shared/human-avatar.ts`, `shared/message-format.ts`, `shared/model-presentation.ts`, `shared/openrouter-model-page.ts`, `shared/workshop.ts` |
 | 2026-09-19 | `shared-contracts` | Omit unknown roster profiles from mention suggestions, retain explicit ambiguity handling during offset reconciliation, and omit unavailable provider/model snapshots rather than serializing present `undefined` values. | `shared/mentions.ts`, `shared/mentions.test.ts` |
+| 2026-09-19 | `shared-contracts` | Preserve absence for unavailable diagnostics and legacy model-selection fields. A missing diagnostic is distinct from a present empty value, while legacy reasoning effort is migrated only when it is actually present. | `shared/model-discovery.ts`, `shared/roster.ts`, `server/model-discovery.test.ts`, `shared/roster.test.ts` |
 
 # Next action
 
-Run and review the `shared-contracts` inventory, then implement only the shared
-contract and helper changes needed to clear that slice. Add characterization tests
-before any change whose absent-versus-undefined behavior is not already explicit.
+Run and review the three Wave 2 inventories, then begin one bounded runtime slice.
+Keep cross-boundary contract changes in `shared/` and update the dependent slice
+inventory whenever an exact shared type removes downstream diagnostics.
 
 # Evidence
 

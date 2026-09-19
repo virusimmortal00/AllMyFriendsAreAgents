@@ -136,7 +136,11 @@ export function selectedModelAvailability(reference: ModelReference, result: Mod
     return { available: false, reason: "variant_conflict", diagnostic: "OpenCode accepts one variant selection; choose either the stored variant or reasoning effort." };
   }
   if (["cli_missing", "authentication_required", "configuration_required", "runtime_incompatible", "error"].includes(result.status)) {
-    return { available: false, reason: "runtime_unavailable", diagnostic: result.diagnostic };
+    return {
+      available: false,
+      reason: "runtime_unavailable",
+      ...(result.diagnostic === undefined ? {} : { diagnostic: result.diagnostic }),
+    };
   }
   const model = result.models.find((candidate) => candidate.modelId === reference.modelId
     && (candidate.providerId || "") === (reference.providerId || ""));
