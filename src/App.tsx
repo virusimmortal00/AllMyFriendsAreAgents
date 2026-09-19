@@ -836,7 +836,7 @@ export default function App() {
           </div>
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onOpenRepositorySettings={() => openAdministration(null, "Rooms")} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
         {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 

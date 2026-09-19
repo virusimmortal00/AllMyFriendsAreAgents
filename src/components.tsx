@@ -993,6 +993,7 @@ interface RoomControlsProps extends RoomSettingsInput {
   propertySheet?: boolean;
   /** `owner/name` this room reads from, shown read-only; undefined when no repository is attached. */
   repository?: string;
+  onOpenRepositorySettings?: () => void;
 }
 
 export function RoomControls({
@@ -1007,6 +1008,7 @@ export function RoomControls({
   showTitle = true,
   propertySheet = false,
   repository,
+  onOpenRepositorySettings,
 }: RoomControlsProps) {
   const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
   const [saving, setSaving] = useState(false);
@@ -1114,7 +1116,7 @@ export function RoomControls({
       </section>
       {propertySheet ? <section className="classic-property-section room-properties-section" aria-labelledby="room-repository-heading"><h3 id="room-repository-heading">Repository</h3><span className="field-label" id="room-repository-label">Connected repository</span>
       <p className="room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
-      <p className="field-help">Visible to everyone in the room. A server administrator connects it from the Server menu, under Integrations.</p></section> : null}
+      <p className="field-help">Server administrators only{onOpenRepositorySettings ? <> · <button type="button" className="classic-link-button classic-link" onClick={onOpenRepositorySettings}>Change in Rooms &amp; repositories</button></> : null}</p></section> : null}
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
       {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
       {saving ? <p className="room-settings-status" role="status">Saving room properties…</p> : saved ? <p className="room-settings-status" role="status">Room properties saved.</p> : null}

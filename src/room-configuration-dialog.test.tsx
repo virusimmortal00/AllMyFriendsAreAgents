@@ -81,16 +81,20 @@ describe("RoomConfigurationPanel", () => {
 });
 
 describe("RoomPropertiesDialog", () => {
-  it("contains only member-editable general room settings", () => {
+  it("contains only member-editable general room settings", async () => {
     const fetchMock = vi.fn();
+    const onOpenRepositorySettings = vi.fn();
+    const user = userEvent.setup();
     vi.stubGlobal("fetch", fetchMock);
-    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
+    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onOpenRepositorySettings={onOpenRepositorySettings} onSave={vi.fn()} onClose={vi.fn()} />);
 
     expect(screen.getByRole("textbox", { name: "Room name" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "General" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Identity" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Conversation" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Repository" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Change in Rooms & repositories" }));
+    expect(onOpenRepositorySettings).toHaveBeenCalledOnce();
     expect(screen.queryByRole("tab", { name: "Agent behavior" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Pre-flight mode" })).toBeNull();
     expect(screen.queryByRole("checkbox", { name: "Intent classifier (Jev via OpenRouter)" })).toBeNull();
