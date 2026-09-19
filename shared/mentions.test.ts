@@ -8,6 +8,10 @@ describe("message mentions", () => {
     expect(candidates.find(({ targetId }) => targetId === "human-alice")).toMatchObject({ label: "Alice", targetKind: "human" });
   });
 
+  it("omits roster IDs that have no registered participant profile", () => {
+    expect(roomMentionCandidates([], ["missing-agent"])).toEqual([]);
+  });
+
   it("disambiguates humans with duplicate display names", () => {
     const candidates = roomMentionCandidates([
       { id: "human-alice-1", name: "Alice" },

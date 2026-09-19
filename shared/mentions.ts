@@ -22,9 +22,10 @@ export interface MentionCandidate {
 }
 
 export function roomMentionCandidates(humans: readonly { id: string; name: string }[], rosterAgents: readonly ActiveAgentId[] = AGENT_IDS): MentionCandidate[] {
-  const agents = rosterAgents.map((id: ActiveAgentId) => {
+  const agents = rosterAgents.flatMap((id: ActiveAgentId) => {
     const profile = AGENT_PROFILES[id];
-    return {
+    if (!profile) return [];
+    return [{
       targetKind: "agent" as const,
       targetId: id,
       label: profile.conversationalName,
@@ -32,7 +33,7 @@ export function roomMentionCandidates(humans: readonly { id: string; name: strin
       providerSnapshot: profile.provider,
       modelSnapshot: profile.modelLabel,
       revision: 1,
-    };
+    }];
   });
   const humanNameCounts = new Map<string, number>();
   for (const { name } of humans) humanNameCounts.set(name, (humanNameCounts.get(name) ?? 0) + 1);
@@ -83,14 +84,23 @@ export function reconcileMessageMentions(text: string, mentions: readonly Messag
     const occurrences: number[] = [];
     for (let start = text.indexOf(token); start >= 0; start = text.indexOf(token, start + 1)) occurrences.push(start);
     if (labelMentions.length === 1) {
-      if (occurrences.length === 1) return [{ ...labelMentions[0], start: occurrences[0], end: occurrences[0] + token.length }];
-      const exact = occurrences.filter((start) => start === labelMentions[0].start);
-      return exact.length === 1 ? [{ ...labelMentions[0], start: exact[0], end: exact[0] + token.length }] : [];
+      const mention = labelMentions[0];
+      if (!mention) return [];
+      if (occurrences.length === 1) {
+        const start = occurrences[0];
+        return start === undefined ? [] : [{ ...mention, start, end: start + token.length }];
+      }
+      const exact = occurrences.filter((start) => start === mention.start);
+      const start = exact.length === 1 ? exact[0] : undefined;
+      return start === undefined ? [] : [{ ...mention, start, end: start + token.length }];
     }
     if (occurrences.length !== labelMentions.length) return [];
     return [...labelMentions]
       .sort((left, right) => left.start - right.start)
-      .map((mention, index) => ({ ...mention, start: occurrences[index], end: occurrences[index] + token.length }));
+      .flatMap((mention, index) => {
+        const start = occurrences[index];
+        return start === undefined ? [] : [{ ...mention, start, end: start + token.length }];
+      });
   }).sort((left, right) => left.start - right.start);
 }
 
@@ -106,20 +116,23 @@ export function validateMessageMentions(
     if (!value || typeof value !== "object") throw new Error("Message mentions are invalid.");
     const mention = value as Partial<MessageMention>;
     const candidate = allowed.get(`${mention.targetKind}:${mention.targetId}`);
+    const start = mention.start;
+    const end = mention.end;
     if (!candidate || mention.label !== candidate.label || mention.revision !== candidate.revision
-      || !Number.isInteger(mention.start) || !Number.isInteger(mention.end)
-      || mention.start! < 0 || mention.end! <= mention.start! || mention.end! > text.length) {
+      || typeof start !== "number" || !Number.isInteger(start)
+      || typeof end !== "number" || !Number.isInteger(end)
+      || start < 0 || end <= start || end > text.length) {
       throw new Error("Message mentions are invalid.");
     }
     const normalized: MessageMention = {
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
       label: candidate.label,
-      providerSnapshot: candidate.providerSnapshot,
-      modelSnapshot: candidate.modelSnapshot,
+      ...(candidate.providerSnapshot === undefined ? {} : { providerSnapshot: candidate.providerSnapshot }),
+      ...(candidate.modelSnapshot === undefined ? {} : { modelSnapshot: candidate.modelSnapshot }),
       revision: candidate.revision,
-      start: mention.start!,
-      end: mention.end!,
+      start,
+      end,
     };
     if (text.slice(normalized.start, normalized.end) !== `@${normalized.label}`) {
       throw new Error("Message mention text no longer matches its target.");
@@ -128,7 +141,9 @@ export function validateMessageMentions(
   });
   const sorted = mentions.sort((left, right) => left.start - right.start);
   for (let index = 1; index < sorted.length; index += 1) {
-    if (sorted[index].start < sorted[index - 1].end) throw new Error("Message mentions cannot overlap.");
+    const current = sorted[index];
+    const previous = sorted[index - 1];
+    if (current && previous && current.start < previous.end) throw new Error("Message mentions cannot overlap.");
   }
   return sorted;
 }

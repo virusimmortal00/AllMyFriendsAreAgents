@@ -75,6 +75,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | Planning | Treat absent properties, present `undefined`, missing lookups, and invalid state as separate domain cases. Compiler silence alone is not acceptance evidence. | Inventory error families TS2375/TS2379/TS2412 and TS2532/TS18048/TS2345 |
 | 2026-09-19 | Planning | Use a compiler-derived inventory and fail on unassigned diagnostics instead of maintaining a copied file checklist that can drift. | `scripts/strict-type-inventory.ts` |
 | 2026-09-19 | `shared-contracts` | Preserve complete registries as exact object shapes, and validate regex captures and URL segments at runtime where input is external. This represents the actual boundary invariant instead of asserting indexed values exist. | `shared/chat-style.ts`, `shared/command-domain.ts`, `shared/human-avatar.ts`, `shared/message-format.ts`, `shared/model-presentation.ts`, `shared/openrouter-model-page.ts`, `shared/workshop.ts` |
+| 2026-09-19 | `shared-contracts` | Omit unknown roster profiles from mention suggestions, retain explicit ambiguity handling during offset reconciliation, and omit unavailable provider/model snapshots rather than serializing present `undefined` values. | `shared/mentions.ts`, `shared/mentions.test.ts` |
 
 # Next action
 
