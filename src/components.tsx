@@ -1113,7 +1113,7 @@ export function RoomControls({
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
       </section>
       {propertySheet ? <section className="classic-property-section room-properties-section" aria-labelledby="room-repository-heading"><h3 id="room-repository-heading">Repository</h3><span className="field-label" id="room-repository-label">Connected repository</span>
-      <p className="classic-summary room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
+      <p className="room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
       <p className="field-help">Visible to everyone in the room. A server administrator connects it from the Server menu, under Integrations.</p></section> : null}
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
       {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
