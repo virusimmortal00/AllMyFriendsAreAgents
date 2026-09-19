@@ -361,6 +361,7 @@ function markdownDestinationEnd(text: string, start: number) {
   let nestedParentheses = 0;
   for (let index = start; index < text.length; index += 1) {
     const character = text[index];
+    if (character === undefined) return -1;
     if (/\s|[<>"']/.test(character)) return -1;
     if (character === "(") {
       nestedParentheses += 1;
@@ -381,6 +382,7 @@ function linkedMessageText(text: string, keyPrefix: string): ReactNode[] {
     if (!match || match.index === undefined) break;
     const start = searchOffset + match.index;
     const label = match[1];
+    if (label === undefined) break;
     const destinationStart = start + match[0].length;
     const destinationEnd = markdownDestinationEnd(text, destinationStart);
     if (destinationEnd < 0) {
@@ -557,7 +559,14 @@ export const Transcript = memo(function Transcript({
         }}
       >
         <div ref={contentRef} className="transcript-content">
-          {visibleMessages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+          {visibleMessages.map((message) => (
+            <TranscriptMessage
+              key={message.id}
+              message={message}
+              magnification={magnification}
+              {...(onOpenImprovement ? { onOpenImprovement } : {})}
+            />
+          ))}
         </div>
       </div>
       {hasNewMessages ? (

@@ -86,6 +86,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Keep optional refresh counters and agent-label maps absent across integration and usage composition boundaries. Child defaults now distinguish omission from an explicitly supplied value without widening their contracts. | `src/integrations.tsx`, `src/openrouter-integration-section.tsx`, `src/room-usage-dialog.tsx` |
 | 2026-09-19 | `client-runtime` | Make the spend-chart's parallel-array invariant executable. Percentage allocation and palette lookup now fail explicitly if internal arrays diverge instead of allowing unchecked values into SVG and legend output. | `src/spend-chart.tsx`, `src/spend-chart.test.tsx` |
 | 2026-09-19 | `client-runtime` | Narrow menu commands with a reusable type guard and stop keyboard handling when a menu or selected item is absent. Separators and disabled commands remain non-invokable without relying on unchecked indices. | `src/classic-menu.tsx`, `src/classic-menu.test.tsx` |
+| 2026-09-19 | `client-runtime` | Validate markdown parser captures before rendering links and omit the transcript improvement callback when unavailable. Invalid internal parser state now fails closed as plain text rather than flowing unchecked values into React. | `src/components.tsx`, `src/components.test.tsx` |
 
 # Next action
 
