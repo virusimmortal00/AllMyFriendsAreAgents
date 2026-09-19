@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false
+  },
+  "include": ["scripts/strict-type-inventory.ts", "scripts/strict-type-inventory.test.ts"]
+}

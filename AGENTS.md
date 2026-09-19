@@ -68,6 +68,12 @@ existing Vite/bundler import style.
 - Search for the existing type, service, route, component, and nearest tests
   before introducing a new abstraction. Extend canonical code paths rather than
   creating a parallel implementation.
+- For the strict TypeScript migration, read
+  `docs/planning/strict-typescript-migration.md` and run
+  `pnpm run types:strict:inventory` before editing. Run the owned slice with
+  `--slice=<name>` at the start and `--assert-clean=<name>` before completion;
+  update the planning record in the same commit so decisions and evidence do
+  not drift from the code.
 - Files mapped by `integration-contracts/opencode.json` consume behavior from
   OpenCode's public source. Before editing one, run
   `pnpm check:integration-contracts -- --inspect-files <repository-relative-path>`,
