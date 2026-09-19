@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_IDS, AGENT_PROFILES, SUPPORTED_AGENT_IDS, agentScreenName, isActiveAgentId, migrateLegacyAgentId } from "./participants.js";
+import {
+  AGENT_IDS,
+  AGENT_PROFILES,
+  SUPPORTED_AGENT_IDS,
+  agentScreenName,
+  isActiveAgentId,
+  migrateLegacyAgentId,
+} from "./participants.js";
 
 describe("agent participant registry", () => {
+  function profile(agent: string) {
+    const value = AGENT_PROFILES[agent];
+    expect(value).toBeDefined();
+    if (!value) throw new Error(`Missing profile for ${agent}`);
+    return value;
+  }
+
   it("defines independently model-pinned default agents and opt-in harnesses", () => {
-    expect(AGENT_IDS).toEqual(["codex-sol", "claude-sonnet", "cursor-grok", "cursor-composer", "cursor-gemini-flash", "cursor-glm"]);
-    expect(AGENT_IDS.map((agent) => AGENT_PROFILES[agent].modelId)).toEqual([
+    expect(AGENT_IDS).toEqual([
+      "codex-sol",
+      "claude-sonnet",
+      "cursor-grok",
+      "cursor-composer",
+      "cursor-gemini-flash",
+      "cursor-glm",
+    ]);
+    expect(AGENT_IDS.map((agent) => profile(agent).modelId)).toEqual([
       "gpt-5.6-sol",
       "claude-sonnet-5",
       "cursor-grok-4.6-high",
@@ -12,8 +33,10 @@ describe("agent participant registry", () => {
       "gemini-3.7-flash-high",
       "glm-5.2-high",
     ]);
-    expect(new Set(AGENT_IDS.map((agent) => AGENT_PROFILES[agent].conversationalName)).size).toBe(6);
-    expect(SUPPORTED_AGENT_IDS).toEqual(expect.arrayContaining(["claude-opus", "cursor-gemini", "opencode-configured"]));
+    expect(new Set(AGENT_IDS.map((agent) => profile(agent).conversationalName)).size).toBe(6);
+    expect(SUPPORTED_AGENT_IDS).toEqual(
+      expect.arrayContaining(["claude-opus", "cursor-gemini", "opencode-configured"]),
+    );
   });
 
   it("uses model-backed screen-name tags and maps legacy participants safely", () => {

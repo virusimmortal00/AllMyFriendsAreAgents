@@ -3,7 +3,8 @@ const CONVERSATION_STATE_LINE = /^\s*CONVERSATION_STATE:\s*(?:SETTLED|OPEN|BLOCK
 const STYLE_LINE = /^\s*STYLE:\s*\{[^\n]*\}\s*$/gim;
 const INVESTIGATION_LINE = /^\s*INVESTIGATION_REQUEST:\s*\{[^\n]*\}\s*$/gim;
 const TURN_DISPOSITION_LINE = /^\s*TURN_DISPOSITION:\s*.*$/gim;
-const INTERNAL_PREFACE = /\b(?:plan mode|planning workflow|not a coding task|system prompt|developer instructions?|internal (?:dialogue|reasoning|instructions?)|respond normally|skip (?:the )?(?:plan|planning)(?:ning)? workflow)\b/i;
+const INTERNAL_PREFACE =
+  /\b(?:plan mode|planning workflow|not a coding task|system prompt|developer instructions?|internal (?:dialogue|reasoning|instructions?)|respond normally|skip (?:the )?(?:plan|planning)(?:ning)? workflow)\b/i;
 
 export const NO_RESPONSE_NEEDED = "NO_RESPONSE_NEEDED";
 
@@ -27,7 +28,9 @@ export function parseTurnDisposition(text: string): ParsedTurnDisposition {
   const lines = text.split(/\r?\n/).filter((line) => /^\s*TURN_DISPOSITION\s*:/i.test(line));
   if (lines.length === 0) return { status: "missing" };
   if (lines.length !== 1) return { status: "malformed" };
-  const raw = lines[0].replace(/^\s*TURN_DISPOSITION\s*:\s*/i, "").trim();
+  const line = lines[0];
+  if (line === undefined) return { status: "malformed" };
+  const raw = line.replace(/^\s*TURN_DISPOSITION\s*:\s*/i, "").trim();
   try {
     const value = JSON.parse(raw) as { action?: unknown; reason?: unknown };
     if (!value || typeof value !== "object") return { status: "malformed" };
@@ -48,7 +51,13 @@ export function visibleAgentText(text: string): string {
 function visibleAgentTextWithDiagnostics(text: string) {
   let protocolDirectives = 0;
   let protocolCharacters = 0;
-  for (const pattern of [DISPOSITION_LINE, CONVERSATION_STATE_LINE, STYLE_LINE, INVESTIGATION_LINE, TURN_DISPOSITION_LINE]) {
+  for (const pattern of [
+    DISPOSITION_LINE,
+    CONVERSATION_STATE_LINE,
+    STYLE_LINE,
+    INVESTIGATION_LINE,
+    TURN_DISPOSITION_LINE,
+  ]) {
     text = text.replace(pattern, (match) => {
       protocolDirectives++;
       protocolCharacters += match.length;
@@ -62,7 +71,9 @@ function visibleAgentTextWithDiagnostics(text: string) {
 export function stripAgentSelfLabel(text: string, speakerName?: string): string {
   if (!speakerName) return text;
   const prefix = /^\s*\[([^\]\r\n]+)\](?:[ \t]+|\r?\n|$)/.exec(text);
-  return prefix?.[1].toLowerCase() === speakerName.toLowerCase() ? text.slice(prefix[0].length).trimStart() : text;
+  const label = prefix?.[1];
+  if (!prefix || !label) return text;
+  return label.toLowerCase() === speakerName.toLowerCase() ? text.slice(prefix[0].length).trimStart() : text;
 }
 
 export function visibleAgentChatText(text: string, speakerName?: string): string {
@@ -74,7 +85,7 @@ export function visibleAgentChatTextWithDiagnostics(text: string, speakerName?: 
   const paragraphs = visible.text.split(/\n\s*\n/);
   const normalizedLength = paragraphs.join("\n\n").length;
   let workflowPrefaceParagraphs = 0;
-  while (paragraphs.length > 1 && INTERNAL_PREFACE.test(paragraphs[0])) {
+  while (paragraphs.length > 1 && INTERNAL_PREFACE.test(paragraphs[0] ?? "")) {
     paragraphs.shift();
     workflowPrefaceParagraphs++;
   }
@@ -82,10 +93,13 @@ export function visibleAgentChatTextWithDiagnostics(text: string, speakerName?: 
   const trimmed = remaining.trim();
   const withoutLabel = stripAgentSelfLabel(trimmed, speakerName);
   return {
-    ...visible, text: withoutLabel, workflowPrefaceParagraphs,
+    ...visible,
+    text: withoutLabel,
+    workflowPrefaceParagraphs,
     workflowPrefaceCharacters: normalizedLength - remaining.length,
     speakerLabelCharacters: trimmed.length - withoutLabel.length,
-    whitespaceCharacters: visible.whitespaceCharacters + visible.text.length - normalizedLength + remaining.length - trimmed.length,
+    whitespaceCharacters:
+      visible.whitespaceCharacters + visible.text.length - normalizedLength + remaining.length - trimmed.length,
   };
 }
 

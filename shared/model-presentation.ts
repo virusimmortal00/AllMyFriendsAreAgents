@@ -52,9 +52,23 @@ const LOGO_ID_ALIASES: Readonly<Record<string, string>> = {
 // models.dev intentionally serves a generic sparkle for unknown IDs with a
 // successful response. Only use it for IDs verified to have distinct art.
 const MODELS_DEV_BRANDED = new Set([
-  "anthropic", "cohere", "deepseek", "google", "inception", "meta", "minimax",
-  "moonshotai", "nvidia", "openai", "opencode", "openrouter", "perplexity",
-  "poolside", "stepfun", "thinkingmachines", "xiaomi",
+  "anthropic",
+  "cohere",
+  "deepseek",
+  "google",
+  "inception",
+  "meta",
+  "minimax",
+  "moonshotai",
+  "nvidia",
+  "openai",
+  "opencode",
+  "openrouter",
+  "perplexity",
+  "poolside",
+  "stepfun",
+  "thinkingmachines",
+  "xiaomi",
 ]);
 
 const OPENROUTER_LOGOS: Readonly<Record<string, string>> = {
@@ -100,11 +114,14 @@ const PROVIDER_DOMAINS: Readonly<Record<string, string>> = {
 
 export function providerDisplayName(providerId: string | undefined) {
   if (!providerId) return "Configured provider";
-  return PROVIDER_NAMES[providerId] || providerId
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => part.length <= 3 ? part.toUpperCase() : `${part[0].toUpperCase()}${part.slice(1)}`)
-    .join(" ");
+  return (
+    PROVIDER_NAMES[providerId] ||
+    providerId
+      .split(/[-_]/g)
+      .filter(Boolean)
+      .map((part) => (part.length <= 3 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
+      .join(" ")
+  );
 }
 
 export function modelAuthorId(providerId: string | undefined, modelId: string) {
@@ -129,9 +146,12 @@ export function providerLogoUrl(providerId: string | undefined) {
   const logoId = LOGO_ID_ALIASES[safe] || safe;
   if (logoId === "cursor") return "https://cursor.com/favicon.ico";
   if (MODELS_DEV_BRANDED.has(logoId)) return `https://models.dev/logos/${encodeURIComponent(logoId)}.svg`;
-  if (OPENROUTER_LOGOS[logoId]) return `https://openrouter.ai/images/icons/${OPENROUTER_LOGOS[logoId]}`;
+  const openRouterLogo = OPENROUTER_LOGOS[logoId];
+  if (openRouterLogo) return `https://openrouter.ai/images/icons/${openRouterLogo}`;
   const domain = PROVIDER_DOMAINS[logoId];
-  return domain ? `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(`https://${domain}/`)}&size=256` : undefined;
+  return domain
+    ? `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(`https://${domain}/`)}&size=256`
+    : undefined;
 }
 
 export function friendlyModelName(modelId: string) {
@@ -140,8 +160,10 @@ export function friendlyModelName(modelId: string) {
     .replace(/:(free|nitro|extended|online)$/i, " ($1)")
     .split(/[-_]/g)
     .filter(Boolean)
-    .map((part) => uppercaseTokens.has(part.toLocaleLowerCase()) || /^\d+(?:\.\d+)*[a-z]?$/i.test(part) || /^[a-z]\d/i.test(part)
-      ? part.toUpperCase()
-      : `${part[0].toUpperCase()}${part.slice(1)}`)
+    .map((part) =>
+      uppercaseTokens.has(part.toLocaleLowerCase()) || /^\d+(?:\.\d+)*[a-z]?$/i.test(part) || /^[a-z]\d/i.test(part)
+        ? part.toUpperCase()
+        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
+    )
     .join(" ");
 }
