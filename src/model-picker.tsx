@@ -4,7 +4,7 @@ import { modelKey } from "../shared/model-discovery";
 import { parseOpenRouterModelPageUrl } from "../shared/openrouter-model-page";
 import { modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { loadModelOfferDetails, resolveOpenRouterModelPage } from "./api";
-import { ProviderMark } from "./provider-mark";
+import { ProviderMark, providerMarkProps } from "./provider-mark";
 import { ListView } from "./list-view";
 import { viewAttributes, type ViewDefinition } from "./view-registry";
 
@@ -185,7 +185,7 @@ export function RichModelPicker({
             const checked = model.modelId === modelId && (model.providerId || "") === providerId;
             const authorId = model.authorId || modelAuthorId(model.providerId, model.modelId);
             return <button type="button" className="model-row" aria-pressed={checked} title={model.description} onClick={() => onChange(model)}>
-              <ProviderMark authorId={authorId} accessProviderId={model.providerId} compact />
+              <ProviderMark {...providerMarkProps(authorId, model.providerId, true)} />
               <span className="model-row__name"><strong>{model.displayName}</strong><small>{model.authorDisplayName || providerDisplayName(authorId)}{model.providerId && model.providerId !== authorId ? ` · via ${model.accessProviderDisplayName || providerDisplayName(model.providerId)}` : ""}</small><small className="model-row__price">In {formatMoney(model.pricing?.inputPerMillion)} · Out {formatMoney(model.pricing?.outputPerMillion)} /1M · {formatTokens(model.limits?.context)}</small></span>
             </button>;
           } },
@@ -204,13 +204,13 @@ export function RichModelPicker({
       {selected ? (
         <div className="model-detail" aria-live="polite">
           <div className="model-detail__summary">
-            <ProviderMark authorId={selectedAuthorId} accessProviderId={selected.providerId} />
+            <ProviderMark {...providerMarkProps(selectedAuthorId, selected.providerId)} />
             <div><strong>{selected.displayName}</strong><span>Built by {selected.authorDisplayName || providerDisplayName(selectedAuthorId)}{selected.providerId && selected.providerId !== selectedAuthorId ? ` · accessed through ${selected.accessProviderDisplayName || providerDisplayName(selected.providerId)}` : ""}</span></div>
             {sale > 0 ? <em className="model-badge model-badge--sale">Save {Math.round(sale * 100)}%</em> : null}
           </div>
           <div className="model-detail__costs"><span><b>{formatMoney(selected.pricing?.inputPerMillion)}</b> input / 1M tokens</span><span><b>{formatMoney(selected.pricing?.outputPerMillion)}</b> output / 1M tokens</span><span><b>{estimateRun(selected) === undefined ? "—" : formatMoney(estimateRun(selected))}</b> example run*</span></div>
           <small>*Rough estimate for 10K input and 2K output tokens. Actual cost depends on usage and the provider route selected at request time.</small>
-          {selected.providerId === "openrouter" ? <div className="model-offers"><strong>OpenRouter provider offers</strong>{offersLoading ? <span role="status">Checking live prices and promotions…</span> : offerDetails?.offers.length ? offerDetails.offers.slice(0, 6).map((offer) => <div className="model-offer" key={offer.providerId || offer.providerName}><ProviderMark authorId={offer.providerId} compact /><span><b>{offer.providerName}</b>{offer.uptime !== undefined ? <small>{Math.round(offer.uptime * 100)}% uptime</small> : null}</span><span>{formatMoney(offer.inputPerMillion)} in · {formatMoney(offer.outputPerMillion)} out</span>{offer.discount ? <em className="model-badge model-badge--sale">{Math.round(offer.discount * 100)}% off</em> : null}</div>) : <span>Live provider offers are unavailable right now; catalog pricing is shown above.</span>}</div> : null}
+          {selected.providerId === "openrouter" ? <div className="model-offers"><strong>OpenRouter provider offers</strong>{offersLoading ? <span role="status">Checking live prices and promotions…</span> : offerDetails?.offers.length ? offerDetails.offers.slice(0, 6).map((offer) => <div className="model-offer" key={offer.providerId || offer.providerName}><ProviderMark {...providerMarkProps(offer.providerId, undefined, true)} /><span><b>{offer.providerName}</b>{offer.uptime !== undefined ? <small>{Math.round(offer.uptime * 100)}% uptime</small> : null}</span><span>{formatMoney(offer.inputPerMillion)} in · {formatMoney(offer.outputPerMillion)} out</span>{offer.discount ? <em className="model-badge model-badge--sale">{Math.round(offer.discount * 100)}% off</em> : null}</div>) : <span>Live provider offers are unavailable right now; catalog pricing is shown above.</span>}</div> : null}
           {selected.capabilities?.toolCall === false ? <p className="model-detail__warning">This model does not report tool support, so it may not be suitable for an agent that needs to take actions.</p> : null}
         </div>
       ) : null}

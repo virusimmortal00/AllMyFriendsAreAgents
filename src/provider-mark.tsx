@@ -1,14 +1,28 @@
 import { providerDisplayName, providerLogoUrl } from "../shared/model-presentation";
 
+export interface ProviderMarkProps {
+  readonly authorId?: string;
+  readonly accessProviderId?: string;
+  readonly compact?: boolean;
+}
+
+export function providerMarkProps(
+  authorId: string | undefined,
+  accessProviderId: string | undefined,
+  compact = false,
+): ProviderMarkProps {
+  return {
+    ...(authorId ? { authorId } : {}),
+    ...(accessProviderId ? { accessProviderId } : {}),
+    ...(compact ? { compact: true } : {}),
+  };
+}
+
 export function ProviderMark({
   authorId,
   accessProviderId,
   compact = false,
-}: {
-  authorId?: string;
-  accessProviderId?: string;
-  compact?: boolean;
-}) {
+}: ProviderMarkProps) {
   const authorName = providerDisplayName(authorId);
   const accessName = providerDisplayName(accessProviderId);
   const authorLogo = providerLogoUrl(authorId);

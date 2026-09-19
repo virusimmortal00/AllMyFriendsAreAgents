@@ -80,6 +80,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Centralize optional abort-signal construction for read requests so an absent signal remains absent from `RequestInit`; continue routing malformed API roots through room scope instead of treating an unchecked segment as global. | `src/api.ts` |
 | 2026-09-19 | `client-runtime` | Model explorer page collections as non-empty because rendering requires a selected fallback; keep an explicit guard for filtered keyboard-navigation results because every page may be disabled. | `src/administration-window.tsx`, `src/explorer-layout.tsx` |
 | 2026-09-19 | `client-runtime` | Build sortable participant display records with optional maker/provider fields only when known. This preserves the concrete record subtype through generic sorting and prevents an absent display attribute from erasing unrelated fields during inference. | `src/components.tsx`, `src/roster-manager.tsx`, `src/agent-list-sort.ts` |
+| 2026-09-19 | `client-runtime` | Centralize provider-mark prop construction so unknown maker and access-provider identities are omitted consistently across roster and model views. The component contract remains exact rather than accepting present `undefined`. | `src/provider-mark.tsx`, `src/provider-mark.test.ts`, `src/components.tsx`, `src/model-picker.tsx`, `src/roster-manager.tsx` |
 
 # Next action
 

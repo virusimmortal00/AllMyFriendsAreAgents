@@ -27,7 +27,7 @@ import type { RoomAgentRoster } from "../shared/roster";
 import { openCodeRuntimeStatusMessage, type OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { formatUsd } from "../shared/currency";
-import { ProviderMark } from "./provider-mark";
+import { ProviderMark, providerMarkProps } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
 import { commandMessageDisclosure } from "../shared/command-message";
@@ -196,7 +196,7 @@ export function RoomRoster({
                 aria-label={`${availableLabel}: ${connectionLabel}`}
                 title={connectionLabel}
               />
-              <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
+              <ProviderMark {...providerMarkProps(authorId, providerId, true)} />
               <span className="presence-identity">
                 <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
                 <span className="presence-meta">

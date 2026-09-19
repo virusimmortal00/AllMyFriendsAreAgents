@@ -14,7 +14,7 @@ import { selectedModelAvailability, type ModelDiscoveryResult } from "../shared/
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { ConfirmationDialog } from "./components";
 import { RichModelPicker } from "./model-picker";
-import { ProviderMark } from "./provider-mark";
+import { ProviderMark, providerMarkProps } from "./provider-mark";
 import { formatUsd } from "../shared/currency";
 import { OpenRouterMark } from "./openrouter-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
@@ -280,7 +280,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         <div className={`roster-editor-row presence-row${isSelected ? " presence-row--active" : ""}${entry.enabled ? "" : " roster-editor-row--disabled"}`} role="listitem">
                           <button type="button" className="roster-agent-select" aria-pressed={isSelected} aria-label={`View ${name} configuration`} onClick={() => { setSelectedAgentId(entry.agentId); setChangingModelForAgentId(null); setMobilePane("detail"); }}>
                             <span className={`presence-status${entry.enabled ? "" : " presence-status--offline"}`} aria-hidden="true" />
-                            <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
+                            <ProviderMark {...providerMarkProps(authorId, providerId, true)} />
                             <span className="presence-identity"><strong className="speaker" title={name}>{name}</strong><small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small><small className={`roster-agent-state${entry.enabled ? "" : " roster-agent-state--inactive"}`}>{entry.enabled ? "Active in room" : "Deactivated"}</small>{usage?.agents[entry.agentId] ? <small className="roster-agent-spend">Spent {formatUsd(usage.agents[entry.agentId]!.costUsd)}</small> : null}</span>
                             <span className="roster-row-chevron" aria-hidden="true">›</span>
                           </button>
@@ -304,7 +304,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                   <section className="roster-config-workspace" aria-label={`${selectedName} configuration`}>
                     {draftCreatedAgentIds.has(selectedEntry.agentId) ? <p className="roster-draft-notice" role="status"><strong>{selectedName} is ready in this draft.</strong> Review the settings, then choose <b>Save roster</b> to add this agent to the room.</p> : null}
                     <header className="roster-config-header">
-                      <label className="roster-config-identity"><ProviderMark authorId={modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId)} accessProviderId={selectedReference.providerId || selectedProfile?.provider} /><span id="roster-config-heading">Agent alias</span><input aria-labelledby="roster-config-heading" value={selectedName} maxLength={48} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, conversationalName: event.target.value })} /></label>
+                      <label className="roster-config-identity"><ProviderMark {...providerMarkProps(modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId), selectedReference.providerId || selectedProfile?.provider)} /><span id="roster-config-heading">Agent alias</span><input aria-labelledby="roster-config-heading" value={selectedName} maxLength={48} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, conversationalName: event.target.value })} /></label>
                       <label className="roster-active-switch classic-check"><input type="checkbox" role="switch" checked={selectedEntry.enabled} disabled={saving} aria-label={`Active in room for ${selectedName}`} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, enabled: event.target.checked })} /><span><strong>{selectedEntry.enabled ? "Active in room" : "Deactivated"}</strong><small>{selectedEntry.enabled ? "This agent can participate in conversations." : "The configuration is saved, but this agent will not participate."}</small></span></label>
                     </header>
                     <div className="roster-config-fields">
@@ -345,7 +345,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       <>
                         <header className="roster-journey-heading"><span className="roster-step-badge">Step 2 of 2</span><div><h3 id="roster-explore-heading">Create your agent</h3><p>Give this model a memorable name. You can change its model or deactivate it later.</p></div><button type="button" className="classic-button" onClick={() => { setNewProvider(""); setNewModel(""); setNewVariant(""); }}>← Choose a different model</button></header>
                         <section className="roster-selected-model" aria-label={`Selected model: ${newSelectedModel.displayName}`}>
-                          <ProviderMark authorId={newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId)} accessProviderId={newSelectedModel.providerId} />
+                          <ProviderMark {...providerMarkProps(newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId), newSelectedModel.providerId)} />
                           <div><strong>{newSelectedModel.displayName}</strong><span>Built by {newSelectedModel.authorDisplayName || providerDisplayName(newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId))}{newSelectedModel.providerId ? ` · accessed through ${newSelectedModel.accessProviderDisplayName || providerDisplayName(newSelectedModel.providerId)}` : ""}</span>{newSelectedModel.description ? <p>{newSelectedModel.description}</p> : null}</div>
                           <dl><div><dt>Input</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.inputPerMillion)} / 1M</dd></div><div><dt>Output</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.outputPerMillion)} / 1M</dd></div></dl>
                         </section>
