@@ -223,7 +223,7 @@ export function RoomRoster({
         {humans.map((human) => (
           <div className="presence-row presence-row--human" role="listitem" key={human.id}>
             <span className="presence-status" aria-hidden="true" />
-            <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} compact />
+            <HumanAvatar name={human.name} {...(human.avatarUrl ? { avatarUrl: human.avatarUrl } : {})} compact />
             <strong className="speaker speaker--you presence-human-name">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
             {human.id === currentHumanId && onConfigureHumanAvatar ? <button type="button" className="agent-settings-button human-avatar-settings-button" aria-label="Edit your profile" title="Your profile" onClick={(event) => onConfigureHumanAvatar(event.currentTarget)}>📷</button> : <span className="presence-row-spacer" aria-hidden="true" />}
           </div>
