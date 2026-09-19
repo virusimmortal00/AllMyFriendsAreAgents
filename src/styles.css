@@ -1022,7 +1022,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .task-detail > h3 { margin: 0 0 8px; color: var(--blue); font-size: 14px; overflow-wrap: anywhere; }
 .improvements-missing { align-self: center; justify-self: center; width: 100%; max-width: 640px; margin-block: 16px; padding: 16px; border: 2px outset white; background: var(--chrome); }
 .improvements-missing p:last-child { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 0; }
-.room-topic-input { height: auto; min-height: 48px; resize: vertical; white-space: pre-wrap; }
+.room-properties-section textarea.room-topic-input { height: auto; min-height: 48px; resize: vertical; white-space: pre-wrap; }
 .diagnostic-detail pre { max-width: 100%; padding: 6px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f4f4; }
 .diagnostic-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; }
 .diagnostic-detail dl div { display: contents; }
