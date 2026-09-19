@@ -3,6 +3,12 @@ import { formatUsd } from "../shared/currency";
 
 const SLICE_COLORS = ["#4f6df5", "#e0793c", "#3fae5c", "#c0463c", "#8a5fd1", "#d4a72c", "#2f9e97", "#c2538f", "#6b7280", "#7a4f9c"];
 
+function requiredItem<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`Missing chart item at index ${index}.`);
+  return item;
+}
+
 function polarPoint(cx: number, cy: number, r: number, angle: number) {
   return { x: cx + r * Math.sin(angle), y: cy - r * Math.cos(angle) };
 }
@@ -12,11 +18,12 @@ function allocatePercentages(shares: readonly number[]): number[] {
   const raw = shares.map((share) => share * 100);
   const base = raw.map(Math.floor);
   let remaining = 100 - base.reduce((sum, value) => sum + value, 0);
-  const order = base.map((_, index) => index).sort((a, b) => (raw[b] - base[b]) - (raw[a] - base[a]));
+  const remainder = (index: number) => requiredItem(raw, index) - requiredItem(base, index);
+  const order = base.map((_, index) => index).sort((a, b) => remainder(b) - remainder(a));
   const allocated = [...base];
   for (const index of order) {
     if (remaining <= 0) break;
-    allocated[index] += 1;
+    allocated[index] = requiredItem(allocated, index) + 1;
     remaining -= 1;
   }
   return allocated;
@@ -49,7 +56,15 @@ export function OpenRouterSpendChart({ agents, labels }: { agents: Readonly<Reco
     const share = metric([agentId, totals]) / total;
     const start = angle;
     angle += share * Math.PI * 2;
-    return { agentId, totals, share, start, end: angle, percent: percentages[index], color: SLICE_COLORS[index % SLICE_COLORS.length] };
+    return {
+      agentId,
+      totals,
+      share,
+      start,
+      end: angle,
+      percent: requiredItem(percentages, index),
+      color: requiredItem(SLICE_COLORS, index % SLICE_COLORS.length),
+    };
   });
 
   return (
