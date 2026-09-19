@@ -47,7 +47,7 @@ silently missed.
 | Wave | Slice | Owned paths | Status | Depends on | Completion evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
-| 2 | `client-runtime` | Non-test `src/**` | Not started | `shared-contracts` | — |
+| 2 | `client-runtime` | Non-test `src/**` | In progress: request boundaries | `shared-contracts` | Client API tests and strict inventory |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Not started | `client-runtime` | — |
@@ -77,6 +77,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `shared-contracts` | Preserve complete registries as exact object shapes, and validate regex captures and URL segments at runtime where input is external. This represents the actual boundary invariant instead of asserting indexed values exist. | `shared/chat-style.ts`, `shared/command-domain.ts`, `shared/human-avatar.ts`, `shared/message-format.ts`, `shared/model-presentation.ts`, `shared/openrouter-model-page.ts`, `shared/workshop.ts` |
 | 2026-09-19 | `shared-contracts` | Omit unknown roster profiles from mention suggestions, retain explicit ambiguity handling during offset reconciliation, and omit unavailable provider/model snapshots rather than serializing present `undefined` values. | `shared/mentions.ts`, `shared/mentions.test.ts` |
 | 2026-09-19 | `shared-contracts` | Preserve absence for unavailable diagnostics and legacy model-selection fields. A missing diagnostic is distinct from a present empty value, while legacy reasoning effort is migrated only when it is actually present. | `shared/model-discovery.ts`, `shared/roster.ts`, `server/model-discovery.test.ts`, `shared/roster.test.ts` |
+| 2026-09-19 | `client-runtime` | Centralize optional abort-signal construction for read requests so an absent signal remains absent from `RequestInit`; continue routing malformed API roots through room scope instead of treating an unchecked segment as global. | `src/api.ts` |
 
 # Next action
 
