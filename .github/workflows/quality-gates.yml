@@ -40,6 +40,8 @@ jobs:
           sudo apt-get "${ubuntu_sources[@]}" update
           sudo apt-get "${ubuntu_sources[@]}" install --no-install-recommends --yes bubblewrap
       - run: pnpm install --frozen-lockfile
+      - name: Enforce Biome lint rules
+        run: pnpm run lint
       - name: Enforce upstream integration contracts
         run: pnpm run check:integration-contracts -- --verify-upstream
         env:
@@ -51,9 +53,7 @@ jobs:
         run: pnpm run check:api-contracts
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
-      - name: Type-check screenshot and review tooling
-        run: pnpm run check:visual-types
-      - name: Type-check and build production assets
+      - name: Strictly type-check and build production assets
         run: pnpm run build
       - name: Run the full regression suite
         run: pnpm test

@@ -87,8 +87,11 @@ existing Vite/bundler import style.
 - Treat `pnpm canary:investigations` as the provider-free canary. Do not run
   `pnpm canary:investigations:real`, publish, deploy, or invoke paid or live
   external services without explicit authorization.
-- Follow the style of the surrounding file. This repository has no standalone
-  lint or format script, so do not invent one as a required check.
+- Use `pnpm run format` for Biome formatting and `pnpm run lint` for the
+  repository's Biome lint baseline. Run `pnpm run typecheck` for the complete
+  strict TypeScript check, including visual tooling. Rules explicitly disabled
+  in `biome.json` document migration debt; do not expand that list to bypass a
+  new diagnostic.
 
 ## Validation
 
@@ -100,6 +103,11 @@ pnpm exec vitest run path/to/file.test.ts
 
 # Full repository quality gate
 pnpm run check:quality
+
+# Formatting, linting, and strict type checks independently
+pnpm run format
+pnpm run lint
+pnpm run typecheck
 
 # Planning/template changes
 pnpm check:planning-docs -- --self-check
