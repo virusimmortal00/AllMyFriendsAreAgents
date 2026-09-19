@@ -10,11 +10,14 @@ import { VIEWS } from "./view-registry";
 
 export type AdministrationPage = "Login" | "Integrations" | "Rooms" | "Diagnostics";
 
-export const ADMINISTRATION_PAGES: readonly (ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean })[] = [
+export const ADMINISTRATION_PAGES = [
   { key: "Login", label: "Owner login", icon: "🔑", requiresAdministrator: false },
   { key: "Integrations", label: "Integrations", icon: "🔌", requiresAdministrator: true },
   { key: "Rooms", label: "Rooms & repositories", icon: "📁", requiresAdministrator: true },
   { key: "Diagnostics", label: "Diagnostics", icon: "🩺", requiresAdministrator: true },
+] as const satisfies readonly [
+  ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean },
+  ...(ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean })[],
 ];
 
 /**

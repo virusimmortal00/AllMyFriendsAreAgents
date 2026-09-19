@@ -78,6 +78,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `shared-contracts` | Omit unknown roster profiles from mention suggestions, retain explicit ambiguity handling during offset reconciliation, and omit unavailable provider/model snapshots rather than serializing present `undefined` values. | `shared/mentions.ts`, `shared/mentions.test.ts` |
 | 2026-09-19 | `shared-contracts` | Preserve absence for unavailable diagnostics and legacy model-selection fields. A missing diagnostic is distinct from a present empty value, while legacy reasoning effort is migrated only when it is actually present. | `shared/model-discovery.ts`, `shared/roster.ts`, `server/model-discovery.test.ts`, `shared/roster.test.ts` |
 | 2026-09-19 | `client-runtime` | Centralize optional abort-signal construction for read requests so an absent signal remains absent from `RequestInit`; continue routing malformed API roots through room scope instead of treating an unchecked segment as global. | `src/api.ts` |
+| 2026-09-19 | `client-runtime` | Model explorer page collections as non-empty because rendering requires a selected fallback; keep an explicit guard for filtered keyboard-navigation results because every page may be disabled. | `src/administration-window.tsx`, `src/explorer-layout.tsx` |
 
 # Next action
 
