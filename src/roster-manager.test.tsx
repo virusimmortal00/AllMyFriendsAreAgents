@@ -191,7 +191,7 @@ describe("roster manager", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 1, entries: [entry] }, catalog: [], modelDiscovery: discovery }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ ...entry, selectionConfirmationRequired: undefined, sessionInvalidationReason: "" }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ agentId, conversationalName: "Alpha", providerId: "openai", modelId: "configured", enabled: true }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
@@ -200,8 +200,10 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Confirm selected OpenCode model" }));
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).toMatchObject({ agentId, sessionInvalidationReason: "" });
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).not.toHaveProperty("selectionConfirmationRequired");
+    const savedEntry = JSON.parse(fetchMock.mock.calls[2][1].body).entries[0];
+    expect(savedEntry).toMatchObject({ agentId });
+    expect(savedEntry).not.toHaveProperty("sessionInvalidationReason");
+    expect(savedEntry).not.toHaveProperty("selectionConfirmationRequired");
   });
 
   it("keeps deactivation reversible and confirms configuration deletion separately", async () => {

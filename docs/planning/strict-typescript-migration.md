@@ -81,6 +81,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Model explorer page collections as non-empty because rendering requires a selected fallback; keep an explicit guard for filtered keyboard-navigation results because every page may be disabled. | `src/administration-window.tsx`, `src/explorer-layout.tsx` |
 | 2026-09-19 | `client-runtime` | Build sortable participant display records with optional maker/provider fields only when known. This preserves the concrete record subtype through generic sorting and prevents an absent display attribute from erasing unrelated fields during inference. | `src/components.tsx`, `src/roster-manager.tsx`, `src/agent-list-sort.ts` |
 | 2026-09-19 | `client-runtime` | Centralize provider-mark prop construction so unknown maker and access-provider identities are omitted consistently across roster and model views. The component contract remains exact rather than accepting present `undefined`. | `src/provider-mark.tsx`, `src/provider-mark.test.ts`, `src/components.tsx`, `src/model-picker.tsx`, `src/roster-manager.tsx` |
+| 2026-09-19 | `client-runtime` | Move roster draft transitions into pure helpers. Model replacement removes stale variant and confirmation state, selecting the default removes both modern and legacy variant fields, and confirmation removes its diagnostic fields rather than persisting empty sentinels. | `src/roster-entry-edit.ts`, `src/roster-entry-edit.test.ts`, `src/roster-manager.tsx`, `src/roster-manager.test.tsx` |
 
 # Next action
 
