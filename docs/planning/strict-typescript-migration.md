@@ -87,6 +87,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` storage migration options | `802b0dd` | 11 durable-identity migration and JSON-to-SQLite import tests, including restart, overwrite, and manifest behavior | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 14 diagnostics in 1 file with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` SQLite repository invariants | `b9424f0` | 69 SQLite repository, command, continuation, task, identity-migration, and JSON-import tests | `pnpm run typecheck`; Biome lint; `--assert-clean=server-boundaries`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` external boundary fixtures | `6c05e78` | 85 command, credential-vault, OpenCode transport, OpenRouter, and room-bound GitHub tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 189 diagnostics in 40 files with no drift in completed slices; planning self-check; `git diff --check` |
+| `server-tests` service construction fixtures | `80b5cac` | 34 assignment API, continuation service, and contribution lifecycle tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 186 diagnostics in 37 files with no drift in completed slices; planning self-check; `git diff --check` |
 
 ## Decision log
 
