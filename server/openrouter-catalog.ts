@@ -52,6 +52,19 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 20) : [];
 }
 
+function delimitedLabel(value: unknown, delimiter?: string) {
+  if (typeof value !== "string") return undefined;
+  const label = (delimiter ? value.split(delimiter).at(0) : value)?.trim();
+  return label ? label.slice(0, 100) : undefined;
+}
+
+function releaseDate(value: unknown) {
+  const seconds = finite(value);
+  if (seconds === undefined) return undefined;
+  const date = new Date(seconds * 1_000);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
+}
+
 function friendlyOpenRouterName(value: unknown, authorDisplayName: string | undefined, fallback: string) {
   if (typeof value !== "string" || !value.trim()) return fallback;
   const name = value.trim();
@@ -60,9 +73,9 @@ function friendlyOpenRouterName(value: unknown, authorDisplayName: string | unde
 }
 
 export class OpenRouterCatalogService {
-  private catalog?: { expiresAt: number; promise: Promise<Map<string, OpenRouterModel>> };
+  private catalog: { expiresAt: number; promise: Promise<Map<string, OpenRouterModel>> } | undefined;
   private readonly offers = new Map<string, { expiresAt: number; promise: Promise<ModelOfferDetails> }>();
-  private creditsCache?: { expiresAt: number; promise: Promise<OpenRouterCreditBalance | undefined> };
+  private creditsCache: { expiresAt: number; promise: Promise<OpenRouterCreditBalance | undefined> } | undefined;
 
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
@@ -198,35 +211,45 @@ export class OpenRouterCatalogService {
   private enrichModel(model: DiscoveredModel, remote: OpenRouterModel | undefined): DiscoveredModel {
     if (!remote) return model;
     const parameters = new Set(stringArray(remote.supported_parameters));
-    const inputModalities = stringArray(remote.architecture?.input_modalities);
-    const outputModalities = stringArray(remote.architecture?.output_modalities);
+    const remoteInputModalities = stringArray(remote.architecture?.input_modalities);
+    const remoteOutputModalities = stringArray(remote.architecture?.output_modalities);
+    const inputModalities = remoteInputModalities.length ? remoteInputModalities : model.capabilities?.inputModalities;
+    const outputModalities = remoteOutputModalities.length ? remoteOutputModalities : model.capabilities?.outputModalities;
+    const inputPerMillion = perMillion(remote.pricing?.prompt) ?? model.pricing?.inputPerMillion;
+    const outputPerMillion = perMillion(remote.pricing?.completion) ?? model.pricing?.outputPerMillion;
     const pricing: ModelPricing = {
-      inputPerMillion: perMillion(remote.pricing?.prompt) ?? model.pricing?.inputPerMillion,
-      outputPerMillion: perMillion(remote.pricing?.completion) ?? model.pricing?.outputPerMillion,
-      cacheReadPerMillion: model.pricing?.cacheReadPerMillion,
-      cacheWritePerMillion: model.pricing?.cacheWritePerMillion,
+      ...(inputPerMillion !== undefined ? { inputPerMillion } : {}),
+      ...(outputPerMillion !== undefined ? { outputPerMillion } : {}),
+      ...(model.pricing?.cacheReadPerMillion !== undefined ? { cacheReadPerMillion: model.pricing.cacheReadPerMillion } : {}),
+      ...(model.pricing?.cacheWritePerMillion !== undefined ? { cacheWritePerMillion: model.pricing.cacheWritePerMillion } : {}),
     };
     const scores = remote.benchmarks?.artificial_analysis;
+    const intelligence = finite(scores?.intelligence_index);
+    const coding = finite(scores?.coding_index);
+    const agentic = finite(scores?.agentic_index);
+    const benchmarks = intelligence !== undefined || coding !== undefined || agentic !== undefined ? {
+      ...(intelligence !== undefined ? { intelligence } : {}),
+      ...(coding !== undefined ? { coding } : {}),
+      ...(agentic !== undefined ? { agentic } : {}),
+    } : undefined;
     const rank = finite((remote as OpenRouterModel & { popularityRank?: unknown }).popularityRank);
+    const context = finite(remote.context_length);
+    const discoveredReleaseDate = releaseDate(remote.created);
     return {
       ...model,
       displayName: friendlyOpenRouterName(remote.name, model.authorDisplayName, model.displayName),
       ...(typeof remote.description === "string" && remote.description.trim() ? { description: remote.description.trim().replace(/\s+/g, " ").slice(0, 420) } : {}),
-      pricing,
-      limits: { ...model.limits, ...(finite(remote.context_length) !== undefined ? { context: finite(remote.context_length) } : {}) },
-      ...(finite(remote.created) !== undefined ? { releaseDate: new Date(finite(remote.created)! * 1_000).toISOString().slice(0, 10) } : {}),
+      ...(Object.keys(pricing).length ? { pricing } : {}),
+      ...(context !== undefined ? { limits: { ...model.limits, context } } : model.limits !== undefined ? { limits: model.limits } : {}),
+      ...(discoveredReleaseDate !== undefined ? { releaseDate: discoveredReleaseDate } : {}),
       ...(rank !== undefined ? { popularity: { rank, window: "weekly", source: "openrouter" } } : {}),
-      ...(scores && [scores.intelligence_index, scores.coding_index, scores.agentic_index].some((value) => finite(value) !== undefined) ? { benchmarks: {
-        ...(finite(scores.intelligence_index) !== undefined ? { intelligence: finite(scores.intelligence_index) } : {}),
-        ...(finite(scores.coding_index) !== undefined ? { coding: finite(scores.coding_index) } : {}),
-        ...(finite(scores.agentic_index) !== undefined ? { agentic: finite(scores.agentic_index) } : {}),
-      } } : {}),
+      ...(benchmarks !== undefined ? { benchmarks } : {}),
       capabilities: {
         ...model.capabilities,
         reasoning: model.capabilities?.reasoning ?? (parameters.has("reasoning") || parameters.has("include_reasoning")),
         toolCall: model.capabilities?.toolCall ?? parameters.has("tools"),
-        inputModalities: inputModalities.length ? inputModalities : model.capabilities?.inputModalities,
-        outputModalities: outputModalities.length ? outputModalities : model.capabilities?.outputModalities,
+        ...(inputModalities !== undefined ? { inputModalities } : {}),
+        ...(outputModalities !== undefined ? { outputModalities } : {}),
       },
     };
   }
@@ -242,18 +265,23 @@ export class OpenRouterCatalogService {
       : [];
     const grouped = new Map<string, ModelOffer>();
     for (const endpoint of endpoints.slice(0, 100)) {
-      const providerName = typeof endpoint.provider_name === "string" ? endpoint.provider_name.slice(0, 100) : typeof endpoint.name === "string" ? endpoint.name.split("|")[0].trim().slice(0, 100) : "OpenRouter provider";
-      const providerId = typeof endpoint.tag === "string" ? endpoint.tag.split("/")[0].slice(0, 100) : undefined;
+      const providerName = delimitedLabel(endpoint.provider_name) ?? delimitedLabel(endpoint.name, "|") ?? "OpenRouter provider";
+      const providerId = delimitedLabel(endpoint.tag, "/");
+      const inputPerMillion = perMillion(endpoint.pricing?.prompt);
+      const outputPerMillion = perMillion(endpoint.pricing?.completion);
       const discount = finite(endpoint.pricing?.discount);
+      const uptime = ratio(endpoint.uptime_last_30m);
+      const latencySeconds = finite(endpoint.latency_last_30m);
+      const throughputTokensPerSecond = finite(endpoint.throughput_last_30m);
       const offer: ModelOffer = {
         providerName,
         ...(providerId ? { providerId } : {}),
-        ...(perMillion(endpoint.pricing?.prompt) !== undefined ? { inputPerMillion: perMillion(endpoint.pricing?.prompt) } : {}),
-        ...(perMillion(endpoint.pricing?.completion) !== undefined ? { outputPerMillion: perMillion(endpoint.pricing?.completion) } : {}),
+        ...(inputPerMillion !== undefined ? { inputPerMillion } : {}),
+        ...(outputPerMillion !== undefined ? { outputPerMillion } : {}),
         ...(discount !== undefined && discount > 0 && discount < 1 ? { discount } : {}),
-        ...(ratio(endpoint.uptime_last_30m) !== undefined ? { uptime: ratio(endpoint.uptime_last_30m) } : {}),
-        ...(finite(endpoint.latency_last_30m) !== undefined ? { latencySeconds: finite(endpoint.latency_last_30m) } : {}),
-        ...(finite(endpoint.throughput_last_30m) !== undefined ? { throughputTokensPerSecond: finite(endpoint.throughput_last_30m) } : {}),
+        ...(uptime !== undefined ? { uptime } : {}),
+        ...(latencySeconds !== undefined ? { latencySeconds } : {}),
+        ...(throughputTokensPerSecond !== undefined ? { throughputTokensPerSecond } : {}),
       };
       const key = providerId || providerName;
       const previous = grouped.get(key);

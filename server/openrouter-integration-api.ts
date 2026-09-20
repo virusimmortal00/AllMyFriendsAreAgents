@@ -23,6 +23,7 @@ export function registerOpenRouterIntegrationRoutes(input: {
     if (!intelligence) return response.status(404).json({ error: "OpenRouter credit lookup is not configured." });
     const forceRefresh = request.query.refresh === "1" || request.query.refresh === "true";
     const credits = await intelligence.credits(forceRefresh).catch(() => undefined);
-    response.set("Cache-Control", "no-store").json({ credits } satisfies OpenRouterCreditsResponse);
+    const body = credits === undefined ? {} : { credits };
+    response.set("Cache-Control", "no-store").json(body satisfies OpenRouterCreditsResponse);
   }));
 }
