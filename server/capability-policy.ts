@@ -1,7 +1,7 @@
 import type { ModelAvailability } from "../shared/model-discovery.js";
 import type { AgentCapabilityName, AgentCapabilityStatus, CapabilityExclusion, CommandCapabilityStatus, EffectiveCapability } from "../shared/capabilities.js";
 import type { RoomAgentRosterEntry } from "../shared/roster.js";
-import { ROOM_COMMANDS } from "../shared/command-domain.js";
+import { ROOM_COMMANDS, type RoomCommandName } from "../shared/command-domain.js";
 
 const guidance = {
   conversation: "Enable the agent and select a model currently available through OpenCode.",
@@ -43,9 +43,16 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
   const ceiling = input.serverCeiling || (input.githubReadConfigured ? ROOM_COMMANDS : ROOM_COMMANDS.filter((command) => command !== "gh"));
   const requested = input.requestedGrants || (input.githubReadGranted ? ["gh"] : []);
   const common = { featureCompiled: input.featureCompiled !== false, rosterEnabled: entry.enabled, providerSessionFresh: input.providerSessionFresh !== false, lease: input.lease || { status: "not-required" as const, issuedAt: null, expiresAt: null }, lastManifestIssuance: input.lastManifestIssuance || null, lastRejection: input.lastRejection || null, runtimeAvailable: input.runtimeAvailable, modelAvailable: input.model.available };
-  const commands = Object.fromEntries(ROOM_COMMANDS.map((command) => [command, resolveCommandCapability({ ...common, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false })]));
+  const resolveCommand = (command: RoomCommandName) => resolveCommandCapability({ ...common, requiredConfigPresent: command !== "gh" || input.githubReadConfigured, serverCeiling: ceiling.includes(command), requestedGrant: requested.includes(command), catalogRevisionCurrent: command !== "gh" || input.catalogRevisionCurrent !== false });
   const projectWrite = resolveCommandCapability({ ...common, featureCompiled: false, requiredConfigPresent: entry.supportsProjectWrites === true, serverCeiling: selectedWriter, requestedGrant: selectedWriter, catalogRevisionCurrent: true, lease: input.lease || { status: "missing", issuedAt: null, expiresAt: null }, requiresLease: true, requiresProviderSession: false, modelAvailable: true });
-  commands.project_write = projectWrite;
+  const commands = {
+    task: resolveCommand("task"),
+    pov: resolveCommand("pov"),
+    poll: resolveCommand("poll"),
+    help: resolveCommand("help"),
+    gh: resolveCommand("gh"),
+    project_write: projectWrite,
+  } satisfies Record<RoomCommandName | "project_write", CommandCapabilityStatus>;
   const ghCommand = commands.gh;
   const effectiveGhReason: EffectiveCapability["reason"] = ghCommand.effective ? "available"
     : ghCommand.exclusions.includes("agent-disabled") ? "agent_disabled"
@@ -59,10 +66,10 @@ export function resolveAgentCapabilities(input: CapabilityPolicyInput): AgentCap
     capabilities: {
       conversation: capability(entry.enabled, input.runtimeAvailable && input.model.available, conversationReason, "conversation"),
       room_diagnostics: capability(input.diagnosticsConfigured === true, input.runtimeAvailable && input.model.available, diagnosticsReason, "room_diagnostics", "read-only"),
-      github_read: { ...githubCapability, effective: commands.gh.effective },
+      github_read: { ...githubCapability, effective: ghCommand.effective },
       project_write: capability(selectedWriter && entry.supportsProjectWrites === true, false, writeReason, "project_write"),
     },
-    effectiveCommands: ROOM_COMMANDS.filter((command) => commands[command]?.effective),
+    effectiveCommands: ROOM_COMMANDS.filter((command) => commands[command].effective),
     commands,
   };
 }

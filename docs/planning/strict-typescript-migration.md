@@ -101,6 +101,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-runtime` | Give log-context scopes an explicit list of inherited optional identities to clear. New conversation runs and turns now remove stale turn, generation, and attempt keys instead of retaining those keys with `undefined` values. | `server/structured-logger.ts`, `server/conversation-context.ts`, `server/conversation-context.test.ts` |
 | 2026-09-19 | `server-runtime` | Construct query and pagination records only from values supplied by the caller. An explicitly parsed empty task-state filter remains present, while absent cursors and continuation limits remain absent instead of becoming present `undefined` properties. | `server/continuation-api.ts`, `server/task-api.ts`, `server/room-lifecycle-api.ts` |
 | 2026-09-19 | `server-runtime` | Model the event-stream heartbeat handle as an always-declared lifecycle slot whose value can be unset. Disconnect clears that slot, and a later connection is verified to start a new heartbeat rather than inheriting stale timer state. | `server/room-event-stream.ts`, `server/room-event-stream.test.ts` |
+| 2026-09-19 | `server-runtime` | Build command capability status as an exhaustive object checked against the canonical command-name union. Known commands are now total lookups, and adding a future command requires an explicit policy entry at compile time instead of weakening lookups with optional chaining. | `server/capability-policy.ts`, `server/capability-policy.test.ts` |
 
 # Next action
 
