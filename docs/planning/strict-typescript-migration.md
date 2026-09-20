@@ -6,7 +6,7 @@ owner: unclaimed
 reviewers: []
 depends_on: []
 reported_by: maintainer
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 # Outcome
@@ -140,6 +140,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-boundaries` | Forward repository policy collections only when the project binding request supplies them. Absence now selects the repository authority's protected-default-branch and empty validation/sensitive-path defaults instead of materializing present `undefined` overrides. | `server/project-github-binding.ts`, `server/project-github-binding.test.ts` |
 | 2026-09-19 | `server-boundaries` | Model OpenRouter catalog and credit caches as explicit mutable lifecycle slots, clear rejected requests for recovery, and preserve absence for unavailable pricing, limits, modalities, benchmarks, offers, and credit balances. External provider labels and release timestamps are validated before projection, while malformed remote metadata leaves usable local discovery fields intact. | `server/openrouter-catalog.ts`, `server/openrouter-catalog.test.ts`, `server/openrouter-integration-api.ts`, `server/openrouter-integration-api.test.ts` |
 | 2026-09-19 | `server-boundaries` | Omit unavailable abort signals from generated SDK request options, omit unavailable variant/system prompt fields, and omit unavailable assistant finish metadata from structured-turn results. The required upstream review at v1.18.25 confirmed all four are optional contracts; the complete approved downstream patch series changes structured-output retry behavior without requiring present `undefined` fields. | `server/opencode-structured-transport.ts`, `server/opencode-structured-transport.test.ts`, `integration-contracts/opencode.json` revision 49 |
+| 2026-09-20 | `server-boundaries` | Forward command-route callbacks, poll cursors, and diagnostic filters only when they are supplied. Missing route configuration and query parameters continue to select the downstream defaults instead of becoming present `undefined` overrides. | `server/command-api.ts`, `server/command-api.test.ts`, `server/room-surfaces.acceptance.test.ts` |
 
 # Next action
 
