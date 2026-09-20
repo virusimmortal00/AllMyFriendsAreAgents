@@ -50,7 +50,7 @@ silently missed.
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
-| 3 | `client-tests` | `src/**/*.test.ts?(x)` | In progress: fixture invariants | `client-runtime` | Strict inventory and focused test suites |
+| 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
@@ -96,12 +96,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-tests` | Guard captured callbacks, requests, and retry attempts after asserting their expected counts. Static ordered display data is modeled as a tuple; asynchronous mock evidence now fails with an explicit test invariant instead of relying on unchecked indexing. | `src/agent-list-sort.test.ts`, `src/api-identity.test.ts`, `src/classic-menu.test.tsx`, `src/composer.test.tsx`, `src/github-integration-panel.test.tsx`, `src/protected-work.test.tsx` |
 | 2026-09-19 | `client-tests` | Validate loaded investigation fixtures and parsed responsive-audit table/capture fields before use. Malformed planning rows remain excluded, while missing test fixtures fail explicitly instead of producing partial typed records. | `src/investigations.test.tsx`, `src/responsive-view-audit.test.ts` |
 | 2026-09-19 | `client-tests` | Inspect recorded network calls only after establishing that the expected request and body exist. Parsed roster payloads also require an entry before field assertions, so failed setup produces a targeted invariant error rather than an unchecked-access exception. | `src/room-configuration-dialog.test.tsx`, `src/roster-api.test.ts`, `src/roster-manager.test.tsx` |
+| 2026-09-19 | `client-tests` | Centralize positional test-fixture access in a fail-fast helper for reconnect event sources, message calls, and roster agents. The harness still tests exact event ordering, but missing setup evidence now reports which indexed fixture was absent. | `src/reconnect-flow.test.tsx` |
 
 # Next action
 
-Begin `client-tests` now that its `client-runtime` dependency is complete. Group
-test-fixture changes by the production invariant they exercise, and keep running
-the full inventory so diagnostics cannot move outside a declared slice.
+Begin `server-runtime` with a full file-level inventory review, then select the
+smallest coherent domain group. Keep boundary-owned files in `server-boundaries`
+so independent storage and external-service contracts remain reviewable.
 
 # Evidence
 
