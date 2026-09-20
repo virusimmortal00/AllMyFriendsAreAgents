@@ -77,6 +77,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` Git broker lifecycle | `7bbe896` | 14 Git-security tests with one platform-specific skip, including restart after close | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 56 diagnostics in 18 files; planning self-check; `git diff --check` |
 | `server-boundaries` GitHub credential lifecycle | `e2d21e1` | 29 credential-vault, device-flow, authorization, and integration-runtime tests | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 52 diagnostics in 14 files with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-boundaries` GitHub read boundary | `79988ae` | 39 read-store, room-bound read, and command-runtime GitHub tests | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 49 diagnostics in 11 files with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-boundaries` source diff parsing | `31d3ead` | 10 source-control adapter tests, including isolated rename normalization | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 43 diagnostics in 10 files with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
@@ -131,6 +132,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-boundaries` | Keep GitHub credential callbacks and mutable authorization connection state as always-declared lifecycle values. Device refresh tokens and their expiry are validated and returned as an inseparable pair, while an unavailable refresh-audit callback remains absent from vault construction. | `server/github-credential-vault.ts`, `server/github-device-authorization.ts`, `server/github-device-flow.ts`, `server/github-integration-runtime.ts` |
 | 2026-09-19 | `server-boundaries` | Preserve HTTP GET body absence, model the cache audit callback as an always-declared optional dependency, and pass only configured cache limits into room-bound GitHub reads. Unset limits continue to select `GitHubReadStore` defaults instead of becoming present `undefined` overrides. | `server/github-read-adapter.ts`, `server/github-read-store.ts`, `server/room-bound-github-read.ts` |
 | 2026-09-19 | `server-boundaries` | Parse Git's NUL-delimited name and numeric diff streams as complete boundary records. Rename and copy numstat records consume both paths and associate counts with the destination; truncated records, invalid counts, and inconsistent binary markers now fail closed instead of producing partial evidence. | `server/source-control-adapter.ts`, `server/source-control-adapter.test.ts` |
+| 2026-09-19 | `server-boundaries` | Validate comment issue and pull-request numbers before selecting a target, require exactly one present target, and pass a single-property target to the GitHub client. Zero and other invalid numbers now fail before any external call instead of exploiting truthiness or carrying present `undefined` fields. | `server/github-contribution-broker.ts`, `server/github-contribution-broker.test.ts` |
 
 # Next action
 

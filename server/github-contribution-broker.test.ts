@@ -20,6 +20,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 
 class FakeGitHub implements GitHubContributionClient {
   readonly calls: string[] = [];
+  readonly commentTargets: Array<{ issueNumber?: number; pullNumber?: number }> = [];
   pull: GitHubExternalResult | null = null;
   failNext?: Error;
   private result(kind: string, number?: number) { this.calls.push(kind); if (this.failNext) { const error = this.failNext; this.failNext = undefined; throw error; } return Promise.resolve({ id: `${kind}-id`, url: `https://github.test/${kind}`, number }); }
@@ -29,7 +30,10 @@ class FakeGitHub implements GitHubContributionClient {
   readIssue(_repository: string, number: number) { return this.result("read-issue", number); }
   readPullRequest(_repository: string, number: number) { return this.result("read-pull", number); }
   readChecks() { return this.result("read-checks"); }
-  comment() { return this.result("comment", 13); }
+  comment(_repository: string, target: { issueNumber?: number; pullNumber?: number }, _body: string, _marker: string) {
+    this.commentTargets.push(target);
+    return this.result("comment", 13);
+  }
   async publishBranch() { await this.result("publish-branch"); }
   findDraftPullRequest() { this.calls.push("find-pull"); return Promise.resolve(this.pull); }
   async createDraftPullRequest() { const result = await this.result("create-pull", 44); this.pull = result; return result; }
@@ -128,7 +132,7 @@ describe("scoped GitHub contribution broker", () => {
   it("retains a lost mutation response across restart and a later authorization rejection", async () => {
     const value = await fixture();
     const comment = value.client.comment.bind(value.client);
-    value.client.comment = async () => { await comment(); throw new GitHubClientError("Fixture response lost after mutation", true); };
+    value.client.comment = async (...args) => { await comment(...args); throw new GitHubClientError("Fixture response lost after mutation", true); };
     const request = { ...value.request, operation: "COMMENT" as const, body: "Fixture comment" };
     expect(await value.broker.execute(value.auth, request)).toEqual({ kind: "failed", reason: "Fixture response lost after mutation", retryable: true });
     expect(value.client.calls).toEqual(["comment"]);
@@ -153,8 +157,17 @@ describe("scoped GitHub contribution broker", () => {
 
   it("stores no reusable GitHub credential or caller-controlled content outside bounded hashes/results", async () => {
     const value = await fixture(); await value.broker.execute(value.auth, { ...value.request, operation: "COMMENT", idempotencyKey: "github:comment:0001", body: "Agent comment" });
+    expect(value.client.commentTargets).toEqual([{ issueNumber: 13 }]);
     const persisted = await readFile(value.file, "utf8");
     expect(persisted).not.toContain("Agent comment"); expect(persisted).not.toContain("authorization"); expect(persisted).toContain("requestHash");
+  });
+
+  it("rejects invalid comment target numbers before calling GitHub", async () => {
+    const value = await fixture();
+    await expect(value.broker.execute(value.auth, {
+      ...value.request, operation: "COMMENT", idempotencyKey: "github:comment-invalid:0001", issueNumber: 0, body: "Agent comment",
+    })).resolves.toMatchObject({ kind: "failed", reason: "A valid issue number is required", retryable: false });
+    expect(value.client.commentTargets).toEqual([]);
   });
 });
 
