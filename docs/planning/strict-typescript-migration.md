@@ -47,7 +47,7 @@ silently missed.
 | Wave | Slice | Owned paths | Status | Depends on | Completion evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
-| 2 | `client-runtime` | Non-test `src/**` | In progress: request boundaries | `shared-contracts` | Client API tests and strict inventory |
+| 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Not started | `client-runtime` | — |
@@ -91,12 +91,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Validate non-empty diagnostic chunk groups and captured improvement route IDs before indexing them. Re-check a selected trace ID inside its event callback because the selected record can change before invocation. | `src/diagnostics.tsx`, `src/improvements.tsx` |
 | 2026-09-19 | `client-runtime` | Preserve connection-health fields across snapshots only when a prior or incoming value exists. Initial room enrichment likewise applies only values returned by the request, so omission remains distinct from a present `undefined` property. | `src/room-reconciliation.ts`, `src/room-reconciliation.test.ts`, `src/App.tsx` |
 | 2026-09-19 | `client-runtime` | Keep transcript magnification within the normalized level when an internal index is unexpectedly unavailable, require the sole typing participant before naming it, and derive menu access keys with non-throwing string access. | `src/transcript-view.ts`, `src/transcript-view.test.ts`, `src/App.tsx` |
+| 2026-09-19 | `client-runtime` | Compose optional room and dialog props only from available state. This keeps child contracts exact and prevents React boundaries from converting missing availability, health, repository, protected-work, provider, capability, and selection state into present `undefined` values. | `src/App.tsx`, `src/reconnect-flow.test.tsx` |
 
 # Next action
 
-Run and review the three Wave 2 inventories, then begin one bounded runtime slice.
-Keep cross-boundary contract changes in `shared/` and update the dependent slice
-inventory whenever an exact shared type removes downstream diagnostics.
+Begin `client-tests` now that its `client-runtime` dependency is complete. Group
+test-fixture changes by the production invariant they exercise, and keep running
+the full inventory so diagnostics cannot move outside a declared slice.
 
 # Evidence
 
