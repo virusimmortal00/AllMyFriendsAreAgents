@@ -91,6 +91,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` GitHub contribution fake | `1c071ec` | 8 scoped contribution-broker tests covering reads, comments, draft publication, metadata, review, retry, restart, and stale identity | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 168 diagnostics in 36 files; planning self-check; `git diff --check` |
 | `server-tests` storage fixture invariants | `5b9e966` | 40 JSON/SQLite room-store and public-state response tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 160 diagnostics in 33 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` singleton fixture invariants | `3f9646e` | 67 assignment lifecycle, authoritative logging, capability, consultation, summarizer, repository-readiness, and event-stream tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 153 diagnostics in 26 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-tests` optional fixture composition | `9f2a717` | 123 conversation, coordinator, diagnostics, investigation, queue, MCP, and roster tests | `pnpm run typecheck`; Biome lint; all exact-optional server-test diagnostics cleared; server-test inventory reduced to 139 unchecked-index diagnostics in 23 files; planning self-check; `git diff --check` |
 
 ## Decision log
 
