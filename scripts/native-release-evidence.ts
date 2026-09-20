@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { verifyNativeArtifactSet } from "./build-native-opencode.js";
 import { verifyNativeApplicationSet } from "./package-native-application.js";
 import { loadNativeReleaseContext, serializeNativeReleaseManifest, validateNativeReleaseManifest } from "./native-release-contract.js";
+import { requiredAt } from "./type-invariants.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -232,19 +233,20 @@ export function verifyNativeReleaseEvidence(directory: string, expectedCommit?: 
   if (manifest.artifacts.length !== expectedCandidates.length) throw new Error("Native evidence manifest has a missing or extra artifact.");
   const expectedFiles = new Set(["native-evidence-manifest.json"]);
   for (let index = 0; index < expectedCandidates.length; index += 1) {
-    const expected = expectedCandidates[index]; const entry = object(manifest.artifacts[index], `manifest.artifacts[${index}]`);
+    const expected = requiredAt(expectedCandidates, index, `expected native artifact ${index}`); const entry = object(manifest.artifacts[index], `manifest.artifacts[${index}]`);
     exactKeys(entry, ["kind", "target", "path", "size", "sha256", "checksum", "sbom", "provenance"], `manifest.artifacts[${index}]`);
     if (entry.kind !== expected.kind || entry.target !== expected.target) throw new Error("Native evidence artifact order, kind, or target was changed.");
     const artifact = assertReference(root, { path: entry.path, size: entry.size, sha256: entry.sha256 }, expected.relativePath, `${expected.relativePath} artifact`);
-    const companionPaths = { checksum: `${expected.relativePath}.sha256`, sbom: `${expected.relativePath}.spdx.json`, provenance: `${expected.relativePath}.intoto.jsonl` };
-    const companions = Object.fromEntries(Object.entries(companionPaths).map(([name, item]) => [name, assertReference(root, entry[name], item, `${expected.relativePath} ${name}`)]));
-    for (const file of [artifact.path, ...Object.values(companions).map((item) => item.path)]) expectedFiles.add(file);
-    if (readFileSync(path.join(root, companions.checksum.path), "utf8") !== `${artifact.sha256}  ${path.basename(artifact.path)}\n`) throw new Error(`${artifact.path} checksum record is invalid.`);
-    const parsedSbom = object(JSON.parse(readFileSync(path.join(root, companions.sbom.path), "utf8")), `${artifact.path} SBOM`);
+    const checksum = assertReference(root, entry.checksum, `${expected.relativePath}.sha256`, `${expected.relativePath} checksum`);
+    const sbom = assertReference(root, entry.sbom, `${expected.relativePath}.spdx.json`, `${expected.relativePath} sbom`);
+    const provenance = assertReference(root, entry.provenance, `${expected.relativePath}.intoto.jsonl`, `${expected.relativePath} provenance`);
+    for (const file of [artifact.path, checksum.path, sbom.path, provenance.path]) expectedFiles.add(file);
+    if (readFileSync(path.join(root, checksum.path), "utf8") !== `${artifact.sha256}  ${path.basename(artifact.path)}\n`) throw new Error(`${artifact.path} checksum record is invalid.`);
+    const parsedSbom = object(JSON.parse(readFileSync(path.join(root, sbom.path), "utf8")), `${artifact.path} SBOM`);
     const sbomFile = object((parsedSbom.files as unknown[])?.[0], `${artifact.path} SBOM file`);
     const sbomChecksum = object((sbomFile.checksums as unknown[])?.[0], `${artifact.path} SBOM checksum`);
     if (sbomFile.fileName !== artifact.path || sbomChecksum.algorithm !== "SHA256" || sbomChecksum.checksumValue !== artifact.sha256) throw new Error(`${artifact.path} SBOM is not bound to the retained bytes.`);
-    const attestation = object(JSON.parse(readFileSync(path.join(root, companions.provenance.path), "utf8")), `${artifact.path} provenance statement`);
+    const attestation = object(JSON.parse(readFileSync(path.join(root, provenance.path), "utf8")), `${artifact.path} provenance statement`);
     const subject = object((attestation.subject as unknown[])?.[0], `${artifact.path} provenance subject`); const subjectDigest = object(subject.digest, `${artifact.path} provenance digest`);
     const predicate = object(attestation.predicate, `${artifact.path} provenance predicate`); const definition = object(predicate.buildDefinition, `${artifact.path} provenance build definition`); const parameters = object(definition.externalParameters, `${artifact.path} provenance external parameters`);
     if (subject.name !== path.basename(artifact.path) || subjectDigest.sha256 !== artifact.sha256 || JSON.stringify(parameters.source) !== JSON.stringify(source) || JSON.stringify(parameters.workflow) !== JSON.stringify(workflow)) throw new Error(`${artifact.path} provenance is not bound to the source, workflow, and retained bytes.`);

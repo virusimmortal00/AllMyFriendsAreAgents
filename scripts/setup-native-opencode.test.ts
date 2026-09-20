@@ -6,10 +6,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setupCurrentNativeOpenCode, setupNativeOpenCode } from "./setup-native-opencode.js";
+import { requiredAt } from "./type-invariants.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const roots: string[] = [];
 const sha = (value: Buffer) => createHash("sha256").update(value).digest("hex");
+const responseBody = (value: Buffer): ArrayBuffer => {
+  const copy = new Uint8Array(value.length);
+  copy.set(value);
+  return copy.buffer;
+};
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-source-setup-")); roots.push(root);
@@ -34,8 +40,9 @@ async function fixture() {
   });
   const manifestPath = path.join(root, "manifest.json");
   await writeFile(manifestPath, `${JSON.stringify({ schemaVersion: 1, application: { version: applicationVersion, commit: "b".repeat(40), repository: "https://github.com/virusimmortal00/AllMyFriendsAreAgents.git" }, downstream: { repository: "https://github.com/virusimmortal00/opencode.git", commit: "6883ca5bd35a5494fb2759018373308911c79e01", version: "1.18.25-amfaa.2", sdkVersion: "1.18.25", pluginVersion: "1.18.25" }, targets })}\n`);
-  const resources = new Map([[targets[3]!.artifact.url, artifact], [targets[3]!.sbom.url, dummy], [targets[3]!.provenance.url, provenance]]);
-  const fetch = vi.fn(async (url: string | URL) => { const content = resources.get(String(url)); return content ? new Response(content) : new Response("missing", { status: 404 }); });
+  const selectedTarget = requiredAt(targets, 3, "linux x64 release target");
+  const resources = new Map([[selectedTarget.artifact.url, artifact], [selectedTarget.sbom.url, dummy], [selectedTarget.provenance.url, provenance]]);
+  const fetch: typeof globalThis.fetch = vi.fn(async (url) => { const content = resources.get(String(url)); return content ? new Response(responseBody(content)) : new Response("missing", { status: 404 }); });
   return { root, manifestPath, fetch, targets, applicationVersion };
 }
 
@@ -54,7 +61,7 @@ describe("source OpenCode setup", () => {
   it("uses the moving current manifest only to select immutable release files", async () => {
     const value = await fixture(); const manifest = await readFile(value.manifestPath);
     const latest = "https://github.com/virusimmortal00/AllMyFriendsAreAgents/releases/latest/download/native-release-manifest.json";
-    const fetch = vi.fn(async (url: string | URL) => String(url) === latest ? new Response(manifest) : value.fetch(url));
+    const fetch: typeof globalThis.fetch = vi.fn(async (url) => String(url) === latest ? new Response(responseBody(manifest)) : value.fetch(url));
     await expect(setupCurrentNativeOpenCode({ root: value.root, platform: "linux", architecture: "x64", fetch, verify: async () => undefined })).resolves.toEqual({ reused: false, target: "linux-x64" });
     expect(fetch).toHaveBeenNthCalledWith(1, latest, { redirect: "follow" });
     expect(fetch).toHaveBeenCalledTimes(4);

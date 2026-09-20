@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { loadNativeReleaseContext, validateNativeReleaseManifest, type NativeReleaseFile, type NativeReleaseManifest } from "./native-release-contract.js";
 import { pnpmInvocation } from "./package-manager-command.js";
+import { requiredAt } from "./type-invariants.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -104,8 +105,9 @@ export async function setupNativeOpenCode(options: SetupNativeOpenCodeOptions): 
     const entries = (await run("tar", ["-tf", archive], root)).split(/\r?\n/).map((entry) => entry.replace(/^\.\//, "").replace(/\\/g, "/")).filter(Boolean);
     const candidates = entries.filter((entry) => entry === legacy || applicationPattern.test(entry));
     if (candidates.length !== 1 || new Set(entries).size !== entries.length || entries.some((entry) => entry !== "all-my-friends-are-agents/" && !entry.startsWith("all-my-friends-are-agents/") || /(?:^|\/)\.\.(?:\/|$)/.test(entry))) throw new Error("Native archive has an unsafe application runtime layout.");
-    await run("tar", ["-xf", archive, "-C", staging, candidates[0]], root).catch(async () => { await run("tar", ["-xzf", archive, "-C", staging, candidates[0]], root); });
-    const selected = path.join(staging, ...candidates[0].split("/")); const selectedMetadata = await lstat(selected);
+    const candidate = requiredAt(candidates, 0, "native archive executable");
+    await run("tar", ["-xf", archive, "-C", staging, candidate], root).catch(async () => { await run("tar", ["-xzf", archive, "-C", staging, candidate], root); });
+    const selected = path.join(staging, ...candidate.split("/")); const selectedMetadata = await lstat(selected);
     if (!selectedMetadata.isFile() || selectedMetadata.isSymbolicLink()) throw new Error("Native archive OpenCode runtime is not a regular file.");
     const extracted = path.join(staging, "all-my-friends-are-agents", "runtime", "opencode", "bin", executableName);
     if (selected !== extracted) { await mkdir(path.dirname(extracted), { recursive: true }); await copyFile(selected, extracted); }
