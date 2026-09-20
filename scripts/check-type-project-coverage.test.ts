@@ -1,5 +1,9 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  filterExistingPaths,
   findUncoveredTypeScriptFiles,
   isTypeScriptPath,
   missingRequiredCompilerOptions,
@@ -27,6 +31,20 @@ describe("TypeScript project coverage guard", () => {
         projects,
       ),
     ).toEqual(["release/runtime.d.mts", "scripts/new-tool.ts"]);
+  });
+
+  it("excludes deleted cached paths while retaining existing untracked files", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-type-coverage-"));
+    try {
+      await writeFile(path.join(root, "tracked.ts"), "export {};\n", "utf8");
+      await writeFile(path.join(root, "untracked.ts"), "export {};\n", "utf8");
+      expect(filterExistingPaths(root, ["tracked.ts", "deleted.ts", "untracked.ts"])).toEqual([
+        "tracked.ts",
+        "untracked.ts",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("requires the complete repository strictness policy", () => {

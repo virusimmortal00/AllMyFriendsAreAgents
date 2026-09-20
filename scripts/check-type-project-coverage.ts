@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -31,6 +32,10 @@ export function findUncoveredTypeScriptFiles(
   return files.filter(isTypeScriptPath).filter((file) => !covered.has(file)).sort();
 }
 
+export function filterExistingPaths(root: string, files: readonly string[]): string[] {
+  return files.filter((file) => existsSync(path.join(root, file)));
+}
+
 export function missingRequiredCompilerOptions(options: ts.CompilerOptions): string[] {
   return REQUIRED_COMPILER_OPTIONS.filter((option) => options[option] !== true);
 }
@@ -59,13 +64,16 @@ export function checkTypeProjectCoverage(root: string): {
   trackedFiles: string[];
   projects: Map<string, Set<string>>;
 } {
-  const trackedFiles = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-    .split("\0")
-    .filter(Boolean)
-    .map((file) => file.replaceAll("\\", "/"));
+  const trackedFiles = filterExistingPaths(
+    root,
+    execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\0")
+      .filter(Boolean)
+      .map((file) => file.replaceAll("\\", "/")),
+  );
   const projects = new Map<string, Set<string>>();
   const configurationFailures: string[] = [];
   for (const project of TYPECHECK_PROJECTS) {
