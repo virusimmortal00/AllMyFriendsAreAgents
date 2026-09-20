@@ -389,7 +389,12 @@ export default function App() {
       scheduleReconnect();
     }, 1_000);
     void loadRoom().then((next) => {
-      if (!cancelled) setRoom((current) => ({ ...current, availability: next.availability || current.availability, githubReadStatus: next.githubReadStatus || current.githubReadStatus, openCodeRuntime: next.openCodeRuntime || current.openCodeRuntime }));
+      if (!cancelled) setRoom((current) => ({
+        ...current,
+        ...(next.availability !== undefined ? { availability: next.availability } : {}),
+        ...(next.githubReadStatus !== undefined ? { githubReadStatus: next.githubReadStatus } : {}),
+        ...(next.openCodeRuntime !== undefined ? { openCodeRuntime: next.openCodeRuntime } : {}),
+      }));
     }).catch(() => {
       // The SSE initial snapshot is authoritative; this request only enriches CLI availability.
     });

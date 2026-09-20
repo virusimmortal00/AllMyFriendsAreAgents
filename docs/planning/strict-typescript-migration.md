@@ -89,6 +89,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Validate markdown parser captures before rendering links and omit the transcript improvement callback when unavailable. Invalid internal parser state now fails closed as plain text rather than flowing unchecked values into React. | `src/components.tsx`, `src/components.test.tsx` |
 | 2026-09-19 | `client-runtime` | Make composer mention boundaries explicit: inspect the preceding character without unchecked indexing, omit unavailable provider/model snapshots, and ignore selection keys when the active suggestion no longer exists. | `src/components.tsx`, `src/mentions.test.tsx` |
 | 2026-09-19 | `client-runtime` | Validate non-empty diagnostic chunk groups and captured improvement route IDs before indexing them. Re-check a selected trace ID inside its event callback because the selected record can change before invocation. | `src/diagnostics.tsx`, `src/improvements.tsx` |
+| 2026-09-19 | `client-runtime` | Preserve connection-health fields across snapshots only when a prior or incoming value exists. Initial room enrichment likewise applies only values returned by the request, so omission remains distinct from a present `undefined` property. | `src/room-reconciliation.ts`, `src/room-reconciliation.test.ts`, `src/App.tsx` |
 
 # Next action
 

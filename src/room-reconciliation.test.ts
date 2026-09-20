@@ -148,4 +148,18 @@ describe("room delta reconciliation", () => {
     const reconciled = reconcileRoomEvent(current, { streamId: "old", version: 2 }, snapshot(state([], { providerHealth: {} }), "new", 0));
     expect(reconciled).toMatchObject({ kind: "applied", room: { providerHealth: {} } });
   });
+
+  it("preserves optional connection state without materializing absent fields", () => {
+    const absent = reconcileRoomEvent(state(), undefined, snapshot(state()));
+    expect(absent.kind).toBe("applied");
+    if (absent.kind !== "applied") return;
+    expect(Object.hasOwn(absent.room, "availability")).toBe(false);
+    expect(Object.hasOwn(absent.room, "agentHealth")).toBe(false);
+    expect(Object.hasOwn(absent.room, "githubReadStatus")).toBe(false);
+    expect(Object.hasOwn(absent.room, "providerHealth")).toBe(false);
+
+    const current = state([], { availability: { "codex-sol": false } });
+    const preserved = reconcileRoomEvent(current, undefined, snapshot(state()));
+    expect(preserved).toMatchObject({ kind: "applied", room: { availability: { "codex-sol": false } } });
+  });
 });

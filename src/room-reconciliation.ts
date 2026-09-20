@@ -61,11 +61,19 @@ function installSnapshot(current: RoomState, next: RoomState): RoomState {
 function mergeRoomFields(current: RoomState, next: Omit<RoomState, "messages"> & { messages?: RoomMessage[] }): RoomState {
   return {
     ...next,
-    messages: next.messages || current.messages,
-    availability: next.availability || current.availability,
-    agentHealth: next.agentHealth || current.agentHealth,
-    githubReadStatus: next.githubReadStatus || current.githubReadStatus,
-    providerHealth: next.providerHealth || current.providerHealth,
+    messages: next.messages ?? current.messages,
+    ...(next.availability !== undefined
+      ? { availability: next.availability }
+      : current.availability !== undefined ? { availability: current.availability } : {}),
+    ...(next.agentHealth !== undefined
+      ? { agentHealth: next.agentHealth }
+      : current.agentHealth !== undefined ? { agentHealth: current.agentHealth } : {}),
+    ...(next.githubReadStatus !== undefined
+      ? { githubReadStatus: next.githubReadStatus }
+      : current.githubReadStatus !== undefined ? { githubReadStatus: current.githubReadStatus } : {}),
+    ...(next.providerHealth !== undefined
+      ? { providerHealth: next.providerHealth }
+      : current.providerHealth !== undefined ? { providerHealth: current.providerHealth } : {}),
   };
 }
 
