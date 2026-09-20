@@ -34,7 +34,7 @@ interface PendingAuthorization {
   intervalSeconds: number;
   nextPollAtMs: number;
   state: GitHubDeviceAuthorizationState;
-  connection?: PublicServerGitHubConnection;
+  connection: PublicServerGitHubConnection | undefined;
   failureReason?: PublicGitHubDeviceAuthorization["failureReason"];
 }
 
@@ -85,6 +85,7 @@ export class GitHubDeviceAuthorizationCoordinator {
         intervalSeconds: authorization.intervalSeconds,
         nextPollAtMs: nowMs + authorization.intervalSeconds * 1_000,
         state: "authorizing",
+        connection: undefined,
       };
       this.#flows.set(flow.flowId, flow);
       return project(flow);
