@@ -1,5 +1,5 @@
-export function requiredValue<T>(value: T | undefined, label: string): T {
-  if (value === undefined) throw new Error(`Missing test fixture: ${label}.`);
+export function requiredValue<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Missing test fixture: ${label}.`);
   return value;
 }
 

@@ -16,6 +16,7 @@ import { RoomLifecycleStore } from "./room-lifecycle.js";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import type { AssignmentRecord } from "./assignment-record.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 import { GitHubContributionStore } from "./github-contribution-store.js";
 import type { GitHubBrokerAuditRecord, GitHubOperation } from "./github-contribution-record.js";
 import type { ContributionRecord } from "./contribution-record.js";
@@ -108,7 +109,8 @@ async function fixture(backend: "json" | "sqlite") {
     async function readProject(projectId: string) {
       const human = await fetch(base + "/api/humans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Fixture reader" }) });
       expect(human.status).toBe(201);
-      const headers = { "content-type": "application/json", cookie: human.headers.get("set-cookie")!.split(";")[0] };
+      const cookie=requiredAt(requiredValue(human.headers.get("set-cookie"),"repository-repair session cookie").split(";"),0,"repository-repair cookie pair");
+      const headers = { "content-type": "application/json", cookie };
       const room = await fetch(base + "/api/rooms", { method: "POST", headers, body: JSON.stringify({ name: "Fixture read", projectId }) });
       expect(room.status).toBe(201);
       const roomId = (await room.json()).roomId;
