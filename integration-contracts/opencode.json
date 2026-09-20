@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 49,
-    "reviewedOn": "2026-09-19",
-    "result": "Refresh trigger: server/opencode-structured-transport.ts now preserves omission for unavailable SDK abort signals, prompt variant and system fields, and assistant finish metadata. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, assistant message types, and structured output schemas. Confirmed: generated SDK request options accept an absent signal, prompt variant and system fields are optional, and AssistantMessage.finish is optional. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths; its structured retry and schema-validation changes do not require present undefined fields or change these omission contracts. The recorded focused contract tests pass.",
+    "revision": 50,
+    "reviewedOn": "2026-09-20",
+    "result": "Refresh trigger: the strict server-test and storage-fixture layer now validates optional fixture omission, indexed records, ordered runtime evidence, and normalized persistence boundaries in tests that exercise the recorded OpenCode integration surfaces. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked the recorded CLI event, SDK message, session prompt, cancellation, model discovery, permission, tool, MCP configuration, and native authentication contracts against these test-only typing changes. Confirmed: the layer changes fixture validation and application-owned storage normalization without changing OpenCode arguments, transports, credentials, permissions, tool schemas, or upstream session semantics. All 291 tests in the 19-suite focused integration-contract gate pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
@@ -135,24 +135,13 @@
         "server/opencode-runtime.ts",
         "shared/model-discovery.ts"
       ],
-      "upstream": [
-        "packages/opencode/src/cli/cmd/models.ts",
-        "packages/opencode/src/provider/provider.ts"
-      ],
-      "tests": [
-        "server/model-discovery.test.ts",
-        "server/opencode-runtime.test.ts"
-      ]
+      "upstream": ["packages/opencode/src/cli/cmd/models.ts", "packages/opencode/src/provider/provider.ts"],
+      "tests": ["server/model-discovery.test.ts", "server/opencode-runtime.test.ts"]
     },
     {
       "id": "permissions-and-tools",
       "description": "Inline OpenCode permissions, the custom-tool API, and the server-owned tool configuration directory.",
-      "local": [
-        "server/agent-tools/**",
-        "server/agent-runner.ts",
-        "tsconfig.node.json",
-        "server/room-tool-attempt.ts"
-      ],
+      "local": ["server/agent-tools/**", "server/agent-runner.ts", "tsconfig.node.json", "server/room-tool-attempt.ts"],
       "upstream": [
         "packages/opencode/src/config/config.ts",
         "packages/plugin/package.json",
@@ -173,24 +162,14 @@
     {
       "id": "mcp-adapter",
       "description": "The mergeable OpenCode MCP configuration and consultation-skill adapter.",
-      "local": [
-        "plugins/all-my-friends-are-agents/adapters/opencode/**"
-      ],
-      "upstream": [
-        "packages/opencode/src/config/config.ts"
-      ],
-      "tests": [
-        "server/universal-plugin-package.test.ts",
-        "server/consultation-e2e.test.ts"
-      ]
+      "local": ["plugins/all-my-friends-are-agents/adapters/opencode/**"],
+      "upstream": ["packages/opencode/src/config/config.ts"],
+      "tests": ["server/universal-plugin-package.test.ts", "server/consultation-e2e.test.ts"]
     },
     {
       "id": "native-setup-auth",
       "description": "Native setup credential persistence and configured-provider detection through the authenticated loopback API.",
-      "local": [
-        "release/setup-auth.mjs",
-        "release/native-cli.mjs"
-      ],
+      "local": ["release/setup-auth.mjs", "release/native-cli.mjs"],
       "upstream": [
         "packages/opencode/src/cli/cmd/serve.ts",
         "packages/opencode/src/auth/index.ts",
