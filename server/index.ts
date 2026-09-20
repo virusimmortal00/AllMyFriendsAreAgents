@@ -154,13 +154,14 @@ const streamRotation = Object.fromEntries(Object.entries(DEFAULT_STREAM_ROTATION
   const prefix = `ALL_MY_FRIENDS_ARE_AGENTS_LOG_${stream.replaceAll("-", "_").toUpperCase()}`;
   return [stream, { maxBytes: configuredPositiveInteger(`${prefix}_MAX_BYTES`) || defaults.maxBytes, frequencyMs: configuredPositiveInteger(`${prefix}_FREQUENCY_MS`) || defaults.frequencyMs, retention: configuredPositiveInteger(`${prefix}_RETENTION`) || defaults.retention }];
 })) as StreamRotationConfiguration;
+const maxBufferedLogBytes = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BUFFERED_BYTES");
 const loggingFoundation = await AuthoritativeLogging.open({
   dataDirectory: storageConfiguration.dataDirectory,
   projectId: path.basename(projectRoot),
   projectPath: projectRoot,
   roomId: CANONICAL_ROOM_ID,
   rotation: streamRotation,
-  maxBufferedBytes: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_LOG_MAX_BUFFERED_BYTES"),
+  ...(maxBufferedLogBytes === undefined ? {} : { maxBufferedBytes: maxBufferedLogBytes }),
   includeStacks: isLoopbackHost && process.env.ALL_MY_FRIENDS_ARE_AGENTS_LOG_LOCAL_DEBUG_STACKS === "true",
   identity: { schemaVersion: 1, service: "all-my-friends-are-agents", serviceVersion: "0.1.0", instanceId: serverIdentity.instanceId, deploymentCommit: null, deploymentEpoch: null, environment: process.env.NODE_ENV?.slice(0, 40) || "development" },
 });
@@ -205,10 +206,12 @@ const roomActivity = new RoomActivity();
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
+const intentClassifierModel = process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL;
+const intentClassifierEndpoint = process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_ENDPOINT;
 const intentClassifier = new IntentClassifier({
   apiKey: readOpenRouterApiKey,
-  model: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL,
-  endpoint: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_ENDPOINT,
+  ...(intentClassifierModel === undefined ? {} : { model: intentClassifierModel }),
+  ...(intentClassifierEndpoint === undefined ? {} : { endpoint: intentClassifierEndpoint }),
   disabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED === "true",
   log: (level, event, fields) => { void structuredLogger.log(level, event, fields); },
 });
@@ -397,6 +400,13 @@ let implementationCapabilityRefreshTimer: ReturnType<typeof setTimeout> | undefi
 scheduleImplementationCapabilityRefresh(initialImplementationCapabilitySnapshot.refreshAt);
 const coordinatorConfigured = coordinatorEnabled();
 const coordinatorState = await SqliteCoordinatorStateStore.open(storageConfiguration.dataDirectory);
+const coordinatorIntervalMs = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_INTERVAL_MS");
+const coordinatorLeaseMs = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_LEASE_MS");
+const coordinatorRetryAfterMs = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_RETRY_AFTER_MS");
+const coordinatorMaxSelected = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED");
+const coordinatorMaxDispatched = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED");
+const coordinatorMaxAttempts = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_ATTEMPTS");
+const coordinatorTimeBudgetMs = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_TIME_BUDGET_MS");
 const coordinatorHeartbeat = new CoordinatorHeartbeat(
   store,
   coordinatorState,
@@ -409,13 +419,13 @@ const coordinatorHeartbeat = new CoordinatorHeartbeat(
   {
     enabled: coordinatorConfigured,
     workerMemberId: process.env.ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MEMBER_ID?.trim() || "coordinator",
-    intervalMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_INTERVAL_MS"),
-    leaseMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_LEASE_MS"),
-    retryAfterMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_RETRY_AFTER_MS"),
-    maxSelectedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_SELECTED"),
-    maxDispatchedPerTick: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_DISPATCHED"),
-    maxAttempts: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_MAX_ATTEMPTS"),
-    timeBudgetMs: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COORDINATOR_TIME_BUDGET_MS"),
+    ...(coordinatorIntervalMs === undefined ? {} : { intervalMs: coordinatorIntervalMs }),
+    ...(coordinatorLeaseMs === undefined ? {} : { leaseMs: coordinatorLeaseMs }),
+    ...(coordinatorRetryAfterMs === undefined ? {} : { retryAfterMs: coordinatorRetryAfterMs }),
+    ...(coordinatorMaxSelected === undefined ? {} : { maxSelectedPerTick: coordinatorMaxSelected }),
+    ...(coordinatorMaxDispatched === undefined ? {} : { maxDispatchedPerTick: coordinatorMaxDispatched }),
+    ...(coordinatorMaxAttempts === undefined ? {} : { maxAttempts: coordinatorMaxAttempts }),
+    ...(coordinatorTimeBudgetMs === undefined ? {} : { timeBudgetMs: coordinatorTimeBudgetMs }),
     onError: (error) => { void structuredLogger.log("error", "coordinator.heartbeat.failed", { error }); },
   },
 );
@@ -444,11 +454,13 @@ const investigationExecutor = new HttpInvestigationExecutor(
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_EXECUTOR_TOKEN ? `Bearer ${process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_EXECUTOR_TOKEN}` : undefined,
   process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_PROGRESS_BASE_URL?.trim() || `http://127.0.0.1:${port}`,
 );
+const investigationConcurrency = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY");
+const investigationDefaultTokenLimit = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT");
 const investigationService = new InvestigationService(investigationStore, store, investigationExecutor, {
   ownerAllowed: (agent, workId) => protectedReservations.allows(agent, workId),
   configuredEnabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATIONS_ENABLED === "true",
-  maxConcurrentGlobal: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_CONCURRENCY"),
-  defaultTokenLimit: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_INVESTIGATION_DEFAULT_TOKEN_LIMIT"),
+  ...(investigationConcurrency === undefined ? {} : { maxConcurrentGlobal: investigationConcurrency }),
+  ...(investigationDefaultTokenLimit === undefined ? {} : { defaultTokenLimit: investigationDefaultTokenLimit }),
   emergencyStopped: () => coordinatorHeartbeat.status().runtime.emergencyStopped,
   onTransition: () => broadcast(), onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
 });
@@ -471,8 +483,8 @@ registerRoomHistoryRoutes({
     return candidate.length === expected.length && timingSafeEqual(candidate, expected);
   },
 });
-registerGitHubContributionRoutes({ app, broker: githubContributionBroker, developers: developerTeam });
-registerContributionRoutes({ app, service: contributionService, developers: developerTeam, humans, sessions: humanSessions });
+registerGitHubContributionRoutes({ app, ...(githubContributionBroker ? { broker: githubContributionBroker } : {}), developers: developerTeam });
+registerContributionRoutes({ app, ...(contributionService ? { service: contributionService } : {}), developers: developerTeam, humans, sessions: humanSessions });
 registerProjectRepositoryRoutes({ app, developers: developerTeam, service: projectRepositoryScope.connection });
 
 function roomSnapshot() {

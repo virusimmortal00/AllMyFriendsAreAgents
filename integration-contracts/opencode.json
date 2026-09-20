@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 46,
+    "revision": 47,
     "reviewedOn": "2026-09-19",
-    "result": "Refresh trigger: server/agent-runner.ts now validates configured conversation identity and omits unavailable transcript, transport, process, journal, and result fields; scoped-tool refresh removes retired bindings rather than retaining present undefined values. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, cli-jsonl, and permissions-and-tools, including authenticated server startup, SDK session and prompt types, CLI JSON event projection, inline permissions, custom-tool discovery, variants, and provider telemetry. Confirmed: the local object-shape changes preserve the same OpenCode command arguments, permission policy, structured SDK calls, and event interpretation. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional runner contract change. The recorded focused contract tests pass.",
+    "result": "Refresh trigger: server/index.ts now omits unavailable startup configuration overrides and optional contribution services so downstream constructors retain their own defaults. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, and structured response types. Confirmed: this startup-composition change does not alter OpenCode executable selection, server arguments, credentials, SDK requests, or structured-turn behavior. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional startup contract change. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
