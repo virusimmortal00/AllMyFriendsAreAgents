@@ -261,6 +261,9 @@ describe("OpenCode runtime contract", () => {
     expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" }, costUsd: 0.0037 });
     const invocation = structuredTransport.run.mock.calls[0][0];
     expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: "plan" });
+    expect(Object.hasOwn(invocation, "variant")).toBe(false);
+    expect(Object.hasOwn(invocation, "sessionId")).toBe(false);
+    expect(Object.hasOwn(invocation, "signal")).toBe(false);
     expect(invocation.prompt).toContain("Return only the requested structured room-turn object");
     expect(invocation.prompt).not.toContain("<<<NEXT>>>");
     expect(invocation.prompt).not.toContain("TURN_DISPOSITION:");

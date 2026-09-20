@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 45,
+    "revision": 46,
     "reviewedOn": "2026-09-19",
-    "result": "Refresh trigger: server/model-discovery.ts now validates version captures and catalog line access before use, and preserves omission for unavailable pricing, limit, and configured-default fields. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected packages/opencode/src/cli/cmd/models.ts and packages/opencode/src/provider/provider.ts. Confirmed: models --verbose still emits each provider/model identity followed by the JSON model record consumed by the compatibility parser, including cost, limit, capability, and variant metadata. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 does not modify either model-discovery source path. The local change hardens parsing and output construction without changing OpenCode arguments or inferred upstream behavior; the recorded focused contract tests pass.",
+    "result": "Refresh trigger: server/agent-runner.ts now validates configured conversation identity and omits unavailable transcript, transport, process, journal, and result fields; scoped-tool refresh removes retired bindings rather than retaining present undefined values. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, cli-jsonl, and permissions-and-tools, including authenticated server startup, SDK session and prompt types, CLI JSON event projection, inline permissions, custom-tool discovery, variants, and provider telemetry. Confirmed: the local object-shape changes preserve the same OpenCode command arguments, permission policy, structured SDK calls, and event interpretation. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional runner contract change. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
