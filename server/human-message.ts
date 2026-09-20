@@ -20,7 +20,7 @@ export async function addHumanMessageOnce(
     ...human,
     clientMessageId,
     mentions,
-    continuationRequest,
+    ...(continuationRequest !== undefined ? { continuationRequest } : {}),
   });
   return { inserted: true as const, message };
 }

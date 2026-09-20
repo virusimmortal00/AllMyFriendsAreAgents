@@ -512,7 +512,7 @@ export class CoordinatorHeartbeat {
     const selected: Array<{ improvement: Improvement; action: AutonomousAction }> = [];
     let cursor: string | undefined;
     while (selected.length < limit) {
-      const page = await this.repository.listImprovements({ states: ["APPROVED", "IN_PROGRESS"], limit: Math.min(100, limit), cursor });
+      const page = await this.repository.listImprovements({ states: ["APPROVED", "IN_PROGRESS"], limit: Math.min(100, limit), ...(cursor !== undefined ? { cursor } : {}) });
       for (const improvement of page.items) {
         const action = (["ANALYZE", "RUN_TESTS", "EDIT_SANDBOX"] as const).find((candidate) => this.actionable(improvement, candidate));
         if (action) selected.push({ improvement, action });
