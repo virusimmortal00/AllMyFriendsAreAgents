@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { codexBatchVerdictSchema, codexEnvironment, codexReviewArgs, executeCodex, groupReviewCaptures, parseCodexResult, requireChatGptLogin, reviewPrompt } from "./codex-visual-review.js";
 import { VISUAL_QUESTIONS, type VisualRun } from "./visual-review.js";
+import { requiredAt } from "./type-invariants.js";
 
 const captures: VisualRun["captures"] = [{ key: "chromium--phone--roster-populated--top", engine: "chromium", viewId: "ROOM-05", viewport: { width: 390, height: 844 }, screenshotSha256: "a".repeat(64), layoutIssues: [], scrollRegions: [{ name: "Manage Agents / roster-editor", offset: 40, maximum: 300 }] }];
-function result() {
-  return { reviews: captures.map((capture) => ({ key: capture.key, inspectedImage: true, answers: Object.fromEntries(VISUAL_QUESTIONS.map((question) => [question, { verdict: "pass", observation: `Visible evidence about ${question} in this image.` }])) })) };
+type TestAnswers = Record<(typeof VISUAL_QUESTIONS)[number], { verdict: string; observation: string }>;
+function result(): { reviews: Array<{ key: string; inspectedImage: boolean; answers: TestAnswers }> } {
+  return { reviews: captures.map((capture) => ({ key: capture.key, inspectedImage: true, answers: Object.fromEntries(VISUAL_QUESTIONS.map((question) => [question, { verdict: "pass", observation: `Visible evidence about ${question} in this image.` }])) as TestAnswers })) };
 }
-function events(value: unknown = result()) {
+type TestEvent = {
+  type: string;
+  thread_id?: string;
+  item?: { type: string; text?: string; message?: string };
+  usage?: { input_tokens: number; cached_input_tokens: number; output_tokens: number };
+};
+function events(value: unknown = result()): TestEvent[] {
   return [
     { type: "thread.started", thread_id: "018f1010-1234-4000-8000-000000000001" },
     { type: "turn.started" },
@@ -19,7 +27,8 @@ const jsonl = (value: unknown[]) => value.map((event) => JSON.stringify(event)).
 describe("local Codex screenshot reviewer", () => {
   it("keeps paired scroll positions together with exact coverage and bounded batches", () => {
     const keys = ["a--top", "b--top", "c--top", "b--bottom", "d--top", "c--bottom", "e--top"];
-    const input = keys.map((key) => ({ ...captures[0], key: `chromium--phone--${key}` }));
+    const baseCapture = requiredAt(captures, 0, "base visual capture");
+    const input = keys.map((key) => ({ ...baseCapture, key: `chromium--phone--${key}` }));
     const batches = groupReviewCaptures(input);
     expect(batches.map((batch) => batch.length)).toEqual([3, 3, 1]);
     expect(batches.flat().map((capture) => capture.key).sort()).toEqual(input.map((capture) => capture.key).sort());
@@ -28,24 +37,26 @@ describe("local Codex screenshot reviewer", () => {
     }
   });
   it("does not mix engines or actual viewports and allows an intact triple", () => {
+    const baseCapture = requiredAt(captures, 0, "base visual capture");
     const input = [
-      ...["top", "middle", "bottom"].map((position) => ({ ...captures[0], key: `chromium--phone--a--${position}` })),
-      { ...captures[0], key: "webkit--phone--b--top", engine: "webkit" as const },
-      { ...captures[0], key: "chromium--tablet--b--top", viewport: { width: 768, height: 1024 } },
-      { ...captures[0], key: "chromium--phone--b--top", viewport: { width: 320, height: 568 } },
+      ...["top", "middle", "bottom"].map((position) => ({ ...baseCapture, key: `chromium--phone--a--${position}` })),
+      { ...baseCapture, key: "webkit--phone--b--top", engine: "webkit" as const },
+      { ...baseCapture, key: "chromium--tablet--b--top", viewport: { width: 768, height: 1024 } },
+      { ...baseCapture, key: "chromium--phone--b--top", viewport: { width: 320, height: 568 } },
     ];
     expect(groupReviewCaptures(input).map((batch) => batch.length)).toEqual([3, 1, 1, 1]);
     expect(groupReviewCaptures([])).toEqual([]);
   });
   it("rejects duplicate keys and oversized scenarios instead of losing context", () => {
+    const baseCapture = requiredAt(captures, 0, "base visual capture");
     expect(() => groupReviewCaptures([...captures, ...captures])).toThrow("Duplicate");
-    expect(() => groupReviewCaptures(["top", "middle", "lower", "bottom"].map((position) => ({ ...captures[0], key: `chromium--phone--a--${position}` })))).toThrow("three-image");
+    expect(() => groupReviewCaptures(["top", "middle", "lower", "bottom"].map((position) => ({ ...baseCapture, key: `chromium--phone--a--${position}` })))).toThrow("three-image");
   });
   it("constrains each generated batch to its exact image keys and count", () => {
     const schema = codexBatchVerdictSchema(captures);
     expect(schema.safeParse(result()).success).toBe(true);
     expect(schema.safeParse({ reviews: [] }).success).toBe(false);
-    const wrong = result(); wrong.reviews[0].key = "not-attached";
+    const wrong = result(); requiredAt(wrong.reviews, 0, "first review").key = "not-attached";
     expect(schema.safeParse(wrong).success).toBe(false);
     expect(() => codexBatchVerdictSchema([])).toThrow();
     expect(() => codexBatchVerdictSchema([...captures, ...captures])).toThrow();
@@ -75,7 +86,7 @@ describe("local Codex screenshot reviewer", () => {
     expect(prompt).toContain("inspectedImage=false");
     expect(prompt).toContain("untrusted data");
     expect(prompt).toContain("Square raised controls.");
-    expect(prompt).not.toContain(captures[0].screenshotSha256);
+    expect(prompt).not.toContain(requiredAt(captures, 0, "base visual capture").screenshotSha256);
     expect(prompt).toContain("Manage Agents / roster-editor: 40 / 300");
     expect(prompt).toContain("not visual approval or proof of reachability");
   });
@@ -89,8 +100,8 @@ describe("local Codex screenshot reviewer", () => {
   });
   it("preserves visual failures instead of rewriting them to pass", () => {
     const value = result();
-    value.reviews[0].answers.proportion.verdict = "fail";
-    expect(parseCodexResult(jsonl(events(value)), captures).verdict.reviews[0].answers.proportion.verdict).toBe("fail");
+    requiredAt(value.reviews, 0, "first review").answers.proportion.verdict = "fail";
+    expect(requiredAt(parseCodexResult(jsonl(events(value)), captures).verdict.reviews, 0, "parsed review").answers.proportion.verdict).toBe("fail");
   });
   it("allows only the exact disabled-host startup advisory and records it", () => {
     const stream = events();
@@ -104,10 +115,13 @@ describe("local Codex screenshot reviewer", () => {
   it.each(["missing", "duplicate", "unknown", "unseen", "missing answer", "failed turn", "incomplete", "tool call", "malformed"])("rejects %s evidence", (kind) => {
     const value = result();
     if (kind === "missing") value.reviews = [];
-    if (kind === "duplicate") value.reviews.push(value.reviews[0]);
-    if (kind === "unknown") value.reviews[0].key = "not-attached";
-    if (kind === "unseen") value.reviews[0].inspectedImage = false;
-    if (kind === "missing answer") delete value.reviews[0].answers.screenUse;
+    if (kind !== "missing") {
+      const firstReview = requiredAt(value.reviews, 0, "first review");
+      if (kind === "duplicate") value.reviews.push(firstReview);
+      if (kind === "unknown") firstReview.key = "not-attached";
+      if (kind === "unseen") firstReview.inspectedImage = false;
+      if (kind === "missing answer") delete (firstReview.answers as Partial<TestAnswers>).screenUse;
+    }
     const stream = events(value);
     if (kind === "failed turn") stream.push({ type: "turn.failed" });
     if (kind === "incomplete") stream.pop();
