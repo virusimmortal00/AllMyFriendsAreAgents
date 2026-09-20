@@ -124,11 +124,14 @@ export class ConsultationRunner {
   async start(input: StartConsultationInput): Promise<CreateConsultationResult> {
     if (this.closed) throw new Error("Consultation runner is closed");
     const consultationId = input.consultationId ?? randomUUID();
+    const { context: _context, requestedParticipantIds: _requestedParticipantIds, ...requestFields } = input.request;
+    const context = sanitizeConsultationContext(input.request.context);
+    const requestedParticipantIds = input.request.requestedParticipantIds === undefined ? undefined : [...input.request.requestedParticipantIds];
     const request: ConsultationRequest = {
-      ...input.request,
+      ...requestFields,
       topic: publicText(input.request.topic, 8_000),
-      context: sanitizeConsultationContext(input.request.context),
-      requestedParticipantIds: input.request.requestedParticipantIds ? [...input.request.requestedParticipantIds] : undefined,
+      ...(context !== undefined ? { context } : {}),
+      ...(requestedParticipantIds !== undefined ? { requestedParticipantIds } : {}),
       dialogue: { enabled: input.dialogue?.enabled === true, ...boundLimits(input.dialogue) },
     };
     const result = await this.repository.createConsultation({ ...input, consultationId, idempotencyScope: input.provenance.actorId, request, now: this.now() });
@@ -162,7 +165,7 @@ export class ConsultationRunner {
     for (const room of rooms) {
       let cursor: string | undefined;
       do {
-        const page = await this.repository.listConsultations({ roomId: room, states: ["queued", "discussing", "input_required"], cursor, limit: 100 });
+        const page = await this.repository.listConsultations({ roomId: room, states: ["queued", "discussing", "input_required"], ...(cursor !== undefined ? { cursor } : {}), limit: 100 });
         recovered.push(...page.items);
         for (const consultation of page.items) if (consultation.state !== "input_required") this.schedule(consultation);
         cursor = page.nextCursor ?? undefined;
@@ -402,7 +405,11 @@ function artifactFrom(consultation: Consultation, output: Extract<ConsultationSy
   const supplied = (output.dissent ?? []).map(({ participantId, position }) => ({ participantId: publicText(participantId, 256), position: publicText(position, 4_000) }));
   return { schemaVersion: 1, synthesis: publicText(output.synthesis, 16_000), recommendations: (output.recommendations ?? []).slice(0, 64).map((value) => publicText(value, 2_000)).filter(Boolean), evidence: sanitizeEvidence([...(consultation.execution?.turns.flatMap(({ evidence }) => evidence) ?? []), ...(output.evidence ?? [])]), blockers: (output.blockers ?? []).slice(0, 32).map((value) => publicText(value, 1_000)).filter(Boolean), dissent: [...recordedDissent, ...supplied.filter((entry) => !recordedDissent.some((candidate) => candidate.participantId === entry.participantId && candidate.position === entry.position))], provenance: (output.provenance?.length ? output.provenance : consultation.provenance).map(sanitizeProvenance), completedAt, completedBy: publicText(output.completedBy ?? "consultation-synthesizer", 256) || "consultation-synthesizer" };
 }
-function sanitizeProvenance(value: ConsultationProvenance): ConsultationProvenance { return { ...value, actorId: publicText(value.actorId, 256), sourceId: value.sourceId ? publicText(value.sourceId, 2_000) : undefined }; }
+function sanitizeProvenance(value: ConsultationProvenance): ConsultationProvenance {
+  const { sourceId: _sourceId, ...provenance } = value;
+  const sourceId = value.sourceId ? publicText(value.sourceId, 2_000) : undefined;
+  return { ...provenance, actorId: publicText(value.actorId, 256), ...(sourceId !== undefined ? { sourceId } : {}) };
+}
 function key(identity: ConsultationIdentity) { return `${identity.roomId.length}:${identity.roomId}${identity.consultationId}`; }
 function changeFailure(result: { kind: "conflict"; expectedRevision: number; actualRevision: number } | { kind: "rejected"; reason: string }): ConsultationOperationResult { return result.kind === "conflict" ? { kind: "conflict", reason: `Expected revision ${result.expectedRevision}; actual revision is ${result.actualRevision}.` } : { kind: "rejected", reason: result.reason }; }
 function completeOperation(operations: ConsultationExecution["providerOperations"], operationKey: string, completedAt: string) { return operations.map((operation) => operation.operationKey === operationKey ? { ...operation, status: "completed" as const, completedAt } : operation); }

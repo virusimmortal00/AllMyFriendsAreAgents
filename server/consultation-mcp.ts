@@ -74,8 +74,8 @@ export class DurableConsultationMcpService {
       idempotencyKey: input.idempotency_key,
       request: {
         topic: input.topic,
-        context: input.context,
-        requestedParticipantIds: input.requested_participant_ids,
+        ...(input.context !== undefined ? { context: input.context } : {}),
+        ...(input.requested_participant_ids !== undefined ? { requestedParticipantIds: input.requested_participant_ids } : {}),
       },
       provenance: {
         kind: "agent",
@@ -83,7 +83,7 @@ export class DurableConsultationMcpService {
         sourceId: `mcp:start:${digest(input.idempotency_key).slice(0, 24)}`,
         recordedAt: this.now(),
       },
-      dialogue: input.dialogue,
+      ...(input.dialogue !== undefined ? { dialogue: input.dialogue } : {}),
     });
     if (result.kind === "idempotency_conflict" || result.kind === "identity_conflict") return { kind: "idempotency_conflict" };
     if (result.kind === "replayed") {
