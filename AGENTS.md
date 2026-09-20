@@ -253,6 +253,10 @@ Before publishing an issue, confirm that:
 
 ## Pull requests and commits
 
+- Prefer pull requests at or below 50 changed files and 1,000 changed lines.
+  Required CI rejects changes above 100 files or 5,000 lines. Split larger work
+  into dependency-ordered stacked pull requests, keep each layer independently
+  understandable, and run the complete quality gate for every layer.
 - Pull request descriptions should explain what changed, why it changed, and
   how it was verified without reconstructing the work from chat.
 - Commit messages should be concise and descriptive. Omit private provenance and

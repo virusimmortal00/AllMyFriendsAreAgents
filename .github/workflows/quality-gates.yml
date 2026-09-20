@@ -40,6 +40,12 @@ jobs:
           sudo apt-get "${ubuntu_sources[@]}" update
           sudo apt-get "${ubuntu_sources[@]}" install --no-install-recommends --yes bubblewrap
       - run: pnpm install --frozen-lockfile
+      - name: Enforce pull request review size
+        if: github.event_name == 'pull_request'
+        run: pnpm run check:pr-size
+        env:
+          PR_SIZE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_SIZE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       - name: Enforce Biome lint rules
         run: pnpm run lint
       - name: Enforce upstream integration contracts

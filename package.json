@@ -24,6 +24,7 @@
     "evidence:native-release": "tsx scripts/native-release-evidence.ts",
     "check:quality": "pnpm run lint && pnpm run check:integration-contracts && pnpm run check:api-contracts && pnpm run check:ui-standards && pnpm run build && pnpm test",
     "check:api-contracts": "tsx scripts/check-api-route-contracts.ts",
+    "check:pr-size": "tsx scripts/check-pr-size.ts",
     "check:type-coverage": "tsx scripts/check-type-project-coverage.ts",
     "check:integration-contracts": "tsx scripts/check-integration-contracts.ts --run-tests",
     "check:opencode-binary": "tsx scripts/check-opencode-binary-contract.ts",
