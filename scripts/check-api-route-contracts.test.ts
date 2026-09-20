@@ -143,6 +143,16 @@ describe("client call extraction", () => {
     expect(calls).toEqual([]);
     expect(problems[0]?.message).toContain("request must be called");
   });
+
+  it("flags request calls without a path argument", () => {
+    const { calls, problems } = extractClientRequests("request();", "src/api.ts");
+    expect(calls).toEqual([]);
+    expect(problems).toEqual([{
+      file: "src/api.ts",
+      line: 1,
+      message: "request must include a path argument",
+    }]);
+  });
 });
 
 describe("browser boundary", () => {

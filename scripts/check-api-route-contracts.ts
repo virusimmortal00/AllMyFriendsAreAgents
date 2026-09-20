@@ -263,7 +263,7 @@ export function extractClientRequests(
             method.method,
           ),
         );
-      } else if (node.arguments.length && ts.isIdentifier(node.expression) && node.expression.text === "request") {
+      } else if (ts.isIdentifier(node.expression) && node.expression.text === "request") {
         const argument = node.arguments[0];
         if (!argument) {
           problems.push({ file, line: lineOf(sourceFile, node), message: "request must include a path argument" });
