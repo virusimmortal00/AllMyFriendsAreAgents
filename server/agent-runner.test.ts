@@ -10,6 +10,7 @@ import { defaultRoomConfiguration } from "./room-configuration.js";
 import { roomCommandGuide } from "../shared/command-domain.js";
 import { ProviderInvocationError, providerFailureCode, providerRetryAfterMs } from "./provider-failure.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
+import { requiredAt } from "./test-invariants.js";
 import type { RoomState } from "./types.js";
 import { parseAgentTurn } from "./conversation.js";
 
@@ -161,7 +162,7 @@ describe("OpenCode runtime contract", () => {
       error: { name: "APIError", data: { message: "Quota exceeded", isRetryable: false, responseBody: JSON.stringify({ type: "error", error: { code: "insufficient_quota", account: "private" } }) } },
     }));
     expect(parsed.errors).toEqual([{ source: "opencode", name: "APIError", message: "Quota exceeded", retryable: false, code: "insufficient_quota" }]);
-    const error = new ProviderInvocationError(parsed.errors[0]);
+    const error = new ProviderInvocationError(requiredAt(parsed.errors,0,"parsed provider error"));
     expect(error).not.toHaveProperty("process");
     expect(error.message).toBe("Provider invocation failed.");
     expect(Object.keys(error)).not.toContain("failure");
@@ -259,7 +260,7 @@ describe("OpenCode runtime contract", () => {
     const result = await runAgent("codex-sol", state, "Answer once.", false, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { runtimeCommand: () => "/app/runtime/opencode/bin/opencode", structuredTransport });
 
     expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" }, costUsd: 0.0037 });
-    const invocation = structuredTransport.run.mock.calls[0][0];
+    const invocation = requiredAt(structuredTransport.run.mock.calls,0,"structured transport call")[0];
     expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: "plan" });
     expect(Object.hasOwn(invocation, "variant")).toBe(false);
     expect(Object.hasOwn(invocation, "sessionId")).toBe(false);
@@ -368,8 +369,8 @@ describe("room prompt context", () => {
     expect(prompt).toContain("including agents from the same provider");
     expect(prompt).toContain('Before using continuity language such as "still," "as I said," or "my earlier point,"');
     expect(prompt).not.toContain("CURRENT PARTICIPANT STYLES");
-    expect(prompt).not.toContain(`Alice: ${JSON.stringify(state.humans[0].style)}`);
-    expect(prompt).not.toContain(`Bob: ${JSON.stringify(state.humans[1].style)}`);
+    expect(prompt).not.toContain(`Alice: ${JSON.stringify(requiredAt(state.humans,0,"Alice fixture").style)}`);
+    expect(prompt).not.toContain(`Bob: ${JSON.stringify(requiredAt(state.humans,1,"Bob fixture").style)}`);
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Your current outgoing message-body style is ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).not.toContain(JSON.stringify(state.settings.participantStyles["claude-sonnet"]));

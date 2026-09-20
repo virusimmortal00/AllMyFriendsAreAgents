@@ -70,7 +70,7 @@ describe("live roster API", () => {
       // Authorized catalog access reaches validation, not a control-plane sign-in gate.
       expect((await api.call("/api/model-details")).status).toBe(400);
       expect((await api.call("/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fz-ai%2Fglm-5.3-flash")).status).toBe(404);
-      for (const [route, method] of [["/api/provider-setup/initiate", "POST"], ["/api/provider-setup/refresh", "POST"], ["/api/control/principals", "GET"], ["/api/control/audit", "GET"]]) {
+      for (const [route, method] of [["/api/provider-setup/initiate", "POST"], ["/api/provider-setup/refresh", "POST"], ["/api/control/principals", "GET"], ["/api/control/audit", "GET"]] as const) {
         expect((await api.call(route, { method, ...(method === "POST" ? { body: "{}" } : {}) })).status).toBe(401);
       }
     } finally { await api.close(); }
@@ -139,7 +139,7 @@ describe("live roster API", () => {
     try {
       const foreignCookie = `${HUMAN_SESSION_COOKIE}=${api.sessions.issue("another-human")}`;
       for (const token of ["", "forged", api.sessions.csrfToken(foreignCookie)!]) {
-        for (const [route, method, body] of [["/api/roster", "PUT", JSON.stringify({ expectedRevision: 1, entries: [] })], ["/api/model-discovery/refresh", "POST", "{}"]]) {
+        for (const [route, method, body] of [["/api/roster", "PUT", JSON.stringify({ expectedRevision: 1, entries: [] })], ["/api/model-discovery/refresh", "POST", "{}"]] as const) {
           expect((await api.call(route, { method, headers: { "X-AMFAA-CSRF": token }, body })).status).toBe(403);
         }
       }
@@ -155,7 +155,7 @@ describe("live roster API", () => {
     const api = await fixture({ realControl: true, humanIsMember: () => false });
     try {
       for (const authenticated of [false, true]) {
-        for (const [route, method] of [["/api/roster", "GET"], ["/api/roster", "PUT"], ["/api/model-discovery/refresh", "POST"], ["/api/model-details", "GET"], ["/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fz-ai%2Fglm-5.3-flash", "GET"]]) {
+        for (const [route, method] of [["/api/roster", "GET"], ["/api/roster", "PUT"], ["/api/model-discovery/refresh", "POST"], ["/api/model-details", "GET"], ["/api/openrouter-model-page?url=https%3A%2F%2Fopenrouter.ai%2Fz-ai%2Fglm-5.3-flash", "GET"]] as const) {
           expect((await api.call(route, { method, ...(method !== "GET" ? { body: "{}" } : {}) }, authenticated)).status).toBe(authenticated ? 403 : 401);
         }
       }

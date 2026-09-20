@@ -8,6 +8,7 @@ import type { ModelDiscoveryService } from "./model-discovery.js";
 import { RoomCommandToolBroker } from "./room-command-tool.js";
 import { RoomDiagnosticsToolBroker, type RoomDiagnosticsCapabilityBinding } from "./room-diagnostics-tool.js";
 import type { RoomToolAttempt } from "./room-tool-attempt.js";
+import { requiredAt } from "./test-invariants.js";
 import type { RoomState } from "./types.js";
 
 function fixture() {
@@ -66,8 +67,7 @@ describe("room tool generation-attempt lifetime", () => {
         throw new Error("session prior-provider-session not found");
       }
       if (invocations === 2) {
-        expect(await api.use(api.issued[0])).toEqual([undefined, undefined]);
-        expect(api.issued[0].attempt.isActive()).toBe(false);
+        const issued=requiredAt(api.issued,0,"initial room-tool attempt");expect(await api.use(issued)).toEqual([undefined, undefined]);expect(issued.attempt.isActive()).toBe(false);
       }
       // Persisting a replacement session must not change attempt authority.
       api.state.sessions["codex-sol"] = { ...api.stored, id: "replacement-provider-session" };
@@ -108,14 +108,14 @@ describe("room tool generation-attempt lifetime", () => {
       const api = fixture();
       await expect(api.run(async () => { throw new Error("fixture provider failure"); }, accepted)).rejects.toThrow();
       expect(await api.use()).toEqual([undefined, undefined]);
-      expect(api.issued[0].attempt.isActive()).toBe(false);
+      expect(requiredAt(api.issued,0,"failed room-tool attempt").attempt.isActive()).toBe(false);
     }
   });
 
   it("does not reactivate completed leases when the same participant starts another generation", async () => {
     const api = fixture();
     await api.run(async () => { expect((await api.use()).every(Boolean)).toBe(true); });
-    const old = api.issued[0];
+    const old = requiredAt(api.issued,0,"completed room-tool attempt");
     await api.run(async () => {
       expect(api.issued.at(-1)!.attempt.generationId).not.toBe(old.attempt.generationId);
       expect(await api.use(old)).toEqual([undefined, undefined]);
