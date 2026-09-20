@@ -158,7 +158,7 @@ export async function rebuildJsonImportSourceWorkBindings(database: DatabaseSync
       const origin = candidates.length === 1 ? candidates[0] : undefined;
       const terminal = ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycle_status);
       insertBinding(database, { kind: "assignment", workId: assignment.assignment_id, roomId, ...scope,
-        originTaskId: origin?.taskId, originTaskRevision: origin?.revision, state: terminal ? "terminal-history" : "needs-reconciliation",
+        ...(origin ? { originTaskId: origin.taskId, originTaskRevision: origin.revision } : {}), state: terminal ? "terminal-history" : "needs-reconciliation",
         reasonCode: terminal ? "legacy-terminal-history" : "legacy-missing-implementation-job-worker",
         evidence: { priorLifecycleStatus: assignment.lifecycle_status, priorLifecycleRevision: assignment.lifecycle_revision || 1, originCandidates: candidates.length }, now: timestamp });
     }
@@ -278,7 +278,7 @@ export async function ensureDurableIdentityMigration(
         const scope = roomBindings.get(assignment.room_id) || { projectId: null, repositoryReferenceId: null };
         const terminal = ["COMPLETED", "CANCELLED", "DISPOSED"].includes(assignment.lifecycle_status);
         insertBinding(database, { kind: "assignment", workId: assignment.assignment_id, roomId: assignment.room_id, ...scope,
-          originTaskId: origin?.taskId, originTaskRevision: origin?.revision, state: terminal ? "terminal-history" : "needs-reconciliation",
+          ...(origin ? { originTaskId: origin.taskId, originTaskRevision: origin.revision } : {}), state: terminal ? "terminal-history" : "needs-reconciliation",
           reasonCode: terminal ? "legacy-terminal-history" : "legacy-missing-implementation-job-worker",
           evidence: { priorLifecycleStatus: assignment.lifecycle_status, priorLifecycleRevision: assignment.lifecycle_revision || 1, originCandidates: candidates.length }, now: timestamp });
       }
