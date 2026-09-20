@@ -94,6 +94,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` optional fixture composition | `9f2a717` | 123 conversation, coordinator, diagnostics, investigation, queue, MCP, and roster tests | `pnpm run typecheck`; Biome lint; all exact-optional server-test diagnostics cleared; server-test inventory reduced to 139 unchecked-index diagnostics in 23 files; planning self-check; `git diff --check` |
 | `server-tests` preflight and intent fixtures | `193706c` | 46 human-message, intent-classifier, preflight-gate, and preflight-store tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 128 unchecked-index diagnostics in 19 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` application boundary fixtures | `f0b0749` | 30 protected-work, repository-repair, room-tool, governed-improvement, and room-lifecycle GitHub application tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 119 unchecked-index diagnostics in 14 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-tests` agent runtime fixtures | `592610e` | 85 agent-runner, room-tool-attempt, and roster API tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 109 unchecked-index diagnostics in 11 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
