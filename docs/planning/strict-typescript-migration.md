@@ -67,6 +67,12 @@ At the start and end of every slice, the implementing agent must:
 5. Run the complete inventory to confirm no diagnostic became unassigned or moved
    into another slice unexpectedly.
 
+## Completed slice evidence
+
+| Slice | Commit | Focused checks | Repository checks |
+| --- | --- | --- | --- |
+| `server-runtime` | `f35d60e` | 180 conversation, command, delivery, protected-work, room-surface, and room-tool tests; 290 OpenCode integration-contract tests | `pnpm run typecheck`; Biome lint; `--assert-clean=server-runtime`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+
 ## Decision log
 
 | Date | Slice | Decision and rationale | Paths/evidence |
@@ -78,6 +84,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `shared-contracts` | Omit unknown roster profiles from mention suggestions, retain explicit ambiguity handling during offset reconciliation, and omit unavailable provider/model snapshots rather than serializing present `undefined` values. | `shared/mentions.ts`, `shared/mentions.test.ts` |
 | 2026-09-19 | `shared-contracts` | Preserve absence for unavailable diagnostics and legacy model-selection fields. A missing diagnostic is distinct from a present empty value, while legacy reasoning effort is migrated only when it is actually present. | `shared/model-discovery.ts`, `shared/roster.ts`, `server/model-discovery.test.ts`, `shared/roster.test.ts` |
 | 2026-09-19 | `client-runtime` | Centralize optional abort-signal construction for read requests so an absent signal remains absent from `RequestInit`; continue routing malformed API roots through room scope instead of treating an unchecked segment as global. | `src/api.ts` |
+| 2026-09-19 | `client-runtime` | Keep optional abort signals omitted, but compose them inside each request's object literal so the API-route guardrail can continue proving the HTTP method statically. A shared options helper hid that evidence and caused the full quality gate to reject ten otherwise valid reads. | `src/api.ts`, `pnpm run check:api-contracts` |
 | 2026-09-19 | `client-runtime` | Model explorer page collections as non-empty because rendering requires a selected fallback; keep an explicit guard for filtered keyboard-navigation results because every page may be disabled. | `src/administration-window.tsx`, `src/explorer-layout.tsx` |
 | 2026-09-19 | `client-runtime` | Build sortable participant display records with optional maker/provider fields only when known. This preserves the concrete record subtype through generic sorting and prevents an absent display attribute from erasing unrelated fields during inference. | `src/components.tsx`, `src/roster-manager.tsx`, `src/agent-list-sort.ts` |
 | 2026-09-19 | `client-runtime` | Centralize provider-mark prop construction so unknown maker and access-provider identities are omitted consistently across roster and model views. The component contract remains exact rather than accepting present `undefined`. | `src/provider-mark.tsx`, `src/provider-mark.test.ts`, `src/components.tsx`, `src/model-picker.tsx`, `src/roster-manager.tsx` |

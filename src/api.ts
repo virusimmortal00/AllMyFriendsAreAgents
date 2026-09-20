@@ -48,10 +48,6 @@ export function scopedRequestPath(path:string){
     : `/api/rooms/${encodeURIComponent(roomId)}/${path.slice(5)}`;
 }
 
-function readRequestOptions(signal?: AbortSignal): RequestInit {
-  return { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) };
-}
-
 export class ApiRequestError extends Error {
   constructor(message: string, readonly outcomeUnknown = false, readonly status?: number, readonly body?: unknown) {
     super(message);
@@ -170,26 +166,26 @@ export async function refreshModelDiscovery(): Promise<ModelDiscoveryResult> {
 
 export async function loadModelOfferDetails(providerId: string, modelId: string, signal?: AbortSignal): Promise<ModelOfferDetails> {
   const query = new URLSearchParams({ providerId, modelId });
-  return request(`/api/model-details?${query}`, readRequestOptions(signal))
+  return request(`/api/model-details?${query}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) })
     .then((response) => response.json());
 }
 
 export async function resolveOpenRouterModelPage(url: string, signal?: AbortSignal): Promise<OpenRouterModelPageResolution> {
   const query = new URLSearchParams({ url });
-  return request(`/api/openrouter-model-page?${query}`, readRequestOptions(signal))
+  return request(`/api/openrouter-model-page?${query}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) })
     .then((response) => response.json());
 }
 
 export async function loadOpenRouterUsageWindow(window: OpenRouterSpendWindow, signal?: AbortSignal): Promise<OpenRouterUsageWindow> {
   const query = new URLSearchParams({ window });
-  return request(`/api/openrouter-usage?${query}`, readRequestOptions(signal))
+  return request(`/api/openrouter-usage?${query}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) })
     .then((response) => response.json());
 }
 
 /** The account's OpenRouter credit balance. Server-admin only — see `registerOpenRouterIntegrationRoutes`. */
 export async function loadOpenRouterCredits(forceRefresh = false, signal?: AbortSignal): Promise<OpenRouterCreditsResponse> {
   const query = forceRefresh ? "?refresh=1" : "";
-  return request(`/api/control/integrations/openrouter${query}`, readRequestOptions(signal))
+  return request(`/api/control/integrations/openrouter${query}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) })
     .then((response) => response.json());
 }
 
@@ -369,7 +365,7 @@ export interface RoomRepositoryListing {
   readonly reason: string;
 }
 export async function loadRoomRepositories(includeArchived = false, signal?: AbortSignal): Promise<readonly RoomRepositoryListing[]> {
-  return request(`/api/control/rooms${includeArchived ? "?archived=true" : ""}`, readRequestOptions(signal))
+  return request(`/api/control/rooms${includeArchived ? "?archived=true" : ""}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) })
     .then((response) => response.json()).then((result) => Array.isArray(result?.items) ? result.items : []);
 }
 export async function loadCurrentProjectGitHubStatus(): Promise<CurrentProjectGitHubStatus> {
@@ -565,20 +561,20 @@ export async function emergencyStopHeartbeat(expectedRevision: number) {
   return request("/api/heartbeat/emergency-stop", { method: "POST", body: JSON.stringify({ expectedRevision, reason: "Emergency stop requested from the visible control" }) }).then((response) => response.json() as Promise<HeartbeatStatus>);
 }
 
-export async function loadContinuations(signal?: AbortSignal): Promise<ContinuationDashboard> { return request("/api/continuations", readRequestOptions(signal)).then((response) => response.json()); }
+export async function loadContinuations(signal?: AbortSignal): Promise<ContinuationDashboard> { return request("/api/continuations", { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) }).then((response) => response.json()); }
 export async function setContinuationPolicy(expectedRevision: number, enabled: boolean) { return request("/api/continuations/policy", { method: "PATCH", body: JSON.stringify({ expectedRevision, enabled }) }).then((response) => response.json()); }
 export async function continuationAction(jobId: string, action: "cancel" | "resume") { return request(`/api/continuations/${encodeURIComponent(jobId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
-export async function loadContinuationInbox(owner: AgentId, signal?: AbortSignal): Promise<ContinuationInboxEntry[]> { return request(`/api/continuations/inbox/${encodeURIComponent(owner)}`, readRequestOptions(signal)).then((response) => response.json()); }
+export async function loadContinuationInbox(owner: AgentId, signal?: AbortSignal): Promise<ContinuationInboxEntry[]> { return request(`/api/continuations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) }).then((response) => response.json()); }
 export async function acknowledgeContinuationInbox(inboxEntryId: string, close: boolean) { return request(`/api/continuations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }
-export async function loadInvestigations(signal?: AbortSignal): Promise<InvestigationDashboard> { return request("/api/investigations", readRequestOptions(signal)).then((response) => response.json()); }
+export async function loadInvestigations(signal?: AbortSignal): Promise<InvestigationDashboard> { return request("/api/investigations", { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) }).then((response) => response.json()); }
 export async function setInvestigationPolicy(expectedRevision: number, enabled: boolean) { return request("/api/investigations/policy", { method: "PATCH", body: JSON.stringify({ expectedRevision, enabled }) }).then((response) => response.json()); }
 export async function investigationAction(investigationId: string, action: "cancel" | "resume") { return request(`/api/investigations/${encodeURIComponent(investigationId)}/${action}`, { method: "POST", body: "{}" }).then((response) => response.json()); }
-export async function loadInvestigationInbox(owner: AgentId, signal?: AbortSignal): Promise<InvestigationInboxEntry[]> { return request(`/api/investigations/inbox/${encodeURIComponent(owner)}`, readRequestOptions(signal)).then((response) => response.json()); }
+export async function loadInvestigationInbox(owner: AgentId, signal?: AbortSignal): Promise<InvestigationInboxEntry[]> { return request(`/api/investigations/inbox/${encodeURIComponent(owner)}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) }).then((response) => response.json()); }
 export async function acknowledgeInvestigationInbox(inboxEntryId: string, close: boolean) { return request(`/api/investigations/inbox/${encodeURIComponent(inboxEntryId)}/acknowledge`, { method: "POST", body: JSON.stringify({ close }) }).then((response) => response.json()); }
 
 export const protectedWorkRoomId = () => routedRoomId() || "00000000-0000-4000-8000-000000000001";
 export async function loadProtectedWork(signal?: AbortSignal): Promise<ProtectedWorkView[]> {
-  return request(`/api/protected-work?roomId=${encodeURIComponent(protectedWorkRoomId())}`, readRequestOptions(signal)).then((response) => response.json());
+  return request(`/api/protected-work?roomId=${encodeURIComponent(protectedWorkRoomId())}`, { method: "GET", cache: "no-store", ...(signal ? { signal } : {}) }).then((response) => response.json());
 }
 export async function startProtectedWork(input: Omit<ProtectedWorkRequest, "roomId">) {
   return request("/api/protected-work", { method: "POST", body: JSON.stringify({ ...input, roomId: protectedWorkRoomId() }) }).then((response) => response.json());
