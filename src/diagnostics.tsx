@@ -28,13 +28,15 @@ export function assembleDiagnosticChunks(chunks: readonly OwnerDiagnosticChunk[]
   const records: OwnerDiagnosticRecord[] = [];
   for (const recordChunks of grouped.values()) {
     const ordered = [...recordChunks].sort((left, right) => left.offset - right.offset);
+    const first = ordered[0];
+    if (!first) continue;
     const parts: Uint8Array[] = []; let offset = 0;
     try {
       for (const chunk of ordered) {
         if (chunk.offset !== offset || chunk.encoding !== "base64-json-utf8") { parts.length = 0; break; }
         const part = decodeBase64(chunk.data); parts.push(part); offset += part.length;
       }
-      if (!parts.length || !ordered.at(-1)?.final || offset !== ordered[0].totalBytes) continue;
+      if (!parts.length || !ordered.at(-1)?.final || offset !== first.totalBytes) continue;
       const bytes = new Uint8Array(offset); let position = 0;
       for (const part of parts) { bytes.set(part, position); position += part.length; }
       records.push(JSON.parse(new TextDecoder().decode(bytes)) as OwnerDiagnosticRecord);
@@ -169,7 +171,7 @@ export function Diagnostics() {
       <div className="diagnostics-results">{visibleRecords.length ? visibleRecords.map((item) => <button type="button" key={item.recordId} aria-pressed={selected?.recordId === item.recordId} onClick={() => setSelected(item)}><strong>{item.event}{traceSummary?.unpairedRecordIds.includes(item.recordId) ? " · Unpaired" : ""}</strong><span>{item.stream} · {new Date(item.timestamp).toLocaleString()}{item.correlationId ? ` · ${item.correlationId}` : ""}</span></button>) : result.chunks.length ? <p>A large record is loading in bounded chunks.</p> : <p>No matching records.</p>}</div>
       {result.nextCursor ? <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => void load(result.nextCursor || undefined)}>Load next bounded page</button> : null}
       </div>
-      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><dl><div><dt>Trace ID</dt><dd>{selected.traceId || "unavailable"}</dd></div><div><dt>Generation ID</dt><dd>{generationIdOf(selected) || "unavailable"}</dd></div></dl><pre>{safe(selected.content)}</pre>{selected.traceId ? <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => { setScope("operator"); setStream("all"); setSelectorKind("traceId"); setSelectorValue(selected.traceId || ""); void load(undefined, { scope: "operator", stream: "all", selectorKind: "traceId", selectorValue: selected.traceId }); }}>Open whole trace</button> : <p>Whole-trace navigation is unavailable because this record has no trace ID.</p>}</article> : null}
+      {selected ? <article className="diagnostic-detail diagnostic-record-detail"><h3>{selected.event}</h3><p><small>{selected.stream} · {selected.severity} · {selected.correlationId || "no correlation ID"}</small></p><dl><div><dt>Trace ID</dt><dd>{selected.traceId || "unavailable"}</dd></div><div><dt>Generation ID</dt><dd>{generationIdOf(selected) || "unavailable"}</dd></div></dl><pre>{safe(selected.content)}</pre>{selected.traceId ? <button type="button" className="classic-button" disabled={accessDenied || loading} onClick={() => { const traceId = selected.traceId; if (!traceId) return; setScope("operator"); setStream("all"); setSelectorKind("traceId"); setSelectorValue(traceId); void load(undefined, { scope: "operator", stream: "all", selectorKind: "traceId", selectorValue: traceId }); }}>Open whole trace</button> : <p>Whole-trace navigation is unavailable because this record has no trace ID.</p>}</article> : null}
     </section>}
     <section className="diagnostic-detail capability-inspector" aria-label="Owner capability inspector">
       <h3>Owner capability inspector</h3><p>Loads the server-owned effective policy and bounded capability audit only when requested.</p>

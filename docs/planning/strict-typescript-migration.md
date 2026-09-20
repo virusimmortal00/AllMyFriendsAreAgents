@@ -88,6 +88,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Narrow menu commands with a reusable type guard and stop keyboard handling when a menu or selected item is absent. Separators and disabled commands remain non-invokable without relying on unchecked indices. | `src/classic-menu.tsx`, `src/classic-menu.test.tsx` |
 | 2026-09-19 | `client-runtime` | Validate markdown parser captures before rendering links and omit the transcript improvement callback when unavailable. Invalid internal parser state now fails closed as plain text rather than flowing unchecked values into React. | `src/components.tsx`, `src/components.test.tsx` |
 | 2026-09-19 | `client-runtime` | Make composer mention boundaries explicit: inspect the preceding character without unchecked indexing, omit unavailable provider/model snapshots, and ignore selection keys when the active suggestion no longer exists. | `src/components.tsx`, `src/mentions.test.tsx` |
+| 2026-09-19 | `client-runtime` | Validate non-empty diagnostic chunk groups and captured improvement route IDs before indexing them. Re-check a selected trace ID inside its event callback because the selected record can change before invocation. | `src/diagnostics.tsx`, `src/improvements.tsx` |
 
 # Next action
 

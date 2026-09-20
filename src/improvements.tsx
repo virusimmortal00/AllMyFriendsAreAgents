@@ -12,7 +12,8 @@ export function ImprovementsMenuControl({ active = false, onOpen }: { active?: b
 
 export function improvementsRoute(location = window.location): ImprovementsRoute | null {
   const match = location.pathname.match(/^\/improvements\/([^/]+)$/);
-  if (match) return { view: "detail", id: decodeURIComponent(match[1]) };
+  const id = match?.[1];
+  if (id) return { view: "detail", id: decodeURIComponent(id) };
   if (location.pathname === "/improvements") return { view: "list", scope: location.search === "?scope=all" ? "all" : "active" };
   return null;
 }
