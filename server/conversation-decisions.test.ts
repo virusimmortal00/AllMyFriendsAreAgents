@@ -3,6 +3,7 @@ import type { ConversationFact, ConversationObserver } from "../shared/conversat
 import { AGENT_IDS } from "../shared/participants.js";
 import { CONVERSATION_ENERGY_LEVELS } from "../shared/conversation-energy.js";
 import { parseAgentTurn, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 
 const candidates = AGENT_IDS.slice(0, 3).map((agent) => ({ agent, instruction: "Instruction preservation sentinel" }));
 type Decision = Extract<ConversationFact, { kind: "decision" }>;
@@ -49,8 +50,10 @@ describe("branch-owned conversation observations", () => {
     }, () => 1, { observer: (fact) => { facts.push(fact); } });
     expect(called.map(({ agent }) => agent)).toEqual([AGENT_IDS[0], AGENT_IDS[1], AGENT_IDS[0]]);
     const drop = decisions(facts).find(({ reason }) => reason === "pair-cap-reached")!;
+    const sourceTurn = requiredAt(called, 2, "pair-cap source turn");
+    const sourceObservation = requiredValue(sourceTurn.observation, "pair-cap source observation");
     expect(drop).toMatchObject({ action: "dropped", selectionFamily: "legacy-name-match", pairCount: 2, pairLimit: 2,
-      sourceAgentId: AGENT_IDS[0], targetAgentId: AGENT_IDS[1], sourceTurnId: called[2].observation!.turnId, sourceGenerationId: "generation-3" });
+      sourceAgentId: AGENT_IDS[0], targetAgentId: AGENT_IDS[1], sourceTurnId: sourceObservation.turnId, sourceGenerationId: "generation-3" });
     expect(finished(facts)).toHaveLength(3);
     expect(JSON.stringify(facts)).not.toContain("Instruction preservation sentinel");
     expect(decisions(facts).every(({ selectionFamily }) => !["structured-mention", "direct-vocative"].includes(selectionFamily))).toBe(true);
@@ -68,11 +71,13 @@ describe("branch-owned conversation observations", () => {
     }, 3, undefined, (fact) => { facts.push(fact); });
     await vi.waitFor(() => expect(decisions(facts).filter(({ action }) => action === "deferred")).toHaveLength(2));
     const deferred = decisions(facts).filter(({ action }) => action === "deferred");
+    const initialDeferred = requiredAt(deferred, 0, "initial deferred decision");
+    const replacementDeferred = requiredAt(deferred, 1, "replacement deferred decision");
     const replaced = decisions(facts).find(({ reason }) => reason === "deferred-replaced")!;
-    expect(replaced).toMatchObject({ pendingDecisionId: deferred[0].pendingDecisionId, relatedDecisionId: deferred[1].pendingDecisionId, action: "dropped" });
+    expect(replaced).toMatchObject({ pendingDecisionId: initialDeferred.pendingDecisionId, relatedDecisionId: replacementDeferred.pendingDecisionId, action: "dropped" });
     release(); await run;
     expect(invocations).toBe(4);
-    expect(decisions(facts).find(({ action, pendingDecisionId }) => action === "started" && pendingDecisionId === deferred[1].pendingDecisionId)).toBeDefined();
+    expect(decisions(facts).find(({ action, pendingDecisionId }) => action === "started" && pendingDecisionId === replacementDeferred.pendingDecisionId)).toBeDefined();
     expect(decisions(facts).some(({ reason }) => reason === "follow-up-allowance-exhausted")).toBe(true);
   });
 
@@ -137,6 +142,6 @@ describe("branch-owned conversation observations", () => {
     expect(facts.at(-1)).toMatchObject({ kind: "summary", summary: { reason: "run-failed", pending: { activeTurns: 0 } } });
     expect(finished(facts)).toHaveLength(2);
     const unstarted = decisions(facts).filter(({ action }) => action === "dropped");
-    expect(unstarted).toHaveLength(1); expect(unstarted[0].reason).toBe("run-failed");
+    expect(unstarted).toHaveLength(1); expect(requiredAt(unstarted, 0, "unstarted turn decision").reason).toBe("run-failed");
   });
 });
