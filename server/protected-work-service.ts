@@ -203,9 +203,10 @@ export class ProtectedWorkService {
         try { report = await this.options.runReturn(record, controller.signal); }
         finally { clearTimeout(timeout); this.returns.delete(workId); }
         if (controller.signal.aborted || this.closed) throw new Error("Return interrupted. Findings are retained.");
+        const reportRecord = record;
         const next = await this.exclusive(workId, async () => {
           if (controller.signal.aborted || this.closed) return undefined;
-          return this.patch(record, { phase: "report-pending", report });
+          return this.patch(reportRecord, { phase: "report-pending", report });
         });
         if (!next) return;
         record = next;
@@ -215,9 +216,10 @@ export class ProtectedWorkService {
         await this.patch(record, { phase: "blocked", blocker: "Return authority changed. Findings are retained." });
         return;
       }
+      const expectedRevision = record.revision;
       await this.exclusive(workId, async () => {
         const current = await this.store.get(workId);
-        if (!current || current.revision !== record.revision || current.phase !== "report-pending" || current.report?.cursor !== this.options.cursor()) return;
+        if (!current || current.revision !== expectedRevision || current.phase !== "report-pending" || current.report?.cursor !== this.options.cursor()) return;
         if (!current.report.text) { await this.finish(current, "no-update"); return; }
         if (await this.options.deliver(current)) await this.finish(current, "delivered");
       });

@@ -205,6 +205,7 @@ function trimArchive(state: State, maximum: number, now: string) {
   const priorCount = state.archive.checkpoint?.entryCount ?? 0;
   while (removed < state.archive.entries.length && archiveBytes(state.archive) > maximum) {
     const entry = state.archive.entries[removed];
+    if (!entry) throw new Error("Protected-work archive entry is missing during trim.");
     const remaining = state.archive.entries.length - removed;
     state.archive.entryBytes -= serializedBytes(entry) + (remaining > 1 ? 1 : 0);
     removed += 1;
