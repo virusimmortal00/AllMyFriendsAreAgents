@@ -59,7 +59,7 @@ function redactedMetadata(input: Record<string, unknown> = {}) {
 }
 
 export class ControlPlaneStore {
-  private state?: ControlState;
+  private state: ControlState | undefined = undefined;
   private readonly sessions = new Map<string, ControlSession>();
   private mutation: Promise<unknown> = Promise.resolve();
 
@@ -152,14 +152,44 @@ export class ControlPlaneStore {
   async transferOwnerLocal(secret: string, targetUsername: string) {
     this.assertLocalOperatorProof(secret);
     if (!validUsername(targetUsername)) throw new ControlError(400, "A valid target username is required.");
-    return this.serial(async () => { if (!this.state) throw new ControlError(409, "Owner bootstrap is required."); const current = this.state.principals[this.state.ownerId]; const target = Object.values(this.state.principals).find((principal) => principal.username.toLocaleLowerCase() === targetUsername.toLocaleLowerCase()); if (!target) throw new ControlError(404, "Target identity not found."); if (target.id === current.id) return publicPrincipal(current); current.role = "ADMIN"; current.revision += 1; current.updatedAt = new Date().toISOString(); target.role = "OWNER"; target.revision += 1; target.updatedAt = current.updatedAt; this.state.ownerId = target.id; this.revokePrincipalSessions(current.id); this.revokePrincipalSessions(target.id); this.appendAudit(null, "OWNER_TRANSFERRED", target.id, { previousRevision: current.revision - 1, nextRevision: target.revision }); await this.save(); return publicPrincipal(target); });
+    return this.serial(async () => {
+      const state = this.requireState();
+      const current = this.ownerPrincipal(state);
+      const target = Object.values(state.principals).find((principal) => principal.username.toLocaleLowerCase() === targetUsername.toLocaleLowerCase());
+      if (!target) throw new ControlError(404, "Target identity not found.");
+      if (target.id === current.id) return publicPrincipal(current);
+      current.role = "ADMIN";
+      current.revision += 1;
+      current.updatedAt = new Date().toISOString();
+      target.role = "OWNER";
+      target.revision += 1;
+      target.updatedAt = current.updatedAt;
+      state.ownerId = target.id;
+      this.revokePrincipalSessions(current.id);
+      this.revokePrincipalSessions(target.id);
+      this.appendAudit(null, "OWNER_TRANSFERRED", target.id, { previousRevision: current.revision - 1, nextRevision: target.revision });
+      await this.save();
+      return publicPrincipal(target);
+    });
   }
 
   async recoverOwnerLocal(secret: string, newPassword: string) {
     this.assertLocalOperatorProof(secret); if (!validPassword(newPassword)) throw new ControlError(400, "A 12-256 character recovery password is required.");
-    return this.serial(async () => { if (!this.state) throw new ControlError(409, "Owner bootstrap is required."); const owner = this.state.principals[this.state.ownerId]; owner.passwordSalt = randomBytes(24).toString("hex"); owner.passwordHash = await passwordHash(newPassword, owner.passwordSalt); owner.revision += 1; owner.updatedAt = new Date().toISOString(); this.revokePrincipalSessions(owner.id); this.appendAudit(null, "OWNER_RECOVERED", owner.id, { nextRevision: owner.revision }); await this.save(); return publicPrincipal(owner); });
+    return this.serial(async () => {
+      const owner = this.ownerPrincipal(this.requireState());
+      owner.passwordSalt = randomBytes(24).toString("hex");
+      owner.passwordHash = await passwordHash(newPassword, owner.passwordSalt);
+      owner.revision += 1;
+      owner.updatedAt = new Date().toISOString();
+      this.revokePrincipalSessions(owner.id);
+      this.appendAudit(null, "OWNER_RECOVERED", owner.id, { nextRevision: owner.revision });
+      await this.save();
+      return publicPrincipal(owner);
+    });
   }
 
+  private requireState() { if (!this.state) throw new ControlError(409, "Owner bootstrap is required."); return this.state; }
+  private ownerPrincipal(state: ControlState) { const owner = state.principals[state.ownerId]; if (!owner || owner.role !== "OWNER") throw new Error("Control-plane owner invariant is invalid."); return owner; }
   private revokePrincipalSessions(principalId: string) { for (const [token, session] of this.sessions) if (session.principalId === principalId) this.sessions.delete(token); }
   private appendAudit(actorPrincipalId: string | null, action: ControlAuditEvent["action"], targetId?: string, metadata?: Record<string, unknown>) { if (!this.state) return; this.state.audit.push({ id: randomUUID(), at: new Date().toISOString(), actorPrincipalId, action, ...(targetId ? { targetId } : {}), metadata: redactedMetadata(metadata) }); if (this.state.audit.length > AUDIT_LIMIT) this.state.audit.splice(0, this.state.audit.length - AUDIT_LIMIT); }
   private async save() { if (!this.state) return; const temporary = `${this.statePath}.${randomUUID()}.tmp`; await writeFile(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 }); await chmod(temporary, 0o600); await rename(temporary, this.statePath); await chmod(this.statePath, 0o600); }
