@@ -290,7 +290,7 @@ function normalizeDiff(nameOutput: string, numberOutput: string): readonly Sourc
     const rawAdditions = record.slice(0, additionsEnd);
     const rawDeletions = record.slice(additionsEnd + 1, deletionsEnd);
     const inlinePath = record.slice(deletionsEnd + 1);
-    let diffPath = inlinePath;
+    let diffPath: string | undefined = inlinePath || undefined;
     if (!diffPath) {
       const previousPath = numberParts[index++];
       diffPath = numberParts[index++];
