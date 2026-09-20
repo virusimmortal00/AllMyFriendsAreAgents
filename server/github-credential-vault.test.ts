@@ -111,7 +111,7 @@ describe("encrypted GitHub credential vault", () => {
     const values = await Promise.all([one.read("github-secret-one"), one.read("github-secret-one"), two.read("github-secret-one")]);
     expect(refresh).toHaveBeenCalledExactlyOnceWith(credential().refreshToken);
     for (const value of values) expect(value).toMatchObject({ token: "ghu_rotated_access_1234567890", revision: "vault:2" });
-    const reopened = await EncryptedGitHubCredentialVault.open({ ...options, refresh: undefined });
+    const reopened = await EncryptedGitHubCredentialVault.open({ vaultPath:f.vaultPath,keyPath:f.keyPath,now:()=>now,onRefreshEvent:(event)=>events.push(event) });
     expect(reopened.readCredential("github-secret-one")).toMatchObject({ revision: 2, credential: {
       refreshToken: "ghr_rotated_refresh_1234567890", accessTokenExpiresAt: "2026-08-29T06:00:00.000Z",
     } });

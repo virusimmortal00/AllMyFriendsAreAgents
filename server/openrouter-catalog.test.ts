@@ -39,7 +39,9 @@ describe("OpenRouter catalog enrichment", () => {
     const details = await service.details("openrouter", "google/gemini-3.7-flash");
     await service.details("openrouter", "google/gemini-3.7-flash");
     expect(details).toMatchObject({ offers: [{ providerName: "Google Vertex", providerId: "google-vertex", inputPerMillion: 0.3, outputPerMillion: 1.5, discount: 0.2, throughputTokensPerSecond: 130 }] });
-    expect(details?.offers[0].uptime).toBeCloseTo(0.999);
+    const offer=details?.offers[0];
+    if(!offer)throw new Error("Expected the catalog offer fixture.");
+    expect(offer.uptime).toBeCloseTo(0.999);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
