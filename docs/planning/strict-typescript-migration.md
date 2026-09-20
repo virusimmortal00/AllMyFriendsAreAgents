@@ -49,7 +49,7 @@ silently missed.
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Complete | `shared-contracts` | `--assert-clean=server-runtime`; focused server tests; repository typecheck |
-| 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | In progress | `shared-contracts` | Git broker and GitHub credential/read slices complete; live compiler inventory tracks the remainder |
+| 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Complete | `shared-contracts` | `--assert-clean=server-boundaries`; focused boundary suites; repository typecheck |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
@@ -146,12 +146,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `server-boundaries` | Forward command-route callbacks, poll cursors, and diagnostic filters only when they are supplied. Missing route configuration and query parameters continue to select the downstream defaults instead of becoming present `undefined` overrides. | `server/command-api.ts`, `server/command-api.test.ts`, `server/room-surfaces.acceptance.test.ts` |
 | 2026-09-20 | `server-boundaries` | Reconstruct recovered command delivery results only from durable fields that exist, and centralize generation metadata omission for diagnostics. Advancing a POV target now projects the durable base record explicitly, removing target-scoped delivery and authority fields instead of retaining them as present `undefined`. | `server/command-runtime.ts`, `server/command-runtime.test.ts` |
 | 2026-09-20 | `server-boundaries` | Persist assignment origins only when migration evidence resolves exactly one candidate, keeping ambiguous or missing provenance absent. Forward the JSON-import overwrite option only when the caller supplied it so repository defaults remain authoritative. | `server/storage/identity-migration.ts`, `server/storage/import-json-to-sqlite.ts` |
+| 2026-09-20 | `server-boundaries` | Treat normalized participant styles and built-in profiles as checked storage invariants, failing explicitly if registry completeness is violated. Preserve absence for cleared status fields, unavailable continuation conflict revisions, fork titles, and session fingerprints instead of storing present `undefined` values. | `server/storage/sqlite-room-repository.ts`, storage contract suites |
 
 # Next action
 
-Continue the `server-boundaries` inventory with the smallest coherent storage
-or external-service group. Keep each boundary's validation, omission, denial,
-and recovery semantics independently reviewable.
+Begin `server-tests` with the smallest coherent fixture family. Convert unchecked
+positional test access into explicit test invariants and construct optional fixture
+fields only when the scenario supplies them.
 
 # Evidence
 
