@@ -13,6 +13,7 @@ describe("conversation identity scopes", () => {
         expect(currentLogContext()).toMatchObject({ runId: run.runId, jobId: "job-one", traceId: "a".repeat(32), requestId: "request-one", agentId: agent });
         expect(currentLogContext()?.spanId).not.toBe(run.spanId);
         expect(currentLogContext()?.generationId).toBeUndefined();
+        expect(Object.hasOwn(currentLogContext()!, "generationId")).toBe(false);
       })));
       expect(currentLogContext()).toBe(run);
     }));
@@ -29,6 +30,7 @@ describe("conversation identity scopes", () => {
     expect(new Set(observed.map(({ runId }) => runId)).size).toBe(2);
     expect(new Set(observed.map(({ turnId }) => turnId)).size).toBe(2);
     expect(observed.every(({ generationId, attemptOrdinal, requestId }) => generationId === undefined && attemptOrdinal === undefined && requestId === undefined)).toBe(true);
+    expect(observed.every((context) => !Object.hasOwn(context, "generationId") && !Object.hasOwn(context, "attemptOrdinal"))).toBe(true);
   });
 
   it("does not invent missing identities when reading older or non-conversation evidence", () => {
