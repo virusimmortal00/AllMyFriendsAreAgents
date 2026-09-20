@@ -81,6 +81,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` GitHub comment targeting | `e2ad472` | 8 contribution-broker tests, including exact issue-target projection and invalid-number denial | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 42 diagnostics in 9 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` repository policy defaults | `fc7c116` | 7 project-binding tests, including omitted-policy default preservation and restart/repair coverage | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 41 diagnostics in 8 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` OpenRouter catalog and credits | `24a007e` | 20 catalog and integration API tests, including cache recovery, partial remote metadata, invalid timestamps, and unavailable-credit omission | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 32 diagnostics in 6 files with no drift in other slices; planning self-check; `git diff --check` |
+| `server-boundaries` OpenCode structured transport | `9b1bc25` | 6 structured-transport tests plus all 291 tests in the 19-suite OpenCode integration-contract gate | Upstream review revision 49 at audited commit `cb7d8b2f5e44876ef98b661dc10590c915af3a9f`; `pnpm run typecheck`; Biome lint; boundary inventory reduced to 28 diagnostics in 5 files with no drift in other slices; planning self-check; `git diff --check` |
 
 ## Decision log
 
