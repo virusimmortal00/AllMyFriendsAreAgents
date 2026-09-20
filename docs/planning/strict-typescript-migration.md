@@ -103,6 +103,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` protected-work lifecycle fixtures | `68a6e1c` | 26 protected-work service and durable room-lifecycle tests across JSON and SQLite storage | `pnpm run typecheck`; Biome lint; `pnpm run types:strict:inventory -- --assert-clean=server-tests`; all server-test diagnostics cleared with no drift in completed slices; planning self-check; `git diff --check` |
 | `visual-tooling` Codex review evidence | `f0d5687` | 28 Codex visual-review protocol and process tests | `pnpm run typecheck`; Biome lint; visual-tooling inventory reduced to 22 diagnostics in 6 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `visual-tooling` deterministic fixtures | `218ff0f` | 3 visual fixture fidelity tests covering roster normalization, registered-view coverage, and mutation rejection | `pnpm run typecheck`; Biome lint; `pnpm run types:strict:inventory -- --assert-clean=visual-tooling`; all migration slices and unassigned diagnostics at zero; planning self-check; `git diff --check` |
+| Configuration gate | `6d54072` | 62 strict-inventory, Git-broker, and reconnect tests with one platform skip | both target options enabled; `pnpm run typecheck`; inventory reports every slice, unassigned, and combined-only diagnostics at zero; `pnpm run check:quality` passed the production build, 291 integration-contract tests, 71 UI-standard tests, and 1,833 full-suite tests with one platform skip; planning self-check; `git diff --check` |
 
 ## Decision log
 
