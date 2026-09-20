@@ -1,0 +1,5 @@
+reviews:
+  auto_review:
+    # Review dependency-ordered stack layers as well as the default branch.
+    base_branches:
+      - ".*"
