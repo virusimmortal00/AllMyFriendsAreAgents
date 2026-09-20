@@ -183,6 +183,8 @@ describe("assignment-scoped Git broker", () => {
       server.close().then(() => "closed"),
       new Promise((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
     ])).resolves.toBe("closed");
+    await expect(server.start()).resolves.toBe(server);
+    await server.close();
   });
 
   it("serializes connection claims and rejects malformed add paths before broker execution", async () => {

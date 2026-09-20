@@ -8,7 +8,7 @@ import type { AssignmentRecord } from "./assignment-record.js";
 interface ShimRequest { readonly token?: string; readonly args?: readonly string[]; readonly health?: boolean }
 
 export class AssignmentGitBrokerServer {
-  private server?: Server;
+  private server: Server | undefined;
   private readonly sockets = new Set<Socket>();
   private requestQueue: Promise<void> = Promise.resolve();
   private claims: AssignmentGitClaims;
