@@ -1,7 +1,8 @@
+import { spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { requiredAt } from "./type-invariants.js";
 
 export type GuardrailMode = "report" | "enforce";
 
@@ -34,15 +35,14 @@ export function parsePlanningFrontmatter(contents: string): Pick<PlanningDocReco
   const match = contents.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
   const fields = new Map<string, string>();
-  for (const line of match[1].split(/\r?\n/)) {
+  for (const line of requiredAt(match, 1, "planning frontmatter body").split(/\r?\n/)) {
     const separator = line.indexOf(":");
     if (separator <= 0) continue;
     fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
   }
-  return {
-    status: fields.get("status"),
-    issue: parseIssueReference(fields.get("issue")),
-  };
+  const status = fields.get("status");
+  const issue = parseIssueReference(fields.get("issue"));
+  return { ...(status === undefined ? {} : { status }), ...(issue === undefined ? {} : { issue }) };
 }
 
 /**
@@ -110,7 +110,10 @@ export function evaluatePlanningDocSync(input: {
       continue;
     }
     if (issue.state === "CLOSED") {
-      violations.push({ path: document.path, reason: `status ${document.status} but issue #${document.issue} is closed` });
+      violations.push({
+        path: document.path,
+        reason: `status ${document.status} but issue #${document.issue} is closed`,
+      });
     }
   }
 
@@ -142,30 +145,55 @@ export function runSelfCheck(): string[] {
   const failures: string[] = [];
   const closingKeywordCases: Array<{ name: string; payload: PullRequestPayload; expected: number[] }> = [
     { name: "colon-separated closing keywords are recognized", payload: { body: "Closes: #24" }, expected: [24] },
-    { name: "PR titles do not imply issue closure", payload: { title: "Closes #24", body: "No closing keyword here." }, expected: [] },
-    { name: "commit messages can close issues", payload: { commits: [{ messageHeadline: "Fixes #25" }] }, expected: [25] },
+    {
+      name: "PR titles do not imply issue closure",
+      payload: { title: "Closes #24", body: "No closing keyword here." },
+      expected: [],
+    },
+    {
+      name: "commit messages can close issues",
+      payload: { commits: [{ messageHeadline: "Fixes #25" }] },
+      expected: [25],
+    },
   ];
   for (const testCase of closingKeywordCases) {
     const actual = extractPullRequestClosingIssueNumbers(testCase.payload);
     if (JSON.stringify(actual) !== JSON.stringify(testCase.expected)) {
-      failures.push(`${testCase.name}: expected ${testCase.expected.join(",") || "none"}, got ${actual.join(",") || "none"}`);
+      failures.push(
+        `${testCase.name}: expected ${testCase.expected.join(",") || "none"}, got ${actual.join(",") || "none"}`,
+      );
     }
   }
   const cases: Array<{ name: string; expected: number; input: Parameters<typeof evaluatePlanningDocSync>[0] }> = [
     {
       name: "proposed notes without an issue stay allowed",
       expected: 0,
-      input: { documents: [{ path: "a.md", status: "proposed" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
+      input: {
+        documents: [{ path: "a.md", status: "proposed" }],
+        issueStates: new Map(),
+        closingIssueNumbers: [],
+        changedPaths: new Set(),
+      },
     },
     {
       name: "active work without an issue fails",
       expected: 1,
-      input: { documents: [{ path: "a.md", status: "active" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
+      input: {
+        documents: [{ path: "a.md", status: "active" }],
+        issueStates: new Map(),
+        closingIssueNumbers: [],
+        changedPaths: new Set(),
+      },
     },
     {
       name: "unknown statuses fail closed",
       expected: 1,
-      input: { documents: [{ path: "a.md", status: "in-progress" }], issueStates: new Map(), closingIssueNumbers: [], changedPaths: new Set() },
+      input: {
+        documents: [{ path: "a.md", status: "in-progress" }],
+        issueStates: new Map(),
+        closingIssueNumbers: [],
+        changedPaths: new Set(),
+      },
     },
     {
       name: "active work with an open issue passes",
@@ -231,7 +259,8 @@ export function runSelfCheck(): string[] {
 
   for (const testCase of cases) {
     const actual = evaluatePlanningDocSync(testCase.input).length;
-    if (actual !== testCase.expected) failures.push(`${testCase.name}: expected ${testCase.expected} violations, got ${actual}`);
+    if (actual !== testCase.expected)
+      failures.push(`${testCase.name}: expected ${testCase.expected} violations, got ${actual}`);
   }
   return failures;
 }
@@ -261,7 +290,9 @@ async function runCommand(command: string, args: string[]): Promise<string> {
     child.on("close", (code) => {
       const output = Buffer.concat(stdout).toString("utf8");
       if (code === 0) return resolve(output);
-      reject(new Error(`${command} ${args.join(" ")} exited ${code}: ${Buffer.concat(stderr).toString("utf8") || output}`));
+      reject(
+        new Error(`${command} ${args.join(" ")} exited ${code}: ${Buffer.concat(stderr).toString("utf8") || output}`),
+      );
     });
   });
 }
@@ -270,11 +301,18 @@ async function runCommand(command: string, args: string[]): Promise<string> {
  * Loads every planning markdown file except the index and template.
  */
 async function loadPlanningDocuments(planningDirectory: string): Promise<PlanningDocRecord[]> {
-  const names = (await readdir(planningDirectory)).filter((name) => name.endsWith(".md") && !SKIP_FILES.has(name)).sort();
-  return Promise.all(names.map(async (name) => {
-    const filePath = path.join(planningDirectory, name);
-    return { path: path.posix.join("docs/planning", name), ...parsePlanningFrontmatter(await readFile(filePath, "utf8")) };
-  }));
+  const names = (await readdir(planningDirectory))
+    .filter((name) => name.endsWith(".md") && !SKIP_FILES.has(name))
+    .sort();
+  return Promise.all(
+    names.map(async (name) => {
+      const filePath = path.join(planningDirectory, name);
+      return {
+        path: path.posix.join("docs/planning", name),
+        ...parsePlanningFrontmatter(await readFile(filePath, "utf8")),
+      };
+    }),
+  );
 }
 
 /**
@@ -283,8 +321,13 @@ async function loadPlanningDocuments(planningDirectory: string): Promise<Plannin
 async function loadIssueStates(repo: string, issueNumbers: readonly number[]): Promise<Map<number, IssueState>> {
   const states = new Map<number, IssueState>();
   for (const issueNumber of [...new Set(issueNumbers)]) {
-    const payload = JSON.parse(await runCommand("gh", ["api", `repos/${repo}/issues/${issueNumber}`, "--jq", "{number,state}"])) as { number: number; state: string };
-    states.set(issueNumber, { number: payload.number, state: payload.state.toUpperCase() === "OPEN" ? "OPEN" : "CLOSED" });
+    const payload = JSON.parse(
+      await runCommand("gh", ["api", `repos/${repo}/issues/${issueNumber}`, "--jq", "{number,state}"]),
+    ) as { number: number; state: string };
+    states.set(issueNumber, {
+      number: payload.number,
+      state: payload.state.toUpperCase() === "OPEN" ? "OPEN" : "CLOSED",
+    });
   }
   return states;
 }
@@ -292,17 +335,22 @@ async function loadIssueStates(repo: string, issueNumbers: readonly number[]): P
 /**
  * Collects closing keywords and changed paths when a PR number is known.
  */
-async function loadPullRequestContext(repo: string, pullRequest: string | undefined): Promise<{
+async function loadPullRequestContext(
+  repo: string,
+  pullRequest: string | undefined,
+): Promise<{
   closingIssueNumbers: number[];
   changedPaths: ReadonlySet<string>;
 }> {
   if (!pullRequest) return { closingIssueNumbers: [], changedPaths: new Set() };
-  const payload = JSON.parse(await runCommand("gh", [
-    "pr", "view", pullRequest, "--repo", repo, "--json", "body,commits,files",
-  ])) as PullRequestPayload;
+  const payload = JSON.parse(
+    await runCommand("gh", ["pr", "view", pullRequest, "--repo", repo, "--json", "body,commits,files"]),
+  ) as PullRequestPayload;
   return {
     closingIssueNumbers: extractPullRequestClosingIssueNumbers(payload),
-    changedPaths: new Set((payload.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value))),
+    changedPaths: new Set(
+      (payload.files ?? []).map((file) => file.path).filter((value): value is string => Boolean(value)),
+    ),
   };
 }
 
@@ -328,21 +376,29 @@ async function main() {
   if (process.argv.includes("--self-check")) {
     const failures = runSelfCheck();
     if (failures.length) {
-      process.stderr.write(`Planning-doc guardrail self-check failed:\n${failures.map((line) => `- ${line}`).join("\n")}\n`);
+      process.stderr.write(
+        `Planning-doc guardrail self-check failed:\n${failures.map((line) => `- ${line}`).join("\n")}\n`,
+      );
       process.exit(1);
     }
     process.stdout.write("Planning-doc guardrail self-check passed.\n");
     process.exit(0);
   }
 
-  const mode: GuardrailMode = option("mode") === "report" || process.env.PLANNING_DOC_GUARDRAIL_MODE === "report" ? "report" : "enforce";
-  const repo = option("repo") || process.env.GITHUB_REPOSITORY || (await runCommand("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
+  const mode: GuardrailMode =
+    option("mode") === "report" || process.env.PLANNING_DOC_GUARDRAIL_MODE === "report" ? "report" : "enforce";
+  const repo =
+    option("repo") ||
+    process.env.GITHUB_REPOSITORY ||
+    (await runCommand("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   if (!repo) throw new Error("Pass --repo=owner/name or set GITHUB_REPOSITORY.");
 
   const planningDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../docs/planning");
   const documents = await loadPlanningDocuments(planningDirectory);
   const pullRequestContext = await loadPullRequestContext(repo, option("pr") || process.env.PR_NUMBER);
-  const issueNumbers = [...new Set(documents.map((document) => document.issue).filter((value): value is number => Boolean(value)))];
+  const issueNumbers = [
+    ...new Set(documents.map((document) => document.issue).filter((value): value is number => Boolean(value))),
+  ];
   const issueStates = await loadIssueStates(repo, issueNumbers);
   reportViolations(evaluatePlanningDocSync({ documents, issueStates, ...pullRequestContext }), mode);
 }

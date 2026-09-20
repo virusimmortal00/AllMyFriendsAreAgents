@@ -3,8 +3,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
+import type { ApiRootDefinition, ApiRootScope, ApiRouteDefinition } from "../shared/api-routes.js";
 import { API_ROOTS, API_ROUTES } from "../shared/api-routes.js";
-import type { ApiRouteDefinition, ApiRootDefinition, ApiRootScope } from "../shared/api-routes.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SERVER_DIR = path.join(ROOT, "server");
@@ -57,35 +57,64 @@ function parse(file: string, text: string): ts.SourceFile {
 
 /** Files whose non-literal registrations are exempt because they provably never mount /api paths. */
 const NON_API_DYNAMIC_REGISTRATIONS: Record<string, string> = {
-  "server/installer-redirects.ts": "registers /install.sh and /install.ps1 redirects from INSTALLER_DOWNLOADS; never /api",
+  "server/installer-redirects.ts":
+    "registers /install.sh and /install.ps1 redirects from INSTALLER_DOWNLOADS; never /api",
 };
 
 /** True when a non-literal expression statically mentions /api in any of its string leaves. */
 function mentionsApi(node: ts.Expression): boolean {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text.includes("/api");
-  if (ts.isTemplateExpression(node)) return node.head.text.includes("/api") || node.templateSpans.some((span) => span.literal.text.includes("/api"));
+  if (ts.isTemplateExpression(node))
+    return node.head.text.includes("/api") || node.templateSpans.some((span) => span.literal.text.includes("/api"));
   if (ts.isBinaryExpression(node)) return mentionsApi(node.left) || mentionsApi(node.right);
   return false;
 }
 
 /** Extracts static Express registrations such as app.get("/api/tasks/:taskId", handler). */
-export function extractServerRoutes(text: string, file: string): { routes: ObservedRoute[]; problems: SourceProblem[] } {
+export function extractServerRoutes(
+  text: string,
+  file: string,
+): { routes: ObservedRoute[]; problems: SourceProblem[] } {
   const sourceFile = parse(file, text);
   const routes: ObservedRoute[] = [];
   const problems: SourceProblem[] = [];
   const exempt = Object.keys(NON_API_DYNAMIC_REGISTRATIONS).some((suffix) => file.endsWith(suffix));
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ROUTE_METHODS[node.expression.name.text]) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ROUTE_METHODS[node.expression.name.text]
+    ) {
       const first = node.arguments[0];
       if (first) {
         const literal = literalOf(first);
         if (literal !== null) {
-          if (literal.startsWith("/api")) routes.push({ method: node.expression.name.text.toUpperCase(), path: literal, file, line: lineOf(sourceFile, node) });
+          if (literal.startsWith("/api"))
+            routes.push({
+              method: node.expression.name.text.toUpperCase(),
+              path: literal,
+              file,
+              line: lineOf(sourceFile, node),
+            });
         } else {
           const receiver = node.expression.expression;
-          const appReceiver = ts.isIdentifier(receiver) ? receiver.text === "app" : ts.isPropertyAccessExpression(receiver) && receiver.name.text === "app";
-          if (mentionsApi(first)) problems.push({ file, line: lineOf(sourceFile, node), message: "dynamic route path statically mentions /api and cannot be verified; route paths must be static literals" });
-          else if (!exempt && appReceiver) problems.push({ file, line: lineOf(sourceFile, node), message: "dynamic route registration on an Express app cannot be contract-verified; use a static /api literal" });
+          const appReceiver = ts.isIdentifier(receiver)
+            ? receiver.text === "app"
+            : ts.isPropertyAccessExpression(receiver) && receiver.name.text === "app";
+          if (mentionsApi(first))
+            problems.push({
+              file,
+              line: lineOf(sourceFile, node),
+              message:
+                "dynamic route path statically mentions /api and cannot be verified; route paths must be static literals",
+            });
+          else if (!exempt && appReceiver)
+            problems.push({
+              file,
+              line: lineOf(sourceFile, node),
+              message:
+                "dynamic route registration on an Express app cannot be contract-verified; use a static /api literal",
+            });
         }
       }
     }
@@ -126,9 +155,15 @@ function literalUnionValues(typeNode: ts.TypeNode): string[] | null {
 /** Resolves a request() identifier argument to the literal union of its innermost enclosing parameter declaration. */
 function resolveArgumentLiterals(node: ts.CallExpression, identifier: ts.Identifier): string[] | null {
   for (let scope: ts.Node | undefined = node.parent; scope; scope = scope.parent) {
-    if (ts.isFunctionDeclaration(scope) || ts.isFunctionExpression(scope) || ts.isArrowFunction(scope) || ts.isMethodDeclaration(scope)) {
+    if (
+      ts.isFunctionDeclaration(scope) ||
+      ts.isFunctionExpression(scope) ||
+      ts.isArrowFunction(scope) ||
+      ts.isMethodDeclaration(scope)
+    ) {
       for (const parameter of scope.parameters) {
-        if (ts.isIdentifier(parameter.name) && parameter.name.text === identifier.text && parameter.type) return literalUnionValues(parameter.type);
+        if (ts.isIdentifier(parameter.name) && parameter.name.text === identifier.text && parameter.type)
+          return literalUnionValues(parameter.type);
       }
     }
   }
@@ -143,18 +178,33 @@ function segmentsOf(routePath: string): string[] {
 export function matchesRoutePattern(clientPath: string, routePath: string): boolean {
   const left = segmentsOf(clientPath);
   const right = segmentsOf(routePath);
-  return left.length === right.length && left.every((segment, index) => segment === right[index] || segment === ":*" || right[index].startsWith(":"));
+  return (
+    left.length === right.length &&
+    left.every((segment, index) => {
+      const routeSegment = right[index];
+      return (
+        routeSegment !== undefined && (segment === routeSegment || segment === ":*" || routeSegment.startsWith(":"))
+      );
+    })
+  );
+}
+
+function clientRequestCall(input: Omit<ClientRequestCall, "method">, method: string | undefined): ClientRequestCall {
+  return { ...input, ...(method === undefined ? {} : { method }) };
 }
 
 /** Runtime fetch defaults to GET, so absent options mean GET; a present-but-unresolvable method is a contract problem, not a wildcard. */
 function methodOfCall(sourceFile: ts.SourceFile, node: ts.CallExpression): { method?: string; problem?: string } {
   const options = node.arguments[1];
   if (!options) return { method: "GET" };
-  if (!ts.isObjectLiteralExpression(options)) return { problem: "request options must be an object literal so the HTTP method is verifiable" };
+  if (!ts.isObjectLiteralExpression(options))
+    return { problem: "request options must be an object literal so the HTTP method is verifiable" };
   for (const property of options.properties) {
-    const name = ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) ? property.name : undefined;
+    const name =
+      ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) ? property.name : undefined;
     if (name && ts.isIdentifier(name) && name.text === "method") {
-      if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)) return { method: property.initializer.text.toUpperCase() };
+      if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer))
+        return { method: property.initializer.text.toUpperCase() };
       return { problem: "request method must be a string literal" };
     }
   }
@@ -162,7 +212,10 @@ function methodOfCall(sourceFile: ts.SourceFile, node: ts.CallExpression): { met
 }
 
 /** Extracts browser client calls: request("…") / request(`/api/…`) / request(roomPath("state"), …) plus standalone roomPath(…) wrappers. */
-export function extractClientRequests(text: string, file: string): { calls: ClientRequestCall[]; problems: SourceProblem[] } {
+export function extractClientRequests(
+  text: string,
+  file: string,
+): { calls: ClientRequestCall[]; problems: SourceProblem[] } {
   const sourceFile = parse(file, text);
   const calls: ClientRequestCall[] = [];
   const problems: SourceProblem[] = [];
@@ -171,11 +224,19 @@ export function extractClientRequests(text: string, file: string): { calls: Clie
     if (!argument || !ts.isIdentifier(node.expression) || node.expression.text !== "roomPath") return null;
     const literal = literalOf(argument);
     if (literal === null) {
-      problems.push({ file, line: lineOf(sourceFile, node), message: "roomPath must be called with a static endpoint literal" });
+      problems.push({
+        file,
+        line: lineOf(sourceFile, node),
+        message: "roomPath must be called with a static endpoint literal",
+      });
       return null;
     }
     if (!ROOM_PATH_ENDPOINTS[literal]) {
-      problems.push({ file, line: lineOf(sourceFile, node), message: `roomPath endpoint ${JSON.stringify(literal)} is outside the known endpoint set` });
+      problems.push({
+        file,
+        line: lineOf(sourceFile, node),
+        message: `roomPath endpoint ${JSON.stringify(literal)} is outside the known endpoint set`,
+      });
       return null;
     }
     return literal;
@@ -184,22 +245,67 @@ export function extractClientRequests(text: string, file: string): { calls: Clie
     if (ts.isCallExpression(node)) {
       const endpoint = roomPathEndpoint(node);
       if (endpoint) {
-        const isRequestArgument = ts.isCallExpression(node.parent) && ts.isIdentifier(node.parent.expression) && node.parent.expression.text === "request" && node.parent.arguments[0] === node;
+        const isRequestArgument =
+          ts.isCallExpression(node.parent) &&
+          ts.isIdentifier(node.parent.expression) &&
+          node.parent.expression.text === "request" &&
+          node.parent.arguments[0] === node;
         const method = isRequestArgument ? methodOfCall(sourceFile, node.parent) : { method: "GET" as const };
         if (method.problem) problems.push({ file, line: lineOf(sourceFile, node.parent), message: method.problem });
-        calls.push({ raw: `roomPath("${endpoint}")`, variants: [`/api/${endpoint}`, `${ROOM_PREFIX}/${endpoint}`], method: method.method, file, line: lineOf(sourceFile, node) });
+        calls.push(
+          clientRequestCall(
+            {
+              raw: `roomPath("${endpoint}")`,
+              variants: [`/api/${endpoint}`, `${ROOM_PREFIX}/${endpoint}`],
+              file,
+              line: lineOf(sourceFile, node),
+            },
+            method.method,
+          ),
+        );
       } else if (node.arguments.length && ts.isIdentifier(node.expression) && node.expression.text === "request") {
         const argument = node.arguments[0];
+        if (!argument) {
+          problems.push({ file, line: lineOf(sourceFile, node), message: "request must include a path argument" });
+          return;
+        }
         const method = methodOfCall(sourceFile, node);
         if (method.problem) problems.push({ file, line: lineOf(sourceFile, node), message: method.problem });
         const literal = literalOf(argument);
-        const raw = literal !== null ? literal : ts.isTemplateExpression(argument) ? templateRaw(argument) : ts.isIdentifier(argument) ? resolveArgumentLiterals(node, argument) : null;
+        const raw =
+          literal !== null
+            ? literal
+            : ts.isTemplateExpression(argument)
+              ? templateRaw(argument)
+              : ts.isIdentifier(argument)
+                ? resolveArgumentLiterals(node, argument)
+                : null;
         if (typeof raw === "string" && raw.startsWith("/api")) {
-          calls.push({ raw, variants: [normalizeClientPath(raw)], method: method.method, file, line: lineOf(sourceFile, node) });
+          calls.push(
+            clientRequestCall(
+              { raw, variants: [normalizeClientPath(raw)], file, line: lineOf(sourceFile, node) },
+              method.method,
+            ),
+          );
         } else if (Array.isArray(raw)) {
-          for (const value of raw) calls.push({ raw: value, variants: [value], method: method.method, file, line: lineOf(sourceFile, node) });
-        } else if (raw === null && !(ts.isCallExpression(argument) && ts.isIdentifier(argument.expression) && argument.expression.text === "roomPath")) {
-          problems.push({ file, line: lineOf(sourceFile, node), message: "request must be called with a static /api path or template, roomPath(endpoint), or a parameter typed as /api literals" });
+          for (const value of raw)
+            calls.push(
+              clientRequestCall({ raw: value, variants: [value], file, line: lineOf(sourceFile, node) }, method.method),
+            );
+        } else if (
+          raw === null &&
+          !(
+            ts.isCallExpression(argument) &&
+            ts.isIdentifier(argument.expression) &&
+            argument.expression.text === "roomPath"
+          )
+        ) {
+          problems.push({
+            file,
+            line: lineOf(sourceFile, node),
+            message:
+              "request must be called with a static /api path or template, roomPath(endpoint), or a parameter typed as /api literals",
+          });
         }
       }
     }
@@ -215,9 +321,21 @@ export function extractBoundaryViolations(text: string, file: string): SourcePro
   const problems: SourceProblem[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      if (node.text.includes("/api/")) problems.push({ file, line: lineOf(sourceFile, node), message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths" });
-    } else if (ts.isTemplateExpression(node) && (node.head.text.includes("/api/") || node.templateSpans.some((span) => span.literal.text.includes("/api/")))) {
-      problems.push({ file, line: lineOf(sourceFile, node), message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths" });
+      if (node.text.includes("/api/"))
+        problems.push({
+          file,
+          line: lineOf(sourceFile, node),
+          message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths",
+        });
+    } else if (
+      ts.isTemplateExpression(node) &&
+      (node.head.text.includes("/api/") || node.templateSpans.some((span) => span.literal.text.includes("/api/")))
+    ) {
+      problems.push({
+        file,
+        line: lineOf(sourceFile, node),
+        message: "browser code must call the shared client boundary in src/api.ts, not raw /api paths",
+      });
     }
     ts.forEachChild(node, visit);
   };
@@ -248,32 +366,49 @@ export interface RouteContractTable {
 }
 
 /** Validates registry shape, server equality, room-twin completeness, and client coverage. */
-export function checkRouteContracts(table: RouteContractTable, observed: readonly ObservedRoute[], observedProblems: readonly SourceProblem[], clientCalls: readonly ClientRequestCall[], clientProblems: readonly SourceProblem[], boundaryProblems: readonly SourceProblem[]): RouteContractReport {
+export function checkRouteContracts(
+  table: RouteContractTable,
+  observed: readonly ObservedRoute[],
+  observedProblems: readonly SourceProblem[],
+  clientCalls: readonly ClientRequestCall[],
+  clientProblems: readonly SourceProblem[],
+  boundaryProblems: readonly SourceProblem[],
+): RouteContractReport {
   const failures: string[] = [];
   const knownGaps: string[] = [];
-  for (const problem of [...observedProblems, ...clientProblems, ...boundaryProblems]) failures.push(`${problem.file.replace(`${ROOT}/`, "")}:${problem.line}: ${problem.message}`);
+  for (const problem of [...observedProblems, ...clientProblems, ...boundaryProblems])
+    failures.push(`${problem.file.replace(`${ROOT}/`, "")}:${problem.line}: ${problem.message}`);
 
   const scopeByRoot = new Map<string, ApiRootScope>();
   for (const root of table.roots) {
     if (scopeByRoot.has(root.root)) failures.push(`api root ${JSON.stringify(root.root)} is classified more than once`);
-    if (root.scope === "canonical" && (!root.note || root.note.trim().length === 0)) failures.push(`canonical api root ${JSON.stringify(root.root)} requires a note explaining the missing room-scoped twin`);
+    if (root.scope === "canonical" && (!root.note || root.note.trim().length === 0))
+      failures.push(
+        `canonical api root ${JSON.stringify(root.root)} requires a note explaining the missing room-scoped twin`,
+      );
     scopeByRoot.set(root.root, root.scope);
   }
 
   const routeKeys = new Set(table.routes.map((route) => `${route.method} ${route.path}`));
   if (routeKeys.size !== table.routes.length) failures.push("shared/api-routes.ts contains duplicate method+path rows");
   for (const route of table.routes) {
-    if (!route.path.startsWith("/api/") || route.path !== route.path.trim()) failures.push(`contract path ${JSON.stringify(route.path)} is not a normalized /api path`);
+    if (!route.path.startsWith("/api/") || route.path !== route.path.trim())
+      failures.push(`contract path ${JSON.stringify(route.path)} is not a normalized /api path`);
     const root = routeRoot(route.path);
-    if (!root || !scopeByRoot.has(root)) failures.push(`route ${route.method} ${route.path} has no api root classification for ${JSON.stringify(root)}`);
+    if (!root || !scopeByRoot.has(root))
+      failures.push(`route ${route.method} ${route.path} has no api root classification for ${JSON.stringify(root)}`);
   }
 
   const observedByKey = new Map(observed.map((route) => [`${route.method} ${route.path}`, route]));
   for (const [key, route] of observedByKey) {
-    if (!routeKeys.has(key)) failures.push(`unregistered route ${key} at ${route.file.replace(`${ROOT}/`, "")}:${route.line} — add it to shared/api-routes.ts or remove it`);
+    if (!routeKeys.has(key))
+      failures.push(
+        `unregistered route ${key} at ${route.file.replace(`${ROOT}/`, "")}:${route.line} — add it to shared/api-routes.ts or remove it`,
+      );
   }
   for (const route of table.routes) {
-    if (!observedByKey.has(`${route.method} ${route.path}`)) failures.push(`contract ${route.method} ${route.path} matches no server registration`);
+    if (!observedByKey.has(`${route.method} ${route.path}`))
+      failures.push(`contract ${route.method} ${route.path} matches no server registration`);
   }
 
   const routesByRoot = new Map<string, ApiRouteDefinition[]>();
@@ -283,25 +418,40 @@ export function checkRouteContracts(table: RouteContractTable, observed: readonl
   }
   for (const [root, scope] of scopeByRoot) {
     const routes = routesByRoot.get(root) ?? [];
-    const bareRoutes = routes.filter((route) => !isRoomForm(route.path) && !routeKeys.has(`${route.method} ${roomFormOf(route.path)}`));
+    const bareRoutes = routes.filter(
+      (route) => !isRoomForm(route.path) && !routeKeys.has(`${route.method} ${roomFormOf(route.path)}`),
+    );
     for (const route of routes) {
       const key = `${route.method} ${route.path}`;
       if (isRoomForm(route.path)) {
         const bareRoot = routeRoot(bareFormOf(route.path));
-        if (scopeByRoot.get(bareRoot ?? "") === "room" && !routeKeys.has(`${route.method} ${bareFormOf(route.path)}`)) failures.push(`room-form ${key} has no bare twin under /api`);
+        if (scopeByRoot.get(bareRoot ?? "") === "room" && !routeKeys.has(`${route.method} ${bareFormOf(route.path)}`))
+          failures.push(`room-form ${key} has no bare twin under /api`);
       } else if (scope === "room" && !routeKeys.has(`${route.method} ${roomFormOf(route.path)}`)) {
         failures.push(`room-scoped route ${key} has no /api/rooms/:roomId twin`);
       }
     }
-    if (scope === "canonical" && bareRoutes.length > 0) knownGaps.push(`${root}: ${bareRoutes.length} route(s) are canonical-room only; /rooms/:roomId views rewrite ${root} calls to a room form that would 404 until #60 lands per-room twins`);
+    if (scope === "canonical" && bareRoutes.length > 0)
+      knownGaps.push(
+        `${root}: ${bareRoutes.length} route(s) are canonical-room only; /rooms/:roomId views rewrite ${root} calls to a room form that would 404 until #60 lands per-room twins`,
+      );
     const roomFormCount = routes.filter((route) => isRoomForm(route.path)).length;
-    if (root !== "rooms" && scope !== "room" && roomFormCount > 0) knownGaps.push(`${root} scope ${scope}: ${roomFormCount} room-form route(s) exist while the root is not fully classified "room" (partial twin coverage)`);
+    if (root !== "rooms" && scope !== "room" && roomFormCount > 0)
+      knownGaps.push(
+        `${root} scope ${scope}: ${roomFormCount} room-form route(s) exist while the root is not fully classified "room" (partial twin coverage)`,
+      );
   }
 
   for (const call of clientCalls) {
-    const match = table.routes.find((route) => call.variants.some((variant) => matchesRoutePattern(variant, route.path)) && (!call.method || route.method === call.method));
+    const match = table.routes.find(
+      (route) =>
+        call.variants.some((variant) => matchesRoutePattern(variant, route.path)) &&
+        (!call.method || route.method === call.method),
+    );
     if (!match) {
-      failures.push(`client call ${JSON.stringify(call.raw)}${call.method ? ` (${call.method})` : ""} at ${call.file.replace(`${ROOT}/`, "")}:${call.line} matches no registered route`);
+      failures.push(
+        `client call ${JSON.stringify(call.raw)}${call.method ? ` (${call.method})` : ""} at ${call.file.replace(`${ROOT}/`, "")}:${call.line} matches no registered route`,
+      );
     }
   }
 
@@ -313,8 +463,16 @@ function listSourceFiles(directory: string, suffixes: readonly string[]): string
   const walk = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const full = path.join(directory, entry.name);
-      if (entry.isDirectory()) { if (entry.name !== "node_modules") walk(full); }
-      else if (entry.isFile() && suffixes.some((suffix) => entry.name.endsWith(suffix)) && !entry.name.endsWith(".test.ts") && !entry.name.endsWith(".test.tsx") && !entry.name.endsWith(".d.ts")) files.push(full);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") walk(full);
+      } else if (
+        entry.isFile() &&
+        suffixes.some((suffix) => entry.name.endsWith(suffix)) &&
+        !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".test.tsx") &&
+        !entry.name.endsWith(".d.ts")
+      )
+        files.push(full);
     }
   };
   walk(directory);
@@ -331,10 +489,13 @@ async function main(): Promise<void> {
   }
 
   if (process.argv.includes("--emit-routes")) {
-    for (const route of [...observed].sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))) {
+    for (const route of [...observed].sort(
+      (a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method),
+    )) {
       process.stdout.write(`${route.method} ${route.path}\n`);
     }
-    for (const problem of observedProblems) process.stderr.write(`${problem.file}:${problem.line}: ${problem.message}\n`);
+    for (const problem of observedProblems)
+      process.stderr.write(`${problem.file}:${problem.line}: ${problem.message}\n`);
     return;
   }
 
@@ -344,14 +505,25 @@ async function main(): Promise<void> {
     if (file !== CLIENT_API_FILE) boundaryProblems.push(...extractBoundaryViolations(readFileSync(file, "utf8"), file));
   }
 
-  const { failures, knownGaps } = checkRouteContracts({ roots: API_ROOTS, routes: API_ROUTES }, observed, observedProblems, clientResult.calls, clientResult.problems, boundaryProblems);
+  const { failures, knownGaps } = checkRouteContracts(
+    { roots: API_ROOTS, routes: API_ROUTES },
+    observed,
+    observedProblems,
+    clientResult.calls,
+    clientResult.problems,
+    boundaryProblems,
+  );
   for (const gap of knownGaps) process.stdout.write(`known gap: ${gap}\n`);
   if (failures.length > 0) {
     for (const failure of failures) process.stderr.write(`api route contract violation: ${failure}\n`);
-    process.stderr.write(`${failures.length} violation(s). Update shared/api-routes.ts, the server registration, or src/api.ts together in the same change.\n`);
+    process.stderr.write(
+      `${failures.length} violation(s). Update shared/api-routes.ts, the server registration, or src/api.ts together in the same change.\n`,
+    );
     process.exitCode = 1;
   } else {
-    process.stdout.write(`api route contracts verified: ${observed.length} server routes, ${clientResult.calls.length} client call sites, ${knownGaps.length} known tracked gap(s).\n`);
+    process.stdout.write(
+      `api route contracts verified: ${observed.length} server routes, ${clientResult.calls.length} client call sites, ${knownGaps.length} known tracked gap(s).\n`,
+    );
   }
 }
 

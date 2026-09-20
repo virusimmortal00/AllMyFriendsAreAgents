@@ -1,49 +1,64 @@
 import { describe, expect, it } from "vitest";
 import {
-  OPENCODE_CONTRACT_PATH,
   affectedSurfaces,
   changedPathsFromNameStatus,
+  OPENCODE_CONTRACT_PATH,
+  type OpenCodeIntegrationContract,
   parseContract,
   pathMatches,
   requiredUpstreamPaths,
   surfacesForChanges,
-  validatePullRequestEvidence,
   validateLocalPins,
+  validatePullRequestEvidence,
   validateReview,
-  type OpenCodeIntegrationContract,
 } from "./check-integration-contracts.js";
+import { requiredAt } from "./type-invariants.js";
 
-const contract = parseContract(JSON.stringify({
-  schemaVersion: 2,
-  integration: "opencode",
-  upstream: {
-    repository: "https://github.com/anomalyco/opencode.git",
-    minimumVersion: "1.18.18",
-    auditedVersion: "1.18.25",
-    auditedTag: "v1.18.25",
-    auditedCommit: "a".repeat(40),
-  },
-  downstream: {
-    repository: "https://github.com/example/opencode.git",
-    branch: "codex/structured-output-1.18.25",
-    version: "1.18.25-amfaa.2",
-    baseCommit: "a".repeat(40),
-    headCommit: "c".repeat(40),
-    pluginVersion: "1.18.25",
-    patches: ["b".repeat(40), "c".repeat(40)],
-    paths: ["upstream/run.ts", "upstream/tool.ts"],
-  },
-  review: {
-    revision: 3,
-    reviewedOn: "2026-08-28",
-    result: "The exact upstream behavior remained compatible after source review.",
-    paths: ["upstream/run.ts", "upstream/tool.ts"],
-  },
-  surfaces: [
-    { id: "runtime", description: "Runtime protocol boundary behavior.", local: ["server/runner.ts"], upstream: ["upstream/run.ts"], tests: ["server/runner.test.ts"] },
-    { id: "tools", description: "Custom tool API boundary behavior.", local: ["server/tools/**"], upstream: ["upstream/tool.ts"], tests: ["server/tools.test.ts"] },
-  ],
-})) satisfies OpenCodeIntegrationContract;
+const contract = parseContract(
+  JSON.stringify({
+    schemaVersion: 2,
+    integration: "opencode",
+    upstream: {
+      repository: "https://github.com/anomalyco/opencode.git",
+      minimumVersion: "1.18.18",
+      auditedVersion: "1.18.25",
+      auditedTag: "v1.18.25",
+      auditedCommit: "a".repeat(40),
+    },
+    downstream: {
+      repository: "https://github.com/example/opencode.git",
+      branch: "codex/structured-output-1.18.25",
+      version: "1.18.25-amfaa.2",
+      baseCommit: "a".repeat(40),
+      headCommit: "c".repeat(40),
+      pluginVersion: "1.18.25",
+      patches: ["b".repeat(40), "c".repeat(40)],
+      paths: ["upstream/run.ts", "upstream/tool.ts"],
+    },
+    review: {
+      revision: 3,
+      reviewedOn: "2026-08-28",
+      result: "The exact upstream behavior remained compatible after source review.",
+      paths: ["upstream/run.ts", "upstream/tool.ts"],
+    },
+    surfaces: [
+      {
+        id: "runtime",
+        description: "Runtime protocol boundary behavior.",
+        local: ["server/runner.ts"],
+        upstream: ["upstream/run.ts"],
+        tests: ["server/runner.test.ts"],
+      },
+      {
+        id: "tools",
+        description: "Custom tool API boundary behavior.",
+        local: ["server/tools/**"],
+        upstream: ["upstream/tool.ts"],
+        tests: ["server/tools.test.ts"],
+      },
+    ],
+  }),
+) satisfies OpenCodeIntegrationContract;
 
 describe("OpenCode integration contract guard", () => {
   it("matches exact files and bounded directory patterns", () => {
@@ -61,7 +76,10 @@ describe("OpenCode integration contract guard", () => {
   });
 
   it("audits every surface whenever the contract itself changes", () => {
-    expect(surfacesForChanges(contract, [OPENCODE_CONTRACT_PATH, "server/runner.ts"]).map(({ id }) => id)).toEqual(["runtime", "tools"]);
+    expect(surfacesForChanges(contract, [OPENCODE_CONTRACT_PATH, "server/runner.ts"]).map(({ id }) => id)).toEqual([
+      "runtime",
+      "tools",
+    ]);
   });
 
   it("keeps both sides of a rename so moved integration files remain affected", () => {
@@ -71,38 +89,63 @@ describe("OpenCode integration contract guard", () => {
   });
 
   it("requires a new review revision and every relevant upstream path", () => {
-    const previousReview = { ...contract.review, revision: 2, reviewedOn: "2026-08-27", result: "The previous source audit documented a different implementation change." };
+    const previousReview = {
+      ...contract.review,
+      revision: 2,
+      reviewedOn: "2026-08-27",
+      result: "The previous source audit documented a different implementation change.",
+    };
     expect(validateReview(contract, contract.surfaces, previousReview)).toEqual([]);
     expect(validateReview(contract, contract.surfaces, contract.review)).toContain("increment review.revision above 3");
-    expect(validateReview(contract, contract.surfaces, { ...previousReview, result: contract.review.result })).toContain("replace review.result with fresh source-audit evidence");
-    expect(validateReview(contract, contract.surfaces, { ...previousReview, reviewedOn: "2026-08-29" })).toContain("keep review.reviewedOn on or after 2026-08-29");
+    expect(
+      validateReview(contract, contract.surfaces, { ...previousReview, result: contract.review.result }),
+    ).toContain("replace review.result with fresh source-audit evidence");
+    expect(validateReview(contract, contract.surfaces, { ...previousReview, reviewedOn: "2026-08-29" })).toContain(
+      "keep review.reviewedOn on or after 2026-08-29",
+    );
     const missing = { ...contract, review: { ...contract.review, revision: 4, paths: ["upstream/run.ts"] } };
-    expect(validateReview(missing, contract.surfaces, previousReview)).toContain("record upstream review path upstream/tool.ts");
+    expect(validateReview(missing, contract.surfaces, previousReview)).toContain(
+      "record upstream review path upstream/tool.ts",
+    );
   });
 
   it("rejects a minimum version above the audited version", () => {
-    expect(() => parseContract(JSON.stringify({
-      ...contract,
-      upstream: { ...contract.upstream, minimumVersion: "1.18.26" },
-    }))).toThrow("minimum version cannot exceed its audited version");
+    expect(() =>
+      parseContract(
+        JSON.stringify({
+          ...contract,
+          upstream: { ...contract.upstream, minimumVersion: "1.18.26" },
+        }),
+      ),
+    ).toThrow("minimum version cannot exceed its audited version");
   });
 
   it("requires immutable downstream provenance tied to the audited base", () => {
-    expect(() => parseContract(JSON.stringify({
-      ...contract,
-      downstream: { ...contract.downstream, baseCommit: "d".repeat(40) },
-    }))).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
-    expect(() => parseContract(JSON.stringify({
-      ...contract,
-      downstream: { ...contract.downstream, patches: ["b".repeat(40)] },
-    }))).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
+    expect(() =>
+      parseContract(
+        JSON.stringify({
+          ...contract,
+          downstream: { ...contract.downstream, baseCommit: "d".repeat(40) },
+        }),
+      ),
+    ).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
+    expect(() =>
+      parseContract(
+        JSON.stringify({
+          ...contract,
+          downstream: { ...contract.downstream, patches: ["b".repeat(40)] },
+        }),
+      ),
+    ).toThrow("exact downstream version, branch, base, patch, path, and head provenance");
   });
 
   it("validates durable pull-request evidence against the exact contract", () => {
     const body = `## OpenCode upstream review\nTag: v1.18.25\nCommit: ${"a".repeat(40)}\nSurfaces: runtime, tools\nResult: Confirmed the mapped behavior remains compatible with the local implementation.`;
     expect(validatePullRequestEvidence(contract, contract.surfaces, body)).toEqual([]);
     expect(validatePullRequestEvidence(contract, contract.surfaces, "")).not.toEqual([]);
-    expect(validatePullRequestEvidence(contract, [contract.surfaces[0]], body)).toContain("record exactly these affected surfaces in the OpenCode upstream review section: runtime");
+    expect(
+      validatePullRequestEvidence(contract, [requiredAt(contract.surfaces, 0, "first integration surface")], body),
+    ).toContain("record exactly these affected surfaces in the OpenCode upstream review section: runtime");
   });
 
   it("rejects valid-looking evidence outside the OpenCode review section", () => {
@@ -118,13 +161,31 @@ describe("OpenCode integration contract guard", () => {
 
   it("keeps the package, compiler, install policy, and runtime range pinned together", () => {
     const valid = {
-      packageText: JSON.stringify({ dependencies: { "@opencode-ai/plugin": "1.18.25", "@opencode-ai/sdk": "1.18.25" } }),
+      packageText: JSON.stringify({
+        dependencies: { "@opencode-ai/plugin": "1.18.25", "@opencode-ai/sdk": "1.18.25" },
+      }),
       tsconfigText: JSON.stringify({ include: ["server/**/*.ts"] }),
       workspaceText: "msgpackr-extract: false\n  - '@opencode-ai/plugin@1.18.25'\n  - '@opencode-ai/sdk@1.18.25'",
-      discoveryText: 'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2"',
+      discoveryText:
+        'MINIMUM_OPENCODE_VERSION = "1.18.18"\nMAXIMUM_AUDITED_OPENCODE_VERSION = "1.18.25"\nAPPROVED_DOWNSTREAM_OPENCODE_VERSION = "1.18.25-amfaa.2"',
     };
     expect(validateLocalPins(contract, valid)).toEqual([]);
-    expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ dependencies: { "@opencode-ai/sdk": "1.18.25" }, devDependencies: { "@opencode-ai/plugin": "1.18.25" } }) })).toContain("keep @opencode-ai/plugin as a production dependency pinned to 1.18.25");
-    expect(validateLocalPins(contract, { ...valid, packageText: JSON.stringify({ dependencies: { "@opencode-ai/plugin": "1.18.25", "@opencode-ai/sdk": "1.18.24" } }) })).toContain("pin @opencode-ai/sdk to 1.18.25");
+    expect(
+      validateLocalPins(contract, {
+        ...valid,
+        packageText: JSON.stringify({
+          dependencies: { "@opencode-ai/sdk": "1.18.25" },
+          devDependencies: { "@opencode-ai/plugin": "1.18.25" },
+        }),
+      }),
+    ).toContain("keep @opencode-ai/plugin as a production dependency pinned to 1.18.25");
+    expect(
+      validateLocalPins(contract, {
+        ...valid,
+        packageText: JSON.stringify({
+          dependencies: { "@opencode-ai/plugin": "1.18.25", "@opencode-ai/sdk": "1.18.24" },
+        }),
+      }),
+    ).toContain("pin @opencode-ai/sdk to 1.18.25");
   });
 });

@@ -55,6 +55,7 @@ silently missed.
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Complete | Both server runtime slices | `pnpm run types:strict:inventory -- --assert-clean=server-tests` |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Complete | Shared and client runtime | `pnpm run types:strict:inventory -- --assert-clean=visual-tooling` |
+| 4 | `repository-tooling` | Operational and guardrail `scripts/**` outside the visual tooling project | Active | All product and test slices | Strict script project and tracked-file coverage gate; focused script tests; repository typecheck |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Complete | All remediation slices | `pnpm run typecheck`; `pnpm run types:strict:inventory -- --assert-clean=all`; `pnpm run check:quality` |
 
 ## Update protocol
@@ -182,12 +183,14 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `visual-tooling` | Validate the single required Codex lifecycle events, verdict message, claimed capture batch, matched review item, and lead capture before use. Review orchestration now fails with a named invariant when generated evidence is structurally incomplete. | `scripts/codex-visual-review.ts`, `scripts/review-visual.ts` |
 | 2026-09-20 | `visual-tooling` | Centralize fail-fast visual fixture lookup, name required roster/model/work entries, preserve tuple dimensions, and omit an unselected roster identity. README messages are built from typed dialogue tuples with validated names and styles, keeping optional fields semantically absent rather than widening them. | visual app, README, control-density, and protected-work fixtures |
 | 2026-09-20 | Configuration gate | Enable both target options in the authoritative application and Node configurations. Visual tooling and the inventory project inherit the flags. The inventory retains per-option attribution and adds a combined-options pass because interactions can surface diagnostics that neither isolated option reports. | `tsconfig.app.json`, `tsconfig.node.json`, derived configs, strict inventory |
+| 2026-09-20 | `repository-tooling` | Extend strict checking to operational scripts and replace unchecked contract parsing assumptions with named invariants. Optional HTTP-method and planning-frontmatter fields remain absent when unresolved, while malformed repository URLs and incomplete semantic-version records fail explicitly at their boundaries. | API-route, OpenCode integration-contract, planning-sync, and shared script-invariant tooling |
 
 # Next action
 
-Keep the strict inventory and full quality gate green. New code should preserve
-absence at optional-property boundaries, validate indexed data at its source, and
-record any future strictness regression in the owning slice before remediation.
+Complete the `repository-tooling` slice, add an executable coverage check for
+every tracked TypeScript file, and make that coverage plus the complete clean
+inventory part of the canonical CI typecheck. New code should preserve absence
+at optional-property boundaries and validate indexed data at its source.
 
 # Evidence
 
