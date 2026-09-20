@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 49,
-    "reviewedOn": "2026-09-19",
-    "result": "Refresh trigger: server/opencode-structured-transport.ts now preserves omission for unavailable SDK abort signals, prompt variant and system fields, and assistant finish metadata. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, assistant message types, and structured output schemas. Confirmed: generated SDK request options accept an absent signal, prompt variant and system fields are optional, and AssistantMessage.finish is optional. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths; its structured retry and schema-validation changes do not require present undefined fields or change these omission contracts. The recorded focused contract tests pass.",
+    "revision": 52,
+    "reviewedOn": "2026-09-20",
+    "result": "Refresh trigger: the read-only source-control adapter now preserves literal tab characters in Git paths and applies the same explicit rename detection to name-status and numstat output. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked every recorded CLI, SDK, session, model discovery, permission, tool, MCP configuration, and native authentication path against this application-owned Git parsing change. Confirmed: the change does not alter OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
