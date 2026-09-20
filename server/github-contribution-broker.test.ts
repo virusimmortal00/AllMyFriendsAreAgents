@@ -17,13 +17,14 @@ import type { RoomRepository } from "./storage/room-repository.js";
 const exec = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+function withoutIssueNumber({issueNumber:_issueNumber,...request}:GitHubBrokerRequest){return request;}
 
 class FakeGitHub implements GitHubContributionClient {
   readonly calls: string[] = [];
   readonly commentTargets: Array<{ issueNumber?: number; pullNumber?: number }> = [];
   pull: GitHubExternalResult | null = null;
-  failNext?: Error;
-  private result(kind: string, number?: number) { this.calls.push(kind); if (this.failNext) { const error = this.failNext; this.failNext = undefined; throw error; } return Promise.resolve({ id: `${kind}-id`, url: `https://github.test/${kind}`, number }); }
+  failNext: Error | undefined;
+  private result(kind: string, number?: number):Promise<GitHubExternalResult> { this.calls.push(kind); if (this.failNext) { const error = this.failNext; this.failNext = undefined; throw error; } return Promise.resolve({ id: `${kind}-id`, url: `https://github.test/${kind}`, ...(number===undefined?{}:{number}) }); }
   baseSha = ""; headSha = ""; headRef = "";
   readBranchHead() { this.calls.push("read-branch-head"); return Promise.resolve(this.baseSha); }
   pullRequestIdentity() { this.calls.push("pull-identity"); return Promise.resolve({ headSha: this.headSha, baseSha: this.baseSha, headRef: this.headRef, draft: true, state: "open" }); }
@@ -110,17 +111,17 @@ describe("scoped GitHub contribution broker", () => {
 
   it("publishes only an assignment branch to a draft PR and confines subsequent metadata and review operations", async () => {
     const value = await fixture();
-    const publish = { ...value.request, operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:publish:0001", issueNumber: undefined, title: "Bounded contribution", body: "Exact commit evidence" };
+    const publish = { ...withoutIssueNumber(value.request), operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:publish:0001", title: "Bounded contribution", body: "Exact commit evidence" };
     await expect(value.broker.execute(value.auth, publish)).resolves.toMatchObject({ kind: "ok", value: { number: 44 } });
     expect(value.client.calls).toEqual(["read-branch-head", "find-pull", "publish-branch", "create-pull"]);
-    await expect(value.broker.execute(value.auth, { ...value.request, operation: "UPDATE_PULL_REQUEST", idempotencyKey: "github:update:0001", issueNumber: undefined, pullNumber: 44, title: "Reviewed title" })).resolves.toMatchObject({ kind: "ok" });
-    await expect(value.broker.execute(value.auth, { ...value.request, operation: "REQUEST_REVIEW", idempotencyKey: "github:review:0001", issueNumber: undefined, pullNumber: 44, reviewers: ["reviewer-one"] })).resolves.toMatchObject({ kind: "ok" });
-    await expect(value.broker.execute(value.auth, { ...value.request, operation: "UPDATE_PULL_REQUEST", idempotencyKey: "github:foreign:0001", issueNumber: undefined, pullNumber: 45, title: "No" })).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("broker-owned") });
+    await expect(value.broker.execute(value.auth, { ...withoutIssueNumber(value.request), operation: "UPDATE_PULL_REQUEST", idempotencyKey: "github:update:0001", pullNumber: 44, title: "Reviewed title" })).resolves.toMatchObject({ kind: "ok" });
+    await expect(value.broker.execute(value.auth, { ...withoutIssueNumber(value.request), operation: "REQUEST_REVIEW", idempotencyKey: "github:review:0001", pullNumber: 44, reviewers: ["reviewer-one"] })).resolves.toMatchObject({ kind: "ok" });
+    await expect(value.broker.execute(value.auth, { ...withoutIssueNumber(value.request), operation: "UPDATE_PULL_REQUEST", idempotencyKey: "github:foreign:0001", pullNumber: 45, title: "No" })).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("broker-owned") });
   });
 
   it("allows retry only for retryable partial failures and reconciles an existing draft without duplicating it", async () => {
     const value = await fixture(); value.client.failNext = new GitHubClientError("rate limited", true);
-    const publish = { ...value.request, operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:retry:0001", issueNumber: undefined, title: "Contribution", body: "Evidence" };
+    const publish = { ...withoutIssueNumber(value.request), operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:retry:0001", title: "Contribution", body: "Evidence" };
     await expect(value.broker.execute(value.auth, publish)).resolves.toEqual({ kind: "failed", reason: "rate limited", retryable: true });
     expect(githubBrokerRepositoryReferences((await GitHubContributionStore.open(value.file)).records())).toMatchObject([{ reconciled: false }]);
     value.client.pull = { id: "existing", url: "https://github.test/pull/44", number: 44 };
@@ -150,7 +151,7 @@ describe("scoped GitHub contribution broker", () => {
 
   it("rejects an existing draft whose externally observed head or base changed", async () => {
     const value = await fixture(); value.client.pull = { id: "existing", url: "https://github.test/pull/44", number: 44 }; value.client.headSha = "f".repeat(40);
-    const publish = { ...value.request, operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:stale-draft:0001", issueNumber: undefined, title: "Contribution", body: "Evidence" };
+    const publish = { ...withoutIssueNumber(value.request), operation: "PUBLISH_DRAFT_PULL_REQUEST" as const, idempotencyKey: "github:stale-draft:0001", title: "Contribution", body: "Evidence" };
     await expect(value.broker.execute(value.auth, publish)).resolves.toMatchObject({ kind: "failed", retryable: false, reason: expect.stringContaining("source identity changed") });
     expect(value.client.calls).not.toContain("publish-branch"); expect(value.client.calls).not.toContain("create-pull");
   });
