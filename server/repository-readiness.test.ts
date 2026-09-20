@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, expect, it } from "vitest";
 import { registerRepositoryReadiness } from "./repository-readiness.js";
 import type { ProjectRepositoryConnection } from "./project-repository-connection.js";
+import { requiredAt } from "./test-invariants.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
@@ -35,7 +36,7 @@ it("checks repositories concurrently and shares unfinished work after the respon
     revalidateAuthority: async () => {
       started.push(projectId);
       await gate;
-      return { kind: "ok", connection: connections[0] };
+      return { kind: "ok", connection: requiredAt(connections,0,"first repository connection") };
     },
   }), 50);
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));

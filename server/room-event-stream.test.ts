@@ -4,6 +4,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { ROOM_PROTOCOL_VERSION } from "../shared/protocol.js";
 import { ROOM_EVENT_HEARTBEAT_MS, RoomEventStream } from "./room-event-stream.js";
 import type { PublicRoomState, RoomMessage } from "./types.js";
+import { requiredValue } from "./test-invariants.js";
 
 function message(id: string, text = id): RoomMessage {
   return { id, speaker: "you", text, timestamp: "2026-08-19T12:00:00Z" };
@@ -45,7 +46,7 @@ function dataEvents(response: ReturnType<typeof connection>["response"]) {
   return response.write.mock.calls
     .map(([encoded]) => encoded as string)
     .filter((encoded) => encoded.startsWith("id: "))
-    .map((encoded) => JSON.parse(encoded.match(/\ndata: (.+)\n\n$/s)![1]));
+    .map((encoded) => JSON.parse(requiredValue(encoded.match(/\ndata: (.+)\n\n$/s)?.[1],"event-stream data payload")));
 }
 
 afterEach(() => vi.useRealTimers());
