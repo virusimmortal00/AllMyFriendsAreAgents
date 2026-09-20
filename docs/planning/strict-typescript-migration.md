@@ -31,10 +31,11 @@ optional properties or adding unchecked assertions merely to satisfy the compile
 # Current state
 
 TypeScript `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`,
-`noImplicitOverride`, and `noFallthroughCasesInSwitch` are enabled in the
-authoritative application and Node configs. Derived visual and inventory configs
-inherit the same settings. The compiler-derived inventory remains available as a
-regression and ownership audit:
+`noImplicitOverride`, and `noFallthroughCasesInSwitch` are enabled across the
+application, Node, visual, operational-script, and inventory projects. The
+tracked-file coverage guard rejects TypeScript outside those checked projects.
+The compiler-derived inventory remains available as a regression and ownership
+audit:
 
 ```bash
 pnpm run types:strict:inventory
@@ -55,7 +56,7 @@ silently missed.
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Complete | Both server runtime slices | `pnpm run types:strict:inventory -- --assert-clean=server-tests` |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Complete | Shared and client runtime | `pnpm run types:strict:inventory -- --assert-clean=visual-tooling` |
-| 4 | `repository-tooling` | Operational and guardrail `scripts/**` outside the visual tooling project | Active | All product and test slices | Strict script project and tracked-file coverage gate; focused script tests; repository typecheck |
+| 4 | `repository-tooling` | Operational and guardrail `scripts/**` outside the visual tooling project | Complete | All product and test slices | `--assert-clean=repository-tooling`; strict script project; tracked-file coverage gate; focused script tests; repository typecheck |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Complete | All remediation slices | `pnpm run typecheck`; `pnpm run types:strict:inventory -- --assert-clean=all`; `pnpm run check:quality` |
 
 ## Update protocol
@@ -187,13 +188,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `repository-tooling` | Treat native target selection, archive executable selection, and retained evidence companions as checked one-item invariants. Test fetch doubles now implement the complete platform fetch boundary and copy binary buffers into web-compatible response bodies; release fixtures name required targets before mutation. | Native build, setup, release-contract, release-evidence, and lifecycle-lock tooling |
 | 2026-09-20 | `repository-tooling` | Keep absent canary request bodies and cookies structurally absent from Fetch options, validate held dispatches and issued session cookies before use, and name required research-probe turns. The provider-free investigation canary confirms these stricter boundaries preserve dispatch, restart, cancellation, and tamper-rejection behavior. | Investigation, live room-tool, and conversation-observability canaries |
 | 2026-09-20 | `repository-tooling` | Model visual-review fixtures with the same capture, verdict, and event contracts as production tooling. Invalid-case tests now obtain required baseline records before mutation and deliberately weaken only the field under test, so fixture setup failures remain distinct from the validation behavior being asserted. | Codex visual-review and visual-receipt tests |
+| 2026-09-20 | `repository-tooling` | Make strictness coverage executable rather than convention-based. The canonical typecheck compiles every operational script, requires the complete compiler-option policy in every checked project, proves every tracked TypeScript path belongs to at least one project, and requires the compiler-derived inventory to remain globally clean. | `tsconfig.scripts.json`, type-project coverage guard, strict inventory, package scripts, CI workflow |
 
 # Next action
 
-Complete the `repository-tooling` slice, add an executable coverage check for
-every tracked TypeScript file, and make that coverage plus the complete clean
-inventory part of the canonical CI typecheck. New code should preserve absence
-at optional-property boundaries and validate indexed data at its source.
+Keep the canonical typecheck and full quality gate green. New TypeScript files
+must enter a checked strict project; new code should preserve absence at
+optional-property boundaries and validate indexed data at its source.
 
 # Evidence
 
@@ -202,6 +203,9 @@ at optional-property boundaries and validate indexed data at its source.
   behavior.
 - `tsconfig.strict-inventory.json` keeps the inventory implementation itself
   inside the normal strict type-check gate.
+- `tsconfig.scripts.json` compiles operational and repository guardrail scripts.
+- `scripts/check-type-project-coverage.ts` verifies tracked-file ownership and
+  the required strict compiler-option policy before CI can pass.
 - Initial read-only compiler measurements found that unchecked indexed access is
   the larger error family, while exact optional properties have broader boundary
   semantics and therefore require case-by-case decisions.

@@ -61,8 +61,10 @@ Before opening a pull request:
 
    Use `pnpm run format`, `pnpm run lint`, and `pnpm run typecheck` when working
    on formatting, lint, and types independently. The TypeScript configuration
-   uses strict mode throughout the application, server, shared code, and visual
-   tooling.
+   uses strict mode throughout every tracked TypeScript file, including tests,
+   visual tooling, and operational scripts. The typecheck also fails when a new
+   TypeScript file is outside every checked project or when a project drops a
+   required strictness option.
 
 4. Include the commands run and any meaningful manual verification.
 5. Review the diff for secrets, private context, machine-specific paths, and

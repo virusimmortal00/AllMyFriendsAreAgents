@@ -95,7 +95,8 @@ existing Vite/bundler import style.
   external services without explicit authorization.
 - Use `pnpm run format` for Biome formatting and `pnpm run lint` for the
   repository's Biome lint baseline. Run `pnpm run typecheck` for the complete
-  strict TypeScript check, including visual tooling. Rules explicitly disabled
+  strict TypeScript check, including operational scripts and tracked-file
+  project coverage. Rules explicitly disabled
   in `biome.json` document migration debt; do not expand that list to bypass a
   new diagnostic.
 

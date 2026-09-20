@@ -13,6 +13,7 @@ export const MIGRATION_SLICES = [
   "server-boundaries",
   "server-tests",
   "visual-tooling",
+  "repository-tooling",
 ] as const;
 export type MigrationSlice = (typeof MIGRATION_SLICES)[number];
 
@@ -20,7 +21,17 @@ export function isMigrationSlice(value: string): value is MigrationSlice {
   return (MIGRATION_SLICES as readonly string[]).includes(value);
 }
 
-const PROJECTS = ["tsconfig.app.json", "tsconfig.node.json", "tsconfig.visual.json"] as const;
+const PROJECTS = ["tsconfig.app.json", "tsconfig.node.json", "tsconfig.visual.json", "tsconfig.scripts.json"] as const;
+const VISUAL_TOOLING_FILES = new Set([
+  "scripts/visual-review.ts",
+  "scripts/visual-review.test.ts",
+  "scripts/capture-visual.ts",
+  "scripts/capture-readme.ts",
+  "scripts/check-visual-review.ts",
+  "scripts/codex-visual-review.ts",
+  "scripts/codex-visual-review.test.ts",
+  "scripts/review-visual.ts",
+]);
 const SERVER_BOUNDARY_FILES = new Set([
   "server/command-api.ts",
   "server/command-runtime.ts",
@@ -46,7 +57,8 @@ export interface CombinedStrictDiagnostic extends Omit<StrictDiagnostic, "option
 export function classifyStrictDiagnostic(file: string): StrictDiagnostic["slice"] {
   const normalized = file.replaceAll("\\", "/");
   if (normalized.startsWith("shared/")) return "shared-contracts";
-  if (normalized.startsWith("tests/visual/") || normalized.startsWith("scripts/")) return "visual-tooling";
+  if (normalized.startsWith("tests/visual/") || VISUAL_TOOLING_FILES.has(normalized)) return "visual-tooling";
+  if (normalized.startsWith("scripts/") || normalized.startsWith("release/")) return "repository-tooling";
   if (normalized.startsWith("src/")) return /\.test\.tsx?$/.test(normalized) ? "client-tests" : "client-runtime";
   if (normalized.startsWith("server/")) {
     if (/\.test\.tsx?$/.test(normalized)) return "server-tests";

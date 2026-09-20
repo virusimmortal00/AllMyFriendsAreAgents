@@ -17,6 +17,8 @@ describe("strict type migration inventory", () => {
     ["server/agent-runner.test.ts", "server-tests"],
     ["tests/visual/app-fixtures.ts", "visual-tooling"],
     ["scripts/review-visual.ts", "visual-tooling"],
+    ["scripts/setup-native-opencode.ts", "repository-tooling"],
+    ["release/lifecycle-lock.d.mts", "repository-tooling"],
     ["vite.config.ts", "unassigned"],
   ])("assigns %s to %s", (file, slice) => {
     expect(classifyStrictDiagnostic(file)).toBe(slice);

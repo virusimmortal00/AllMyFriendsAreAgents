@@ -53,7 +53,7 @@ jobs:
         run: pnpm run check:api-contracts
       - name: Enforce UI contracts
         run: pnpm run check:ui-standards
-      - name: Strictly type-check and build production assets
+      - name: Enforce strict TypeScript coverage and build production assets
         run: pnpm run build
       - name: Run the full regression suite
         run: pnpm test
