@@ -90,7 +90,7 @@ export async function executeOpenCodeStructuredTurn(client: OpenCodeStructuredSd
           sessionId,
           messageId: response.info.id,
           structured,
-          finish: response.info.finish,
+          ...(response.info.finish !== undefined ? { finish: response.info.finish } : {}),
           cost,
           tokens,
         };
@@ -112,7 +112,7 @@ function sdkClient(baseUrl: string, username: string, password: string): OpenCod
   const client = createOpencodeClient({ baseUrl, headers: { Authorization: authorization } });
   return {
     async health(signal) {
-      const result = await client.global.health({ throwOnError: true, signal });
+      const result = await client.global.health({ throwOnError: true, ...(signal !== undefined ? { signal } : {}) });
       return result.data;
     },
     async createSession(input, signal) {
@@ -121,7 +121,7 @@ function sdkClient(baseUrl: string, username: string, password: string): OpenCod
         title: "AllMyFriendsAreAgents read-only room turn",
         agent: input.agent,
         model: { id: input.modelId, providerID: input.providerId, ...(input.variant ? { variant: input.variant } : {}) },
-      }, { throwOnError: true, signal });
+      }, { throwOnError: true, ...(signal !== undefined ? { signal } : {}) });
       if (!result.data?.id) throw new Error("OpenCode did not create a structured room session.");
       return result.data.id;
     },
@@ -131,11 +131,11 @@ function sdkClient(baseUrl: string, username: string, password: string): OpenCod
         directory: input.projectPath,
         model: { providerID: input.providerId, modelID: input.modelId },
         agent: input.agent,
-        variant: input.variant,
-        system: input.system,
+        ...(input.variant !== undefined ? { variant: input.variant } : {}),
+        ...(input.system !== undefined ? { system: input.system } : {}),
         format: { type: "json_schema", schema: STRUCTURED_ROOM_TURN_JSON_SCHEMA, retryCount: 2 },
         parts: [{ type: "text", text: input.prompt }],
-      }, { throwOnError: true, signal });
+      }, { throwOnError: true, ...(signal !== undefined ? { signal } : {}) });
       if (!result.data?.info) throw new Error("OpenCode returned no structured room message.");
       return { info: result.data.info };
     },
