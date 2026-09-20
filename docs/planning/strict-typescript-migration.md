@@ -82,6 +82,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` repository policy defaults | `fc7c116` | 7 project-binding tests, including omitted-policy default preservation and restart/repair coverage | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 41 diagnostics in 8 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` OpenRouter catalog and credits | `24a007e` | 20 catalog and integration API tests, including cache recovery, partial remote metadata, invalid timestamps, and unavailable-credit omission | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 32 diagnostics in 6 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` OpenCode structured transport | `9b1bc25` | 6 structured-transport tests plus all 291 tests in the 19-suite OpenCode integration-contract gate | Upstream review revision 49 at audited commit `cb7d8b2f5e44876ef98b661dc10590c915af3a9f`; `pnpm run typecheck`; Biome lint; boundary inventory reduced to 28 diagnostics in 5 files with no drift in other slices; planning self-check; `git diff --check` |
+| `server-boundaries` command API options | `3ecfcda` | 10 command API and room-surface acceptance tests, including routes with omitted callbacks, poll cursors, and diagnostic filters | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 25 diagnostics in 4 files with no drift in other slices; planning self-check; `git diff --check` |
 
 ## Decision log
 
