@@ -85,6 +85,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` command API options | `3ecfcda` | 10 command API and room-surface acceptance tests, including routes with omitted callbacks, poll cursors, and diagnostic filters | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 25 diagnostics in 4 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` command delivery state | `92e96e7` | 36 command runtime and GitHub-command tests, including durable task/POV recovery, authority changes, silent completion, and stalled-generation diagnostics | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 17 diagnostics in 3 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` storage migration options | `802b0dd` | 11 durable-identity migration and JSON-to-SQLite import tests, including restart, overwrite, and manifest behavior | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 14 diagnostics in 1 file with no drift in other slices; planning self-check; `git diff --check` |
+| `server-boundaries` SQLite repository invariants | `b9424f0` | 69 SQLite repository, command, continuation, task, identity-migration, and JSON-import tests | `pnpm run typecheck`; Biome lint; `--assert-clean=server-boundaries`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
