@@ -96,6 +96,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` application boundary fixtures | `f0b0749` | 30 protected-work, repository-repair, room-tool, governed-improvement, and room-lifecycle GitHub application tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 119 unchecked-index diagnostics in 14 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` agent runtime fixtures | `592610e` | 85 agent-runner, room-tool-attempt, and roster API tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 109 unchecked-index diagnostics in 11 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` ordered orchestration fixtures | `f029984` | 35 queue, room-diagnostics, and coordinator-heartbeat tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 94 unchecked-index diagnostics in 8 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-tests` conversation fixture records | `ea32814` | 106 conversation decision, observability, run-observer, and engine tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 58 unchecked-index diagnostics in 4 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
