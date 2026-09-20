@@ -70,8 +70,12 @@ describe("GitHubIntegrationPanel", () => {
     await user.click(await screen.findByRole("button", { name: "Retry repair" }));
     await screen.findByText("Repository verified");
     expect(attempts).toHaveLength(2);
-    expect(attempts[0]).toBe(attempts[1]);
-    expect(JSON.parse(attempts[0])).toMatchObject({ expectedBindingRevision: 1, expectedRepositoryRevision: 1, checkoutPath: "/workspace", worktreeRoot: "/worktrees" });
+    const [firstAttempt, secondAttempt] = attempts;
+    expect(firstAttempt).toBeDefined();
+    expect(secondAttempt).toBeDefined();
+    if (!firstAttempt || !secondAttempt) throw new Error("Expected both repair attempts.");
+    expect(firstAttempt).toBe(secondAttempt);
+    expect(JSON.parse(firstAttempt)).toMatchObject({ expectedBindingRevision: 1, expectedRepositoryRevision: 1, checkoutPath: "/workspace", worktreeRoot: "/worktrees" });
   });
 
   it("explains a capability denial without discarding a valid session or offering another sign-in", async () => {

@@ -5,7 +5,7 @@ const items = [
   { agentId: "2", alias: "Zulu", authorId: "google", providerId: "cursor" },
   { agentId: "1", alias: "Alpha", authorId: "openai", providerId: "openai" },
   { agentId: "3", alias: "Bravo", authorId: "google", providerId: "openrouter" },
-];
+] as const;
 
 describe("agent list presentation order", () => {
   it("sorts display copies without mutating room order", () => {
