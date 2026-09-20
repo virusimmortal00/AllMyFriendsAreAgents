@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 53,
+    "revision": 54,
     "reviewedOn": "2026-09-20",
-    "result": "Refresh trigger: the read-only source-control adapter now preserves literal tab characters in Git paths, applies the same explicit rename detection to name-status and numstat output, and represents the absent inline-path parser state explicitly under strict TypeScript. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked every recorded CLI, SDK, session, model discovery, permission, tool, MCP configuration, and native authentication path against this application-owned Git parsing change. Confirmed: the change does not alter OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. The recorded focused contract tests pass.",
+    "result": "Refresh trigger: the strict server-test and storage-fixture layer validates optional fixture omission, indexed records, ordered runtime evidence, and normalized persistence boundaries in tests that exercise the recorded OpenCode integration surfaces, on top of the reviewed source-control parser update. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked every recorded CLI event, SDK message, session prompt, cancellation, model discovery, permission, tool, MCP configuration, and native authentication contract against these test-only typing changes. Confirmed: the layer changes fixture validation and application-owned storage normalization without changing OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. All 291 tests in the 19-suite focused integration-contract gate pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
