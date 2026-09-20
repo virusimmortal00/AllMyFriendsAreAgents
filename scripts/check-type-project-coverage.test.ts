@@ -51,6 +51,7 @@ describe("TypeScript project coverage guard", () => {
     expect(
       missingRequiredCompilerOptions({
         strict: true,
+        strictNullChecks: true,
         exactOptionalPropertyTypes: true,
         noUncheckedIndexedAccess: true,
         noImplicitOverride: true,
@@ -63,5 +64,15 @@ describe("TypeScript project coverage guard", () => {
       "noImplicitOverride",
       "noFallthroughCasesInSwitch",
     ]);
+    expect(
+      missingRequiredCompilerOptions({
+        strict: true,
+        strictNullChecks: false,
+        exactOptionalPropertyTypes: true,
+        noUncheckedIndexedAccess: true,
+        noImplicitOverride: true,
+        noFallthroughCasesInSwitch: true,
+      }),
+    ).toEqual(["strictNullChecks"]);
   });
 });

@@ -14,6 +14,7 @@ export const TYPECHECK_PROJECTS = [
 
 export const REQUIRED_COMPILER_OPTIONS = [
   "strict",
+  "strictNullChecks",
   "exactOptionalPropertyTypes",
   "noUncheckedIndexedAccess",
   "noImplicitOverride",
@@ -37,7 +38,12 @@ export function filterExistingPaths(root: string, files: readonly string[]): str
 }
 
 export function missingRequiredCompilerOptions(options: ts.CompilerOptions): string[] {
-  return REQUIRED_COMPILER_OPTIONS.filter((option) => options[option] !== true);
+  return REQUIRED_COMPILER_OPTIONS.filter((option) => {
+    if (option === "strictNullChecks") {
+      return options.strictNullChecks === false || (options.strictNullChecks !== true && options.strict !== true);
+    }
+    return options[option] !== true;
+  });
 }
 
 function projectFiles(root: string, project: string): { files: Set<string>; options: ts.CompilerOptions } {
