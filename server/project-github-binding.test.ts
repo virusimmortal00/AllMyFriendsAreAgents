@@ -58,6 +58,25 @@ describe("project GitHub binding workflow", () => {
     expect(f.authority.inspectServer()).toMatchObject({ credentialReference: expect.stringMatching(/^github-binding:/), remote: { canonical: "github.com/example/one" } });
   });
 
+  it("preserves repository policy defaults when optional configuration is absent", async () => {
+    const f = await fixture();
+    const configured = input(f);
+    const result = await f.service.configure({
+      projectId: configured.projectId,
+      githubConnectionId: configured.githubConnectionId,
+      githubRepositoryId: configured.githubRepositoryId,
+      expectedBindingRevision: configured.expectedBindingRevision,
+      expectedRepositoryRevision: configured.expectedRepositoryRevision,
+      checkoutPath: configured.checkoutPath,
+      worktreeRoot: configured.worktreeRoot,
+      policyRevision: configured.policyRevision,
+    });
+    expect(result.kind).toBe("ok");
+    expect(f.authority.inspectServer()).toMatchObject({
+      protectedBranches: ["main"], validationCommands: [], sensitivePaths: [],
+    });
+  });
+
   it("rejects a checkout mismatch before creating project authority", async () => {
     const f = await fixture("other");
     await expect(f.service.configure(input(f))).resolves.toMatchObject({ kind: "rejected", reason: expect.stringContaining("does not match") });

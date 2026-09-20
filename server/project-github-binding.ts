@@ -134,11 +134,11 @@ export class ProjectGitHubBindingService {
       checkoutPath: input.checkoutPath,
       worktreeRoot: input.worktreeRoot,
       defaultBranch: selected.defaultBranch,
-      protectedBranches: input.protectedBranches,
       policyRevision: input.policyRevision,
-      validationCommands: input.validationCommands,
-      sensitivePaths: input.sensitivePaths,
       credentialReference: binding.value.bindingId,
+      ...(input.protectedBranches !== undefined ? { protectedBranches: input.protectedBranches } : {}),
+      ...(input.validationCommands !== undefined ? { validationCommands: input.validationCommands } : {}),
+      ...(input.sensitivePaths !== undefined ? { sensitivePaths: input.sensitivePaths } : {}),
     };
     const repository = await authority.connect(repositoryInput);
     if (repository.kind !== "ok") {
