@@ -182,5 +182,11 @@ describe("RoomEventStream protocol", () => {
     response.emit("close");
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(stream.clientCount).toBe(0);
+
+    const reconnected = connection();
+    stream.connect(reconnected.request as never, reconnected.response as never, room([]));
+    vi.advanceTimersByTime(ROOM_EVENT_HEARTBEAT_MS);
+    expect(reconnected.response.write).toHaveBeenCalledWith(expect.stringMatching(/^event: heartbeat\ndata: /));
+    reconnected.request.emit("close");
   });
 });
