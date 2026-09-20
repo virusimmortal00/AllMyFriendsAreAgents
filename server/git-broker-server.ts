@@ -157,7 +157,9 @@ export function parseGitArguments(claims: AssignmentGitClaims, args: readonly st
     return { requestId, claims, operation: "stage", paths };
   }
   if (args[0] === "commit" && args.length === 3 && args[1] === "-m") {
-    return { requestId, claims, operation: "commit", message: args[2] };
+    const message = args[2];
+    if (message === undefined) throw new Error("Git commit message is missing");
+    return { requestId, claims, operation: "commit", message };
   }
   throw new Error("Git command or option is outside the assignment broker allowlist");
 }
