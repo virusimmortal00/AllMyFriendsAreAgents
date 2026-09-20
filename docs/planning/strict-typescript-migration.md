@@ -48,7 +48,7 @@ silently missed.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
-| 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
+| 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | In progress: parsing and sequencing invariants | `shared-contracts` | Strict inventory and focused server tests |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
@@ -97,6 +97,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-tests` | Validate loaded investigation fixtures and parsed responsive-audit table/capture fields before use. Malformed planning rows remain excluded, while missing test fixtures fail explicitly instead of producing partial typed records. | `src/investigations.test.tsx`, `src/responsive-view-audit.test.ts` |
 | 2026-09-19 | `client-tests` | Inspect recorded network calls only after establishing that the expected request and body exist. Parsed roster payloads also require an entry before field assertions, so failed setup produces a targeted invariant error rather than an unchecked-access exception. | `src/room-configuration-dialog.test.tsx`, `src/roster-api.test.ts`, `src/roster-manager.test.tsx` |
 | 2026-09-19 | `client-tests` | Centralize positional test-fixture access in a fail-fast helper for reconnect event sources, message calls, and roster agents. The harness still tests exact event ordering, but missing setup evidence now reports which indexed fixture was absent. | `src/reconnect-flow.test.tsx` |
+| 2026-09-19 | `server-runtime` | Validate positional timing inputs and regular-expression captures before use. Burst delivery fails explicitly on an internal sparse-array invariant, while mention detection safely ignores room participants without a registered presentation profile. | `server/response-pacing.ts`, `server/burst-delivery.ts`, `server/agent-health.ts`, `server/structured-room-turn.ts`, `server/structured-room-turn.test.ts` |
 
 # Next action
 

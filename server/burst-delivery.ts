@@ -19,12 +19,14 @@ export async function deliverBurst({
   cancel,
 }: BurstDeliveryOptions) {
   for (let sequence = 0; sequence < messages.length; sequence += 1) {
-    const delay = sequence === 0 ? firstDelayMs : continuationDelayMs(messages[sequence], sequence);
+    const message = messages[sequence];
+    if (message === undefined) throw new Error(`Burst message ${sequence} is missing.`);
+    const delay = sequence === 0 ? firstDelayMs : continuationDelayMs(message, sequence);
     if (!(await activity.wait(delay, revision))) {
       await cancel();
       return false;
     }
-    const delivered = await deliver(messages[sequence], sequence);
+    const delivered = await deliver(message, sequence);
     if (delivered === false) {
       await cancel();
       return false;
