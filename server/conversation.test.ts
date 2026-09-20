@@ -192,6 +192,7 @@ describe("agent conversations", () => {
     );
 
     expect(seenAgents).toEqual(["codex-sol", "claude-sonnet", "codex-sol"]);
+    expect(performTurn.mock.calls.slice(1).every(([turn]) => !Object.hasOwn(turn, "includeDiff"))).toBe(true);
   });
 
   it("defers a direct mention when the named agent already has a pending turn", async () => {
