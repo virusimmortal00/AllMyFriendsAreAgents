@@ -52,7 +52,7 @@ describe("browser identity requests", () => {
     await sendMessage("Hello", "message_123");
     await updateMyStyle(style);
     await updateMyAvatar("data:image/jpeg;base64,/9j/AA==");
-    await updateMyProfile({ name: "Grace", avatarUrl: undefined });
+    await updateMyProfile({ name: "Grace" });
     await updateSettings({ roomName: "Architecture Room" });
     await authorizeHeartbeat(3);
     await emergencyStopHeartbeat(4);

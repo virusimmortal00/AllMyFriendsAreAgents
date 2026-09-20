@@ -10,6 +10,7 @@ afterEach(() => { cleanup(); updateControlSession({ status: null, session: null,
 function response(body: unknown, status = 200) { return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })); }
 const traceId = "a".repeat(32);
 const record = { recordId: "diag-1", stream: "generations", timestamp: "2026-08-28T12:00:00.000Z", severity: "info", event: "generation.completed", generationId: "generation-one", correlationId: "correlation-one", traceId, content: { prompt: "peer prompt", rawOutput: "provider output" } };
+const { generationId: _generationId, ...recordWithoutGeneration } = record;
 const page = (overrides: Record<string, unknown> = {}) => ({ records: [record], chunks: [], nextCursor: null, scannedBytes: 1024, serializedBytes: 512, malformedRecords: 0, scanLimitReached: false, ...overrides });
 
 describe("owner diagnostic dashboard", () => {
@@ -299,13 +300,13 @@ describe("owner diagnostic dashboard", () => {
 
   it("reports complete reconstruction only after all pages and linked evidence are present", () => {
     const structured = [
-      { ...record, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 1 } },
+      { ...recordWithoutGeneration, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 1 } },
       { ...record, recordId: "turn-finished", event: "conversation.turn.finished", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 2, generationId: "generation-one" } },
-      { ...record, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 3, attemptedEventCount: 3 } },
+      { ...recordWithoutGeneration, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 3, attemptedEventCount: 3 } },
     ];
     const jobRecords = [
-      { ...record, recordId: "job-decision", event: "conversation.job.decision", correlationId: "request-one", generationId: undefined, content: { jobId: "job-one", action: "queued" } },
-      { ...record, recordId: "job-consumed", event: "conversation.job.consumed", correlationId: "request-one", generationId: undefined, content: { jobId: "job-one" } },
+      { ...recordWithoutGeneration, recordId: "job-decision", event: "conversation.job.decision", correlationId: "request-one", content: { jobId: "job-one", action: "queued" } },
+      { ...recordWithoutGeneration, recordId: "job-consumed", event: "conversation.job.consumed", correlationId: "request-one", content: { jobId: "job-one" } },
     ];
     expect(summarizeTraceEvidence([...jobRecords, ...structured, record], true)).toMatchObject({ status: "partial" });
     expect(summarizeTraceEvidence([...jobRecords, ...structured, record], false)).toMatchObject({ status: "complete", runCount: 1, unpairedRecordIds: [], missingRawGenerationIds: [] });
@@ -325,9 +326,9 @@ describe("owner diagnostic dashboard", () => {
 
   it("detects sequence gaps and decision records whose raw evidence is absent", () => {
     const records = [
-      { ...record, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 1 } },
+      { ...recordWithoutGeneration, recordId: "run-start", event: "conversation.run.started", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 1 } },
       { ...record, recordId: "turn-finished", event: "conversation.turn.finished", correlationId: "run-one", generationId: "generation-missing", content: { runId: "run-one", runEventSequence: 3, generationId: "generation-missing" } },
-      { ...record, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", generationId: undefined, content: { runId: "run-one", runEventSequence: 4, attemptedEventCount: 4 } },
+      { ...recordWithoutGeneration, recordId: "run-complete", event: "conversation.run.completed", correlationId: "run-one", content: { runId: "run-one", runEventSequence: 4, attemptedEventCount: 4 } },
     ];
     expect(summarizeTraceEvidence(records, false)).toMatchObject({ status: "incomplete", missingSequences: [2], missingRawGenerationIds: ["generation-missing"] });
   });

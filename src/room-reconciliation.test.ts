@@ -27,7 +27,7 @@ function snapshot(room: RoomState, streamId = "stream-1", version = 0) {
 }
 
 function message(id: string, clientMessageId?: string): RoomMessage {
-  return { id, clientMessageId, speaker: "you", text: id, timestamp: "2026-08-24T12:00:00.000Z" };
+  return { id, ...(clientMessageId ? { clientMessageId } : {}), speaker: "you", text: id, timestamp: "2026-08-24T12:00:00.000Z" };
 }
 
 describe("room delta reconciliation", () => {

@@ -50,7 +50,7 @@ silently missed.
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Not started | `shared-contracts` | — |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
-| 3 | `client-tests` | `src/**/*.test.ts?(x)` | Not started | `client-runtime` | — |
+| 3 | `client-tests` | `src/**/*.test.ts?(x)` | In progress: fixture invariants | `client-runtime` | Strict inventory and focused test suites |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
@@ -92,6 +92,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Preserve connection-health fields across snapshots only when a prior or incoming value exists. Initial room enrichment likewise applies only values returned by the request, so omission remains distinct from a present `undefined` property. | `src/room-reconciliation.ts`, `src/room-reconciliation.test.ts`, `src/App.tsx` |
 | 2026-09-19 | `client-runtime` | Keep transcript magnification within the normalized level when an internal index is unexpectedly unavailable, require the sole typing participant before naming it, and derive menu access keys with non-throwing string access. | `src/transcript-view.ts`, `src/transcript-view.test.ts`, `src/App.tsx` |
 | 2026-09-19 | `client-runtime` | Compose optional room and dialog props only from available state. This keeps child contracts exact and prevents React boundaries from converting missing availability, health, repository, protected-work, provider, capability, and selection state into present `undefined` values. | `src/App.tsx`, `src/reconnect-flow.test.tsx` |
+| 2026-09-19 | `client-tests` | Build test fixtures with genuinely absent avatar, generation, and client-message fields. These cases now exercise the production omission contract instead of representing absence as explicit `undefined`. | `src/api-identity.test.ts`, `src/diagnostics.test.tsx`, `src/room-reconciliation.test.ts` |
 
 # Next action
 
