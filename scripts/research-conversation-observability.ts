@@ -18,6 +18,7 @@ import { GenerationJournal } from "../server/generation-journal.js";
 import { LocalFileDiagnosticsQueryService, type DiagnosticQuery } from "../server/diagnostics-query.js";
 import { AGENT_IDS } from "../shared/participants.js";
 import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES } from "../shared/conversation-energy.js";
+import { requiredAt, requiredValue } from "./type-invariants.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -108,7 +109,7 @@ async function ceilingProbe() {
           await runEnergyConversation(turns, energy, async (turn) => {
             active++;
             if (active > 1) overlappingTurns++;
-            limits.push(turn.visibleMessageLimit!);
+            limits.push(requiredValue(turn.visibleMessageLimit, "conversation turn visible message limit"));
             const index = turns.findIndex(({ agent }) => agent === turn.agent);
             for (let step = 0; step < (reverse ? turns.length - index : index + 1); step++) await Promise.resolve();
             const parsed = parseAgentTurn(turn.agent,
@@ -116,7 +117,7 @@ async function ceilingProbe() {
               undefined, turn.visibleMessageLimit, turns.map(({ agent }) => agent));
             delivered += parsed.visibleMessageCount;
             active--;
-            const target = turns[(index + 1) % turns.length].agent;
+            const target = requiredAt(turns, (index + 1) % turns.length, "next conversation turn").agent;
             return { ...parsed, ...(behavior === "open-mentions" ? { conversationState: "open" as const, mentionedAgents: target !== turn.agent ? [target] : [] } : {}) };
           }, () => draw, { inviteAll, concurrencyLimit });
           if (delivered > ceiling) violations.push({ energy, count, concurrencyLimit, inviteAll, draw, behavior, reverse, delivered, ceiling, limits });

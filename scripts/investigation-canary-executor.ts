@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { requiredAt } from "./type-invariants.js";
 
 type Mode = "success" | "hold" | "checkpoint-hold" | "collision" | "over-budget" | "failure" | "malformed" | "real";
 interface Dispatch { sequence: number; investigationId: string; attempt: number; owner: string; mode: Mode; capabilities: string[]; excludedCapabilities: string[]; forbiddenProviderSessionIds: string[]; checkpoint: unknown; remainingBudget: { timeMs: number; tokenLimit: number; toolCallLimit: number }; receivedAt: string; aborted: boolean; providerSessionId?: string; tokens?: number; toolCalls?: number; error?: string }
@@ -33,7 +34,7 @@ app.delete("/v1/investigations/:id/attempts/:attempt", (request, response) => {
   if (item.mode === "real") return response.json({ terminated: false });
   item.aborted = true;
   const index = pending.findIndex((entry) => entry.dispatch === item);
-  if (index >= 0) { const [held] = pending.splice(index, 1); if (!held.response.writableEnded) held.response.end(); }
+  if (index >= 0) { const held = requiredAt(pending.splice(index, 1), 0, "held investigation response"); if (!held.response.writableEnded) held.response.end(); }
   return response.json({ terminated: true });
 });
 app.post("/v1/investigations", async (request, response) => {
