@@ -128,6 +128,7 @@ describe("read-only source-control adapter", () => {
     await run(root, ["checkout", "-b", "feature/read-only"]);
     await writeFile(path.join(root, "first.txt"), "one\ntwo\n", "utf8");
     await writeFile(path.join(root, "second.txt"), "new\n", "utf8");
+    await writeFile(path.join(root, "tab\tname.txt"), "tabbed\n", "utf8");
     await writeFile(path.join(root, "rename-from.txt"), "rename me\n", "utf8");
     await run(root, ["add", "."]);
     await run(root, ["commit", "--no-verify", "-m", "head"]);
@@ -136,6 +137,7 @@ describe("read-only source-control adapter", () => {
     await run(root, ["commit", "--no-verify", "-m", "rename"]);
     const head = (await run(root, ["rev-parse", "HEAD"])).trim();
     await run(root, ["worktree", "add", "--detach", worktree, head]);
+    await run(root, ["config", "diff.renames", "false"]);
 
     const adapter = new ReadonlySourceControlAdapter(new GitReadonlySourceBackend(), () => "2026-08-21T14:00:00.000Z");
     const governedTarget = target();
@@ -148,6 +150,7 @@ describe("read-only source-control adapter", () => {
         { path: "first.txt", status: "modified", additions: 1, deletions: 0, binary: false },
         { path: "rename-to.txt", previousPath: null, status: "added", additions: 1, deletions: 0, binary: false },
         { path: "second.txt", status: "added", additions: 1, deletions: 0, binary: false },
+        { path: "tab\tname.txt", status: "added", additions: 1, deletions: 0, binary: false },
       ],
       checks: [{ name: "git-diff-check", conclusion: "passed" }],
     } });

@@ -210,7 +210,7 @@ export class GitReadonlySourceBackend implements ReadonlySourceBackend {
     const range = [binding.base.revision, binding.head.revision];
     const [names, numbers, check] = await Promise.all([
       git(root, ["diff", "--no-ext-diff", "--find-renames", "--name-status", "-z", ...range]),
-      git(root, ["diff", "--no-ext-diff", "--numstat", "-z", ...range]),
+      git(root, ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z", ...range]),
       gitResult(root, ["diff", "--no-ext-diff", "--check", ...range]),
     ]);
     const diff = normalizeDiff(names, numbers);
@@ -282,10 +282,14 @@ function normalizeDiff(nameOutput: string, numberOutput: string): readonly Sourc
   for (let index = 0; index < numberParts.length;) {
     const record = numberParts[index++];
     if (record === undefined) throw new Error("Malformed git numstat output: missing record");
-    const [rawAdditions, rawDeletions, inlinePath] = record.split("\t");
-    if (rawAdditions === undefined || rawDeletions === undefined) {
+    const additionsEnd = record.indexOf("\t");
+    const deletionsEnd = record.indexOf("\t", additionsEnd + 1);
+    if (additionsEnd < 0 || deletionsEnd < 0) {
       throw new Error("Malformed git numstat output: incomplete record");
     }
+    const rawAdditions = record.slice(0, additionsEnd);
+    const rawDeletions = record.slice(additionsEnd + 1, deletionsEnd);
+    const inlinePath = record.slice(deletionsEnd + 1);
     let diffPath = inlinePath;
     if (!diffPath) {
       const previousPath = numberParts[index++];
@@ -302,7 +306,9 @@ function normalizeDiff(nameOutput: string, numberOutput: string): readonly Sourc
   for (let index = 0; index < parts.length;) {
     const record = parts[index++];
     if (record === undefined) throw new Error("Malformed git name-status output: missing record");
-    const [rawStatus, inlinePath] = record.split("\t");
+    const separator = record.indexOf("\t");
+    const rawStatus = separator < 0 ? record : record.slice(0, separator);
+    const inlinePath = separator < 0 ? "" : record.slice(separator + 1);
     if (!rawStatus) throw new Error("Malformed git name-status output: missing status");
     const renamed = rawStatus.startsWith("R") || rawStatus.startsWith("C");
     let previousPath: string | null = null;
