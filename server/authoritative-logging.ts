@@ -57,6 +57,7 @@ export interface AuthoritativeLoggingOptions {
 
 interface StreamState {
   destination: Destination;
+  awaitClose: boolean;
   logger: PinoLogger;
   queue: string[];
   queuedBytes: number;
@@ -102,6 +103,7 @@ export class AuthoritativeLogging {
   private readonly identicalWindowMs: number;
   private readonly includeStacks: boolean;
   private readonly identity: StructuredLogIdentity;
+  private closePromise: Promise<void> | undefined;
   private projectId: string;
   private projectPath: string;
   private constructor(private readonly options: AuthoritativeLoggingOptions) {
@@ -131,7 +133,7 @@ export class AuthoritativeLogging {
         ? await options.sinkFactory(stream, file, rotation)
         : await buildRoll({ file, size: `${rotation.maxBytes}b`, frequency: rotation.frequencyMs, extension: ".jsonl", mode: 0o600, minLength: 0, limit: { count: rotation.retention, removeOtherLogFiles: true } });
       const metrics: LoggingMetrics = { dropped: 0, coalesced: 0, sinkFailures: 0, written: 0 };
-      const state: StreamState = { destination, queue: [], queuedBytes: 0, draining: false, metrics, identical: new Map(), logger: undefined as unknown as PinoLogger };
+      const state: StreamState = { destination, awaitClose: !options.sinkFactory, queue: [], queuedBytes: 0, draining: false, metrics, identical: new Map(), logger: undefined as unknown as PinoLogger };
       destination.on?.("error", () => { metrics.sinkFailures = Math.min(metrics.sinkFailures + 1, Number.MAX_SAFE_INTEGER); });
       const safeDestination = { write: (line: string) => { logging.enqueue(state, line); } };
       state.logger = pino({ base: null, timestamp: false, formatters: { level: (label) => ({ severity: label }) } }, safeDestination);
@@ -233,7 +235,23 @@ export class AuthoritativeLogging {
     }));
   }
 
-  async close() { await this.flush(); for (const state of this.states.values()) state.destination.end?.(); }
+  close() {
+    this.closePromise ??= (async () => {
+      await this.flush();
+      await Promise.all([...this.states.values()].map(async ({ destination, awaitClose }) => {
+        if (!destination.end) return;
+        if (!awaitClose || !destination.once) {
+          destination.end();
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          destination.once!("close", () => resolve());
+          destination.end!();
+        });
+      }));
+    })();
+    return this.closePromise;
+  }
 
   private write(state: StreamState, level: LogLevel, record: Record<string, unknown>) {
     try { state.logger[level](record); }

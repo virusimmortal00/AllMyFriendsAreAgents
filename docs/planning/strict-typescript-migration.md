@@ -72,6 +72,7 @@ At the start and end of every slice, the implementing agent must:
 | Slice | Commit | Focused checks | Repository checks |
 | --- | --- | --- | --- |
 | `server-runtime` | `f35d60e` | 180 conversation, command, delivery, protected-work, room-surface, and room-tool tests; 290 OpenCode integration-contract tests | `pnpm run typecheck`; Biome lint; `--assert-clean=server-runtime`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `client-runtime` guardrail follow-up | `4142b07` | 18 API, roster, continuation, investigation, and protected-work tests | API contract check covering 157 server routes and 72 client call sites; `pnpm run typecheck`; Biome lint; `--assert-clean=client-runtime`; planning self-check; `git diff --check` |
 
 ## Decision log
 
@@ -121,6 +122,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-runtime` | Validate configured conversation identity before prompt construction and preserve omission across transcript, structured-transport, process, journal, and result boundaries. Scoped-tool refresh now removes retired bindings instead of retaining present `undefined` properties. The upstream refresh confirmed the change does not alter OpenCode arguments, permissions, SDK calls, or event interpretation. | `server/agent-runner.ts`, `server/agent-runner.test.ts`, `integration-contracts/opencode.json` |
 | 2026-09-19 | `server-runtime` | Compose startup logging, classifier, coordinator, investigation, and optional contribution-route dependencies only from configured values. Missing environment overrides now preserve each service's own default, and unavailable services remain absent rather than being registered as present `undefined`. | `server/index.ts`, focused service and API tests, `integration-contracts/opencode.json` |
 | 2026-09-19 | `server-runtime` | Complete the runtime slice by resolving participant names from normalized room state, enforcing the participant-style and dense-turn invariants, and preserving omission across spend metadata, scoped tools, generation results, command defaults, MCP cursors, and optional membership services. Presence routing now reads the configured roster provider instead of assuming every runtime participant has a static profile. The upstream refresh confirmed these composition changes do not alter OpenCode arguments, permissions, SDK calls, or event interpretation. | `server/index.ts`, focused conversation, command, delivery, protected-work, and room-surface tests, `integration-contracts/opencode.json` |
+| 2026-09-19 | `server-runtime` quality follow-up | Await managed `pino-roll` destination closure and share one idempotent shutdown promise. Returning immediately after `end()` left frequency timers able to call `reopen()` on a destroyed sink during concurrent test and process shutdown. | `server/authoritative-logging.ts`, `server/authoritative-logging.test.ts`, full 1,828-test suite |
 
 # Next action
 
