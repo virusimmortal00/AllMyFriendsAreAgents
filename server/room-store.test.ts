@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { createDefaultRoomState, RoomStore } from "./room-store.js";
+import { requiredAt } from "./test-invariants.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -62,7 +63,7 @@ describe("room style persistence", () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-config-cache-invalidation-"));
     temporaryDirectories.push(projectRoot);
     const store = await RoomStore.open(projectRoot, path.join(projectRoot, "state"));
-    const [first, last] = [store.snapshot().messages[0], store.snapshot().messages.at(-1)!];
+    const first=requiredAt(store.snapshot().messages,0,"first room message");const last=requiredAt(store.snapshot().messages,-1,"last room message");
     const key = { agentId: "codex-sol" as const, spanStartId: first.id, spanEndId: last.id, configRevision: 0 };
     await store.putAgentContextSummary(key, "stale summary");
     expect(await store.getAgentContextSummary(key)).toBe("stale summary");
@@ -79,7 +80,7 @@ describe("room style persistence", () => {
     const stateDirectory = path.join(projectRoot, "state");
     const store = await RoomStore.open(projectRoot, stateDirectory);
     await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
-    const firstId = store.snapshot().messages[0].id;
+    const firstId = requiredAt(store.snapshot().messages,0,"initial room message").id;
     const message = await store.addMessage("you", "checkpoint");
     await store.setLastSeenMessageId("codex-sol", message.id);
     const key = { agentId: "codex-sol" as const, spanStartId: firstId, spanEndId: message.id, configRevision: 0 };

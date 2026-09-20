@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style.js";
+import { requiredAt } from "../test-invariants.js";
 import { DEFAULT_ROOM_ID, SqliteRoomRepository } from "./sqlite-room-repository.js";
 
 const temporaryDirectories: string[] = [];
@@ -46,19 +47,20 @@ describe("SQLite room repository", () => {
     await store.updateRoster(1, [{ agentId: "codex-sol", enabled: true }]);
     const message = await store.addMessage("you", "Cursor checkpoint");
     await store.setLastSeenMessageId("codex-sol", message.id);
-    await store.putAgentContextSummary({ agentId: "codex-sol", spanStartId: store.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 }, "cached summary");
+    const spanStartId=requiredAt(store.snapshot().messages,0,"initial SQLite room message").id;
+    await store.putAgentContextSummary({ agentId: "codex-sol", spanStartId, spanEndId: message.id, configRevision: 0 }, "cached summary");
     store.close();
 
     const reopened = await SqliteRoomRepository.open(projectRoot, databasePath);
     expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
-    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBe("cached summary");
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId, spanEndId: message.id, configRevision: 0 })).toBe("cached summary");
     const suppliedCursor = reopened.snapshot().roster!.entries.map((entry) => ({ ...entry, lastSeenMessageId: "forged" }));
     expect(await reopened.updateRoster(2, suppliedCursor)).toMatchObject({ kind: "accepted" });
     expect(reopened.snapshot().roster?.entries.find(({ agentId }) => agentId === "codex-sol")?.lastSeenMessageId).toBe(message.id);
     await reopened.updateRoomConfiguration({ preflightMode: "shadow" }, "owner");
-    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
-    await reopened.putAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 }, "late stale summary");
-    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId: reopened.snapshot().messages[0].id, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
+    await reopened.putAgentContextSummary({ agentId: "codex-sol", spanStartId, spanEndId: message.id, configRevision: 0 }, "late stale summary");
+    expect(await reopened.getAgentContextSummary({ agentId: "codex-sol", spanStartId, spanEndId: message.id, configRevision: 0 })).toBeUndefined();
     expect(await reopened.getRoomConfiguration()).toMatchObject({ configurationRevision: 1, preflightMode: "shadow" });
     reopened.close();
   });
