@@ -88,6 +88,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` SQLite repository invariants | `b9424f0` | 69 SQLite repository, command, continuation, task, identity-migration, and JSON-import tests | `pnpm run typecheck`; Biome lint; `--assert-clean=server-boundaries`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` external boundary fixtures | `6c05e78` | 85 command, credential-vault, OpenCode transport, OpenRouter, and room-bound GitHub tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 189 diagnostics in 40 files with no drift in completed slices; planning self-check; `git diff --check` |
 | `server-tests` service construction fixtures | `80b5cac` | 34 assignment API, continuation service, and contribution lifecycle tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 186 diagnostics in 37 files with no drift in completed slices; planning self-check; `git diff --check` |
+| `server-tests` GitHub contribution fake | `1c071ec` | 8 scoped contribution-broker tests covering reads, comments, draft publication, metadata, review, retry, restart, and stale identity | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 168 diagnostics in 36 files; planning self-check; `git diff --check` |
 
 ## Decision log
 
