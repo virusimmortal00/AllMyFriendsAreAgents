@@ -90,6 +90,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` service construction fixtures | `80b5cac` | 34 assignment API, continuation service, and contribution lifecycle tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 186 diagnostics in 37 files with no drift in completed slices; planning self-check; `git diff --check` |
 | `server-tests` GitHub contribution fake | `1c071ec` | 8 scoped contribution-broker tests covering reads, comments, draft publication, metadata, review, retry, restart, and stale identity | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 168 diagnostics in 36 files; planning self-check; `git diff --check` |
 | `server-tests` storage fixture invariants | `5b9e966` | 40 JSON/SQLite room-store and public-state response tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 160 diagnostics in 33 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-tests` singleton fixture invariants | `3f9646e` | 67 assignment lifecycle, authoritative logging, capability, consultation, summarizer, repository-readiness, and event-stream tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 153 diagnostics in 26 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
