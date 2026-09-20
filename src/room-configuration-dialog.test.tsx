@@ -53,17 +53,21 @@ describe("RoomConfigurationDialog", () => {
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(AGENT_BEHAVIOR_RULES);
     expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
     await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
-    expect(screen.getByText(AGENT_BEHAVIOR_RULES[0])).toBeTruthy();
+    const [firstBehaviorRule] = AGENT_BEHAVIOR_RULES;
+    if (!firstBehaviorRule) throw new Error("Expected at least one shared behavior rule.");
+    expect(screen.getByText(firstBehaviorRule)).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "Additional room prompt" }) as HTMLTextAreaElement).disabled).toBe(true);
     await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
     await user.clear(screen.getByLabelText("Additional room prompt", { selector: "textarea" }));
     await user.type(screen.getByLabelText("Additional room prompt", { selector: "textarea" }), "Custom merit rule");
     await user.click(screen.getByRole("button", { name: "OK" }));
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/control/me");
-    expect(fetchMock.mock.calls[2][0]).toBe("/api/room/settings");
-    expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get("X-AMFAA-CSRF")).toBe("control-proof");
-    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ basePromptText: "Custom merit rule" });
+    const [, sessionCall, saveCall] = fetchMock.mock.calls;
+    if (!sessionCall || !saveCall) throw new Error("Expected session recovery and settings save requests.");
+    expect(sessionCall[0]).toBe("/api/control/me");
+    expect(saveCall[0]).toBe("/api/room/settings");
+    expect(new Headers(saveCall[1]?.headers).get("X-AMFAA-CSRF")).toBe("control-proof");
+    expect(JSON.parse(String(saveCall[1]?.body))).toEqual({ basePromptText: "Custom merit rule" });
   });
 
   it.each([true, false])("preserves drafts through administrator recovery (claimed=%s)", async (claimed) => {
@@ -163,7 +167,9 @@ describe("RoomConfigurationDialog", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await user.click(within(dialog).getByRole("button", { name: "Choose model…" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/room/settings/models");
+    const modelCall = fetchMock.mock.calls.at(1);
+    if (!modelCall) throw new Error("Expected the room model request.");
+    expect(modelCall[0]).toBe("/api/room/settings/models");
     await user.click(await screen.findByRole("button", { name: "Back to agent behavior" }));
     const chooseModels = screen.getByRole("button", { name: "Choose model…" });
     expect(document.activeElement).toBe(chooseModels);
@@ -263,7 +269,9 @@ describe("RoomConfigurationDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(fetchMock.mock.calls[2][0]).toBe("/api/room/settings/models");
+    const retryCall = fetchMock.mock.calls.at(2);
+    if (!retryCall) throw new Error("Expected the retried room model request.");
+    expect(retryCall[0]).toBe("/api/room/settings/models");
     expect(screen.getByRole("button", { name: "Hide models" })).toBeTruthy();
     expect(await screen.findByText("0 available")).toBeTruthy();
   });
