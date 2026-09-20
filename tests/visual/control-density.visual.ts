@@ -18,7 +18,7 @@ test("control density remains stable across resize boundaries and views", async 
   await page.goto("/tests/visual/index.html?scenario=room-chat");
   await expect(page.locator(".app-window")).toBeVisible();
   const pointerIsCoarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  for (const [width, height] of [[1440, 900], [1024, 600], [821, 700], [820, 700], [721, 700], [720, 700], [390, 844], [390, 568], [320, 568]]) {
+  for (const [width, height] of [[1440, 900], [1024, 600], [821, 700], [820, 700], [721, 700], [720, 700], [390, 844], [390, 568], [320, 568]] as const) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(pointerIsCoarse);
     expect(await page.evaluate(measureControlDensity), `${width}×${height} chat chrome`).toEqual([]);

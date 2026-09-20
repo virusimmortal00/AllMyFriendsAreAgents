@@ -2,17 +2,19 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style";
 import { ROOM_PROTOCOL_VERSION } from "../../shared/protocol";
 import type { ModelDiscoveryResult } from "../../shared/model-discovery";
 import type { RoomState, HumanPresence } from "../../src/types";
-import { visualRoster } from "./fixtures";
+import { requiredVisualFixture, visualRoster } from "./fixtures";
 import { normalizeRoomAgentRoster } from "../../shared/roster";
 
 export const fixtureTime = "2026-08-30T12:00:00.000Z";
 export const fixtureTraceId = "a".repeat(32);
 export const fixtureHuman: HumanPresence = { id: "visual-human", name: "Alex", style: DEFAULT_PARTICIPANT_STYLES.you };
+const primaryAgent = requiredVisualFixture(visualRoster.entries[0], "primary roster agent");
+const secondaryAgent = requiredVisualFixture(visualRoster.entries[1], "secondary roster agent");
 export const fixtureRoom: RoomState = {
   githubReadStatus: { state: "ready", reason: "ready", repository: "example/navigation" },
   messages: [
     { id: "welcome", speaker: "you", speakerName: "Alex", text: "Let’s review the navigation and make every screen easier to use.", timestamp: fixtureTime },
-    { id: "reply", speaker: visualRoster.entries[0].agentId, text: "Start with a clear route back to the conversation, then check the smaller screen sizes.\n\nSee [[improvement:navigation-review]] for the recorded evidence.", timestamp: fixtureTime },
+    { id: "reply", speaker: primaryAgent.agentId, text: "Start with a clear route back to the conversation, then check the smaller screen sizes.\n\nSee [[improvement:navigation-review]] for the recorded evidence.", timestamp: fixtureTime },
   ],
   settings: { roomName: "Design Workshop", topic: "A consistent experience across screen sizes", conversationEnergy: "balanced", participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) },
   status: "idle", humans: [fixtureHuman], roster: normalizeRoomAgentRoster(visualRoster),
@@ -52,7 +54,7 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
   const unauthorized = { status: 401, body: { error: "Owner sign-in required." } };
   const unauthenticatedScenarios = ["github-admin-sign-in", "github-claim-owner", "manage-agents-sign-in", "server-administration-sign-in", "server-administration-unclaimed", "your-profile-signed-out", "your-profile-unclaimed", "owner-diagnostics-sign-in"];
   if (method === "GET") {
-    if (route === "/api/protected-work") return ok(["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario) ? [{ workId: "protected-fixture", roomId: "00000000-0000-4000-8000-000000000001", owner: visualRoster.entries[0].agentId, objective: "Review navigation recovery", phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.parse(fixtureTime) - 65_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }] : []);
+    if (route === "/api/protected-work") return ok(["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario) ? [{ workId: "protected-fixture", roomId: "00000000-0000-4000-8000-000000000001", owner: primaryAgent.agentId, objective: "Review navigation recovery", phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.parse(fixtureTime) - 65_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }] : []);
     if (route === "/api/ready") return ok(fixtureRoom.server);
     if (route === "/api/state") return ok(fixtureRoom);
     if (route === "/api/polls") return ok({ items: scenario === "poll-cards" ? [{ pollId: "poll-navigation", revision: 1, question: "Which view should we review next?", options: ["Room properties", "Task details"], tallies: [2, 1], state: "OPEN", totalVotes: 3, closedAt: null, ownVote: null, canClose: true }] : [] });
@@ -67,8 +69,8 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
     if (route === "/api/openrouter-usage") return ok({
       room: { generations: 5, costUsd: 0.42, inputTokens: 4200, outputTokens: 900, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       agents: {
-        [visualRoster.entries[0].agentId]: { generations: 3, costUsd: 0.3, inputTokens: 2800, outputTokens: 600, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-        [visualRoster.entries[1].agentId]: { generations: 2, costUsd: 0.12, inputTokens: 1400, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [primaryAgent.agentId]: { generations: 3, costUsd: 0.3, inputTokens: 2800, outputTokens: 600, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        [secondaryAgent.agentId]: { generations: 2, costUsd: 0.12, inputTokens: 1400, outputTokens: 300, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       },
       sinceIso: url.searchParams.get("window") === "all" ? null : fixtureTime,
       truncated: false,

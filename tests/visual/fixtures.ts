@@ -1,5 +1,10 @@
 import type { RoomAgentRoster } from "../../shared/roster";
 
+export function requiredVisualFixture<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`Missing visual fixture: ${label}.`);
+  return value;
+}
+
 export const visualRoster: RoomAgentRoster = {
   schemaVersion: 3,
   revision: 1,

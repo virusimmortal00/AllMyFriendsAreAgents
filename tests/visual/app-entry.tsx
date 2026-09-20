@@ -6,6 +6,8 @@ import { createImprovement } from "../../shared/improvement-domain";
 import { workshopView } from "../../shared/workshop";
 import type { WorkshopResponse } from "../../src/types";
 import { appFixtureResponse, fixtureHuman, fixtureRoom, fixtureTime } from "./app-fixtures";
+import { requiredVisualFixture } from "./fixtures";
+import type { ProtectedWorkView } from "../../shared/protected-work";
 
 export const appScenario = new URLSearchParams(location.search).get("scenario") || "room-chat";
 // This entry is served only by the isolated fixture Vite config. The production
@@ -24,13 +26,15 @@ Object.defineProperty(window, "EventSource", { value: FixtureEventSource, config
 
 const record = createImprovement({ id: "navigation-review", risk: "GUARDED", author: { id: "Alex", role: "AUTHOR", human: true }, claims: [{ id: "navigation", statement: "Navigation should remain clear at every supported screen size." }], now: fixtureTime });
 const workshop: WorkshopResponse = { kind: "found", canonicalId: record.id, revisionLabel: "r1", state: record.state, risk: record.risk, updatedAt: fixtureTime, status: record.statusContract, evidence: [], revisions: [], milestones: [], audit: [], improvement: workshopView(record), emergencyStop: { active: false, reason: null, activatedAt: null } };
+const primaryAgent = requiredVisualFixture(fixtureRoom.roster?.entries[0], "primary app agent");
+const protectedWork = requiredVisualFixture((appFixtureResponse("http://127.0.0.1:4187/api/protected-work", "GET", "agent-status").body as ProtectedWorkView[])[0], "agent-status protected work");
 
 export function AppFixture() {
   const [overlayOpen, setOverlayOpen] = useState(true);
   if (appScenario === "startup") return <LoadingScreen />;
   if (appScenario === "join-room") return <NameEntry onJoin={() => undefined} />;
   if (appScenario === "join-recovery") return <LoadingScreen joining error="The room is temporarily unavailable. Try again or choose a different name." onRetry={() => undefined} onCancel={() => undefined} />;
-  return <><App />{overlayOpen && appScenario === "agent-status" ? <AgentSettingsDialog agent={fixtureRoom.roster!.entries[0].agentId} providerId="fixture-provider" protectedWork={(appFixtureResponse("http://127.0.0.1:4187/api/protected-work", "GET", "agent-status").body as import("../../shared/protected-work").ProtectedWorkView[])[0]} onProtectedWorkChanged={async () => undefined} available={false} health={{ status: "cooldown", reason: "rate_limit", message: "The provider is temporarily busy. Try again shortly.", since: fixtureTime }} onClose={() => setOverlayOpen(false)} /> : null}
+  return <><App />{overlayOpen && appScenario === "agent-status" ? <AgentSettingsDialog agent={primaryAgent.agentId} providerId="fixture-provider" protectedWork={protectedWork} onProtectedWorkChanged={async () => undefined} available={false} health={{ status: "cooldown", reason: "rate_limit", message: "The provider is temporarily busy. Try again shortly.", since: fixtureTime }} onClose={() => setOverlayOpen(false)} /> : null}
     {overlayOpen && appScenario.startsWith("improvement-workshop") ? <WorkshopDialog data={appScenario.endsWith("recovery") ? null : workshop} loading={false} missing={false} error={appScenario.endsWith("recovery") ? "The request timed out. Your conversation is still available." : ""} onRetry={() => undefined} onClose={() => setOverlayOpen(false)} /> : null}
     {overlayOpen && appScenario === "confirmation" ? <ConfirmationDialog returnFocusTo={null} title="Stop background work?" description="Current work will stop. You can review the saved results before starting again." confirmLabel="Stop work" onConfirm={() => setOverlayOpen(false)} onCancel={() => setOverlayOpen(false)} /> : null}
   </>;

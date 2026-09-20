@@ -52,7 +52,7 @@ silently missed.
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Complete | `shared-contracts` | `--assert-clean=server-boundaries`; focused boundary suites; repository typecheck |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Complete | Both server runtime slices | `pnpm run types:strict:inventory -- --assert-clean=server-tests` |
-| 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | In progress | Shared and client runtime | — |
+| 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Complete | Shared and client runtime | `pnpm run types:strict:inventory -- --assert-clean=visual-tooling` |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
 
 ## Update protocol
@@ -176,12 +176,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `server-tests` | Capture investigation dispatches, checkpoints, durable records, pending executor completions, and persisted job keys through named invariants. Recovery tests now reuse validated identities across authority changes instead of repeatedly indexing transient lists. | `server/investigation-recovery.test.ts`, `server/investigation-service.test.ts` |
 | 2026-09-20 | `server-tests` | Validate protected-work dispatches, lifecycle records, inbox entries, and reopened state before asserting transitions. Room-lifecycle isolation now names both opened stores once, so cross-room behavior is expressed through stable identities rather than unchecked array positions. | `server/protected-work-service.test.ts`, `server/room-lifecycle.test.ts` |
 | 2026-09-20 | `visual-tooling` | Validate the single required Codex lifecycle events, verdict message, claimed capture batch, matched review item, and lead capture before use. Review orchestration now fails with a named invariant when generated evidence is structurally incomplete. | `scripts/codex-visual-review.ts`, `scripts/review-visual.ts` |
+| 2026-09-20 | `visual-tooling` | Centralize fail-fast visual fixture lookup, name required roster/model/work entries, preserve tuple dimensions, and omit an unselected roster identity. README messages are built from typed dialogue tuples with validated names and styles, keeping optional fields semantically absent rather than widening them. | visual app, README, control-density, and protected-work fixtures |
 
 # Next action
 
-Begin `visual-tooling` with the smallest coherent script or visual-test family.
-Preserve omission at configuration boundaries and replace unchecked positional
-access with named invariants that explain the expected generated structure.
+Enable `exactOptionalPropertyTypes` and `noUncheckedIndexedAccess` in the
+authoritative TypeScript configuration, remove the migration-only inventory
+overrides, and run the full repository quality gate against the final settings.
 
 # Evidence
 
