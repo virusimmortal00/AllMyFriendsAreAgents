@@ -728,7 +728,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   function queryAt(value: string, cursor: number) {
     const before = value.slice(0, cursor);
     const at = before.lastIndexOf("@");
-    if (at < 0 || (at > 0 && !/\s/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) return null;
+    if (at < 0 || (at > 0 && !/\s/.test(before.charAt(at - 1))) || /\s/.test(before.slice(at + 1))) return null;
     return { start: at, end: cursor, text: before.slice(at + 1) };
   }
 
@@ -742,8 +742,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
       label: candidate.label,
-      providerSnapshot: candidate.providerSnapshot,
-      modelSnapshot: candidate.modelSnapshot,
+      ...(candidate.providerSnapshot ? { providerSnapshot: candidate.providerSnapshot } : {}),
+      ...(candidate.modelSnapshot ? { modelSnapshot: candidate.modelSnapshot } : {}),
       revision: candidate.revision,
       start: mentionQuery.start,
       end: mentionQuery.start + token.length,
@@ -942,7 +942,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           }
           if (matchingMentions.length && (event.key === "Enter" || event.key === "Tab")) {
             event.preventDefault();
-            chooseMention(matchingMentions[activeMention]);
+            const candidate = matchingMentions[activeMention];
+            if (candidate) chooseMention(candidate);
             return;
           }
           if (event.key === "Enter" && !event.shiftKey) {
