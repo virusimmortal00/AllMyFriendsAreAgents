@@ -26,7 +26,7 @@ export class GitHubReadStore {
   private active=0; private touches=0; private sequence=0;
   constructor(private readonly adapter:GitHubReadAdapter|undefined, options:{ttlMs?:number;maxEntries?:number;maxActive?:number;maxQueued?:number;clock?:MonotonicClock;operationLog?:(event:GitHubReadCacheEvent)=>Promise<unknown>|unknown}={}){this.ttlMs=positive(options.ttlMs,DEFAULT_GITHUB_READ_TTL_MS,1,3_600_000);this.maxEntries=positive(options.maxEntries,DEFAULT_GITHUB_READ_MAX_ENTRIES,1,10_000);this.maxActive=positive(options.maxActive,DEFAULT_GITHUB_READ_MAX_ACTIVE,1,64);this.maxQueued=positive(options.maxQueued,DEFAULT_GITHUB_READ_MAX_QUEUED,0,1_000);this.clock=options.clock||performanceClock;this.operationLog=options.operationLog;}
   private readonly clock:MonotonicClock;
-  private readonly operationLog?: (event:GitHubReadCacheEvent)=>Promise<unknown>|unknown;
+  private readonly operationLog: ((event:GitHubReadCacheEvent)=>Promise<unknown>|unknown) | undefined;
   key(query:GitHubReadQuery,scope="",adapter=this.adapter){if(!adapter)throw new GitHubReadFailure("configuration","none");return `${scope}\0${query.family}\0${adapter.normalizedQuery(query)}`;}
 
   async get(query:GitHubReadQuery):Promise<GitHubReadOutcome>{

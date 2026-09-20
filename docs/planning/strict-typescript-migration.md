@@ -75,6 +75,7 @@ At the start and end of every slice, the implementing agent must:
 | `client-runtime` guardrail follow-up | `4142b07` | 18 API, roster, continuation, investigation, and protected-work tests | API contract check covering 157 server routes and 72 client call sites; `pnpm run typecheck`; Biome lint; `--assert-clean=client-runtime`; planning self-check; `git diff --check` |
 | `server-runtime` quality follow-up | `38dc283` | 15 authoritative-logging tests, including idempotent managed-stream shutdown; full 1,828-test suite | `pnpm run typecheck`; Biome lint; `--assert-clean=server-runtime`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-boundaries` Git broker lifecycle | `7bbe896` | 14 Git-security tests with one platform-specific skip, including restart after close | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 56 diagnostics in 18 files; planning self-check; `git diff --check` |
+| `server-boundaries` GitHub credential lifecycle | `e2d21e1` | 29 credential-vault, device-flow, authorization, and integration-runtime tests | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 52 diagnostics in 14 files with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
@@ -127,6 +128,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-runtime` quality follow-up | Await managed `pino-roll` destination closure and share one idempotent shutdown promise. Returning immediately after `end()` left frequency timers able to call `reopen()` on a destroyed sink during concurrent test and process shutdown. | `server/authoritative-logging.ts`, `server/authoritative-logging.test.ts`, full 1,828-test suite |
 | 2026-09-19 | `server-boundaries` | Model the assignment Git broker's listener as an always-declared lifecycle slot whose value can be unset. Closing clears the slot before draining sockets and queued work, and coverage verifies the same broker instance can restart after a complete close. | `server/git-broker-server.ts`, `server/git-security-boundary.test.ts` |
 | 2026-09-19 | `server-boundaries` | Keep GitHub credential callbacks and mutable authorization connection state as always-declared lifecycle values. Device refresh tokens and their expiry are validated and returned as an inseparable pair, while an unavailable refresh-audit callback remains absent from vault construction. | `server/github-credential-vault.ts`, `server/github-device-authorization.ts`, `server/github-device-flow.ts`, `server/github-integration-runtime.ts` |
+| 2026-09-19 | `server-boundaries` | Preserve HTTP GET body absence, model the cache audit callback as an always-declared optional dependency, and pass only configured cache limits into room-bound GitHub reads. Unset limits continue to select `GitHubReadStore` defaults instead of becoming present `undefined` overrides. | `server/github-read-adapter.ts`, `server/github-read-store.ts`, `server/room-bound-github-read.ts` |
 
 # Next action
 

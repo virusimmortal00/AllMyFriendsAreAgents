@@ -97,7 +97,7 @@ export class GitHubReadAdapter {
     if (url.origin !== GITHUB_API_ORIGIN || url.protocol !== "https:") throw new GitHubReadFailure("configuration", "none");
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), GITHUB_READ_TIMEOUT_MS); timer.unref();
     let response: Response;
-    try { response = await this.fetcher(url, { method:"GET", redirect:"error", body:undefined, signal:controller.signal, headers:{ Accept:"application/vnd.github+json", Authorization:`Bearer ${this.binding.token}`, "X-GitHub-Api-Version":"2022-11-28", "User-Agent":"all-my-friends-are-agents-read" } }); }
+    try { response = await this.fetcher(url, { method:"GET", redirect:"error", signal:controller.signal, headers:{ Accept:"application/vnd.github+json", Authorization:`Bearer ${this.binding.token}`, "X-GitHub-Api-Version":"2022-11-28", "User-Agent":"all-my-friends-are-agents-read" } }); }
     catch (error) { throw new GitHubReadFailure(error instanceof DOMException && error.name === "AbortError" ? "timeout" : "upstream", "none"); }
     finally { clearTimeout(timer); }
     const requestId = response.headers.get("x-github-request-id");
