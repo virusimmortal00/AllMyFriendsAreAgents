@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { classificationAudit, IntentClassifier, JEV_INPUT_COST_PER_MILLION_TOKENS } from "./intent-classifier.js";
+import { requiredAt } from "./test-invariants.js";
 
 interface FetchCall {
   input: string;
@@ -73,10 +74,11 @@ describe("intent classifier", () => {
       latencyMs: 120,
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].input).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(calls[0].init.method).toBe("POST");
-    expect(calls[0].init.headers.Authorization).toBe("Bearer stored-openrouter-key");
-    const body = JSON.parse(calls[0].init.body) as { model: string; state: string; questions: Record<string, { type: string }> };
+    const call=requiredAt(calls,0,"classifier request");
+    expect(call.input).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(call.init.method).toBe("POST");
+    expect(call.init.headers.Authorization).toBe("Bearer stored-openrouter-key");
+    const body = JSON.parse(call.init.body) as { model: string; state: string; questions: Record<string, { type: string }> };
     expect(body.model).toBe("~typesafe/jev-latest");
     expect(body.state).toBe("[YOU]\nSol, thoughts?");
     expect(Object.entries(body.questions).map(([id, question]) => [id, question.type])).toEqual(expect.arrayContaining([
