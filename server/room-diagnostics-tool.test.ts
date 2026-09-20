@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DIAGNOSTIC_STREAM_FILES, LocalFileDiagnosticsQueryService, type DiagnosticQueryResult, type DiagnosticsQueryService } from "./diagnostics-query.js";
 import { registerRoomDiagnosticsToolRoute, RoomDiagnosticsToolBroker, type RoomDiagnosticsCapabilityBinding, type RoomDiagnosticsLeaseEvent } from "./room-diagnostics-tool.js";
+import { requiredAt } from "./test-invariants.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -123,8 +124,10 @@ describe("lease-bound room_diagnostics broker", () => {
       query: { ...api.input.query, cursor: "cursor-one" },
     });
     expect(api.query).toHaveBeenCalledTimes(2);
-    expect(api.query.mock.calls[1][1].from).toBe(api.query.mock.calls[0][1].from);
-    expect(api.query.mock.calls[1][1].to).toBe(api.query.mock.calls[0][1].to);
+    const initialQuery = requiredAt(api.query.mock.calls, 0, "initial diagnostic query")[1];
+    const cursorQuery = requiredAt(api.query.mock.calls, 1, "cursor diagnostic query")[1];
+    expect(cursorQuery.from).toBe(initialQuery.from);
+    expect(cursorQuery.to).toBe(initialQuery.to);
   });
 
   it("distinguishes audit events from separate leases and absorbs operation-log failures", async () => {
@@ -160,7 +163,7 @@ describe("lease-bound room_diagnostics broker", () => {
     }
     const api = fixture();
     await api.broker.execute(api.token, api.input);
-    const [caller, query] = api.query.mock.calls[0];
+    const [caller, query] = requiredAt(api.query.mock.calls, 0, "bounded diagnostic query");
     expect(caller).toEqual(api.getBinding().caller);
     expect(query).toMatchObject({ scope: "room", identity: { roomId: "room-one", generationId: "generation-one" }, limit: 12, maxScannedBytes: 2 * 1024 * 1024, maxSerializedBytes: 256 * 1024 });
     expect(Date.parse(query.to) - Date.parse(query.from)).toBe(60 * 60_000);
@@ -170,7 +173,8 @@ describe("lease-bound room_diagnostics broker", () => {
   it("honors self/room/project/operator visibility through the bound diagnostics caller", async () => {
     const api = fixture();
     await api.broker.execute(api.token, { requestId: "self-scope-request", query: { window: "last-hour", scope: "self" } });
-    expect(api.query.mock.calls[0][1]).toMatchObject({ scope: "self", identity: { selfId: "codex-sol" } });
+    const selfQuery = requiredAt(api.query.mock.calls, 0, "self-scoped diagnostic query")[1];
+    expect(selfQuery).toMatchObject({ scope: "self", identity: { selfId: "codex-sol" } });
     expect(await api.broker.execute(api.token, { requestId: "operator-scope-request", query: { window: "last-hour", scope: "operator" } })).toBeUndefined();
     expect(api.events.at(-1)).toMatchObject({ reason: "scope-forbidden" });
   });
@@ -196,7 +200,8 @@ describe("lease-bound room_diagnostics broker", () => {
     const transcript = [{ speaker: "human", text: "existing room message" }];
     const before = structuredClone(transcript);
     const result = await broker.execute(token, { requestId: "redaction-request-01", query: { window: "last-hour", scope: "room", streams: ["generations"] } });
-    expect(result?.records[0].content).toMatchObject({ evidence: "preserve diagnostic evidence", authorization: "[REDACTED]", nested: { apiKey: "[REDACTED]" } });
+    const diagnosticRecord = requiredAt(result?.records ?? [], 0, "redacted diagnostic record");
+    expect(diagnosticRecord.content).toMatchObject({ evidence: "preserve diagnostic evidence", authorization: "[REDACTED]", nested: { apiKey: "[REDACTED]" } });
     expect(JSON.stringify(result)).not.toMatch(/top-secret|remove-me|hunter2/);
     expect(transcript).toEqual(before);
     expect(JSON.stringify(events)).not.toMatch(/diagnostic evidence|top-secret|remove-me|hunter2|correlation-one|generation-one/);

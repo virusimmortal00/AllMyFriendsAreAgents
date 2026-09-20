@@ -51,7 +51,7 @@ silently missed.
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Complete | `shared-contracts` | `--assert-clean=server-runtime`; focused server tests; repository typecheck |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Complete | `shared-contracts` | `--assert-clean=server-boundaries`; focused boundary suites; repository typecheck |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
-| 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
+| 3 | `server-tests` | `server/**/*.test.ts?(x)` | In progress | Both server runtime slices | — |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
 
@@ -166,12 +166,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `server-tests` | Name the required repository, classifier request, routed turn, and persisted decision entries in preflight/intent fixtures. Multi-assertion cases capture one validated entry so missing setup cannot cascade into unrelated index failures. | `server/human-message.test.ts`, `server/intent-classifier.test.ts`, `server/preflight-gate.test.ts`, `server/preflight-store.test.ts` |
 | 2026-09-20 | `server-tests` | Validate application session cookies and the primary protected-work roster entry before constructing HTTP headers or peer records. Static participant/project pairs are tuples, keeping generated identifiers non-optional at API and SQLite boundaries. | protected-work, repository-repair, room-tool, governed-improvement, and room-lifecycle GitHub application tests |
 | 2026-09-20 | `server-tests` | Validate parsed provider failures, structured transport calls, human fixtures, and issued room-tool leases before use. Roster route matrices are readonly tuples so HTTP methods and bodies retain their required types during iteration. | `server/agent-runner.test.ts`, `server/room-tool-attempt.test.ts`, `server/roster-api.test.ts` |
+| 2026-09-20 | `server-tests` | Capture required queue decisions, diagnostic query calls and records, and coordinator dispatches through named fail-fast fixture invariants. Ordered-event assertions retain their behavioral meaning while incomplete setup now fails at the fixture boundary. | `server/job-queue.test.ts`, `server/room-diagnostics-tool.test.ts`, `server/coordinator-heartbeat.test.ts` |
 
 # Next action
 
-Begin `server-tests` with the smallest coherent fixture family. Convert unchecked
-positional test access into explicit test invariants and construct optional fixture
-fields only when the scenario supplies them.
+Continue `server-tests` with the remaining conversation, investigation,
+protected-work, and room-lifecycle fixture families. Convert unchecked positional
+test access into named invariants that preserve each scenario's domain contract.
 
 # Evidence
 

@@ -14,6 +14,7 @@ import {
   type CoordinatorExecutor,
 } from "./coordinator-heartbeat.js";
 import type { EmergencyStopProjection, ImprovementPage } from "./storage/room-repository.js";
+import { requiredAt } from "./test-invariants.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -216,7 +217,9 @@ describe("bounded coordinator heartbeat", () => {
     expect(executor.calls.map(({ improvement: item }) => item.id)).toEqual(["expired"]);
     clock.advance(121_000);
     expect(await coordinator.tick()).toMatchObject({ dispatched: 1 });
-    expect(executor.calls[0].idempotencyKey).toBe(executor.calls[1].idempotencyKey);
+    const failedDispatch = requiredAt(executor.calls, 0, "failed coordinator dispatch");
+    const retriedDispatch = requiredAt(executor.calls, 1, "retried coordinator dispatch");
+    expect(failedDispatch.idempotencyKey).toBe(retriedDispatch.idempotencyKey);
 
     const db = new DatabaseSync(fixture.databasePath, { readOnly: true });
     const row = db.prepare("SELECT status, attempts, evidence_json, error FROM coordinator_dispatches").get() as { status: string; attempts: number; evidence_json: string; error: string | null };
@@ -277,8 +280,9 @@ describe("bounded coordinator heartbeat", () => {
     expect(await coordinator.tick()).toMatchObject({ dispatched: 1 });
     expect(coordinator.status().policy).toMatchObject({ version: "heartbeat-policy-v1", maxConcurrency: 1, maxSelectedPerRun: 1, maxDispatchedPerRun: 2, maxAttemptsPerRevision: 2, timeBudgetMs: 5000 });
     expect(coordinator.status().policy.prohibitedCapabilities).toEqual(expect.arrayContaining(["COMMIT", "PUSH", "MERGE", "DEPLOY", "PUBLISH_UPSTREAM", "BYPASS_GOVERNED_EXECUTOR"]));
-    expect(executor.calls[0].policy.permittedCapabilities).toEqual(["ANALYZE", "EDIT_SANDBOX", "RUN_TESTS"]);
-    expect(executor.calls[0]).not.toHaveProperty("commit");
+    const dispatch = requiredAt(executor.calls, 0, "audited coordinator dispatch");
+    expect(dispatch.policy.permittedCapabilities).toEqual(["ANALYZE", "EDIT_SANDBOX", "RUN_TESTS"]);
+    expect(dispatch).not.toHaveProperty("commit");
     const completed = coordinator.status().attempts.find((attempt) => attempt.outcome === "SUCCEEDED");
     expect(completed).toMatchObject({ policyVersion: "heartbeat-policy-v1", authorityDecision: "AUTHORIZED", improvementId: "audited", selectedRevision: 7, nextAction: expect.any(String) });
     expect(completed?.inputEvidence).toEqual(expect.arrayContaining(["proposal:proposal:audited", "GOVERNANCE:decision-1:APPROVED@r7"]));
