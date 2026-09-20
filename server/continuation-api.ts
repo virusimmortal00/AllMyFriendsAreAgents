@@ -61,7 +61,10 @@ export function registerContinuationRoutes(input: { app: express.Express; servic
     const owner = String(request.params.owner); if (!isAgentId(owner)) return response.status(400).json({ error: "Valid owner is required." });
     const taskId = typeof request.query.taskId === "string" ? request.query.taskId : ""; const assignmentId = typeof request.query.assignmentId === "string" ? request.query.assignmentId : ""; const assignmentReferenceId = typeof request.query.assignmentReferenceId === "string" ? request.query.assignmentReferenceId : "";
     if (!taskId || !assignmentId || !assignmentReferenceId) return response.status(400).json({ error: "Exact taskId, assignmentId, and assignmentReferenceId provenance is required." });
-    const context = await service.contextForDeveloper(owner, { taskId, assignmentId, assignmentReferenceId, developerMemberId: authenticated.member.memberId, developerMemberConfigRevision: authenticated.member.revision, characterBudget: Number(request.query.characterBudget) || undefined, limit: Number(request.query.limit) || undefined });
+    const characterBudget = Number(request.query.characterBudget) || undefined;
+    const limit = Number(request.query.limit) || undefined;
+    const context = await service.contextForDeveloper(owner, { taskId, assignmentId, assignmentReferenceId, developerMemberId: authenticated.member.memberId, developerMemberConfigRevision: authenticated.member.revision,
+      ...(characterBudget !== undefined ? { characterBudget } : {}), ...(limit !== undefined ? { limit } : {}) });
     if (!context.length) return response.status(403).json({ error: "No current continuation authority matches this exact provenance." });
     response.json(context);
   });
