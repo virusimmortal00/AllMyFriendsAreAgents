@@ -35,7 +35,7 @@ function entriesFor(messages: RoomMessage[], includeIds = false) {
     if (!includeIds && message.burstId && previous?.speaker === message.speaker && previous.burstId === message.burstId) {
       previous.text += `\n${text}`;
     } else {
-      entries.push({ ...(includeIds ? { id: message.id } : {}), speaker: message.speaker, speakerName: message.speakerName, text, burstId: message.burstId });
+      entries.push({ ...(includeIds ? { id: message.id } : {}), speaker: message.speaker, ...(message.speakerName !== undefined ? { speakerName: message.speakerName } : {}), text, ...(message.burstId !== undefined ? { burstId: message.burstId } : {}) });
     }
   }
   return entries;
@@ -86,6 +86,10 @@ export interface AgentScopedTranscript {
   readonly text: string;
   readonly cursorMessageId?: string;
   readonly mode: "delta" | "summary" | "verbatim-fallback";
+}
+
+function scopedTranscript(text: string, mode: AgentScopedTranscript["mode"], cursorMessageId: string | undefined): AgentScopedTranscript {
+  return { text, mode, ...(cursorMessageId !== undefined ? { cursorMessageId } : {}) };
 }
 
 function visibleMessages(messages: RoomMessage[]) {
@@ -156,42 +160,42 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
   const recent = candidate.slice(-config.recentMessageCount);
   const older = candidate.slice(0, -config.recentMessageCount);
   if (!older.length) {
-    return { text: `${pinned}\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent) || "(No visible room messages.)"}\n\n${historyNote}`, cursorMessageId: latestMessageId, mode: "summary" };
+    return scopedTranscript(`${pinned}\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent) || "(No visible room messages.)"}\n\n${historyNote}`, "summary", latestMessageId);
   }
 
+  const firstOlder = older[0];
+  const lastOlder = older.at(-1);
+  if (!firstOlder || !lastOlder) throw new Error("Older transcript span invariant is invalid.");
   const candidateTranscript = transcriptMessages(candidate);
-  const fullFallback = () => ({
-    text: `${pinned}\n\nROOM MESSAGES (VERBATIM SUMMARY FALLBACK)\n${candidateTranscript}\n\n${historyNote}`,
-    cursorMessageId: latestMessageId,
-    mode: "verbatim-fallback" as const,
-  });
-  const boundedFallback = (status: "pending" | "unavailable") => ({
-    text: `${pinned}\n\nSUMMARY ${status.toUpperCase()} (${older[0].id} through ${older.at(-1)!.id}; ${older.length} older messages)\nThe configured navigational summary is ${status === "pending" ? "still being prepared without blocking this turn" : "temporarily unavailable"}. Retrieve exact older text with room_history.\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent)}\n\n${historyNote}`,
-    cursorMessageId: latestMessageId,
-    mode: "summary" as const,
-  });
-  if (!options.summarizer || !options.summaryStore) return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
-  const key = { agentId: options.agentId, spanStartId: older[0].id, spanEndId: older.at(-1)!.id, configRevision };
+  const fullFallback = () => scopedTranscript(`${pinned}\n\nROOM MESSAGES (VERBATIM SUMMARY FALLBACK)\n${candidateTranscript}\n\n${historyNote}`, "verbatim-fallback", latestMessageId);
+  const boundedFallback = (status: "pending" | "unavailable") => scopedTranscript(
+    `${pinned}\n\nSUMMARY ${status.toUpperCase()} (${firstOlder.id} through ${lastOlder.id}; ${older.length} older messages)\nThe configured navigational summary is ${status === "pending" ? "still being prepared without blocking this turn" : "temporarily unavailable"}. Retrieve exact older text with room_history.\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent)}\n\n${historyNote}`,
+    "summary",
+    latestMessageId,
+  );
+  const { summarizer, summaryStore } = options;
+  if (!summarizer || !summaryStore) return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
+  const key = { agentId: options.agentId, spanStartId: firstOlder.id, spanEndId: lastOlder.id, configRevision };
   try {
-    let summary = await options.summaryStore.getAgentContextSummary(key);
+    let summary = await summaryStore.getAgentContextSummary(key);
     if (summary) await options.onSummaryUsage?.({ cached: true });
     if (!summary) {
-      const pending = options.summarizer.summarize({
+      const pending = summarizer.summarize({
         transcript: transcriptMessages(older),
         tokenTarget: config.summaryTokenTarget,
         promptTemplate: config.summaryPromptTemplate,
         projectPath: state.settings.projectPath,
         models: config.summarizerModels,
         configRevision,
-        onUsage: options.onSummaryUsage,
+        ...(options.onSummaryUsage !== undefined ? { onUsage: options.onSummaryUsage } : {}),
       });
       const outcome = await foregroundSummary(pending);
       if (outcome.kind === "pending") {
         void pending.then(async (generated) => {
           const bounded = generated.trim().slice(0, config.summaryTokenTarget * 5);
-          if (bounded) await options.summaryStore!.putAgentContextSummary(key, bounded);
+          if (bounded) await summaryStore.putAgentContextSummary(key, bounded);
         }).catch(async () => {
-          await options.summaryStore!.putAgentContextSummary(key, unavailableSummary(key, older.length)).catch(() => undefined);
+          await summaryStore.putAgentContextSummary(key, unavailableSummary(key, older.length)).catch(() => undefined);
         });
         return boundedFallback("pending");
       }
@@ -202,13 +206,9 @@ async function agentScopedTranscriptFor(state: RoomState, options: AgentScopedTr
         summary = outcome.summary.trim().slice(0, config.summaryTokenTarget * 5);
         if (!summary) return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
       }
-      await options.summaryStore.putAgentContextSummary(key, summary);
+      await summaryStore.putAgentContextSummary(key, summary);
     }
-    return {
-      text: `${pinned}\n\nCACHED SUMMARY (${key.spanStartId} through ${key.spanEndId}; cache only, not source of truth)\n${summary}\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent)}\n\n${historyNote}`,
-      cursorMessageId: latestMessageId,
-      mode: "summary",
-    };
+    return scopedTranscript(`${pinned}\n\nCACHED SUMMARY (${key.spanStartId} through ${key.spanEndId}; cache only, not source of truth)\n${summary}\n\nRECENT ROOM MESSAGES (VERBATIM)\n${transcriptMessages(recent)}\n\n${historyNote}`, "summary", latestMessageId);
   } catch {
     return candidateTranscript.length <= MAX_VERBATIM_SUMMARY_FALLBACK_CHARACTERS ? fullFallback() : boundedFallback("unavailable");
   }
@@ -236,7 +236,8 @@ export function transcriptFor(state: RoomState, input: number | AgentScopedTrans
   const characterBudget = input;
   let topicStart = 0;
   for (let index = state.messages.length - 1; index >= 0; index -= 1) {
-    if (state.messages[index].kind === "topic") {
+    const message = state.messages[index];
+    if (message?.kind === "topic") {
       topicStart = index;
       break;
     }
@@ -247,6 +248,7 @@ export function transcriptFor(state: RoomState, input: number | AgentScopedTrans
   let remaining = Math.max(0, characterBudget);
   for (let index = entries.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const entry = entries[index];
+    if (!entry) throw new Error("Transcript entry invariant is invalid.");
     const block = formatEntry(entry);
     const separatorLength = selected.length > 0 ? 2 : 0;
     if (block.length + separatorLength <= remaining) {
