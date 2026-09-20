@@ -11,6 +11,7 @@ import { InvestigationService, type InvestigationExecutorInput, type Investigati
 import { ParticipantReservations, ProtectedWorkStore, type ProtectedReturnReport, type ProtectedWorkRetention } from "./protected-work-store.js";
 import { ProtectedReturnCapacityError, ProtectedWorkService } from "./protected-work-service.js";
 import { protectedReturnCursor } from "./protected-return.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -43,7 +44,7 @@ async function fixture(backend: "json" | "sqlite" = "json", retention: Partial<P
   await service.initialize(); cleanup.push(() => service.shutdown());
   const start = (requestId = "request-0001") => service.start({ roomId: rooms.roomId, owner: "codex-sol", objective: "Inspect bounded evidence", requestId }, "human:fixture");
   const finish = async () => {
-    const investigationId = inputs.at(-1)!.investigationId;
+    const investigationId = requiredValue(inputs.at(-1), "latest protected-work investigation dispatch").investigationId;
     complete({ providerSessionId: `worker-private-${inputs.length}`, summary: "Durable finding", evidenceRefs: [], usage: { tokens: 1, toolCalls: 1 } });
     await expect.poll(async () => (await investigations.list()).find((job) => job.investigationId === investigationId)?.status).toBe("COMPLETED");
   };
@@ -62,8 +63,8 @@ describe("protected participation", () => {
     expect(f.reservations.allows("codex-sol")).toBe(false); expect(f.reservations.allows("claude-sonnet")).toBe(true);
     expect(await f.investigations.request({ owner: "codex-sol", objective: "Bypass", trigger: "Normal request", signal: "AUTHENTICATED_HUMAN" })).toMatchObject({ kind: "rejected" });
     await f.rooms.addMessage("you", "Sol, a new direct invitation"); await f.rooms.updateSettings({ topic: "New topic" });
-    expect(f.inputs[0].signal.aborted).toBe(false);
-    await f.service.tick(); expect((await f.service.list())[0].phase).toBe("busy");
+    expect(requiredAt(f.inputs, 0, "protected-work investigation dispatch").signal.aborted).toBe(false);
+    await f.service.tick(); expect(requiredAt(await f.service.list(), 0, "busy protected-work record").phase).toBe("busy");
     await f.finish(); await f.service.tick();
     expect(f.runReturn).toHaveBeenCalledOnce(); expect(f.reservations.allows("codex-sol")).toBe(true);
     expect(f.rooms.snapshot().messages.at(-1)?.text).toBe("Here are the relevant findings.");
@@ -83,12 +84,12 @@ describe("protected participation", () => {
       return result;
     });
     await f.service.tick();
-    expect((await f.service.list())[0].phase).toBe("report-pending");
+    expect(requiredAt(await f.service.list(), 0, "pending protected-work report").phase).toBe("report-pending");
     expect(f.reservations.allows("codex-sol")).toBe(false);
     expect(f.options.deliver).not.toHaveBeenCalled();
     await f.service.tick();
     expect(f.runReturn).toHaveBeenCalledTimes(2);
-    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "no-update" });
+    expect(requiredAt(await f.service.list(), 0, "reassessed protected-work record")).toMatchObject({ phase: "available", disposition: "no-update" });
   });
   it("shares pending admission failures and preserves failure on durable replay", async () => {
     const f = await fixture();
@@ -118,12 +119,12 @@ describe("protected participation", () => {
       return acknowledge(id, close);
     });
     await f.service.tick();
-    expect((await f.service.list())[0].phase).not.toBe("available");
+    expect(requiredAt(await f.service.list(), 0, "unacknowledged protected-work record").phase).not.toBe("available");
     expect(f.reservations.allows("codex-sol")).toBe(false);
     if (recovery === "tick") await f.service.tick(); else await f.service.action(job.workId, "dismiss");
-    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "delivered" });
+    expect(requiredAt(await f.service.list(), 0, "recovered protected-work record")).toMatchObject({ phase: "available", disposition: "delivered" });
     expect(f.options.deliver).toHaveBeenCalledOnce();
-    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("CLOSED");
+    expect(requiredAt(await f.investigations.inbox("codex-sol"), 0, "closed protected-work inbox entry").status).toBe("CLOSED");
   });
   it("does not publish a stale report after dismissal during final authority validation", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
@@ -134,9 +135,9 @@ describe("protected participation", () => {
       return result;
     });
     await f.service.tick();
-    expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "no-update" });
+    expect(requiredAt(await f.service.list(), 0, "dismissed protected-work record")).toMatchObject({ phase: "available", disposition: "no-update" });
     expect(f.options.deliver).not.toHaveBeenCalled();
-    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("CLOSED");
+    expect(requiredAt(await f.investigations.inbox("codex-sol"), 0, "dismissed protected-work inbox entry").status).toBe("CLOSED");
   });
   it("retains exclusion when missing-job recovery loses a race to Stop", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
@@ -146,17 +147,17 @@ describe("protected participation", () => {
       return [];
     });
     await f.service.tick();
-    expect((await f.service.list())[0].phase).toBe("stopping");
+    expect(requiredAt(await f.service.list(), 0, "stopping protected-work record").phase).toBe("stopping");
     expect(f.reservations.allows("codex-sol")).toBe(false);
     await f.service.tick();
-    expect((await f.service.list())[0].phase).toBe("available");
+    expect(requiredAt(await f.service.list(), 0, "recovered stopped work record").phase).toBe("available");
     expect(f.reservations.allows("codex-sol")).toBe(true);
   });
   it("rejects public acknowledgement of a protected inbox while allowing internal return closure", async () => {
     const f = await fixture(); await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
-    const entry = (await f.investigations.inbox("codex-sol"))[0];
+    const entry = requiredAt(await f.investigations.inbox("codex-sol"), 0, "protected investigation inbox entry");
     expect(await f.investigations.acknowledgePublicInbox(entry.inboxEntryId, true)).toEqual({ kind: "not_found" });
-    expect((await f.investigations.inbox("codex-sol"))[0].status).toBe("UNREAD");
+    expect(requiredAt(await f.investigations.inbox("codex-sol"), 0, "unread protected investigation inbox entry").status).toBe("UNREAD");
     await f.service.tick();
     expect((await f.service.list())[0]).toMatchObject({ phase: "available", disposition: "delivered" });
   });
@@ -222,9 +223,9 @@ describe("protected participation", () => {
   });
   it("waits for confirmed termination, preserves a checkpoint, discards late results, and isolates replacement work", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1);
-    await f.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Partial finding", opaqueState: "private-checkpoint" });
-    f.confirmed(false); await f.service.action(job.workId, "stop"); expect((await f.service.list())[0].phase).toBe("stopping");
-    await f.service.tick(); expect((await f.service.list())[0].phase).toBe("blocked"); expect(f.runReturn).not.toHaveBeenCalled();
+    await requiredAt(f.inputs, 0, "stoppable protected-work dispatch").progress("WAITING_TOOL", "Reading", { summary: "Partial finding", opaqueState: "private-checkpoint" });
+    f.confirmed(false); await f.service.action(job.workId, "stop"); expect(requiredAt(await f.service.list(), 0, "stopping protected-work record").phase).toBe("stopping");
+    await f.service.tick(); expect(requiredAt(await f.service.list(), 0, "blocked protected-work record").phase).toBe("blocked"); expect(f.runReturn).not.toHaveBeenCalled();
     await expect(f.service.action(job.workId, "dismiss")).rejects.toThrow(/termination/);
     f.confirmed(true); await f.service.action(job.workId, "stop"); await f.service.tick();
     expect((await f.work.get(job.workId))?.package).toMatchObject({ summary: "Partial finding", status: "interrupted" });
@@ -238,15 +239,16 @@ describe("protected participation", () => {
     const f = await fixture(); await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
     f.runReturn.mockImplementation(async () => { const cursor = protectedReturnCursor(f.rooms.snapshot()); await f.rooms.addMessage("you", "More current context"); return { text: "Obsolete", relevance: "relevant", cursor }; });
     for (let i = 0; i < 4; i++) await f.service.tick();
-    expect(f.runReturn).toHaveBeenCalledTimes(3); expect((await f.service.list())[0].phase).toBe("blocked");
+    const blocked = requiredAt(await f.service.list(), 0, "interrupted protected-work record");
+    expect(f.runReturn).toHaveBeenCalledTimes(3); expect(blocked.phase).toBe("blocked");
     expect(f.options.deliver).not.toHaveBeenCalled(); expect(f.reservations.allows("codex-sol")).toBe(false);
-    await f.service.action((await f.service.list())[0].workId, "dismiss"); expect(f.reservations.allows("codex-sol")).toBe(true);
+    await f.service.action(blocked.workId, "dismiss"); expect(f.reservations.allows("codex-sol")).toBe(true);
   });
   it("blocks return after policy revocation and releases only through an explicit no-update disposition", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
     const policy = (await f.investigations.policy())!; await f.investigations.updatePolicy(policy.revision, false, "fixture");
-    await f.service.tick(); expect((await f.service.list())[0].phase).toBe("blocked"); expect(f.runReturn).not.toHaveBeenCalled();
-    await f.service.action(job.workId, "dismiss"); expect((await f.service.list())[0].disposition).toBe("no-update");
+    await f.service.tick(); expect(requiredAt(await f.service.list(), 0, "policy-blocked protected-work record").phase).toBe("blocked"); expect(f.runReturn).not.toHaveBeenCalled();
+    await f.service.action(job.workId, "dismiss"); expect(requiredAt(await f.service.list(), 0, "dismissed policy-blocked record").disposition).toBe("no-update");
   });
   it("waits for shared capacity without exhausting its assessment budget", async () => {
     const f = await fixture(); const job = await f.start(); await expect.poll(() => f.inputs.length).toBe(1); await f.finish();
@@ -267,7 +269,7 @@ describe("protected participation", () => {
     expect((await f.work.get(job.workId))?.returnAttempts).toBe(3);
     await f.service.action(job.workId, "retry-return", request); await f.service.tick();
     expect(f.runReturn).toHaveBeenCalledTimes(6);
-    expect((await f.service.list())[0].phase).toBe("blocked");
+    expect(requiredAt(await f.service.list(), 0, "retry-exhausted protected-work record").phase).toBe("blocked");
     await expect(f.service.action(job.workId, "dismiss", request)).rejects.toThrow(/different operation/);
   });
   it("bounds unique retry receipts while reserving durable terminal recovery", async () => {
@@ -289,8 +291,8 @@ describe("protected participation", () => {
     const roster = f.rooms.snapshot().roster!;
     await f.rooms.updateRoster(roster.revision, roster.entries.map((entry) => entry.agentId === "codex-sol" ? { ...entry, enabled: false } : entry));
     await f.service.tick();
-    expect(f.inputs[0].signal.aborted).toBe(true);
-    expect((await f.service.list())[0]).toMatchObject({ phase: "blocked" });
+    expect(requiredAt(f.inputs, 0, "revoked protected-work dispatch").signal.aborted).toBe(true);
+    expect(requiredAt(await f.service.list(), 0, "revoked protected-work record")).toMatchObject({ phase: "blocked" });
     expect(f.runReturn).not.toHaveBeenCalled();
     expect(f.reservations.allows("codex-sol")).toBe(false);
   });
@@ -307,7 +309,7 @@ describe("protected participation", () => {
     const reopened = await ProtectedWorkStore.open(path.join(f.root, "protected"));
     const restored = new ProtectedWorkService(reopened, f.investigations, new ParticipantReservations(() => false), f.options);
     await restored.initialize(); cleanup.push(() => restored.shutdown()); await restored.tick();
-    expect((await restored.list())[0]).toMatchObject({ phase: "available", disposition: "delivered" });
+    expect(requiredAt(await restored.list(), 0, "restored delivered protected-work record")).toMatchObject({ phase: "available", disposition: "delivered" });
     expect(f.options.deliver).toHaveBeenCalledOnce(); expect(f.runReturn).toHaveBeenCalledOnce();
   });
 });

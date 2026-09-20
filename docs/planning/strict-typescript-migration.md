@@ -51,7 +51,7 @@ silently missed.
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Complete | `shared-contracts` | `--assert-clean=server-runtime`; focused server tests; repository typecheck |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Complete | `shared-contracts` | `--assert-clean=server-boundaries`; focused boundary suites; repository typecheck |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
-| 3 | `server-tests` | `server/**/*.test.ts?(x)` | In progress | Both server runtime slices | — |
+| 3 | `server-tests` | `server/**/*.test.ts?(x)` | Complete | Both server runtime slices | `pnpm run types:strict:inventory -- --assert-clean=server-tests` |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
 | 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
 
@@ -172,12 +172,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `server-tests` | Capture required queue decisions, diagnostic query calls and records, and coordinator dispatches through named fail-fast fixture invariants. Ordered-event assertions retain their behavioral meaning while incomplete setup now fails at the fixture boundary. | `server/job-queue.test.ts`, `server/room-diagnostics-tool.test.ts`, `server/coordinator-heartbeat.test.ts` |
 | 2026-09-20 | `server-tests` | Name required conversation turns, deferred decisions, observer records, messages, completions, and mock invocations at their assertion boundaries. The tests retain ordering and concurrency semantics without treating an expected array position as intrinsically present. | conversation decision, observability, run-observer, and engine tests |
 | 2026-09-20 | `server-tests` | Capture investigation dispatches, checkpoints, durable records, pending executor completions, and persisted job keys through named invariants. Recovery tests now reuse validated identities across authority changes instead of repeatedly indexing transient lists. | `server/investigation-recovery.test.ts`, `server/investigation-service.test.ts` |
+| 2026-09-20 | `server-tests` | Validate protected-work dispatches, lifecycle records, inbox entries, and reopened state before asserting transitions. Room-lifecycle isolation now names both opened stores once, so cross-room behavior is expressed through stable identities rather than unchecked array positions. | `server/protected-work-service.test.ts`, `server/room-lifecycle.test.ts` |
 
 # Next action
 
-Continue `server-tests` with the remaining conversation, investigation,
-protected-work, and room-lifecycle fixture families. Convert unchecked positional
-test access into named invariants that preserve each scenario's domain contract.
+Begin `visual-tooling` with the smallest coherent script or visual-test family.
+Preserve omission at configuration boundaries and replace unchecked positional
+access with named invariants that explain the expected generated structure.
 
 # Evidence
 
