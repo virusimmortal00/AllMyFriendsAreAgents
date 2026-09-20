@@ -98,6 +98,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` ordered orchestration fixtures | `f029984` | 35 queue, room-diagnostics, and coordinator-heartbeat tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 94 unchecked-index diagnostics in 8 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` conversation fixture records | `ea32814` | 106 conversation decision, observability, run-observer, and engine tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 58 unchecked-index diagnostics in 4 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` investigation recovery fixtures | `8f61ab0` | 23 investigation service and durable recovery tests across JSON and SQLite storage | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 28 unchecked-index diagnostics in 2 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-tests` protected-work lifecycle fixtures | `68a6e1c` | 26 protected-work service and durable room-lifecycle tests across JSON and SQLite storage | `pnpm run typecheck`; Biome lint; `pnpm run types:strict:inventory -- --assert-clean=server-tests`; all server-test diagnostics cleared with no drift in completed slices; planning self-check; `git diff --check` |
 
 ## Decision log
 
