@@ -3,7 +3,7 @@ import { validDiscoveryId, validModelDiscoveryId, type ModelReference } from "..
 export const DEFAULT_MAX_DELTA_MESSAGES = 20;
 export const DEFAULT_RECENT_CONTEXT_MESSAGES = 20;
 export const DEFAULT_SUMMARY_TOKEN_TARGET = 200;
-export const DEFAULT_CONTEXT_SUMMARIZER_MODELS: readonly ModelReference[] = Object.freeze([
+export const DEFAULT_CONTEXT_SUMMARIZER_MODELS: Readonly<[ModelReference, ModelReference]> = Object.freeze([
   { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free" },
   { providerId: "openrouter", modelId: "~deepseek/deepseek-v4-flash-latest" },
 ]);
