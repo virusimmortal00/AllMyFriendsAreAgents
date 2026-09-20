@@ -90,6 +90,7 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `client-runtime` | Make composer mention boundaries explicit: inspect the preceding character without unchecked indexing, omit unavailable provider/model snapshots, and ignore selection keys when the active suggestion no longer exists. | `src/components.tsx`, `src/mentions.test.tsx` |
 | 2026-09-19 | `client-runtime` | Validate non-empty diagnostic chunk groups and captured improvement route IDs before indexing them. Re-check a selected trace ID inside its event callback because the selected record can change before invocation. | `src/diagnostics.tsx`, `src/improvements.tsx` |
 | 2026-09-19 | `client-runtime` | Preserve connection-health fields across snapshots only when a prior or incoming value exists. Initial room enrichment likewise applies only values returned by the request, so omission remains distinct from a present `undefined` property. | `src/room-reconciliation.ts`, `src/room-reconciliation.test.ts`, `src/App.tsx` |
+| 2026-09-19 | `client-runtime` | Keep transcript magnification within the normalized level when an internal index is unexpectedly unavailable, require the sole typing participant before naming it, and derive menu access keys with non-throwing string access. | `src/transcript-view.ts`, `src/transcript-view.test.ts`, `src/App.tsx` |
 
 # Next action
 

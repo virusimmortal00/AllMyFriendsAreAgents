@@ -677,7 +677,7 @@ export default function App() {
   }
 
   const statusText = working
-    ? activeTypingAgents.length === 1
+    ? activeTypingAgents.length === 1 && activeTypingAgents[0]
       ? `${agentScreenName(activeTypingAgents[0])} is typing...`
       : "Agents are typing..."
     : room.status === "error"
@@ -774,7 +774,7 @@ export default function App() {
       accessKey: "S",
       view: VIEWS.serverMenu,
       // One command per window page, named exactly like the page it opens.
-      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label[0], disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label.charAt(0), disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
