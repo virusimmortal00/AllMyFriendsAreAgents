@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 51,
+    "revision": 52,
     "reviewedOn": "2026-09-20",
-    "result": "Refresh trigger: the final strict-tooling layer adds repository script coverage, native release and canary typing, visual fixture validation, required strict project coverage, and pull-request review-size enforcement while retaining the pinned OpenCode packages and Node project boundary. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked every recorded CLI, SDK, session, model discovery, permission, tool, MCP configuration, and native authentication path against the final package and TypeScript project changes. Confirmed: the layer changes application-owned validation and build coverage without changing OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. All 291 tests in the 19-suite focused integration-contract gate pass.",
+    "result": "Refresh trigger: the read-only source-control adapter now preserves literal tab characters in Git paths and applies the same explicit rename detection to name-status and numstat output. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked every recorded CLI, SDK, session, model discovery, permission, tool, MCP configuration, and native authentication path against this application-owned Git parsing change. Confirmed: the change does not alter OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
