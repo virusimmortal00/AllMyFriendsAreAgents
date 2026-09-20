@@ -80,6 +80,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-boundaries` source diff parsing | `31d3ead` | 10 source-control adapter tests, including isolated rename normalization | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 43 diagnostics in 10 files with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-boundaries` GitHub comment targeting | `e2ad472` | 8 contribution-broker tests, including exact issue-target projection and invalid-number denial | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 42 diagnostics in 9 files with no drift in other slices; planning self-check; `git diff --check` |
 | `server-boundaries` repository policy defaults | `fc7c116` | 7 project-binding tests, including omitted-policy default preservation and restart/repair coverage | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 41 diagnostics in 8 files with no drift in other slices; planning self-check; `git diff --check` |
+| `server-boundaries` OpenRouter catalog and credits | `24a007e` | 20 catalog and integration API tests, including cache recovery, partial remote metadata, invalid timestamps, and unavailable-credit omission | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 32 diagnostics in 6 files with no drift in other slices; planning self-check; `git diff --check` |
 
 ## Decision log
 
