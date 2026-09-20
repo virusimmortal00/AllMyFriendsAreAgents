@@ -96,11 +96,11 @@ describe("branch-owned conversation observations", () => {
       const transcript: string[] = [];
       const random = vi.fn(() => 0.6);
       const result = await runEnergyConversation(candidates, energy, async (turn) => {
-        calls.push({ agent: turn.agent, instruction: turn.instruction, limit: turn.visibleMessageLimit });
+        calls.push({ agent: turn.agent, instruction: turn.instruction, ...(turn.visibleMessageLimit===undefined?{}:{limit:turn.visibleMessageLimit}) });
         const parsed = parseAgentTurn(turn.agent, `Message ${calls.length}\n<<<NEXT>>>\nSecond unit\nCONVERSATION_STATE: OPEN`, undefined, turn.visibleMessageLimit);
         transcript.push(...parsed.visibleMessages);
         return { ...parsed, interpretation: parsed.diagnostics };
-      }, random, { concurrencyLimit: 2, observer });
+      }, random, { concurrencyLimit: 2, ...(observer?{observer}:{}) });
       return { calls, transcript, draws: random.mock.calls.length, result };
     }
     const baseline = await scenario();

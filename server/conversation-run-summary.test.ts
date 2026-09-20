@@ -3,6 +3,7 @@ import type { ConversationRunSummary } from "../shared/conversation-observabilit
 import { AGENT_IDS } from "../shared/participants.js";
 import { parseAgentTurn, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
 import { withGenerationDelivery } from "./generation-delivery.js";
+import { requiredAt } from "./test-invariants.js";
 
 const candidates: ConversationTurn[] = AGENT_IDS.map((agent) => ({ agent, instruction: "Consider joining." }));
 const parsedResult = (text: string): TurnResult => {
@@ -92,7 +93,7 @@ describe("additive conversation terminal facts", () => {
   });
 
   it("distinguishes message and turn ceilings using the engine's original policy counters", async () => {
-    const result = await runEnergyConversation(candidates, "low", async (turn) => ({ visibleMessageCount: turn.visibleMessageLimit, conversationState: "open", mentionedAgents: [AGENT_IDS[1]] }), () => 1);
+    const result = await runEnergyConversation(candidates, "low", async (turn) => ({ ...(turn.visibleMessageLimit===undefined?{}:{visibleMessageCount:turn.visibleMessageLimit}), conversationState: "open", mentionedAgents: [requiredAt(AGENT_IDS,1,"second conversation agent")] }), () => 1);
     expect(result.summary.policy).toMatchObject({ messageCeilingReached: true, turnCeilingReached: false, visibleMessages: 3, responseTurns: 1 });
     // The pre-existing single-responder branch precedes the ceiling branch.
     expect(result.summary.reason).toBe("open-without-second-responder");

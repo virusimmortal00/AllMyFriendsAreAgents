@@ -88,7 +88,7 @@ describe("CoalescingJobQueue", () => {
     const first = deferred();
     const observations: Array<{ decision: JobQueueDecision; requestId?: string }> = [];
     const observe = (decision: JobQueueDecision) => {
-      observations.push({ decision, requestId: currentLogContext()?.requestId });
+      const requestId=currentLogContext()?.requestId;observations.push({ decision, ...(requestId?{requestId}:{}) });
     };
     const executions: string[] = [];
     withLogContext({ requestId: "request-a" }, () => queue.enqueue("conversation", async ({ jobId }) => {
@@ -118,7 +118,7 @@ describe("CoalescingJobQueue", () => {
     const queue = new CoalescingJobQueue();
     const first = deferred();
     const observations: Array<{ decision: JobQueueDecision; requestId?: string }> = [];
-    const observe = (decision: JobQueueDecision) => { observations.push({ decision, requestId: currentLogContext()?.requestId }); };
+    const observe = (decision: JobQueueDecision) => { const requestId=currentLogContext()?.requestId;observations.push({ decision, ...(requestId?{requestId}:{}) }); };
     queue.enqueue("active", async () => { await first.promise; }, observe);
     withLogContext({ requestId: "pending-request" }, () => queue.enqueue("pending", async () => { throw new Error("Dropped job ran"); }, observe));
     withLogContext({ requestId: "shutdown-request" }, () => { queue.close(); queue.close(); });

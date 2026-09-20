@@ -5,6 +5,7 @@ import { Client, InsufficientScopeError, StreamableHTTPClientTransport } from "@
 import { describe, expect, it, vi } from "vitest";
 import { DeveloperTeamRegistry, hashToken, type DeveloperCapability } from "./developer-team.js";
 import { registerRoomMcpRoutes, singleRoomMcpBridge, type RoomMcpBridge } from "./room-mcp.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 
 const TOKEN = "room-mcp-test-token-with-at-least-thirty-two-characters";
 const ROOM_ID = "00000000-0000-4000-8000-000000000001";
@@ -70,7 +71,7 @@ async function withMcp(
   });
   const jsonBodyParser = express.json();
   app.use((request, response, next) => request.path === "/mcp" ? next() : jsonBodyParser(request, response, next));
-  const registration = registerRoomMcpRoutes({ app, developers: registry, bridge: roomBridge, allowedHostnames, messageIdempotencyLimit });
+  const registration = registerRoomMcpRoutes({ app, developers: registry, bridge: roomBridge, ...(allowedHostnames?{allowedHostnames}:{}), ...(messageIdempotencyLimit===undefined?{}:{messageIdempotencyLimit}) });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   try {
@@ -240,10 +241,10 @@ describe("room MCP bridge", () => {
       [secondRoom, [{ id: "room-two-message" }]],
     ]);
     const roomBridge: RoomMcpBridge = {
-      listRooms: () => [ROOM_ID, secondRoom].map((roomId) => ({ roomId, name: roomId, topic: "Testing", status: "active", cursor: pages.get(roomId)!.at(-1)?.id, busy: false })),
+      listRooms: () => [ROOM_ID, secondRoom].map((roomId) => ({ roomId, name: roomId, topic: "Testing", status: "active", cursor: requiredAt(requiredValue(pages.get(roomId),`messages for ${roomId}`),-1,`last message for ${roomId}`).id, busy: false })),
       authorizeRoom: (roomId) => pages.has(roomId),
       readRoom: (roomId, limit, afterMessageId) => {
-        const messages = pages.get(roomId)!;
+        const messages = requiredValue(pages.get(roomId),`messages for ${roomId}`);
         const afterIndex = afterMessageId == null ? -1 : messages.findIndex(({ id }) => id === afterMessageId);
         if (afterMessageId != null && afterIndex < 0) return { kind: "stale_cursor" };
         const page = afterMessageId === undefined ? messages.slice(-limit) : messages.slice(afterIndex + 1, afterIndex + 1 + limit);

@@ -69,7 +69,8 @@ describe("conversation job observability", () => {
     enqueue("request-a", "message-a", async () => { await gate.promise; });
     messages.push({ ...messages[0], id: "message-b" }); activity.interrupt();
     enqueue("request-b", "message-b", async (snapshot) => {
-      consumed.push({ messageId: snapshot.messages.at(-1)?.id, requestId: currentLogContext()?.requestId, jobId: currentLogContext()?.jobId });
+      const messageId=snapshot.messages.at(-1)?.id;const context=currentLogContext();
+      consumed.push({ ...(messageId?{messageId}:{}), ...(context?.requestId?{requestId:context.requestId}:{}), ...(context?.jobId?{jobId:context.jobId}:{}) });
     });
     messages.push({ ...messages[0], id: "message-c" }); activity.interrupt();
     let discardedRuns = 0;

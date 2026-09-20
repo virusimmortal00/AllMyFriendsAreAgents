@@ -27,7 +27,7 @@ async function fixture(files = false, maxBufferedBytes?: number) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-run-events-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const sinks = new Map<AuthoritativeStream, Sink>();
-  const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-fixture", projectPath: "/projects/fixture", roomId: "room-fixture", maxIdentical: 1, maxBufferedBytes,
+  const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-fixture", projectPath: "/projects/fixture", roomId: "room-fixture", maxIdentical: 1, ...(maxBufferedBytes===undefined?{}:{maxBufferedBytes}),
     ...(files ? {} : { sinkFactory: async (stream: AuthoritativeStream) => { const sink = new Sink(); sinks.set(stream, sink); return sink; } }),
   });
   cleanup.push(async () => { for (const sink of sinks.values()) { sink.blocked = false; sink.emit("drain"); } await logging.close(); });
@@ -187,7 +187,7 @@ describe("conversation run event adapter", () => {
     const found: DiagnosticRecord[] = [];
     let cursor: string | undefined;
     do {
-      const page = await service.query(owner, { ...query, cursor }); found.push(...page.records); cursor = page.nextCursor || undefined;
+      const page = await service.query(owner, { ...query, ...(cursor?{cursor}:{}) }); found.push(...page.records); cursor = page.nextCursor || undefined;
       expect(page.chunks).toHaveLength(0);
     } while (cursor);
     const structured = found.filter(({ event }) => event.startsWith("conversation.")).sort((a, b) => Number(a.content.runEventSequence) - Number(b.content.runEventSequence));
