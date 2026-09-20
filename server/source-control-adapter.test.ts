@@ -128,8 +128,12 @@ describe("read-only source-control adapter", () => {
     await run(root, ["checkout", "-b", "feature/read-only"]);
     await writeFile(path.join(root, "first.txt"), "one\ntwo\n", "utf8");
     await writeFile(path.join(root, "second.txt"), "new\n", "utf8");
+    await writeFile(path.join(root, "rename-from.txt"), "rename me\n", "utf8");
     await run(root, ["add", "."]);
     await run(root, ["commit", "--no-verify", "-m", "head"]);
+    const beforeRename = (await run(root, ["rev-parse", "HEAD"])).trim();
+    await run(root, ["mv", "rename-from.txt", "rename-to.txt"]);
+    await run(root, ["commit", "--no-verify", "-m", "rename"]);
     const head = (await run(root, ["rev-parse", "HEAD"])).trim();
     await run(root, ["worktree", "add", "--detach", worktree, head]);
 
@@ -142,6 +146,7 @@ describe("read-only source-control adapter", () => {
     expect(snapshot).toMatchObject({ kind: "ok", value: {
       diff: [
         { path: "first.txt", status: "modified", additions: 1, deletions: 0, binary: false },
+        { path: "rename-to.txt", previousPath: null, status: "added", additions: 1, deletions: 0, binary: false },
         { path: "second.txt", status: "added", additions: 1, deletions: 0, binary: false },
       ],
       checks: [{ name: "git-diff-check", conclusion: "passed" }],
@@ -149,6 +154,15 @@ describe("read-only source-control adapter", () => {
 
     const worktreeBinding = await adapter.bind(governedTarget, { kind: "worktree", repository: root, worktree, branch: null, base, head });
     expect(worktreeBinding).toMatchObject({ kind: "ok", value: { repository: await realpath(root), worktree: await realpath(worktree), branch: null } });
+    const renameBinding = await adapter.bind(governedTarget, {
+      kind: "branch", repository: root, branch: "feature/read-only", base: beforeRename, head,
+    });
+    if (renameBinding.kind !== "ok") throw new Error("rename binding failed");
+    await expect(adapter.readEvidence({
+      item: { canonicalId: "source-control-adapter" }, binding: renameBinding.value, capabilities: ["SOURCE_DIFF"],
+    })).resolves.toMatchObject({ kind: "ok", value: { diff: [{
+      path: "rename-to.txt", previousPath: "rename-from.txt", status: "renamed", additions: 0, deletions: 0, binary: false,
+    }] } });
     await expect(adapter.bind(governedTarget, { kind: "branch", repository: root, branch: "missing", base: "not-a-revision", head }))
       .resolves.toEqual({ kind: "missing_revision", revision: "not-a-revision" });
   });

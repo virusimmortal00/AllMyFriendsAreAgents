@@ -49,7 +49,7 @@ silently missed.
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
 | 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Complete | `shared-contracts` | `--assert-clean=server-runtime`; focused server tests; repository typecheck |
-| 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
+| 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | In progress | `shared-contracts` | Git broker and GitHub credential/read slices complete; live compiler inventory tracks the remainder |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
 | 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
@@ -76,6 +76,7 @@ At the start and end of every slice, the implementing agent must:
 | `server-runtime` quality follow-up | `38dc283` | 15 authoritative-logging tests, including idempotent managed-stream shutdown; full 1,828-test suite | `pnpm run typecheck`; Biome lint; `--assert-clean=server-runtime`; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-boundaries` Git broker lifecycle | `7bbe896` | 14 Git-security tests with one platform-specific skip, including restart after close | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 56 diagnostics in 18 files; planning self-check; `git diff --check` |
 | `server-boundaries` GitHub credential lifecycle | `e2d21e1` | 29 credential-vault, device-flow, authorization, and integration-runtime tests | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 52 diagnostics in 14 files with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `server-boundaries` GitHub read boundary | `79988ae` | 39 read-store, room-bound read, and command-runtime GitHub tests | `pnpm run typecheck`; Biome lint; boundary inventory reduced to 49 diagnostics in 11 files with no unassigned diagnostics; planning self-check; `git diff --check` |
 
 ## Decision log
 
@@ -129,12 +130,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-boundaries` | Model the assignment Git broker's listener as an always-declared lifecycle slot whose value can be unset. Closing clears the slot before draining sockets and queued work, and coverage verifies the same broker instance can restart after a complete close. | `server/git-broker-server.ts`, `server/git-security-boundary.test.ts` |
 | 2026-09-19 | `server-boundaries` | Keep GitHub credential callbacks and mutable authorization connection state as always-declared lifecycle values. Device refresh tokens and their expiry are validated and returned as an inseparable pair, while an unavailable refresh-audit callback remains absent from vault construction. | `server/github-credential-vault.ts`, `server/github-device-authorization.ts`, `server/github-device-flow.ts`, `server/github-integration-runtime.ts` |
 | 2026-09-19 | `server-boundaries` | Preserve HTTP GET body absence, model the cache audit callback as an always-declared optional dependency, and pass only configured cache limits into room-bound GitHub reads. Unset limits continue to select `GitHubReadStore` defaults instead of becoming present `undefined` overrides. | `server/github-read-adapter.ts`, `server/github-read-store.ts`, `server/room-bound-github-read.ts` |
+| 2026-09-19 | `server-boundaries` | Parse Git's NUL-delimited name and numeric diff streams as complete boundary records. Rename and copy numstat records consume both paths and associate counts with the destination; truncated records, invalid counts, and inconsistent binary markers now fail closed instead of producing partial evidence. | `server/source-control-adapter.ts`, `server/source-control-adapter.test.ts` |
 
 # Next action
 
-Inventory `server-boundaries` by file and contract family, then select the
-smallest coherent storage or external-service group. Keep each boundary's
-validation, omission, denial, and recovery semantics independently reviewable.
+Continue the `server-boundaries` inventory with the smallest coherent storage
+or external-service group. Keep each boundary's validation, omission, denial,
+and recovery semantics independently reviewable.
 
 # Evidence
 
