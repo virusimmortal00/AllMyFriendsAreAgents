@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 47,
+    "revision": 48,
     "reviewedOn": "2026-09-19",
-    "result": "Refresh trigger: server/index.ts now omits unavailable startup configuration overrides and optional contribution services so downstream constructors retain their own defaults. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, and structured response types. Confirmed: this startup-composition change does not alter OpenCode executable selection, server arguments, credentials, SDK requests, or structured-turn behavior. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional startup contract change. The recorded focused contract tests pass.",
+    "result": "Refresh trigger: server/index.ts now preserves omission across generation evidence, scoped tools, spend metadata, command defaults, MCP cursors, and optional runtime services while enforcing normalized participant-style and turn-queue invariants. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, permissions, and structured response types. Confirmed: these runtime-composition changes do not alter OpenCode executable selection, server arguments, credentials, SDK requests, tool permissions, or structured-turn behavior. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional runtime contract change. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",

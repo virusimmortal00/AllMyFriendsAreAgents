@@ -48,7 +48,7 @@ silently missed.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `shared-contracts` | `shared/**` | Complete | — | `--assert-clean=shared-contracts`; focused shared tests; repository typecheck |
 | 2 | `client-runtime` | Non-test `src/**` | Complete | `shared-contracts` | `--assert-clean=client-runtime`; focused client tests; repository typecheck |
-| 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | In progress: parsing and sequencing invariants | `shared-contracts` | Strict inventory and focused server tests |
+| 2 | `server-runtime` | Non-test `server/**` excluding boundary paths | Complete | `shared-contracts` | `--assert-clean=server-runtime`; focused server tests; repository typecheck |
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Not started | `shared-contracts` | — |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Not started | Both server runtime slices | — |
@@ -113,12 +113,13 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-19 | `server-runtime` | Validate OpenCode version captures and catalog line access before use, and construct partial pricing, limit, and configured-default records only from discovered values. The required upstream review confirmed the audited verbose catalog shape is unchanged and the approved downstream patch series does not modify either model-discovery source path. | `server/model-discovery.ts`, `server/model-discovery.test.ts`, `integration-contracts/opencode.json` |
 | 2026-09-19 | `server-runtime` | Validate configured conversation identity before prompt construction and preserve omission across transcript, structured-transport, process, journal, and result boundaries. Scoped-tool refresh now removes retired bindings instead of retaining present `undefined` properties. The upstream refresh confirmed the change does not alter OpenCode arguments, permissions, SDK calls, or event interpretation. | `server/agent-runner.ts`, `server/agent-runner.test.ts`, `integration-contracts/opencode.json` |
 | 2026-09-19 | `server-runtime` | Compose startup logging, classifier, coordinator, investigation, and optional contribution-route dependencies only from configured values. Missing environment overrides now preserve each service's own default, and unavailable services remain absent rather than being registered as present `undefined`. | `server/index.ts`, focused service and API tests, `integration-contracts/opencode.json` |
+| 2026-09-19 | `server-runtime` | Complete the runtime slice by resolving participant names from normalized room state, enforcing the participant-style and dense-turn invariants, and preserving omission across spend metadata, scoped tools, generation results, command defaults, MCP cursors, and optional membership services. Presence routing now reads the configured roster provider instead of assuming every runtime participant has a static profile. The upstream refresh confirmed these composition changes do not alter OpenCode arguments, permissions, SDK calls, or event interpretation. | `server/index.ts`, focused conversation, command, delivery, protected-work, and room-surface tests, `integration-contracts/opencode.json` |
 
 # Next action
 
-Begin `server-runtime` with a full file-level inventory review, then select the
-smallest coherent domain group. Keep boundary-owned files in `server-boundaries`
-so independent storage and external-service contracts remain reviewable.
+Inventory `server-boundaries` by file and contract family, then select the
+smallest coherent storage or external-service group. Keep each boundary's
+validation, omission, denial, and recovery semantics independently reviewable.
 
 # Evidence
 

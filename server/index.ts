@@ -679,25 +679,54 @@ function broadcast() {
   for (const [viewerHumanId, stream] of roomEvents) stream.broadcast(publicRoomSnapshot(viewerHumanId));
 }
 
+function participantName(agent: AgentId, state = roomSnapshot()) {
+  return roomAgentEntry(normalizeRoomAgentRoster(state.roster), agent)?.conversationalName
+    || AGENT_PROFILES[agent]?.conversationalName
+    || agent;
+}
+
+function participantStyle(state: Pick<ReturnType<typeof roomSnapshot>, "settings">, agent: AgentId) {
+  const style = state.settings.participantStyles[agent];
+  if (!style) throw new Error(`Room participant style invariant is invalid for ${agent}.`);
+  return style;
+}
+
+function generationSpend(generationId: string | undefined, costUsd: number | undefined) {
+  if (generationId === undefined && costUsd === undefined) return undefined;
+  return {
+    ...(generationId === undefined ? {} : { generationId }),
+    ...(costUsd === undefined ? {} : { costUsd }),
+  };
+}
+
+function scopedAgentTools(agent: import("../shared/participants.js").ActiveAgentId, state: ReturnType<typeof roomSnapshot>, attempt: RoomToolAttempt) {
+  const commandTool = commandToolContext(agent, state, attempt);
+  const diagnosticsTool = diagnosticsToolContext(agent, attempt);
+  return {
+    ...(commandTool ? { commandTool } : {}),
+    ...(diagnosticsTool ? { diagnosticsTool } : {}),
+  };
+}
+
 const spendActivityRuntime: Pick<AgentContextRuntime, "onSummaryUsage" | "onGenerationActivity"> = {
   onSummaryUsage: async (summarizedAgent, usage) => {
-    const name = AGENT_PROFILES[summarizedAgent].conversationalName;
+    const name = participantName(summarizedAgent);
     const text = usage.cached
       ? `Room context summarizer reused cached context for ${name}; no new spend.`
       : usage.failed
         ? `Room context summarizer could not generate context for ${name}.`
         : `Room context summarizer generated context for ${name} using ${usage.model || "the configured model"}${usage.fallbackModels?.length ? ` after fallback from ${usage.fallbackModels.join(", ")}` : ""}.`;
-    await store.addMessage("system", text, "status", undefined, undefined, undefined, { costUsd: usage.costUsd });
+    await store.addMessage("system", text, "status", undefined, undefined, undefined, generationSpend(undefined, usage.costUsd));
     broadcast();
   },
   onGenerationActivity: async (activityAgent, activity) => {
-    const name = AGENT_PROFILES[activityAgent].conversationalName;
+    const name = participantName(activityAgent);
     const text = activity.kind === "retry"
       ? `${name}'s generation retried after a provider or session error.`
       : activity.kind === "failed"
         ? `${name}'s generation failed before posting a reply.`
         : `${name}'s generation was cancelled before posting a reply.`;
-    await store.addMessage("system", text, "status", undefined, undefined, undefined, { generationId: activity.generationId, costUsd: activity.costUsd });
+    await store.addMessage("system", text, "status", undefined, undefined, undefined, generationSpend(activity.generationId, activity.costUsd));
     broadcast();
   },
 };
@@ -784,12 +813,13 @@ function developerMcpRoomView(limit = 50, afterMessageId?: string | null) {
 
 function developerRoomDescriptor() {
   const state = publicRoomSnapshot();
+  const cursor = state.messages.at(-1)?.id;
   return {
     roomId: CANONICAL_ROOM_ID,
     name: state.settings.roomName,
     topic: state.settings.topic,
     status: "active" as const,
-    cursor: state.messages.at(-1)?.id,
+    ...(cursor ? { cursor } : {}),
     busy: jobs.busy,
   };
 }
@@ -896,12 +926,12 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         activeAssignment: assignment ? `assignment=${assignment.assignmentId}; improvement=${assignment.improvementId}; status=${assignment.lifecycleStatus}` : "none",
         historyTool: roomHistoryTool,
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
-        refreshScopedTools: activeAgent ? (attempt) => ({
-          commandTool: commandToolContext(activeAgent, before, attempt),
-          diagnosticsTool: diagnosticsToolContext(activeAgent, attempt),
-        }) : undefined,
+        ...(activeAgent ? { refreshScopedTools: (attempt: RoomToolAttempt) => scopedAgentTools(activeAgent, before, attempt) } : {}),
       },
-      { ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}), evidence },
+      {
+        ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}),
+        ...(evidence ? { evidence } : {}),
+      },
     );
   } catch (error) {
     if (!agentStillEnabled()) {
@@ -935,8 +965,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
-    const name = AGENT_PROFILES[agent].conversationalName;
-    await store.addMessage("system", `${name}'s completed generation was discarded because the agent was disabled before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+    const name = participantName(agent, before);
+    await store.addMessage("system", `${name}'s completed generation was discarded because the agent was disabled before delivery.`, "status", undefined, undefined, undefined, generationSpend(result.generationId, result.costUsd));
     broadcast();
     return { cancelled: true, outcomeReason: "agent-disabled" };
   }
@@ -944,7 +974,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (providerRecovered || participantRecovered) scheduleHealthRefresh();
   if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
-  const currentStyle = before.settings.participantStyles[agent];
+  const currentStyle = participantStyle(before, agent);
   const parsed = result.structuredTurn
     ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource)
     : parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
@@ -982,8 +1012,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) {
       if (activeAgent && parsed.visibleMessages.length > 0) await commandRuntime.captureDiagnostic({ agentId:activeAgent,attemptId:`conversation:${result.generationId}`,generationId:result.generationId,correlationId:`${result.generationId}:unselected`,prompt:instruction,reason:"unselected-candidate",text:diagnosticText,metadata:{source:"conversation",visibleMessages:parsed.visibleMessages.length} });
       await store.clearSession(agent);
-      const name = AGENT_PROFILES[agent].conversationalName;
-      await store.addMessage("system", `${name}'s completed generation was discarded because room activity changed before delivery.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+      const name = participantName(agent, before);
+      await store.addMessage("system", `${name}'s completed generation was discarded because room activity changed before delivery.`, "status", undefined, undefined, undefined, generationSpend(result.generationId, result.costUsd));
       broadcast();
       delivery.finish("cancelled", "activity-changed-before-delivery");
       return { cancelled: true, interpretation: parsed.diagnostics };
@@ -1027,8 +1057,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         }
         if (!roomActivity.isCurrent(activityRevision) || !agentStillEnabled()) return false;
         await delivery.write(sequence, () => deliveryId
-          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd})
-          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,{generationId:result.generationId,costUsd:result.costUsd}));
+          ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence},generationSpend(result.generationId, result.costUsd))
+          : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,generationSpend(result.generationId, result.costUsd)));
         broadcast();
       },
     });
@@ -1060,8 +1090,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       broadcast();
     }
     if (parsed.visibleMessages.length === 0) {
-      const name = AGENT_PROFILES[agent].conversationalName;
-      await store.addMessage("system", `${name} considered the message but did not reply to the chat.`, "status", undefined, undefined, undefined, { generationId: result.generationId, costUsd: result.costUsd });
+      const name = participantName(agent, before);
+      await store.addMessage("system", `${name} considered the message but did not reply to the chat.`, "status", undefined, undefined, undefined, generationSpend(result.generationId, result.costUsd));
       broadcast();
     }
     delivery.finish(parsed.visibleMessages.length === 0 ? "no_response" : "delivered",
@@ -1091,7 +1121,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       mentionedAgents: parsed.mentionedAgents,
       visibleMessageCount: parsed.visibleMessageCount,
       continuationWorthy: parsed.continuationWorthy,
-      conversationState: parsed.conversationState,
+      ...(parsed.conversationState ? { conversationState: parsed.conversationState } : {}),
     };
   });
 }
@@ -1111,7 +1141,9 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
   return withConversationRun(() => observeConversationRun(loggingFoundation, staged ? "energy" : "legacy", async (observer) => {
     const snapshot = store.snapshot();
     const energy = snapshot.settings.conversationEnergy;
-    await store.setStatus("working", turns.length === 1 ? turns[0].agent : undefined);
+    const soleTurn = turns.length === 1 ? turns[0] : undefined;
+    if (turns.length === 1 && !soleTurn) throw new Error("Conversation turn queue invariant is invalid.");
+    await store.setStatus("working", soleTurn?.agent);
     broadcast();
     if (staged) {
       await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
@@ -1170,7 +1202,7 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
         summarizer: contextSummarizer,
         ...spendActivityRuntime,
         historyTool: roomHistoryTool,
-        refreshScopedTools: (attempt) => ({ commandTool: commandToolContext(agent, before, attempt), diagnosticsTool: diagnosticsToolContext(agent, attempt) }),
+        refreshScopedTools: (attempt) => scopedAgentTools(agent, before, attempt),
         operationLog: (level, event, fields) => structuredLogger.log(level, event, fields),
       },
       { onGenerationStart: hooks.active, onPartial: hooks.partial },
@@ -1179,12 +1211,22 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
     const participantRecovered = await agentHealth.recordSuccess(agent);
     if (providerRecovered || participantRecovered) scheduleHealthRefresh();
     if (providerRecovered || participantRecovered) broadcast();
+    const currentStyle = participantStyle(before, agent);
     const parsed = result.structuredTurn
-      ? interpretStructuredRoomTurn(agent, result.structuredTurn, before.settings.participantStyles[agent], 3, currentEnabledAgents())
-      : parseAgentTurn(agent, result.text, before.settings.participantStyles[agent], 3, currentEnabledAgents());
+      ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, 3, currentEnabledAgents())
+      : parseAgentTurn(agent, result.text, currentStyle, 3, currentEnabledAgents());
     const visibleCharacters = parsed.visibleMessages.reduce((total,message)=>total+message.length,0);
     await generationJournal.append({ type:"generation.interpreted",generationId:result.generationId,agent,visibleMessages:parsed.visibleMessages,visibleMessageCount:parsed.visibleMessages.length,visibleCharacters,removedOrProtocolCharacters:result.structuredTurn?0:Math.max(0,result.text.length-visibleCharacters),noResponse:parsed.visibleMessages.length===0,mentionedAgents:parsed.mentionedAgents,styleUpdate:parsed.styleUpdate });
-    return { generationId:result.generationId,visibleMessages:parsed.visibleMessages,rawText:result.text,sessionId:result.sessionId,permission:result.permission,codeEpoch:result.codeEpoch,cursorMessageId:result.cursorMessageId,costUsd:result.costUsd };
+    return {
+      generationId: result.generationId,
+      visibleMessages: parsed.visibleMessages,
+      rawText: result.text,
+      sessionId: result.sessionId,
+      permission: result.permission,
+      ...(result.codeEpoch === undefined ? {} : { codeEpoch: result.codeEpoch }),
+      ...(result.cursorMessageId === undefined ? {} : { cursorMessageId: result.cursorMessageId }),
+      ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
+    };
   } catch (error) {
     if (isAgentGenerationCancelledError(error)) {
       if (providerAttempt === "recovery") providerHealth.recordRecoveryFailure(providerId);
@@ -1203,6 +1245,8 @@ async function performCommandTask(agent: import("../shared/participants.js").Act
   } finally { activityCancellation.dispose(); }
 }
 
+const commandStage1Ms = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS");
+const commandStage2Ms = configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS");
 const commandRuntime = new CommandRuntime({
   store,
   ceiling:githubReadService?ROOM_COMMANDS:LEGACY_ROOM_COMMANDS,
@@ -1211,8 +1255,8 @@ const commandRuntime = new CommandRuntime({
   reserveLaunch: reserveCanonicalGeneration,
   roomEpoch: () => String(roomActivity.current()),
   roomEpochCurrent: (epoch) => roomActivity.isCurrent(Number(epoch)),
-  stage1Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_1_MS"),
-  stage2Ms: configuredPositiveInteger("ALL_MY_FRIENDS_ARE_AGENTS_COMMAND_STAGE_2_MS"),
+  ...(commandStage1Ms === undefined ? {} : { stage1Ms: commandStage1Ms }),
+  ...(commandStage2Ms === undefined ? {} : { stage2Ms: commandStage2Ms }),
   capabilityAudit: async (event) => { await capabilityAudit.append(event); await structuredLogger.log(event.outcome === "failed" ? "error" : "info", "github.read.decision", event); },
   operationLog: (level,event,fields)=>structuredLogger.log(level,event,fields),
   executeTask: performCommandTask,
@@ -1226,7 +1270,7 @@ const commandRuntime = new CommandRuntime({
     if (result.sessionId && result.permission) await store.setSession(agent,result.sessionId,result.permission,result.codeEpoch);
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId:deliveryId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,message,participantStyle(store.snapshot(), agent),{burstId:deliveryId,sequence},generationSpend(result.generationId, result.costUsd));
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
@@ -1236,11 +1280,11 @@ const commandRuntime = new CommandRuntime({
     const cursorEpoch = roomAgentTurnEpoch(normalizeRoomAgentRoster(store.snapshot().roster), agent);
     if (cursorEpoch) await advanceAgentContextCursor(store, agent, cursorEpoch, result);
     const burstId=randomUUID();
-    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,store.snapshot().settings.participantStyles[agent],{burstId,sequence},{generationId:result.generationId,costUsd:result.costUsd});
+    for (const [sequence,message] of messages.entries()) await store.addCommandDeliveryMessageOnce(attemptId,sequence,agent,message,participantStyle(store.snapshot(), agent),{burstId,sequence},generationSpend(result.generationId, result.costUsd));
     broadcast();
     if (result.generationId) await generationJournal.append({type:"generation.delivery",generationId:result.generationId,agent,outcome:"delivered",deliveredMessageCount:messages.length,totalVisibleMessages:messages.length});
   },
-  githubRead:githubReadService,
+  ...(githubReadService ? { githubRead: githubReadService } : {}),
   publishGhResult:async(executionId,summary,text)=>{await store.addCommandDeliveryMessageOnce(executionId,0,"system",commandMessageText(summary,text),undefined,{burstId:executionId,sequence:0,kind:"command"});broadcast();},
 });
 const roomCommandToolBroker = new RoomCommandToolBroker(commandRuntime,Date.now,(event)=>structuredLogger.log(event.outcome==="rejected"||event.outcome==="revoked"||event.outcome==="expired"?"warn":"info","room-command-tool.lease",{generationId:event.generationId,attemptOrdinal:event.attemptOrdinal,agentId:event.agentId,outcome:event.outcome,reason:event.reason,command:event.command,selectorFamily:event.selectorFamily,issuedAt:event.issuedAt,expiresAt:event.expiresAt,manifestRevision:event.manifestRevision}));
@@ -1259,7 +1303,7 @@ const roomCommandDispatcher=roomRuntimes?new RoomCommandDispatcher(async(room)=>
   deliverPov:async()=>undefined,
   deliverTask:async()=>undefined,
   publishStatus:async(auditId,text)=>{await room.repository.addCommandAuditMessageOnce(auditId,text);},
-  githubRead:githubReadService,
+  ...(githubReadService ? { githubRead: githubReadService } : {}),
   publishGhResult:async(executionId,summary,text)=>{await room.repository.addCommandDeliveryMessageOnce(executionId,0,"system",commandMessageText(summary,text),undefined,{burstId:executionId,sequence:0,kind:"command"});},
   capabilityAudit:async(event)=>{await capabilityAudit.append(event);await structuredLogger.log(event.outcome==="failed"?"error":"info","github.read.decision",event);},
   operationLog:(level,event,fields)=>structuredLogger.log(level,event,fields),
@@ -1335,7 +1379,10 @@ async function announceHumanPresence(human: { id: string; name: string }, event:
     try {
       await runJob(async () => {
         const presenceState = roomSnapshot();
-        const agent = rankRoomAgents(presenceState).find((candidate) => AGENT_PROFILES[candidate].provider !== "cursor");
+        const presenceRoster = normalizeRoomAgentRoster(presenceState.roster);
+        const agent = rankRoomAgents(presenceState).find((candidate) =>
+          isActiveAgentId(candidate) && roomAgentProviderScope(presenceRoster, candidate) !== "cursor"
+        );
         if (!agent) return;
         await performConversation([{
           agent,
@@ -1532,15 +1579,18 @@ const protectedWorkService = new ProtectedWorkService(protectedWorkStore, invest
   },
   deliver: async (record) => {
     if (!record.report?.text || record.report.cursor !== protectedReturnCursor(store.snapshot())) return false;
-    await store.addCommandDeliveryMessageOnce(record.workId, 0, record.owner as AgentId, record.report.text, undefined, undefined, { generationId: record.report.generationId, costUsd: record.report.costUsd });
+    await store.addCommandDeliveryMessageOnce(record.workId, 0, record.owner as AgentId, record.report.text, undefined, undefined, generationSpend(record.report.generationId, record.report.costUsd));
     broadcast();
     return true;
   },
   changed: broadcast,
   onError: (error) => { void structuredLogger.log("error", "investigation.lifecycle.failed", { error }); },
 });
+const canonicalHumanIsMember = roomLifecycle
+  ? (humanId: string) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId)
+  : undefined;
 registerProtectedWorkRoutes({ app, roomId: CANONICAL_ROOM_ID, service: protectedWorkService, humans, sessions: humanSessions,
-  developers: developerTeam, member: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined });
+  developers: developerTeam, ...(canonicalHumanIsMember ? { member: canonicalHumanIsMember } : {}) });
 
 registerControlPlaneRoutes({ app, control: controlPlane, discovery: modelDiscovery, runtimeCommand });
 if (githubIntegrationRuntime) registerGitHubIntegrationRoutes({ app, control: controlPlane, integrations: githubIntegrationRuntime.integrations,
@@ -1564,7 +1614,7 @@ app.get("/api/control/capabilities", async (request, response) => {
   const limit = Math.max(1, Math.min(Number(request.query.limit) || 100, 200));
   return response.set("Cache-Control", "no-store").json({ policyRevision: 1, agents: capabilityStatuses, audit: capabilityAudit.list(limit) });
 });
-registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, spend: openRouterSpend, control: controlPlane, humanIsMember: roomLifecycle ? (humanId) => roomLifecycle.isMember(CANONICAL_ROOM_ID, humanId) : undefined, auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
+registerRosterRoutes({ app, store, humans, sessions: humanSessions, processes: agentProcesses, generations: activeGenerations, discovery: modelDiscovery, intelligence: openRouterCatalog, spend: openRouterSpend, control: controlPlane, ...(canonicalHumanIsMember ? { humanIsMember: canonicalHumanIsMember } : {}), auditChange: (change) => structuredLogger.log("info", "room.roster.audit.changed", { ...change, visibility: "operator" }), capabilityStatuses: async () => { await refreshAgentCapabilities(); return capabilityStatuses; }, broadcast: async () => { broadcast(); try { await Promise.all([refreshImplementationCapabilities(), refreshAgentCapabilities()]); broadcast(); } catch (error) { await structuredLogger.log("error", "capability.refresh.failed", { error }); } } });
 registerRoomSettingsRoutes({
   app,
   store,
@@ -1587,7 +1637,7 @@ registerRoomSettingsRoutes({
   routingEvidence: () => preflightStore.evidence(),
   broadcast,
 });
-registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
+registerCommandRoutes({ app, runtime: commandRuntime, store, humans, sessions: humanSessions, developers: developerTeam, control:controlPlane, broadcast, ...(canonicalHumanIsMember ? { humanIsMember: canonicalHumanIsMember } : {}) });
 
 app.patch("/api/settings", async (request, response) => {
   const actor = sessionHuman(request, humans, humanSessions);
@@ -1646,7 +1696,7 @@ app.post("/api/messages", async (request, response) => {
   if (!/^[a-zA-Z0-9_-]{8,100}$/.test(clientMessageId)) {
     return response.status(400).json({ error: "A valid client message ID is required." });
   }
-  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast, humanIsMember:roomLifecycle?(humanId)=>roomLifecycle.isMember(CANONICAL_ROOM_ID,humanId):undefined });
+  if (text.startsWith("/")) return submitHumanCommand({ request, response, runtime:commandRuntime, store, humans, sessions:humanSessions, text, broadcast, ...(canonicalHumanIsMember ? { humanIsMember: canonicalHumanIsMember } : {}) });
   const workRequest = request.body?.continuation as RoomContinuationWorkRequest | undefined;
   const workRequestError = workRequest === undefined ? null : roomContinuationRequestValidationError(workRequest);
   if (workRequestError) return response.status(400).json({ error: workRequestError });
