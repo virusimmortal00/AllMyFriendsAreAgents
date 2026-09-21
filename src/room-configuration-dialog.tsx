@@ -176,6 +176,6 @@ export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { act
 
 export function RoomPropertiesDialog({ returnFocusTo, onClose, active = true, onOpenRepositorySettings, ...general }: RoomPropertiesDialogProps) {
   return <DialogFrame active={active} title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body classic-scrollbars" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesGeneral}>
-    <RoomControls {...general} showTitle={false} propertySheet onOpenRepositorySettings={onOpenRepositorySettings} onCancel={onClose} onSaved={onClose} />
+    <RoomControls {...general} showTitle={false} propertySheet {...(onOpenRepositorySettings ? { onOpenRepositorySettings } : {})} onCancel={onClose} onSaved={onClose} />
   </DialogFrame>;
 }
