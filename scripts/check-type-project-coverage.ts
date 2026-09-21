@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -60,8 +60,10 @@ export function sourcePathsWithoutGit(root: string): string[] {
   function visit(directory: string, relativeDirectory = ""): void {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (!GENERATED_DIRECTORIES.has(entry.name))
-          visit(path.join(directory, entry.name), path.join(relativeDirectory, entry.name));
+        const candidate = path.join(directory, entry.name);
+        const candidateStats = lstatSync(candidate, { throwIfNoEntry: false });
+        if (!GENERATED_DIRECTORIES.has(entry.name) && candidateStats?.isDirectory())
+          visit(candidate, path.join(relativeDirectory, entry.name));
         continue;
       }
       if (entry.isFile() || entry.isSymbolicLink())
