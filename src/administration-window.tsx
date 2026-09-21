@@ -13,14 +13,14 @@ import { VIEWS, viewAttributes } from "./view-registry";
 export type AdministrationPage = "Login" | "Integrations" | "Rooms" | "RoomBehavior" | "Diagnostics";
 
 export const ADMINISTRATION_PAGES = [
-  { key: "Login", label: "Owner login", icon: "🔑", requiresAdministrator: false },
-  { key: "Integrations", label: "Integrations", icon: "🔌", requiresAdministrator: true },
-  { key: "Rooms", label: "Rooms & repositories", icon: "📁", requiresAdministrator: true },
-  { key: "RoomBehavior", label: "Room behavior", icon: "🤖", requiresAdministrator: true },
-  { key: "Diagnostics", label: "Diagnostics", icon: "🩺", requiresAdministrator: true },
+  { key: "Login", label: "Owner login", accessKey: "O", icon: "🔑", requiresAdministrator: false },
+  { key: "Integrations", label: "Integrations", accessKey: "I", icon: "🔌", requiresAdministrator: true },
+  { key: "Rooms", label: "Rooms & repositories", accessKey: "R", icon: "📁", requiresAdministrator: true },
+  { key: "RoomBehavior", label: "Room behavior", accessKey: "B", icon: "🤖", requiresAdministrator: true },
+  { key: "Diagnostics", label: "Diagnostics", accessKey: "D", icon: "🩺", requiresAdministrator: true },
 ] as const satisfies readonly [
-  ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean },
-  ...(ExplorerPage<AdministrationPage> & { readonly requiresAdministrator: boolean })[],
+  ExplorerPage<AdministrationPage> & { readonly accessKey: string; readonly requiresAdministrator: boolean },
+  ...(ExplorerPage<AdministrationPage> & { readonly accessKey: string; readonly requiresAdministrator: boolean })[],
 ];
 
 /**
@@ -42,26 +42,29 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const { session, checked } = useControlSession();
   const [roomsSummary, setRoomsSummary] = useState("");
   const [roomBehaviorDirty, setRoomBehaviorDirty] = useState(false);
+  const [roomBehaviorSaving, setRoomBehaviorSaving] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<AdministrationPage | "close" | null>(null);
   const requestPage = useCallback((nextPage: AdministrationPage) => {
-    if (nextPage === page) return;
+    if (roomBehaviorSaving || nextPage === page) return;
     if (roomBehaviorDirty) {
       setPendingNavigation(nextPage);
       return;
     }
     onSelectPage(nextPage);
-  }, [onSelectPage, page, roomBehaviorDirty]);
+  }, [onSelectPage, page, roomBehaviorDirty, roomBehaviorSaving]);
   const requestClose = useCallback(() => {
+    if (roomBehaviorSaving) return;
     if (roomBehaviorDirty) {
       setPendingNavigation("close");
       return;
     }
     onClose();
-  }, [onClose, roomBehaviorDirty]);
+  }, [onClose, roomBehaviorDirty, roomBehaviorSaving]);
   const discardAndContinue = useCallback(() => {
     const next = pendingNavigation;
     setPendingNavigation(null);
     setRoomBehaviorDirty(false);
+    setRoomBehaviorSaving(false);
     if (next === "close") onClose();
     else if (next) onSelectPage(next);
   }, [onClose, onSelectPage, pendingNavigation]);
@@ -74,13 +77,13 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
     : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
       : current.key === "RoomBehavior" ? <section className="administration-page administration-room-behavior" {...viewAttributes(VIEWS.roomAgentBehavior)}>
         <header className="page-header"><h2>Room behavior</h2><p>Administrator-managed prompts, summarization, and agent routing for this room.</p></header>
-        <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} />
+        <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} onSavingChange={setRoomBehaviorSaving} />
       </section>
       : <Diagnostics />;
 
   return <>
-    <DialogFrame title="Server Administration" closeLabel="Close server administration" active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={requestClose}
-      actions={<button type="button" className="classic-button" onClick={requestClose}>Close</button>}>
+    <DialogFrame title="Server Administration" closeLabel="Close server administration" closeDisabled={roomBehaviorSaving} active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={requestClose}
+      actions={<button type="button" className="classic-button" disabled={roomBehaviorSaving} onClick={requestClose}>Close</button>}>
       <ExplorerLayout label="Administration pages" pages={ADMINISTRATION_PAGES} selected={current.key} onSelect={requestPage} status={current.key === "Rooms" && roomsSummary && !preview ? `${signInState} · ${roomsSummary}` : signInState}>
       {current.key === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
         : preview ? <fieldset className="administration-preview" disabled aria-describedby="administration-preview-note">

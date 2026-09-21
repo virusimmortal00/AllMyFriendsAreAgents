@@ -19,7 +19,7 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
   onClose: () => void;
 }
 
-export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange, onSavingChange }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void }) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [saved, setSaved] = useState<RoomConfiguration>();
@@ -49,6 +49,10 @@ export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [onSavingChange, saving]);
 
   useEffect(() => {
     if (!active || saved) return;
