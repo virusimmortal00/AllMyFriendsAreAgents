@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { assertNativeHost, packageVerifiedExecutable, verifyExecutable, verifyNativeArtifactSet } from "./build-native-opencode.js";
+import { requiredAt, requiredValue } from "./type-invariants.js";
 
 const temporary: string[] = [];
 const context = loadNativeReleaseContext();
@@ -100,7 +101,10 @@ describe("native OpenCode artifact build", () => {
   });
 
   it("rejects a target that does not match the native verification host", () => {
-    const wrong = context.policy.targets.find((target) => target.os !== (process.platform === "win32" ? "windows" : process.platform) || target.architecture !== process.arch)!;
+    const wrong = requiredValue(
+      context.policy.targets.find((target) => target.os !== (process.platform === "win32" ? "windows" : process.platform) || target.architecture !== process.arch),
+      "non-host native target",
+    );
     expect(() => assertNativeHost(wrong)).toThrow(/must be built and verified/);
   });
 
@@ -116,7 +120,7 @@ describe("native OpenCode artifact build", () => {
   it.skipIf(process.platform === "win32" || !hostTarget())("packages a feasible local fixture only after the existing binary contract passes", () => {
     const directory = fixture();
     const output = fixture();
-    const target = hostTarget()!;
+    const target = requiredValue(hostTarget(), "host native target");
     const evidence = packageVerifiedExecutable({ targetId: target.id, binary: fakeOpenCode(directory), outputDirectory: output });
     expect(evidence).toMatchObject({
       target: target.id,
@@ -138,7 +142,8 @@ describe("native OpenCode artifact build", () => {
   it("rejects missing, duplicate-target, wrong-target, wrong-version, and mutated output", () => {
     const missing = fixture();
     synthesizeSet(missing);
-    rmSync(path.join(missing, `all-my-friends-are-agents-v${applicationVersion}-${context.policy.targets[0].id}${context.policy.targets[0].archiveExtension}.sha256`));
+    const firstTarget = requiredAt(context.policy.targets, 0, "first native target");
+    rmSync(path.join(missing, `all-my-friends-are-agents-v${applicationVersion}-${firstTarget.id}${firstTarget.archiveExtension}.sha256`));
     expect(() => verifyNativeArtifactSet(missing)).toThrow(/missing canonical files/);
 
     const duplicate = fixture();

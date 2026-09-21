@@ -49,6 +49,17 @@ behavior, include it as technical environment information instead.
 
 ## Pull requests
 
+Keep pull requests focused enough to review file by file. Prefer at most 50
+changed files and 1,000 added or deleted lines. Required CI rejects a pull
+request above either hard ceiling: 100 changed files or 5,000 changed lines.
+Binary files count toward the file budget but contribute no invented line count.
+
+When a coherent migration exceeds a ceiling, split it into dependency-ordered
+stacked pull requests. Each layer must explain its own outcome, remain below the
+hard ceilings, and pass the complete quality gate. Mechanical changes, generated
+artifacts, and lockfile updates do not waive reviewability; isolate them in a
+focused layer when that makes the substantive diff easier to review.
+
 Before opening a pull request:
 
 1. Explain what changed and why.
@@ -61,11 +72,19 @@ Before opening a pull request:
 
    Use `pnpm run format`, `pnpm run lint`, and `pnpm run typecheck` when working
    on formatting, lint, and types independently. The TypeScript configuration
-   uses strict mode throughout the application, server, shared code, and visual
-   tooling.
+   uses strict mode throughout every tracked TypeScript file, including tests,
+   visual tooling, and operational scripts. The typecheck also fails when a new
+   TypeScript file is outside every checked project or when a project drops a
+   required strictness option.
 
 4. Include the commands run and any meaningful manual verification.
-5. Review the diff for secrets, private context, machine-specific paths, and
+5. Measure the exact proposed diff when working in a stack:
+
+   ```bash
+   pnpm run check:pr-size -- --base=<target-branch> --head=HEAD
+   ```
+
+6. Review the diff for secrets, private context, machine-specific paths, and
    unrelated generated files.
 
 Follow `.github/ISSUE_TEMPLATE/work-item.md` for work-item structure and

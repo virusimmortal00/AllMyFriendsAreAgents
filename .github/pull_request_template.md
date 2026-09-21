@@ -43,6 +43,10 @@ Result: Not applicable; no mapped OpenCode integration surface changed.
 
 ## Public record review
 
+- [ ] The pull request stays within the 100-file and 5,000-line hard review
+      ceilings; larger work is split into dependency-ordered stacked pull
+      requests.
+
 - [ ] The description is understandable without private conversations or local
       environment context.
 - [ ] Logs, screenshots, fixtures, and examples are sanitized and contain no

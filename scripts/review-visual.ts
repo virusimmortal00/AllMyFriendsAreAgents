@@ -6,6 +6,11 @@ import { z } from "zod";
 import { codexEnvironment, codexReviewArgs, codexBatchVerdictSchema, executeCodex, groupReviewCaptures, parseCodexResult, requireChatGptLogin, reviewPrompt } from "./codex-visual-review.js";
 import { hashBytes, reviewSchema, runSchema, validateVisualCapture, validateVisualReceipts, validateVisualReview, visualInputDigest } from "./visual-review.js";
 
+function requiredValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`Missing visual review invariant: ${label}.`);
+  return value;
+}
+
 function readRegular(path: string, maxBytes: number) {
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) throw new Error("Expected a bounded regular evidence file, not a symlink.");
@@ -62,7 +67,7 @@ async function main() {
     async function worker() {
       while (!failed && !abort.signal.aborted && next < batches.length) {
         const index = next++;
-        const captures = batches[index];
+        const captures = requiredValue(batches[index], `capture batch ${index}`);
         const batchDirectory = resolve(scratch, `batch-${index}`);
         mkdirSync(batchDirectory);
         const schemaPath = resolve(batchDirectory, "verdict.schema.json");
@@ -83,11 +88,12 @@ async function main() {
           const result = parseCodexResult(stdout, captures);
           const reviewedAt = new Date().toISOString();
           for (const item of result.verdict.reviews) {
-            const capture = captures.find((entry) => entry.key === item.key)!;
+            const capture = requiredValue(captures.find((entry) => entry.key === item.key), `reviewed capture ${item.key}`);
             review.reviews.push({ ...item, inspectedImage: true, screenshotSha256: capture.screenshotSha256, reviewerAgentId: `codex:${result.threadId}`, reviewedAt });
           }
           receipts.push({ ...receipt, completedAt: reviewedAt, threadId: result.threadId, usage: result.usage, startupWarnings: result.startupWarnings, status: "completed", verdictSha256: hashBytes(JSON.stringify(result.verdict)) });
-          console.log(`Reviewed ${review.reviews.length}/${selected.length}: ${captures[0].key.split("--").slice(0, 2).join(" / ")}`);
+          const leadCapture = requiredValue(captures[0], `lead capture for batch ${index}`);
+          console.log(`Reviewed ${review.reviews.length}/${selected.length}: ${leadCapture.key.split("--").slice(0, 2).join(" / ")}`);
         } catch (error) {
           failed = true;
           // Never retain raw model/CLI diagnostics, which may include private context.

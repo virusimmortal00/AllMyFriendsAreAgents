@@ -1,6 +1,6 @@
 ---
 id: strict-typescript-migration
-status: proposed
+status: done
 issue:
 owner: unclaimed
 reviewers: []
@@ -30,9 +30,12 @@ optional properties or adding unchecked assertions merely to satisfy the compile
 
 # Current state
 
-TypeScript `strict`, `noImplicitOverride`, and `noFallthroughCasesInSwitch` are
-already enabled. The two target options are not yet enabled in committed configs.
-The live inventory is derived from the compiler rather than copied into this file:
+TypeScript `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`,
+`noImplicitOverride`, and `noFallthroughCasesInSwitch` are enabled across the
+application, Node, visual, operational-script, and inventory projects. The
+tracked-file coverage guard rejects TypeScript outside those checked projects.
+The compiler-derived inventory remains available as a regression and ownership
+audit:
 
 ```bash
 pnpm run types:strict:inventory
@@ -52,8 +55,9 @@ silently missed.
 | 2 | `server-boundaries` | Storage, GitHub, OpenRouter, OpenCode, repository, broker, and command boundaries | Complete | `shared-contracts` | `--assert-clean=server-boundaries`; focused boundary suites; repository typecheck |
 | 3 | `client-tests` | `src/**/*.test.ts?(x)` | Complete | `client-runtime` | `--assert-clean=client-tests`; focused suites including all 36 reconnect-flow tests; repository typecheck |
 | 3 | `server-tests` | `server/**/*.test.ts?(x)` | Complete | Both server runtime slices | `pnpm run types:strict:inventory -- --assert-clean=server-tests` |
-| 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Not started | Shared and client runtime | — |
-| 4 | Configuration gate | Authoritative and derived TypeScript configs | Not started | All remediation slices | — |
+| 3 | `visual-tooling` | `tests/visual/**` and scripts included by `tsconfig.visual.json` | Complete | Shared and client runtime | `pnpm run types:strict:inventory -- --assert-clean=visual-tooling` |
+| 4 | `repository-tooling` | Operational and guardrail `scripts/**` outside the visual tooling project | Complete | All product and test slices | `--assert-clean=repository-tooling`; strict script project; tracked-file coverage gate; focused script tests; repository typecheck |
+| 4 | Configuration gate | Authoritative and derived TypeScript configs | Complete | All remediation slices | `pnpm run typecheck`; `pnpm run types:strict:inventory -- --assert-clean=all`; `pnpm run check:quality` |
 
 ## Update protocol
 
@@ -99,6 +103,10 @@ At the start and end of every slice, the implementing agent must:
 | `server-tests` conversation fixture records | `ea32814` | 106 conversation decision, observability, run-observer, and engine tests | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 58 unchecked-index diagnostics in 4 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` investigation recovery fixtures | `8f61ab0` | 23 investigation service and durable recovery tests across JSON and SQLite storage | `pnpm run typecheck`; Biome lint; server-test inventory reduced to 28 unchecked-index diagnostics in 2 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
 | `server-tests` protected-work lifecycle fixtures | `68a6e1c` | 26 protected-work service and durable room-lifecycle tests across JSON and SQLite storage | `pnpm run typecheck`; Biome lint; `pnpm run types:strict:inventory -- --assert-clean=server-tests`; all server-test diagnostics cleared with no drift in completed slices; planning self-check; `git diff --check` |
+| `visual-tooling` Codex review evidence | `f0d5687` | 28 Codex visual-review protocol and process tests | `pnpm run typecheck`; Biome lint; visual-tooling inventory reduced to 22 diagnostics in 6 files; complete inventory with no unassigned diagnostics; planning self-check; `git diff --check` |
+| `visual-tooling` deterministic fixtures | `218ff0f` | 3 visual fixture fidelity tests covering roster normalization, registered-view coverage, and mutation rejection | `pnpm run typecheck`; Biome lint; `pnpm run types:strict:inventory -- --assert-clean=visual-tooling`; all migration slices and unassigned diagnostics at zero; planning self-check; `git diff --check` |
+| `repository-tooling` | `e5eff06`, `e27f739`, `1204935`, `934eac6`, `b8ec217` | 25 coverage/inventory tests; 49 native build/setup/release tests; 50 visual-review tests; complete provider-free investigation canary | `pnpm run typecheck`; 514 tracked TypeScript files covered by 5 strict projects; every inventory slice, unassigned diagnostic, and combined-only diagnostic at zero; `pnpm run check:quality` passed 291 integration-contract tests, 71 UI-standard tests, the production build, and 1,846 full-suite tests with one platform skip; planning self-check; `git diff --check` |
+| Configuration gate | `6d54072` | 62 strict-inventory, Git-broker, and reconnect tests with one platform skip | both target options enabled; `pnpm run typecheck`; inventory reports every slice, unassigned, and combined-only diagnostics at zero; `pnpm run check:quality` passed the production build, 291 integration-contract tests, 71 UI-standard tests, and 1,833 full-suite tests with one platform skip; planning self-check; `git diff --check` |
 
 ## Decision log
 
@@ -174,12 +182,20 @@ At the start and end of every slice, the implementing agent must:
 | 2026-09-20 | `server-tests` | Name required conversation turns, deferred decisions, observer records, messages, completions, and mock invocations at their assertion boundaries. The tests retain ordering and concurrency semantics without treating an expected array position as intrinsically present. | conversation decision, observability, run-observer, and engine tests |
 | 2026-09-20 | `server-tests` | Capture investigation dispatches, checkpoints, durable records, pending executor completions, and persisted job keys through named invariants. Recovery tests now reuse validated identities across authority changes instead of repeatedly indexing transient lists. | `server/investigation-recovery.test.ts`, `server/investigation-service.test.ts` |
 | 2026-09-20 | `server-tests` | Validate protected-work dispatches, lifecycle records, inbox entries, and reopened state before asserting transitions. Room-lifecycle isolation now names both opened stores once, so cross-room behavior is expressed through stable identities rather than unchecked array positions. | `server/protected-work-service.test.ts`, `server/room-lifecycle.test.ts` |
+| 2026-09-20 | `visual-tooling` | Validate the single required Codex lifecycle events, verdict message, claimed capture batch, matched review item, and lead capture before use. Review orchestration now fails with a named invariant when generated evidence is structurally incomplete. | `scripts/codex-visual-review.ts`, `scripts/review-visual.ts` |
+| 2026-09-20 | `visual-tooling` | Centralize fail-fast visual fixture lookup, name required roster/model/work entries, preserve tuple dimensions, and omit an unselected roster identity. README messages are built from typed dialogue tuples with validated names and styles, keeping optional fields semantically absent rather than widening them. | visual app, README, control-density, and protected-work fixtures |
+| 2026-09-20 | Configuration gate | Enable both target options in the authoritative application and Node configurations. Visual tooling and the inventory project inherit the flags. The inventory retains per-option attribution and adds a combined-options pass because interactions can surface diagnostics that neither isolated option reports. | `tsconfig.app.json`, `tsconfig.node.json`, derived configs, strict inventory |
+| 2026-09-20 | `repository-tooling` | Extend strict checking to operational scripts and replace unchecked contract parsing assumptions with named invariants. Optional HTTP-method and planning-frontmatter fields remain absent when unresolved, while malformed repository URLs and incomplete semantic-version records fail explicitly at their boundaries. | API-route, OpenCode integration-contract, planning-sync, and shared script-invariant tooling |
+| 2026-09-20 | `repository-tooling` | Treat native target selection, archive executable selection, and retained evidence companions as checked one-item invariants. Test fetch doubles now implement the complete platform fetch boundary and copy binary buffers into web-compatible response bodies; release fixtures name required targets before mutation. | Native build, setup, release-contract, release-evidence, and lifecycle-lock tooling |
+| 2026-09-20 | `repository-tooling` | Keep absent canary request bodies and cookies structurally absent from Fetch options, validate held dispatches and issued session cookies before use, and name required research-probe turns. The provider-free investigation canary confirms these stricter boundaries preserve dispatch, restart, cancellation, and tamper-rejection behavior. | Investigation, live room-tool, and conversation-observability canaries |
+| 2026-09-20 | `repository-tooling` | Model visual-review fixtures with the same capture, verdict, and event contracts as production tooling. Invalid-case tests now obtain required baseline records before mutation and deliberately weaken only the field under test, so fixture setup failures remain distinct from the validation behavior being asserted. | Codex visual-review and visual-receipt tests |
+| 2026-09-20 | `repository-tooling` | Make strictness coverage executable rather than convention-based. The canonical typecheck compiles every operational script, requires the complete compiler-option policy in every checked project, proves every tracked TypeScript path belongs to at least one project, and requires the compiler-derived inventory to remain globally clean. | `tsconfig.scripts.json`, type-project coverage guard, strict inventory, package scripts, CI workflow |
 
 # Next action
 
-Begin `visual-tooling` with the smallest coherent script or visual-test family.
-Preserve omission at configuration boundaries and replace unchecked positional
-access with named invariants that explain the expected generated structure.
+Keep the canonical typecheck and full quality gate green. New TypeScript files
+must enter a checked strict project; new code should preserve absence at
+optional-property boundaries and validate indexed data at its source.
 
 # Evidence
 
@@ -188,12 +204,9 @@ access with named invariants that explain the expected generated structure.
   behavior.
 - `tsconfig.strict-inventory.json` keeps the inventory implementation itself
   inside the normal strict type-check gate.
+- `tsconfig.scripts.json` compiles operational and repository guardrail scripts.
+- `scripts/check-type-project-coverage.ts` verifies tracked-file ownership and
+  the required strict compiler-option policy before CI can pass.
 - Initial read-only compiler measurements found that unchecked indexed access is
   the larger error family, while exact optional properties have broader boundary
   semantics and therefore require case-by-case decisions.
-
-# Open questions
-
-- Which public GitHub issue should become canonical before this record moves from
-  `proposed` to `active`? Creating or changing that public artifact requires
-  separate maintainer authorization.

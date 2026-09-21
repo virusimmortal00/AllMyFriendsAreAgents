@@ -3,6 +3,11 @@ import { z } from "zod";
 import { visualAnswersSchema, type VisualRun } from "./visual-review.js";
 import { VIEWS } from "../src/view-registry.js";
 
+function requiredValue<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`Missing visual review invariant: ${label}.`);
+  return value;
+}
+
 export const codexVerdictSchema = z.object({
   reviews: z.array(z.object({
     key: z.string(), inspectedImage: z.boolean(), answers: visualAnswersSchema,
@@ -96,11 +101,14 @@ export function parseCodexResult(stdout: string, captures: VisualRun["captures"]
   const turnStarts = events.filter((event) => event.type === "turn.started");
   const completed = events.filter((event) => event.type === "turn.completed");
   if (started.length !== 1 || turnStarts.length !== 1 || completed.length !== 1) throw new Error("Codex did not complete exactly one fresh review turn.");
-  const threadIndex = events.indexOf(started[0]);
-  const turnIndex = events.indexOf(turnStarts[0]);
-  const completedIndex = events.indexOf(completed[0]);
+  const startedEvent = requiredValue(started[0], "thread start event");
+  const turnStartedEvent = requiredValue(turnStarts[0], "turn start event");
+  const completedEvent = requiredValue(completed[0], "turn completion event");
+  const threadIndex = events.indexOf(startedEvent);
+  const turnIndex = events.indexOf(turnStartedEvent);
+  const completedIndex = events.indexOf(completedEvent);
   if (!(threadIndex < turnIndex && turnIndex < completedIndex)) throw new Error("Codex review events are out of order.");
-  const threadId = z.string().uuid().parse(started[0].thread_id);
+  const threadId = z.string().uuid().parse(startedEvent.thread_id);
   const messages: string[] = [];
   const startupWarnings: string[] = [];
   let turnStarted = false;
@@ -120,12 +128,13 @@ export function parseCodexResult(stdout: string, captures: VisualRun["captures"]
     if (event.type === "item.completed" && item.type === "agent_message" && item.text) messages.push(item.text);
   }
   if (!messages.length) throw new Error("Codex returned no visual verdict.");
-  const verdict = codexVerdictSchema.parse(JSON.parse(messages[messages.length - 1]));
+  const verdictMessage = requiredValue(messages.at(-1), "agent verdict message");
+  const verdict = codexVerdictSchema.parse(JSON.parse(verdictMessage));
   if (JSON.stringify(verdict.reviews.map((review) => review.key).sort()) !== JSON.stringify(captures.map((capture) => capture.key).sort())) {
     throw new Error("Codex omitted, duplicated, or invented a screenshot review.");
   }
   if (verdict.reviews.some((review) => !review.inspectedImage)) throw new Error("Codex could not inspect every attached image.");
-  const usage = z.object({ input_tokens: z.number().nonnegative(), cached_input_tokens: z.number().nonnegative(), output_tokens: z.number().nonnegative() }).parse(completed[0].usage);
+  const usage = z.object({ input_tokens: z.number().nonnegative(), cached_input_tokens: z.number().nonnegative(), output_tokens: z.number().nonnegative() }).parse(completedEvent.usage);
   return { threadId, usage, verdict, startupWarnings };
 }
 

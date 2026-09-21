@@ -71,7 +71,8 @@ async function start() {
   }, "readiness", 30_000);
   const joined = await fetch(base + "/api/humans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Live smoke operator" }), signal: AbortSignal.any([interrupted.signal, AbortSignal.timeout(10_000)]) });
   assert.equal(joined.status, 201);
-  const cookie = joined.headers.get("set-cookie")!.split(";")[0];
+  const cookie = joined.headers.get("set-cookie")?.split(";")[0];
+  assert.ok(cookie, "Join did not return a session cookie.");
   const call = (route: string, body?: unknown) => fetch(base + route, {
     method: body === undefined ? "GET" : "POST", headers: { cookie, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([interrupted.signal, AbortSignal.timeout(10_000)]),

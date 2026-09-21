@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { assembleNativeReleaseEvidence, bindNativeWorkflowAttestation, nativeReleaseCommand, verifyNativeReleaseEvidence, verifyNativeReleasePromotion } from "./native-release-evidence.js";
 import { loadNativeReleaseContext } from "./native-release-contract.js";
 import { setupNativeOpenCode } from "./setup-native-opencode.js";
+import { requiredAt } from "./type-invariants.js";
 
 const context = loadNativeReleaseContext();
 const applicationVersion = String(context.packageJson.version);
@@ -115,12 +116,14 @@ describe("native release evidence retention", () => {
   it("projects one manifest and application archive consumable by source setup", async () => {
     const { output } = assemble(); const projection = path.join(output, "release-projection"); const setupRoot = fixture();
     mkdirSync(path.join(setupRoot, "release")); mkdirSync(path.join(setupRoot, "integration-contracts"));
-    for (const [source, destination] of [["release/native-target-policy.json", "release/native-target-policy.json"], ["integration-contracts/opencode.json", "integration-contracts/opencode.json"], ["Dockerfile", "Dockerfile"], ["package.json", "package.json"]]) copyFileSync(path.join(repositoryRoot, source), path.join(setupRoot, destination));
+    for (const [source, destination] of [["release/native-target-policy.json", "release/native-target-policy.json"], ["integration-contracts/opencode.json", "integration-contracts/opencode.json"], ["Dockerfile", "Dockerfile"], ["package.json", "package.json"]] as const) copyFileSync(path.join(repositoryRoot, source), path.join(setupRoot, destination));
     const manifestPath = path.join(projection, "native-release-manifest.json"); const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    const fetch = async (url: string | URL) => { const name = path.basename(new URL(String(url)).pathname); return new Response(readFileSync(path.join(projection, name))); };
+    const fetch: typeof globalThis.fetch = async (url) => { const name = path.basename(new URL(String(url)).pathname); return new Response(Uint8Array.from(readFileSync(path.join(projection, name)))); };
     await expect(setupNativeOpenCode({ root: setupRoot, manifestPath, platform: "linux", architecture: "x64", fetch, verify: async () => undefined })).resolves.toEqual({ reused: false, target: "linux-x64" });
     expect(readFileSync(path.join(setupRoot, ".runtime/opencode/bin/opencode"), "utf8")).toBe("opencode\n");
-    expect(manifest.targets.find((target: { id: string }) => target.id === "linux-x64").artifact.name).toBe(`all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz`);
+    const releaseTargets = manifest.targets as Array<{ id: string; artifact: { name: string } }>;
+    const linuxTarget = requiredAt(releaseTargets.filter((target) => target.id === "linux-x64"), 0, "linux x64 release target");
+    expect(linuxTarget.artifact.name).toBe(`all-my-friends-are-agents-v${applicationVersion}-linux-x64.tar.gz`);
   });
 
   it.each(["missing", "extra", "mutated", "manifest-drift"])("rejects a %s publication projection", (failure) => {

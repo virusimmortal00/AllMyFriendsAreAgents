@@ -3,8 +3,9 @@ import App from "../../src/App";
 import { DEFAULT_PARTICIPANT_STYLES } from "../../shared/chat-style";
 import { normalizeRoomAgentRoster } from "../../shared/roster";
 import type { ModelDiscoveryResult } from "../../shared/model-discovery";
-import type { RoomState } from "../../src/types";
+import type { RoomMessage, RoomState } from "../../src/types";
 import { appFixtureResponse, fixtureHuman, fixtureRoom, fixtureTime } from "./app-fixtures";
+import { requiredVisualFixture } from "./fixtures";
 import catalog from "./readme-models.json";
 import "../../src/styles.css";
 
@@ -18,33 +19,48 @@ const models: ModelDiscoveryResult = {
 const roster = normalizeRoomAgentRoster({ schemaVersion: 3, revision: 1,
   entries: catalog.models.map(({ alias: conversationalName }, index) => ({
     agentId: `agent-00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-    conversationalName, providerId: "openrouter", modelId: models.models[index].modelId, enabled: true,
+    conversationalName, providerId: "openrouter", modelId: requiredVisualFixture(models.models[index], `README model ${index}`).modelId, enabled: true,
   })),
 });
 const styles = { ...DEFAULT_PARTICIPANT_STYLES };
+const colors = ["#6c1974", "#2a7238", "#2d73b7", "#6e3b0a"] as const;
 for (const [index, entry] of roster.entries.entries()) {
   styles[entry.agentId] = { ...DEFAULT_PARTICIPANT_STYLES.you,
-    textColor: ["#6c1974", "#2a7238", "#2d73b7", "#6e3b0a"][index],
+    textColor: requiredVisualFixture(colors[index], `README agent color ${index}`),
   };
 }
+const firstAgent = requiredVisualFixture(roster.entries[0], "first README agent");
+const secondAgent = requiredVisualFixture(roster.entries[1], "second README agent");
+const thirdAgent = requiredVisualFixture(roster.entries[2], "third README agent");
+const fourthAgent = requiredVisualFixture(roster.entries[3], "fourth README agent");
+const dialogue: ReadonlyArray<readonly [string, string]> = [
+  ["you", "Should our app send a notification every time an agent finishes a task? Challenge the idea before we build it."],
+  [firstAgent.agentId, "Start with completion notifications. They let people step away without losing track of work."],
+  [secondAgent.agentId, "I disagree with every completion. If five agents finish together, that is five interruptions for one piece of work."],
+  [thirdAgent.agentId, "Could we group results by task? One notification opens a shared summary, with each agent’s findings underneath."],
+  ["you", "What should interrupt me immediately?"],
+  [firstAgent.agentId, "A blocking question that only you can answer. Routine completions can wait for the grouped summary."],
+  [secondAgent.agentId, "That resolves my concern. I would still let people opt into individual updates for a task they are actively watching."],
+  [fourthAgent.agentId, "Make the summary actionable: what finished, what needs a decision, and where to read the findings."],
+];
+const messages: RoomMessage[] = dialogue.map(([speaker, text], index) => {
+  const speakerName = speaker === "you"
+    ? "Alex"
+    : requiredVisualFixture(roster.entries.find((entry) => entry.agentId === speaker)?.conversationalName, `README speaker ${speaker}`);
+  return {
+    id: `readme-${index}`,
+    speaker,
+    speakerName,
+    style: requiredVisualFixture(styles[speaker], `README style ${speaker}`),
+    text,
+    timestamp: new Date(Date.parse(fixtureTime) + index * 60_000).toISOString(),
+  };
+});
 const room: RoomState = {
   ...fixtureRoom, roster,
   settings: { roomName: "The Idea Room", topic: "When does a helpful notification become noise?", conversationEnergy: "balanced", participantStyles: styles },
   availability: Object.fromEntries(roster.entries.map((entry) => [entry.agentId, true])),
-  messages: [
-    ["you", "Should our app send a notification every time an agent finishes a task? Challenge the idea before we build it."],
-    [roster.entries[0].agentId, "Start with completion notifications. They let people step away without losing track of work."],
-    [roster.entries[1].agentId, "I disagree with every completion. If five agents finish together, that is five interruptions for one piece of work."],
-    [roster.entries[2].agentId, "Could we group results by task? One notification opens a shared summary, with each agent’s findings underneath."],
-    ["you", "What should interrupt me immediately?"],
-    [roster.entries[0].agentId, "A blocking question that only you can answer. Routine completions can wait for the grouped summary."],
-    [roster.entries[1].agentId, "That resolves my concern. I would still let people opt into individual updates for a task they are actively watching."],
-    [roster.entries[3].agentId, "Make the summary actionable: what finished, what needs a decision, and where to read the findings."],
-  ].map(([speaker, text], index) => ({ id: `readme-${index}`, speaker,
-    speakerName: speaker === "you" ? "Alex" : roster.entries.find((entry) => entry.agentId === speaker)!.conversationalName,
-    style: styles[speaker], text,
-    timestamp: new Date(Date.parse(fixtureTime) + index * 60_000).toISOString(),
-  })),
+  messages,
 };
 
 localStorage.setItem("all-my-friends-are-agents-human", JSON.stringify(fixtureHuman));

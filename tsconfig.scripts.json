@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2023"
+  },
+  "include": ["scripts/**/*.ts", "release/**/*.d.mts", "server/pino-roll.d.ts"]
+}

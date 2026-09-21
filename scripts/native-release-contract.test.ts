@@ -10,6 +10,7 @@ import {
   validateNativeReleaseManifest,
   type NativeReleaseContext,
 } from "./native-release-contract.js";
+import { requiredAt } from "./type-invariants.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const context = loadNativeReleaseContext(root);
@@ -108,17 +109,17 @@ describe("native release contract", () => {
       "https://localhost/releases/download/v0.1.0/file.zip",
     ]) {
       const invalidReference = manifest();
-      invalidReference.targets[0].artifact.url = url;
+      requiredAt(invalidReference.targets, 0, "first release target").artifact.url = url;
       expect(() => validateNativeReleaseManifest(invalidReference, context)).toThrow(/mutable, credentialed, or malformed|malformed artifact reference/);
     }
     const invalidHash = manifest();
-    invalidHash.targets[0].sbom.sha256 = "A".repeat(64);
+    requiredAt(invalidHash.targets, 0, "first release target").sbom.sha256 = "A".repeat(64);
     expect(() => validateNativeReleaseManifest(invalidHash, context)).toThrow(/lowercase SHA-256/);
     const invalidSize = manifest();
-    invalidSize.targets[0].provenance.size = 0;
+    requiredAt(invalidSize.targets, 0, "first release target").provenance.size = 0;
     expect(() => validateNativeReleaseManifest(invalidSize, context)).toThrow(/positive safe integer/);
     const missingProvenance = manifest();
-    delete (missingProvenance.targets[0] as Partial<(typeof missingProvenance.targets)[number]>).provenance;
+    delete (requiredAt(missingProvenance.targets, 0, "first release target") as Partial<(typeof missingProvenance.targets)[number]>).provenance;
     expect(() => validateNativeReleaseManifest(missingProvenance, context)).toThrow(/missing or unknown fields/);
     expect(() => validateNativeReleaseManifest({ ...manifest(), buildId: "temporary-run-123" }, context)).toThrow(/missing or unknown fields/);
   });

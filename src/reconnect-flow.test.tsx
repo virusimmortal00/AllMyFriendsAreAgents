@@ -597,7 +597,8 @@ describe("rendered reconnect recovery", () => {
     api.sendMessage.mockResolvedValueOnce({ command: true, result: { kind: "private-error", message: "That participant is not in the room roster." } });
     const user = userEvent.setup();
     await renderConnected();
-    await user.pointer({ keys: "[MouseRight]", target: screen.getAllByRole("button", { name: /^Configure / })[0] });
+    const configureButton = requiredAt(screen.getAllByRole("button", { name: /^Configure / }), 0, "agent configuration button");
+    await user.pointer({ keys: "[MouseRight]", target: configureButton });
     const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
     await user.type(dialog.getByRole("textbox", { name: "Task" }), "check the retry path");
     await user.click(dialog.getByRole("button", { name: "OK" }));

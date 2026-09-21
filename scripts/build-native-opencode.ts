@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNativeReleaseContext, type NativeReleaseContext } from "./native-release-contract.js";
+import { requiredAt } from "./type-invariants.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PRIVATE_ROOT = "all-my-friends-are-agents";
@@ -63,7 +64,7 @@ function contractDownstream(context: NativeReleaseContext) {
 function targetById(context: NativeReleaseContext, id: string): Target {
   const matches = context.policy.targets.filter((target) => target.id === id);
   if (matches.length !== 1) throw new Error(`Unsupported or duplicate native target: ${id}.`);
-  return matches[0];
+  return requiredAt(matches, 0, `native target ${id}`);
 }
 
 function hostOs(platform: NodeJS.Platform): string {
