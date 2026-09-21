@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,8 +58,24 @@ describe("TypeScript project coverage guard", () => {
       await writeFile(path.join(root, "node_modules", "dependency.ts"), "export {};\n", "utf8");
       await writeFile(path.join(root, "dist", "generated.ts"), "export {};\n", "utf8");
       await writeFile(path.join(root, ".runtime", "generated.ts"), "export {};\n", "utf8");
-      expect(sourcePathsWithoutGit(root)).toEqual(["notes.md", "src.ts"]);
-      expect(sourcePathsForCoverage(root)).toEqual(["notes.md", "src.ts"]);
+      await mkdir(path.join(root, "linked-directory"));
+      await writeFile(path.join(root, "linked-directory", "nested.ts"), "export {};\n", "utf8");
+      await symlink("src.ts", path.join(root, "linked.ts"));
+      await symlink("linked-directory", path.join(root, "linked-directory-link"));
+      expect(sourcePathsWithoutGit(root)).toEqual([
+        "linked-directory-link",
+        "linked-directory/nested.ts",
+        "linked.ts",
+        "notes.md",
+        "src.ts",
+      ]);
+      expect(sourcePathsForCoverage(root)).toEqual([
+        "linked-directory-link",
+        "linked-directory/nested.ts",
+        "linked.ts",
+        "notes.md",
+        "src.ts",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

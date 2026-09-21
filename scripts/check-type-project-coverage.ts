@@ -64,7 +64,8 @@ export function sourcePathsWithoutGit(root: string): string[] {
           visit(path.join(directory, entry.name), path.join(relativeDirectory, entry.name));
         continue;
       }
-      if (entry.isFile()) files.push(path.join(relativeDirectory, entry.name).replaceAll("\\", "/"));
+      if (entry.isFile() || entry.isSymbolicLink())
+        files.push(path.join(relativeDirectory, entry.name).replaceAll("\\", "/"));
     }
   }
   visit(root);
