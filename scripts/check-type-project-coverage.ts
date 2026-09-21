@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -30,11 +30,59 @@ export function findUncoveredTypeScriptFiles(
   projectFiles: ReadonlyMap<string, ReadonlySet<string>>,
 ): string[] {
   const covered = new Set([...projectFiles.values()].flatMap((paths) => [...paths]));
-  return files.filter(isTypeScriptPath).filter((file) => !covered.has(file)).sort();
+  return files
+    .filter(isTypeScriptPath)
+    .filter((file) => !covered.has(file))
+    .sort();
 }
 
 export function filterExistingPaths(root: string, files: readonly string[]): string[] {
   return files.filter((file) => existsSync(path.join(root, file)));
+}
+
+const GENERATED_DIRECTORIES = new Set([
+  ".allmyfriendsareagents",
+  ".git",
+  ".runtime",
+  "coverage",
+  "dist",
+  "node_modules",
+  "test-results",
+]);
+
+/**
+ * Docker builds receive an allowlisted source tree without Git metadata. Keep
+ * coverage enforcement hermetic in that context while preserving Git's exact
+ * tracked-and-untracked inventory in ordinary checkouts.
+ */
+export function sourcePathsWithoutGit(root: string): string[] {
+  const files: string[] = [];
+  function visit(directory: string, relativeDirectory = ""): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!GENERATED_DIRECTORIES.has(entry.name))
+          visit(path.join(directory, entry.name), path.join(relativeDirectory, entry.name));
+        continue;
+      }
+      if (entry.isFile()) files.push(path.join(relativeDirectory, entry.name).replaceAll("\\", "/"));
+    }
+  }
+  visit(root);
+  return files.sort();
+}
+
+export function sourcePathsForCoverage(root: string): string[] {
+  if (!existsSync(path.join(root, ".git"))) return sourcePathsWithoutGit(root);
+  return filterExistingPaths(
+    root,
+    execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\0")
+      .filter(Boolean)
+      .map((file) => file.replaceAll("\\", "/")),
+  );
 }
 
 export function missingRequiredCompilerOptions(options: ts.CompilerOptions): string[] {
@@ -70,16 +118,7 @@ export function checkTypeProjectCoverage(root: string): {
   trackedFiles: string[];
   projects: Map<string, Set<string>>;
 } {
-  const trackedFiles = filterExistingPaths(
-    root,
-    execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-      cwd: root,
-      encoding: "utf8",
-    })
-      .split("\0")
-      .filter(Boolean)
-      .map((file) => file.replaceAll("\\", "/")),
-  );
+  const trackedFiles = sourcePathsForCoverage(root);
   const projects = new Map<string, Set<string>>();
   const configurationFailures: string[] = [];
   for (const project of TYPECHECK_PROJECTS) {
@@ -89,7 +128,9 @@ export function checkTypeProjectCoverage(root: string): {
     if (missing.length) configurationFailures.push(`${project}: ${missing.join(", ")}`);
   }
   if (configurationFailures.length) {
-    throw new Error(`TypeScript projects are missing required strict options:\n- ${configurationFailures.join("\n- ")}`);
+    throw new Error(
+      `TypeScript projects are missing required strict options:\n- ${configurationFailures.join("\n- ")}`,
+    );
   }
   const uncovered = findUncoveredTypeScriptFiles(trackedFiles, projects);
   if (uncovered.length) {
