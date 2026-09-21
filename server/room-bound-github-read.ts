@@ -28,8 +28,13 @@ export class RoomBoundGitHubReadService {
     private readonly connectionForProject: (projectId: string) => ProjectRepositoryConnectionService,
     private readonly credentials: GitHubCredentialProvider,
     private readonly options: RoomBoundGitHubReadOptions = {},
-  ) { this.store = new GitHubReadStore(undefined, { ttlMs: options.ttlMs, maxEntries: options.maxEntries, maxActive: options.maxActive,
-    maxQueued: options.maxQueued, operationLog: options.operationLog }); }
+  ) { this.store = new GitHubReadStore(undefined, {
+    ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    ...(options.maxEntries === undefined ? {} : { maxEntries: options.maxEntries }),
+    ...(options.maxActive === undefined ? {} : { maxActive: options.maxActive }),
+    ...(options.maxQueued === undefined ? {} : { maxQueued: options.maxQueued }),
+    ...(options.operationLog ? { operationLog: options.operationLog } : {}),
+  }); }
 
   async authorize(roomId: string) { return (await this.resolve(roomId)).authorizationLease; }
 

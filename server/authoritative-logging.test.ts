@@ -265,6 +265,20 @@ describe("authoritative logging foundation", () => {
     expect(persisted).toContain('"event":"generation.after-restart"');
   });
 
+  it("waits for managed destinations to close and shares shutdown completion", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-authoritative-close-")); roots.push(root);
+    const rotation = Object.fromEntries(AUTHORITATIVE_STREAMS.map((stream) => [stream, { maxBytes: 1024 * 1024, frequencyMs: 40, retention: 2 }])) as Record<AuthoritativeStream, { maxBytes: number; frequencyMs: number; retention: number }>;
+    const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-close", projectPath: root, rotation });
+    logging.application("info", "server.before-close");
+
+    const firstClose = logging.close();
+    expect(logging.close()).toBe(firstClose);
+    await firstClose;
+    const closedFiles = await readdir(logging.logDirectory);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(await readdir(logging.logDirectory)).toEqual(closedFiles);
+  });
+
   it("serializes concurrent producers without record loss or corruption", async () => {
     const { destinations, logging } = await memoryFoundation({ maxBufferedBytes: 4 * 1024 * 1024, maxIdentical: 500 });
     await Promise.all(Array.from({ length: 250 }, (_, producer) => Promise.resolve().then(() => {

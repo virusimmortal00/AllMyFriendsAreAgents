@@ -59,6 +59,6 @@ describe("OpenRouter integration control-plane API", () => {
     const { call: callWithFailingIntelligence, ownerCookie: ownerCookie2 } = await harness({ credits: async () => { throw new Error("offline"); } });
     const response = await callWithFailingIntelligence("/api/control/integrations/openrouter", ownerCookie2);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ credits: undefined });
+    expect(await response.json()).toEqual({});
   });
 });

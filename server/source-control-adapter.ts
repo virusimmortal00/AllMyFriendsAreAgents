@@ -210,7 +210,7 @@ export class GitReadonlySourceBackend implements ReadonlySourceBackend {
     const range = [binding.base.revision, binding.head.revision];
     const [names, numbers, check] = await Promise.all([
       git(root, ["diff", "--no-ext-diff", "--find-renames", "--name-status", "-z", ...range]),
-      git(root, ["diff", "--no-ext-diff", "--numstat", "-z", ...range]),
+      git(root, ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z", ...range]),
       gitResult(root, ["diff", "--no-ext-diff", "--check", ...range]),
     ]);
     const diff = normalizeDiff(names, numbers);
@@ -280,24 +280,54 @@ function normalizeDiff(nameOutput: string, numberOutput: string): readonly Sourc
   const numbers = new Map<string, { additions: number | null; deletions: number | null; binary: boolean }>();
   const numberParts = numberOutput.split("\0").filter(Boolean);
   for (let index = 0; index < numberParts.length;) {
-    const fields = numberParts[index++].split("\t");
-    let diffPath = fields[2] ?? "";
-    if (!diffPath && index < numberParts.length) diffPath = numberParts[index++];
-    const additions = fields[0] === "-" ? null : Number(fields[0]);
-    const deletions = fields[1] === "-" ? null : Number(fields[1]);
+    const record = numberParts[index++];
+    if (record === undefined) throw new Error("Malformed git numstat output: missing record");
+    const additionsEnd = record.indexOf("\t");
+    const deletionsEnd = record.indexOf("\t", additionsEnd + 1);
+    if (additionsEnd < 0 || deletionsEnd < 0) {
+      throw new Error("Malformed git numstat output: incomplete record");
+    }
+    const rawAdditions = record.slice(0, additionsEnd);
+    const rawDeletions = record.slice(additionsEnd + 1, deletionsEnd);
+    const inlinePath = record.slice(deletionsEnd + 1);
+    let diffPath: string | undefined = inlinePath || undefined;
+    if (!diffPath) {
+      const previousPath = numberParts[index++];
+      diffPath = numberParts[index++];
+      if (!previousPath || !diffPath) throw new Error("Malformed git numstat output: incomplete rename record");
+    }
+    const additions = parseGitStat(rawAdditions);
+    const deletions = parseGitStat(rawDeletions);
+    if ((additions === null) !== (deletions === null)) throw new Error("Malformed git numstat output: inconsistent binary record");
     numbers.set(diffPath, { additions, deletions, binary: additions === null || deletions === null });
   }
   const parts = nameOutput.split("\0").filter(Boolean);
   const entries: SourceDiffEntry[] = [];
   for (let index = 0; index < parts.length;) {
-    const [rawStatus, inlinePath] = parts[index++].split("\t");
+    const record = parts[index++];
+    if (record === undefined) throw new Error("Malformed git name-status output: missing record");
+    const separator = record.indexOf("\t");
+    const rawStatus = separator < 0 ? record : record.slice(0, separator);
+    const inlinePath = separator < 0 ? "" : record.slice(separator + 1);
+    if (!rawStatus) throw new Error("Malformed git name-status output: missing status");
     const renamed = rawStatus.startsWith("R") || rawStatus.startsWith("C");
-    const previousPath = renamed ? (inlinePath || parts[index++] || "") : null;
-    const currentPath = renamed ? (parts[index++] || "") : (inlinePath || parts[index++] || "");
+    let previousPath: string | null = null;
+    if (renamed) {
+      previousPath = inlinePath || parts[index++] || null;
+      if (!previousPath) throw new Error("Malformed git name-status output: incomplete previous path");
+    }
+    const currentPath = renamed ? parts[index++] : (inlinePath || parts[index++]);
+    if (!currentPath) throw new Error("Malformed git name-status output: incomplete current path");
     const count = numbers.get(currentPath) ?? { additions: null, deletions: null, binary: false };
     entries.push({ path: currentPath, previousPath, status: normalizeStatus(rawStatus), ...count });
   }
   return entries.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function parseGitStat(value: string): number | null {
+  if (value === "-") return null;
+  if (!/^\d+$/.test(value)) throw new Error("Malformed git numstat output: invalid count");
+  return Number(value);
 }
 
 function normalizeStatus(status: string): SourceDiffEntry["status"] {

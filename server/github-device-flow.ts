@@ -151,12 +151,14 @@ function tokenFrom(payload: Record<string, unknown>): GitHubDeviceUserToken {
     || (refreshToken !== undefined && !REFRESH_TOKEN.test(refreshToken))
     || (refreshTokenExpiresInSeconds !== undefined && !boundedSeconds(refreshTokenExpiresInSeconds, 1, 365 * 24 * 60 * 60))
     || ((refreshToken === undefined) !== (refreshTokenExpiresInSeconds === undefined))) throw new GitHubDeviceFlowFailure("invalid-response");
-  return {
+  const token: GitHubDeviceUserToken = {
     accessToken,
     tokenType: "bearer",
     ...(expiresInSeconds === undefined ? {} : { expiresInSeconds }),
-    ...(refreshToken === undefined ? {} : { refreshToken, refreshTokenExpiresInSeconds }),
   };
+  if (refreshToken === undefined) return token;
+  if (refreshTokenExpiresInSeconds === undefined) throw new GitHubDeviceFlowFailure("invalid-response");
+  return { ...token, refreshToken, refreshTokenExpiresInSeconds };
 }
 
 function stringField(payload: Record<string, unknown>, field: string) {

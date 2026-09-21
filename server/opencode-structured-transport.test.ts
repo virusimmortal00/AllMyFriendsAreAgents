@@ -33,6 +33,16 @@ describe("OpenCode structured transport", () => {
     expect(sdk.prompt).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps unavailable assistant finish metadata absent", async () => {
+    const sdk = client({ schemaVersion: 1, action: "yield", reason: "not_addressed" });
+    const { finish: _finish, ...unfinished } = assistant({ schemaVersion: 1, action: "yield", reason: "not_addressed" });
+    vi.mocked(sdk.prompt).mockResolvedValue({
+      info: unfinished,
+    });
+    const result = await executeOpenCodeStructuredTurn(sdk, input);
+    expect(result).not.toHaveProperty("finish");
+  });
+
   it("makes one bounded same-session correction after a semantically invalid envelope", async () => {
     const sdk = client(undefined);
     vi.mocked(sdk.prompt)

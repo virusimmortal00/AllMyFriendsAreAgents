@@ -32,7 +32,7 @@ export async function openGitHubIntegrationRuntime(input: {
     vaultPath: path.join(input.dataDirectory, "github-credentials.enc"),
     keyPath: input.credentialKeyPath ?? defaultGitHubCredentialKeyPath(input.projectRoot),
     refresh: (token) => deviceFlow.refresh(token),
-    onRefreshEvent: input.onRefreshEvent,
+    ...(input.onRefreshEvent ? { onRefreshEvent: input.onRefreshEvent } : {}),
   });
   const credentials = new BoundGitHubCredentialProvider(integrations, vault);
   const authorizations = new GitHubDeviceAuthorizationCoordinator(deviceFlow, integrations, vault);

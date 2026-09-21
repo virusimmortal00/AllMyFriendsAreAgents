@@ -44,9 +44,33 @@ describe("OpenRouter catalog enrichment", () => {
   });
 
   it("leaves local discovery intact when catalog enrichment fails", async () => {
-    const service = new OpenRouterCatalogService(vi.fn<typeof fetch>(async () => { throw new Error("offline"); }));
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "google/model", name: "Recovered model" }] }), { status: 200 }));
+    const service = new OpenRouterCatalogService(fetchMock);
     const discovery: ModelDiscoveryResult = { status: "available", discoveredAt: "2026-08-26T00:00:00.000Z", models: [{ providerId: "openrouter", modelId: "google/model", displayName: "Local name", provenance: "opencode-catalog" }] };
     await expect(service.enrich(discovery)).resolves.toEqual(discovery);
+    await expect(service.enrich(discovery)).resolves.toMatchObject({ models: [{ displayName: "Recovered model" }] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves local optional metadata when remote fields are absent or malformed", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: [{
+      id: "example/model", pricing: { prompt: "invalid" }, context_length: "invalid", created: Number.MAX_VALUE,
+      architecture: { input_modalities: [], output_modalities: null },
+    }] }), { status: 200 }));
+    const service = new OpenRouterCatalogService(fetchMock);
+    const localModel = {
+      providerId: "openrouter", modelId: "example/model", displayName: "Local model", provenance: "opencode-catalog" as const,
+      pricing: { cacheReadPerMillion: 0.1 }, limits: { input: 8_192 }, capabilities: { attachment: true, inputModalities: ["text"] },
+    };
+    const enriched = await service.enrich({ status: "available", discoveredAt: "2026-08-26T00:00:00.000Z", models: [localModel] });
+    expect(enriched.models[0]).toEqual({
+      ...localModel,
+      popularity: { rank: 1, window: "weekly", source: "openrouter" },
+      capabilities: { attachment: true, reasoning: false, toolCall: false, inputModalities: ["text"] },
+    });
+    expect(enriched.models[0]).not.toHaveProperty("releaseDate");
   });
 
   it("resolves current and revealed OpenRouter model pages against available OpenCode models", async () => {
@@ -150,6 +174,16 @@ describe("OpenRouter catalog enrichment", () => {
     await expect(service.credits()).resolves.toMatchObject({ remainingUsd: 37.5 }); // still within the TTL: cached
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await expect(service.credits(true)).resolves.toMatchObject({ remainingUsd: 30 }); // forced: bypasses the cache
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears a rejected credits request so a later call can recover", async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { total_credits: 50, total_usage: 20 } }), { status: 200 }));
+    const service = new OpenRouterCatalogService(fetchMock, undefined, async () => "sk-or-v1-fixture");
+    await expect(service.credits()).rejects.toThrow("offline");
+    await expect(service.credits()).resolves.toMatchObject({ remainingUsd: 30 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

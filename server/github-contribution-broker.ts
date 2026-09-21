@@ -160,8 +160,18 @@ export class GitHubContributionBroker {
       case "READ_CHECKS": return this.client.readChecks(this.repository, claims.headSha);
       case "COMMENT": {
         const body = boundedText(request.body, 8_000, "Comment body");
-        if (!!request.issueNumber === !!request.pullNumber) throw new Error("Comment requires exactly one issue or pull request target");
-        return this.client.comment(this.repository, { issueNumber: request.issueNumber, pullNumber: request.pullNumber }, body, marker(request.idempotencyKey));
+        const issueNumber = request.issueNumber === undefined ? undefined : positive(request.issueNumber, "issue");
+        const pullNumber = request.pullNumber === undefined ? undefined : positive(request.pullNumber, "pull request");
+        if ((issueNumber === undefined) === (pullNumber === undefined)) {
+          throw new Error("Comment requires exactly one issue or pull request target");
+        }
+        if (issueNumber !== undefined) {
+          return this.client.comment(this.repository, { issueNumber }, body, marker(request.idempotencyKey));
+        }
+        if (pullNumber !== undefined) {
+          return this.client.comment(this.repository, { pullNumber }, body, marker(request.idempotencyKey));
+        }
+        throw new Error("Comment target validation failed");
       }
       case "PUBLISH_DRAFT_PULL_REQUEST": {
         const title = boundedText(request.title, 160, "Pull request title"); const body = boundedText(request.body, 32_000, "Pull request body");

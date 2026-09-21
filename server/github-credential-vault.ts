@@ -83,8 +83,8 @@ export class EncryptedGitHubCredentialVault implements SecretVaultReader {
   readonly #key: Buffer;
   readonly #keyId: string;
   readonly #now: () => string;
-  readonly #refresh?: GitHubDeviceFlowTransport["refresh"];
-  readonly #onRefreshEvent?: OpenEncryptedGitHubCredentialVaultInput["onRefreshEvent"];
+  readonly #refresh: GitHubDeviceFlowTransport["refresh"] | undefined;
+  readonly #onRefreshEvent: OpenEncryptedGitHubCredentialVaultInput["onRefreshEvent"] | undefined;
   #state: PlaintextVaultState;
 
   private constructor(readonly vaultPath: string, readonly keyPath: string, key: Buffer, state: PlaintextVaultState, now: () => string, refresh?: GitHubDeviceFlowTransport["refresh"], onRefreshEvent?: OpenEncryptedGitHubCredentialVaultInput["onRefreshEvent"]) {
