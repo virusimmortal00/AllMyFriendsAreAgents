@@ -1,28 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
 import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
 import { ApiRequestError, loadRoomConfiguration, loadRoomConfigurationModels, updateRoomConfiguration, type RoomConfiguration } from "./api";
 import { RichModelPicker } from "./model-picker";
-import { PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
+import { DEFAULT_PREFLIGHT_MODE, PREFLIGHT_MODES, PREFLIGHT_MODE_LABELS, type PreflightEvidence, type PreflightMode } from "../shared/preflight";
 import { DialogFrame } from "./dialog-frame";
 import { RoomControls, type RoomSettingsInput } from "./components";
 import { VIEWS, viewAttributes } from "./view-registry";
-import { AdministratorRequired } from "./server-administration";
-
-type PropertiesPage = "general" | "agent-behavior";
 
 interface RoomPropertiesDialogProps extends RoomSettingsInput {
   active?: boolean;
-  onOpenAdministration: () => void;
   repository?: string;
   disabled: boolean;
   returnFocusTo: HTMLElement | null;
+  onOpenRepositorySettings?: () => void;
   onSave: (settings: RoomSettingsInput) => void | Promise<void>;
   onClose: () => void;
 }
 
-function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void; onSignIn: () => void }) {
+export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange, onSavingChange }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void }) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [saved, setSaved] = useState<RoomConfiguration>();
@@ -31,7 +28,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   const [summarizerModel, setSummarizerModel] = useState<ModelReference | null>(null);
   const [summarizerPromptText, setSummarizerPromptText] = useState("");
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({ preflightInvocationGating: false });
-  const [preflightMode, setPreflightMode] = useState<PreflightMode>("off");
+  const [preflightMode, setPreflightMode] = useState<PreflightMode>(DEFAULT_PREFLIGHT_MODE);
   const [intentClassifierEnabled, setIntentClassifierEnabled] = useState(true);
   const [routingEvidence, setRoutingEvidence] = useState<PreflightEvidence>();
   const [models, setModels] = useState<readonly DiscoveredModel[]>([]);
@@ -47,12 +44,15 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [signInRequired, setSignInRequired] = useState(false);
   const dirty = useMemo(() => Boolean(saved) && JSON.stringify({ basePromptText: basePromptEnabled ? basePromptText : null, summarizerModel, summarizerPromptText, featureFlags, preflightMode, intentClassifierEnabled }) !== JSON.stringify({ basePromptText: saved?.basePromptText, summarizerModel: saved?.summarizerModel, summarizerPromptText: saved?.summarizerPromptText, featureFlags: saved?.featureFlags, preflightMode: saved?.preflightMode, intentClassifierEnabled: saved?.intentClassifierEnabled }), [saved, basePromptEnabled, basePromptText, summarizerModel, summarizerPromptText, featureFlags, preflightMode, intentClassifierEnabled]);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [onSavingChange, saving]);
 
   useEffect(() => {
     if (!active || saved) return;
@@ -67,7 +67,7 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
       setSummarizerModel(result.settings.summarizerModel);
       setSummarizerPromptText(result.settings.summarizerPromptText);
       setFeatureFlags(result.settings.featureFlags);
-      setPreflightMode(result.settings.preflightMode || "off");
+      setPreflightMode(result.settings.preflightMode || DEFAULT_PREFLIGHT_MODE);
       setIntentClassifierEnabled(result.settings.intentClassifierEnabled !== false);
       setRoutingEvidence(result.routingEvidence);
       setDefaultBasePrompt(result.defaults?.basePromptText || "");
@@ -98,12 +98,11 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
 
   async function save(closeAfter: boolean) {
     if (!dirty || saving) {
-      if (closeAfter && !dirty) onClose();
+      if (closeAfter && !dirty) (onSaved ?? onClose)();
       return;
     }
     setSaving(true);
     setError("");
-    setSignInRequired(false);
     try {
       const nextBasePrompt = basePromptEnabled ? basePromptText : null;
       const update = {
@@ -116,11 +115,10 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
       };
       const result = await updateRoomConfiguration(update);
       setSaved(result.settings);
-      if (closeAfter) onClose();
+      if (closeAfter) (onSaved ?? onClose)();
     } catch (failure) {
       const requiresSignIn = failure instanceof ApiRequestError && [401, 403].includes(failure.status || 0);
-      setSignInRequired(requiresSignIn);
-      setError(requiresSignIn ? "Saving agent behavior needs a server administrator. Sign in, then apply your changes again; your draft stays open." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
+      setError(requiresSignIn ? "Your administrator session expired. Sign in again from Owner login, then return to apply these changes." : failure instanceof Error ? failure.message : "Could not save agent behavior.");
     } finally { setSaving(false); }
   }
 
@@ -129,10 +127,10 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
     setChoosingModel(false);
     modelTriggerRef.current?.focus();
   };
-  return <section className="room-configuration-panel" role="tabpanel" id="room-properties-agent-panel" aria-labelledby="room-properties-agent-tab" hidden={!active}>
+  return <section className="room-configuration-panel" aria-label="Room behavior" hidden={!active}>
     <div className="room-properties-page-content">
       {loading ? <p role="status">Loading agent behavior…</p> : null}
-      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{signInRequired ? <AdministratorRequired onSignIn={onSignIn} /> : null}{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
+      {error ? <div role="alert" className="room-settings-error"><p>{error}</p>{!saved && !loading ? <button type="button" className="classic-button" onClick={() => setRetryCount((value) => value + 1)}>Retry</button> : null}</div> : null}
       {!loading && saved ? <>
         <section className="room-configuration-card classic-property-section" aria-labelledby="base-prompt-heading">
           <h3 id="base-prompt-heading">Base Prompt</h3>
@@ -180,26 +178,8 @@ function RoomConfigurationPanel({ active, onClose, onDirtyChange, onSignIn }: { 
   </section>;
 }
 
-export function RoomPropertiesDialog({ returnFocusTo, onClose, onOpenAdministration, active = true, ...general }: RoomPropertiesDialogProps) {
-  const [page, setPage] = useState<PropertiesPage>("general");
-  const [generalDirty, setGeneralDirty] = useState(false);
-  const [agentBehaviorDirty, setAgentBehaviorDirty] = useState(false);
-  const finishGeneral = useCallback(() => agentBehaviorDirty ? setPage("agent-behavior") : onClose(), [agentBehaviorDirty, onClose]);
-  const finishAgentBehavior = useCallback(() => generalDirty ? setPage("general") : onClose(), [generalDirty, onClose]);
-  return <DialogFrame active={active} title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body classic-scrollbars" returnFocusTo={returnFocusTo} onClose={onClose} dataPresentation={page} view={page === "general" ? VIEWS.roomPropertiesGeneral : VIEWS.roomPropertiesAgentBehavior}>
-    <div className="classic-tabs" role="tablist" aria-label="Room property pages">
-      <button type="button" role="tab" id="room-properties-general-tab" aria-selected={page === "general"} aria-controls="room-properties-general-panel" onClick={() => setPage("general")}>General</button>
-      <button type="button" role="tab" id="room-properties-agent-tab" aria-selected={page === "agent-behavior"} aria-controls="room-properties-agent-panel" onClick={() => setPage("agent-behavior")}>Agent behavior</button>
-    </div>
-    <section role="tabpanel" id="room-properties-general-panel" aria-labelledby="room-properties-general-tab" hidden={page !== "general"}>
-      <RoomControls {...general} showTitle={false} propertySheet onCancel={onClose} onDirtyChange={setGeneralDirty} onSaved={finishGeneral} />
-    </section>
-    <RoomConfigurationPanel active={page === "agent-behavior"} onClose={finishAgentBehavior} onDirtyChange={setAgentBehaviorDirty} onSignIn={onOpenAdministration} />
-  </DialogFrame>;
-}
-
-export function RoomConfigurationDialog({ returnFocusTo, onClose, onOpenAdministration, active = true }: { returnFocusTo: HTMLElement | null; onClose: () => void; onOpenAdministration: () => void; active?: boolean }) {
-  return <DialogFrame active={active} title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body classic-scrollbars" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesAgentBehavior}>
-    <RoomConfigurationPanel active onClose={onClose} onSignIn={onOpenAdministration} />
+export function RoomPropertiesDialog({ returnFocusTo, onClose, active = true, onOpenRepositorySettings, ...general }: RoomPropertiesDialogProps) {
+  return <DialogFrame active={active} title="Room Properties" layout="property-sheet" closeLabel="Close Room Properties" className="room-properties-window" backdropClassName="room-settings-backdrop" bodyClassName="room-properties-body classic-scrollbars" returnFocusTo={returnFocusTo} onClose={onClose} view={VIEWS.roomPropertiesGeneral}>
+    <RoomControls {...general} showTitle={false} propertySheet {...(onOpenRepositorySettings ? { onOpenRepositorySettings } : {})} onCancel={onClose} onSaved={onClose} />
   </DialogFrame>;
 }

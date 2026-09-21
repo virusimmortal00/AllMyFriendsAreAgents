@@ -19,7 +19,7 @@ alias `~typesafe/jev-latest`) advises the existing deterministic pre-flight
 gate so that clearly irrelevant invocations never reach prompt construction,
 while deterministic signals (mentions, structured targets, explicit
 invitations) always remain authoritative. The classifier is enabled by
-default; rooms disable it per-room in Room Properties → Agent Routing, and a
+default; administrators disable it per-room in Server Administration → Room behavior → Agent Routing, and a
 server-owned environment kill switch disables it everywhere. Routing evidence
 records the classifier's cost, latency, and per-agent probabilities together
 with a no-classifier baseline decision, so the pre/post impact on cost and
@@ -85,8 +85,8 @@ TypeSafe key exists or is needed) plus optional
 `ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL`/`_ENDPOINT` overrides and
 the `ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED` kill switch. It is
 consulted inside `preflightTurns` only when a room's pre-flight mode is
-`shadow` or `enforce` and the room's `intentClassifierEnabled` setting (Room
-Properties → Agent Routing, default on, SQLite migration 0030) is true. The
+`shadow` or `enforce` and the room's `intentClassifierEnabled` setting (Server
+Administration → Room behavior → Agent Routing, default on, SQLite migration 0030) is true. The
 pure gate consumes only a probabilities-only projection; the audit store
 persists the full consult, including OpenRouter-reported `usage.cost`. The
 pre-flight audit store gained optional fields that normalize away for older
@@ -99,7 +99,7 @@ its totals contain more than one resolved classifier model.
 Pre-flight mode defaults to `enforce`: new rooms gate invocations from birth,
 with the classifier advising the deterministic gate. Rooms with a persisted
 `off`/`shadow` configuration keep their setting and can change it at any time
-in Room Properties; the previous shadow-evidence promotion gate (200 decisions
+in Server Administration → Room behavior → Agent Routing; the previous shadow-evidence promotion gate (200 decisions
 or seven days, sub-5% false-suppression rate) was removed by owner decision on
 2026-09-18 in favor of immediate enforce-by-default. Shadow mode remains
 available for any room that wants measurement without suppression.

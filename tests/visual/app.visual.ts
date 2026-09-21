@@ -15,11 +15,11 @@ async function openScenario(page: Page, id: string) {
   if (id.startsWith("server-administration")) {
     await menu(page, "Server", "Owner login...");
     await expect(page.getByRole("button", { name: id === "server-administration" ? "Sign out" : id.endsWith("unclaimed") ? "Claim owner" : "Sign in", exact: true })).toBeVisible();
-  } else if (id.startsWith("room-properties") || id === "room-summarizer-model-picker") {
-    await menu(page, "Room", "Room properties...");
-    if (id !== "room-properties-general") await page.getByRole("tab", { name: "Agent behavior" }).click();
-    if (id === "room-properties-shared-behavior") await page.getByText("Shared behavior rules · always included", { exact: true }).click();
+  } else if (id === "room-agent-behavior" || id === "room-agent-behavior-shared-behavior" || id === "room-summarizer-model-picker") {
+    await menu(page, "Server", "Room behavior...");
     if (id === "room-summarizer-model-picker") await page.getByRole("button", { name: "Choose model…" }).click();
+  } else if (id.startsWith("room-properties")) {
+    await menu(page, "Room", "Room properties...");
   } else if (id.startsWith("github-")) {
     await menu(page, "Server", "Integrations...");
     if (id === "github-device-auth") await page.getByRole("button", { name: "Connect GitHub", exact: true }).click();
@@ -277,42 +277,17 @@ for (const scenario of APP_SCENARIOS) {
     await openScenario(page, scenario.id);
     if (scenario.id === "room-properties-general") {
       const dialog = page.getByRole("dialog", { name: "Room Properties" });
-      const general = page.getByRole("tab", { name: "General", exact: true });
-      const behavior = page.getByRole("tab", { name: "Agent behavior", exact: true });
-      const initialBounds = await dialog.boundingBox();
-      const initialActions = await dialog.getByRole("button", { name: "Cancel", exact: true }).boundingBox();
-      await expect(general).toHaveCSS("border-bottom-width", "0px");
-      await expect(behavior).toHaveCSS("border-bottom-color", "rgb(255, 255, 255)");
       await expect(dialog.locator(".room-properties-general-content")).toHaveCSS("font-size", "12px");
-      const generalAppearance = await dialog.locator(".room-properties-general-content").evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { padding: style.padding, font: style.font, background: style.backgroundColor };
-      });
-      await behavior.click();
-      await expect(behavior).toHaveCSS("border-bottom-width", "0px");
-      await expect(general).toHaveCSS("border-bottom-color", "rgb(255, 255, 255)");
-      await expect(dialog.getByRole("heading", { name: "Summarizer", exact: true })).toBeVisible();
-      expect(await dialog.locator("#room-properties-agent-panel .room-properties-page-content").evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { padding: style.padding, font: style.font, background: style.backgroundColor };
-      })).toEqual(generalAppearance);
-      expect(await dialog.boundingBox()).toEqual(initialBounds);
-      expect(await dialog.getByRole("button", { name: "Cancel", exact: true }).boundingBox()).toEqual(initialActions);
-      await expect(dialog.locator("#room-properties-general-panel")).toHaveCSS("display", "none");
-      await general.click();
-      await expect(dialog.locator("#room-properties-agent-panel")).toHaveCSS("display", "none");
-      expect(await dialog.boundingBox()).toEqual(initialBounds);
+      await expect(dialog.getByRole("tab", { name: "Agent behavior", exact: true })).toHaveCount(0);
       await expect(dialog.getByRole("textbox", { name: "Room name", exact: true })).toBeInViewport({ ratio: 1 });
       await expect(dialog.getByRole("button", { name: "OK", exact: true })).toHaveCount(1);
-      // Capture General after the behavior page has loaded, not just on first open.
     }
     const surface = page.locator(`[data-view-id="${scenario.view.id}"], [data-responsive-view-id="${scenario.view.id}"]`).first();
     await expect(surface).toBeVisible();
     if (scenario.id === "room-summarizer-model-picker") await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
     await expect(page.getByText(/^(Loading roster…|Loading configuration…|Loading settings…|Loading contribution…|Loading tasks…|Loading improvements…)$/)).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
-    await capture(page, info, scenario, "top");
-    if (scenario.id === "room-properties-shared-behavior") {
+    if (scenario.id === "room-agent-behavior-shared-behavior") {
       const rules = surface.locator(".room-behavior-rules");
       const disclosure = rules.locator("summary");
       await disclosure.focus();
@@ -327,7 +302,8 @@ for (const scenario of APP_SCENARIOS) {
       }
       await expect(surface.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
     }
-    if (scenario.id === "room-properties-agent-behavior") {
+    await capture(page, info, scenario, "top");
+    if (scenario.id === "room-agent-behavior") {
       const toggle = page.getByRole("checkbox", { name: "Include a room base prompt" });
       await toggle.focus();
       await toggle.press("ArrowRight");

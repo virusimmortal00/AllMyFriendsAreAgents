@@ -1,66 +1,55 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
-import { useState } from "react";
-import { ServerAdministration } from "./server-administration";
-import { updateControlSession } from "./control-session-state";
-import { RoomConfigurationDialog, RoomPropertiesDialog } from "./room-configuration-dialog";
+import { RoomConfigurationPanel, RoomPropertiesDialog } from "./room-configuration-dialog";
 
-afterEach(() => { cleanup(); updateControlSession({ status: null, session: null, checked: false, error: "" }); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe("RoomConfigurationDialog", () => {
-  it("separates base prompt, summarizer, and feature flags and saves only changed fields", async () => {
+function roomConfiguration() {
+  return {
+    settings: {
+      configurationRevision: 0,
+      basePromptRevision: 0,
+      basePromptText: "Default merit rule",
+      summarizerModel: { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" },
+      summarizerPromptText: "Summarize {{transcript}}",
+      summarizerPromptRevision: 0,
+      featureFlags: { preflightInvocationGating: false },
+      preflightMode: "enforce",
+      intentClassifierEnabled: true,
+      updatedAt: null,
+    },
+    defaults: { basePromptText: "Default merit rule" },
+    routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0 },
+  };
+}
+
+describe("RoomConfigurationPanel", () => {
+  it("separates base prompt, summarizer, and routing and saves only changed fields", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        settings: {
-          configurationRevision: 0,
-          basePromptRevision: 0,
-          basePromptText: "Default merit rule",
-          summarizerModel: { providerId: "opencode", modelId: "muse-spark-1.2-contributor-free", variant: "minimal" },
-          summarizerPromptText: "Summarize {{transcript}}",
-          summarizerPromptRevision: 0,
-          featureFlags: { preflightInvocationGating: false },
-          preflightMode: "off", intentClassifierEnabled: true,
-          updatedAt: null,
-        },
-        defaults: { basePromptText: "Default merit rule" },
-        routingEvidence: { recordedDecisions: 4, evaluatedShadowSuppressions: 3, falseSuppressionRate: 0 },
-      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(Response.json(roomConfiguration()))
       .mockResolvedValueOnce(Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "control-proof" }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ settings: { basePromptRevision: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(Response.json({ settings: { basePromptRevision: 1 } }));
     vi.stubGlobal("fetch", fetchMock);
     const onClose = vi.fn();
-    render(<RoomConfigurationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={onClose} />);
+    render(<RoomConfigurationPanel active onClose={onClose} />);
+
     expect(await screen.findByRole("heading", { name: "Base Prompt" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Summarizer" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Agent Routing" })).toBeTruthy();
-    expect(screen.getByLabelText("Pre-flight mode")).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Pre-flight mode" }) as HTMLSelectElement).value).toBe("enforce");
+    expect((screen.getByRole("checkbox", { name: "Intent classifier (Jev via OpenRouter)" }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByTestId("preflight-evidence").textContent).toContain("3 evaluated shadow suppressions");
-    expect(screen.getByRole("region", { name: "Base Prompt" }).classList.contains("classic-property-section")).toBe(true);
-    expect(screen.getByRole("checkbox", { name: "Include a room base prompt" }).closest("label")?.classList.contains("classic-check")).toBe(true);
-    expect(screen.getByRole("button", { name: "Use built-in default" }).closest("label")).toBeNull();
-    expect(screen.getByRole("combobox", { name: "Pre-flight mode" }).classList.contains("classic-select")).toBe(true);
+
     const user = userEvent.setup();
     await user.clear(screen.getByLabelText("Additional room prompt", { selector: "textarea" }));
-    await user.type(screen.getByLabelText("Additional room prompt", { selector: "textarea" }), "Temporary prompt");
-    await user.click(screen.getByRole("button", { name: "Use built-in default" }));
-    expect((screen.getByRole("textbox", { name: "Additional room prompt" }) as HTMLTextAreaElement).value).toBe("Default merit rule");
-    const rulesToggle = screen.getByText("Shared behavior rules · always included");
-    await user.click(rulesToggle);
-    expect(rulesToggle.closest("details")?.open).toBe(true);
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(AGENT_BEHAVIOR_RULES);
-    expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
-    await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
-    const [firstBehaviorRule] = AGENT_BEHAVIOR_RULES;
-    if (!firstBehaviorRule) throw new Error("Expected at least one shared behavior rule.");
-    expect(screen.getByText(firstBehaviorRule)).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "Additional room prompt" }) as HTMLTextAreaElement).disabled).toBe(true);
-    await user.click(screen.getByRole("checkbox", { name: "Include a room base prompt" }));
-    await user.clear(screen.getByLabelText("Additional room prompt", { selector: "textarea" }));
     await user.type(screen.getByLabelText("Additional room prompt", { selector: "textarea" }), "Custom merit rule");
+    await user.click(screen.getByText("Shared behavior rules · always included"));
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(AGENT_BEHAVIOR_RULES);
     await user.click(screen.getByRole("button", { name: "OK" }));
+
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     const [, sessionCall, saveCall] = fetchMock.mock.calls;
     if (!sessionCall || !saveCall) throw new Error("Expected session recovery and settings save requests.");
@@ -70,209 +59,45 @@ describe("RoomConfigurationDialog", () => {
     expect(JSON.parse(String(saveCall[1]?.body))).toEqual({ basePromptText: "Custom merit rule" });
   });
 
-  it.each([true, false])("preserves drafts through administrator recovery (claimed=%s)", async (claimed) => {
-    const settings = { configurationRevision: 0, basePromptRevision: 0, basePromptText: "Default rule", summarizerModel: null, summarizerPromptText: "Summarize {{transcript}}", summarizerPromptRevision: 0, featureFlags: {}, preflightMode: "off", intentClassifierEnabled: true, updatedAt: null };
-    let authenticated = false;
-    let loginAttempts = 0;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/control/me") return authenticated ? Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "fresh-control-proof" }) : Response.json({ error: "Authentication required" }, { status: 401 });
-      if (url === "/api/control/status") return Response.json({ claimed, bootstrapConfigured: true });
-      if (url === "/api/control/login" || url === "/api/control/bootstrap") {
-        if (++loginAttempts === 1) return Response.json({ error: "Invalid administrator credentials" }, { status: 401 });
-        authenticated = true;
-        return Response.json({ expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "test-admin", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "login-control-proof" });
-      }
-      if (url === "/api/control/integrations/github") return Response.json({ connections: [] });
-      if (url === "/api/control/projects/current/repository") return Response.json({ error: "Not configured" }, { status: 404 });
-      if (url === "/api/room/settings") return Response.json({ settings: init?.method === "PUT" ? { ...settings, ...JSON.parse(String(init.body)) } : settings });
-      throw new Error(`Unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    function AuthenticationFlow() {
-      const [administrationOpen, setAdministrationOpen] = useState(false);
-      return <><RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => setAdministrationOpen(true)} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />
-        {administrationOpen ? <section aria-label="Server Administration"><button type="button" onClick={() => setAdministrationOpen(false)}>Close server administration</button><ServerAdministration destination="Room Properties" onContinue={() => setAdministrationOpen(false)} /></section> : null}</>;
-    }
-    render(<AuthenticationFlow />);
-    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    const prompt = await screen.findByLabelText("Additional room prompt", { selector: "textarea" });
-    await user.clear(prompt);
-    await user.type(prompt, "Draft room rule");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
-    const signIn = await screen.findByRole("button", { name: "Sign in…" });
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
-    await user.click(signIn);
-    await screen.findByLabelText("Username");
-    expect(screen.queryByRole("dialog", { name: "Room Properties" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close server administration" }));
-    expect(screen.queryByRole("dialog", { name: "GitHub" })).toBeNull();
-    expect(document.activeElement).toBe(signIn);
-    expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
-    expect(onClose).not.toHaveBeenCalled();
-    await user.click(signIn);
-    const username = await screen.findByLabelText("Username");
-    await user.type(username, "test-admin");
-    await user.type(screen.getByLabelText("Password"), "synthetic-test-password");
-    if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "synthetic-bootstrap-secret");
-    await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
-    expect(await screen.findByText(/Could not sign in or claim/)).toBeTruthy();
-    expect((prompt as HTMLTextAreaElement).value).toBe("Draft room rule");
-    await user.type(screen.getByLabelText("Password"), "synthetic-test-password");
-    if (!claimed) await user.type(screen.getByLabelText("Local bootstrap secret"), "synthetic-bootstrap-secret");
-    await user.click(screen.getByRole("button", { name: claimed ? "Sign in" : "Claim owner" }));
-    await screen.findByRole("dialog", { name: "Room Properties" });
-    expect(document.activeElement).toBe(signIn);
-    await user.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true));
-    expect(screen.queryByRole("alert")).toBeNull();
-    const saved = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
-    expect(JSON.parse(String(saved?.[1]?.body))).toEqual({ basePromptText: "Draft room rule" });
-    expect(new Headers(saved?.[1]?.headers).get("X-AMFAA-CSRF")).toBe("fresh-control-proof");
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("opens on General immediately and loads agent settings and models only when requested", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        settings: {
-          configurationRevision: 0,
-          basePromptRevision: 0,
-          basePromptText: "Default merit rule",
-          summarizerModel: null,
-          summarizerPromptText: "Summarize {{transcript}}",
-          summarizerPromptRevision: 0,
-          featureFlags: {},
-          preflightMode: "off", intentClassifierEnabled: true,
-          updatedAt: null,
-        },
-        defaults: { basePromptText: "Default merit rule" },
-      }), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "available", discoveredAt: "2026-08-27T00:00:00Z", models: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={vi.fn()} />);
-
-    const roomName = screen.getByRole("textbox", { name: "Room name" });
-    expect(roomName).toBeTruthy();
-    expect(roomName.closest(".room-properties-page-content")?.classList.contains("classic-property-section")).toBe(true);
-    expect(roomName.closest(".room-properties-page-content")?.classList.contains("room-properties-general-content")).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    const dialog = screen.getByRole("dialog", { name: "Room Properties" });
-    expect(await within(dialog).findByRole("heading", { name: "Summarizer" })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await user.click(within(dialog).getByRole("button", { name: "Choose model…" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const modelCall = fetchMock.mock.calls.at(1);
-    if (!modelCall) throw new Error("Expected the room model request.");
-    expect(modelCall[0]).toBe("/api/room/settings/models");
-    await user.click(await screen.findByRole("button", { name: "Back to agent behavior" }));
-    const chooseModels = screen.getByRole("button", { name: "Choose model…" });
-    expect(document.activeElement).toBe(chooseModels);
-    expect(screen.queryByRole("button", { name: "Back to agent behavior" })).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("keeps a General draft open when OK is used from Agent behavior", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      settings: {
-        configurationRevision: 0,
-        basePromptRevision: 0,
-        basePromptText: "Default merit rule",
-        summarizerModel: null,
-        summarizerPromptText: "Summarize {{transcript}}",
-        summarizerPromptRevision: 0,
-        featureFlags: {},
-        preflightMode: "off", intentClassifierEnabled: true,
-        updatedAt: null,
-      },
-      defaults: { basePromptText: "Default merit rule" },
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchMock);
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
-
-    const roomName = screen.getByRole("textbox", { name: "Room name" });
-    await user.clear(roomName);
-    await user.type(roomName, "Draft room name");
-    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    expect(await screen.findByRole("heading", { name: "Summarizer" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "OK" }));
-
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
-    expect((screen.getByRole("textbox", { name: "Room name" }) as HTMLInputElement).value).toBe("Draft room name");
-  });
-
-  it("keeps an Agent behavior draft open when OK is used from General", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      settings: {
-        configurationRevision: 0,
-        basePromptRevision: 0,
-        basePromptText: "Default merit rule",
-        summarizerModel: null,
-        summarizerPromptText: "Summarize {{transcript}}",
-        summarizerPromptRevision: 0,
-        featureFlags: {},
-        preflightMode: "off", intentClassifierEnabled: true,
-        updatedAt: null,
-      },
-      defaults: { basePromptText: "Default merit rule" },
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchMock);
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    render(<RoomPropertiesDialog onOpenAdministration={() => undefined} roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onSave={vi.fn()} onClose={onClose} />);
-
-    await user.click(screen.getByRole("tab", { name: "Agent behavior" }));
-    const prompt = await screen.findByLabelText("Additional room prompt", { selector: "textarea" });
-    await user.clear(prompt);
-    await user.type(prompt, "Draft merit rule");
-    await user.click(screen.getByRole("tab", { name: "General" }));
-    await user.click(screen.getByRole("button", { name: "OK" }));
-
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "Agent behavior" }).getAttribute("aria-selected")).toBe("true");
-    expect((screen.getByLabelText("Additional room prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Draft merit rule");
-  });
-
   it("retries a failed model catalog request without closing the chooser", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        settings: {
-          configurationRevision: 0,
-          basePromptRevision: 0,
-          basePromptText: "Default merit rule",
-          summarizerModel: null,
-          summarizerPromptText: "Summarize {{transcript}}",
-          summarizerPromptRevision: 0,
-          featureFlags: {},
-          preflightMode: "off", intentClassifierEnabled: true,
-          updatedAt: null,
-        },
-        defaults: { basePromptText: "Default merit rule" },
-      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(Response.json(roomConfiguration()))
       .mockRejectedValueOnce(new Error("Catalog unavailable"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "available", discoveredAt: "2026-08-30T00:00:00Z", models: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(Response.json({ status: "available", discoveredAt: "2026-08-30T00:00:00Z", models: [] }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
+    render(<RoomConfigurationPanel active onClose={vi.fn()} />);
 
-    render(<RoomConfigurationDialog onOpenAdministration={() => undefined} returnFocusTo={null} onClose={vi.fn()} />);
     expect(await screen.findByRole("heading", { name: "Summarizer" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Choose model…" }));
     expect((await screen.findByRole("alert")).textContent).toContain("connection was interrupted");
-
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const retryCall = fetchMock.mock.calls.at(2);
     if (!retryCall) throw new Error("Expected the retried room model request.");
     expect(retryCall[0]).toBe("/api/room/settings/models");
-    expect(screen.getByRole("button", { name: "Hide models" })).toBeTruthy();
     expect(await screen.findByText("0 available")).toBeTruthy();
+  });
+});
+
+describe("RoomPropertiesDialog", () => {
+  it("contains only member-editable general room settings", async () => {
+    const fetchMock = vi.fn();
+    const onOpenRepositorySettings = vi.fn();
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RoomPropertiesDialog roomName="The Agent Room" topic="Open conversation" conversationEnergy="balanced" disabled={false} returnFocusTo={null} onOpenRepositorySettings={onOpenRepositorySettings} onSave={vi.fn()} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("textbox", { name: "Room name" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "General" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Identity" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Conversation" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Repository" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Change in Rooms & repositories" }));
+    expect(onOpenRepositorySettings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("tab", { name: "Agent behavior" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Pre-flight mode" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Intent classifier (Jev via OpenRouter)" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

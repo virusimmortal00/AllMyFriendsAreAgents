@@ -703,7 +703,6 @@ export default function App() {
     setAdministrationDestination(null);
     setAdministrationOpen(false);
     if (destination === "Manage room agents") setRosterOpen(true);
-    else setRoomPropertiesOpen(true);
   }
 
   const roster = normalizeRoomAgentRoster(room.roster);
@@ -784,7 +783,7 @@ export default function App() {
       accessKey: "S",
       view: VIEWS.serverMenu,
       // One command per window page, named exactly like the page it opens.
-      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.label.charAt(0), disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
+      items: ADMINISTRATION_PAGES.map((page) => ({ label: `${page.label}...`, accessKey: page.accessKey, disabled: page.requiresAdministrator && !administratorSession, onSelect: (trigger: HTMLButtonElement) => openAdministration(null, page.key, trigger) })),
     },
     defineViewMenu([
         presentationCommand({ label: "Timestamps", accessKey: "T", checked: showTimestamps, checkType: "checkbox", onSelect: toggleTranscriptTimestamps }),
@@ -852,7 +851,7 @@ export default function App() {
           </div>
         </div>
 
-        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} onOpenAdministration={() => openAdministration("Room Properties")} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
+        {roomPropertiesOpen ? <RoomPropertiesDialog active={!administrationOpen} roomName={room.settings.roomName} topic={room.settings.topic} {...(room.githubReadStatus?.repository ? { repository: room.githubReadStatus.repository } : {})} conversationEnergy={room.settings.conversationEnergy} disabled={!connected} returnFocusTo={roomPropertiesTrigger.current} onOpenRepositorySettings={() => openAdministration(null, "Rooms")} onSave={saveRoomSettings} onClose={() => setRoomPropertiesOpen(false)} /> : null}
         {administrationOpen ? <AdministrationWindow page={administrationPage} destination={administrationDestination} refreshKey={connectionEpoch} returnFocusTo={administrationTrigger.current} onSelectPage={setAdministrationPage} onContinue={continueFromAdministration} onClose={() => { setAdministrationOpen(false); setAdministrationDestination(null); }} /> : null}
         {profileOpen ? <HumanProfileDialog human={human} busy={profileSaving} returnFocusTo={profileTrigger.current} onProfileChange={changeMyProfile} onClose={() => setProfileOpen(false)} /> : null}
 

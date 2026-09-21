@@ -993,6 +993,7 @@ interface RoomControlsProps extends RoomSettingsInput {
   propertySheet?: boolean;
   /** `owner/name` this room reads from, shown read-only; undefined when no repository is attached. */
   repository?: string;
+  onOpenRepositorySettings?: () => void;
 }
 
 export function RoomControls({
@@ -1007,6 +1008,7 @@ export function RoomControls({
   showTitle = true,
   propertySheet = false,
   repository,
+  onOpenRepositorySettings,
 }: RoomControlsProps) {
   const [draft, setDraft] = useState<RoomSettingsInput>({ roomName, topic, conversationEnergy });
   const [saving, setSaving] = useState(false);
@@ -1064,7 +1066,10 @@ export function RoomControls({
     <aside className="controls-panel beveled-inset" aria-label="General room properties">
       {showTitle ? <PanelTitle>Room Properties</PanelTitle> : null}
       <form className="room-settings-form" onSubmit={(event) => void submit(event)}>
-      <div className={`room-properties-page-content${propertySheet ? " classic-property-section room-properties-general-content" : ""}`}>
+      <div className={`room-properties-page-content${propertySheet ? " room-properties-general-content" : ""}`}>
+      {propertySheet ? <header className="page-header room-properties-header"><h3>General</h3><p>Member-editable details for this room.</p></header> : null}
+      <section className={propertySheet ? "classic-property-section room-properties-section" : undefined} aria-labelledby={propertySheet ? "room-identity-heading" : undefined}>
+      {propertySheet ? <h3 id="room-identity-heading">Identity</h3> : null}
       <label className="field-label" htmlFor="room-name">Room name</label>
       <input
         id="room-name"
@@ -1092,7 +1097,9 @@ export function RoomControls({
         onChange={(event) => { setSaved(false); setDraft((value) => ({ ...value, topic: event.target.value })); }}
       />
       <p className="field-help">A starting point, not a boundary. Changing it starts fresh agent context.</p>
-      <hr />
+      </section>
+      <section className={propertySheet ? "classic-property-section room-properties-section" : undefined} aria-labelledby={propertySheet ? "room-conversation-heading" : undefined}>
+      {propertySheet ? <h3 id="room-conversation-heading">Conversation</h3> : !propertySheet ? <hr /> : null}
       <label className="field-label" htmlFor="conversation-energy">Conversation energy</label>
       <select
         id="conversation-energy"
@@ -1106,9 +1113,10 @@ export function RoomControls({
         ))}
       </select>
       <p className="field-help">{CONVERSATION_ENERGY_POLICIES[draft.conversationEnergy].description}</p>
-      {propertySheet ? <><hr /><span className="field-label" id="room-repository-label">Repository</span>
-      <p className="classic-summary room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
-      <p className="field-help">Visible to everyone in the room. A server administrator connects it from the Server menu, under Integrations.</p></> : null}
+      </section>
+      {propertySheet ? <section className="classic-property-section room-properties-section" aria-labelledby="room-repository-heading"><h3 id="room-repository-heading">Repository</h3><span className="field-label" id="room-repository-label">Connected repository</span>
+      <p className="room-repository" aria-labelledby="room-repository-label">{repository ? <RepositoryName repository={repository} /> : <span className="repository-name"><GitHubMark size={14} />No repository is connected to this room.</span>}</p>
+      <p className="field-help">Server administrators only{onOpenRepositorySettings ? <> · <button type="button" className="classic-link-button classic-link" onClick={onOpenRepositorySettings}>Change in Rooms &amp; repositories</button></> : null}</p></section> : null}
       {!valid ? <p className="room-settings-error" role="alert">Room name and topic cannot be blank.</p> : null}
       {saveError ? <p className="room-settings-error" role="alert">Could not save room properties. {saveError}</p> : null}
       {saving ? <p className="room-settings-status" role="status">Saving room properties…</p> : saved ? <p className="room-settings-status" role="status">Room properties saved.</p> : null}

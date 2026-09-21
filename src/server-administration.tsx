@@ -4,7 +4,7 @@ import { refreshControlSession, useControlSession } from "./control-session";
 
 // Dialogs outside the administration window that send the member to sign in and back.
 // Internal destinations only: never navigate to a caller-supplied URL.
-export type AdministrationDestination = "Manage room agents" | "Room Properties";
+export type AdministrationDestination = "Manage room agents";
 
 /**
  * The one notice shown outside the Server Administration window where an action needs
@@ -52,7 +52,7 @@ export function ServerAdministration({ destination = null, onContinue }: { desti
   }
 
   return <div className="administration-page administration-session">
-    <header className="page-header"><h2>Owner login</h2><p>Sign in with the server's administrator account to unlock Integrations, Rooms &amp; repositories, and Diagnostics. Your room name and membership are separate.</p></header>
+    <header className="page-header"><h2>Owner login</h2><p>Sign in with the server's administrator account to unlock Integrations, Rooms &amp; repositories, Room behavior, and Diagnostics. Your room name and membership are separate.</p></header>
     <div className="administration-content">
       {!checked && !statusError ? <p role="status">Checking server administration…</p> : null}
       {statusError ? <p role="alert">{statusError}</p> : null}
