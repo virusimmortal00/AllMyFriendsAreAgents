@@ -218,7 +218,10 @@ export function interpretStructuredRoomTurn(
   }
   const combinedText = visibleMessages.join("\n");
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
-  const mentionedAgents = otherAgents.filter((candidate) => new RegExp(`\\b${AGENT_PROFILES[candidate].conversationalName}\\b`, "i").test(combinedText));
+  const mentionedAgents = otherAgents.filter((candidate) => {
+    const profile = AGENT_PROFILES[candidate];
+    return profile ? new RegExp(`\\b${profile.conversationalName}\\b`, "i").test(combinedText) : false;
+  });
   interpretation.continuationWorthy = mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText);
   return {
     diagnostics: interpretation,

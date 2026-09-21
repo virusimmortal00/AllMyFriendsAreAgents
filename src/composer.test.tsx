@@ -139,9 +139,13 @@ describe("ComposerBoundary", () => {
     await user.type(message, "second");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await act(async () => resolvers[0]({ restoreOnFailure: true }));
+    const [firstResolver, secondResolver] = resolvers;
+    expect(firstResolver).toBeDefined();
+    expect(secondResolver).toBeDefined();
+    if (!firstResolver || !secondResolver) throw new Error("Expected both pending submissions.");
+    await act(async () => firstResolver({ restoreOnFailure: true }));
     expect(message.value).toBe("");
-    await act(async () => resolvers[1]({ restoreOnFailure: false }));
+    await act(async () => secondResolver({ restoreOnFailure: false }));
     expect(message.value).toBe("");
   });
 

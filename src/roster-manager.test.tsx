@@ -29,7 +29,9 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 5 })));
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/roster", "/api/roster"]);
-    expect(new Headers(fetchMock.mock.calls[1][1].headers).get("X-AMFAA-CSRF")).toBe("member-csrf");
+    const saveCall = fetchMock.mock.calls.at(1);
+    if (!saveCall) throw new Error("Expected the roster save request.");
+    expect(new Headers(saveCall[1]?.headers).get("X-AMFAA-CSRF")).toBe("member-csrf");
   });
 
   it("preserves a requested /gh grant while showing missing server configuration on narrow layouts", async () => {
@@ -81,7 +83,11 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Save roster" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0].commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
+    const saveCall = fetchMock.mock.calls.at(1);
+    if (!saveCall?.[1]?.body) throw new Error("Expected the roster save request body.");
+    const [savedEntry] = JSON.parse(String(saveCall[1].body)).entries as Array<{ commandPermissions: unknown }>;
+    if (!savedEntry) throw new Error("Expected the saved roster entry.");
+    expect(savedEntry.commandPermissions).toEqual({ allowAll: false, allowed: [], catalogRevision: 2 });
   });
 
   it("shows room spend and a per-agent row badge, without the account's credit balance, and links to the Integrations workspace", async () => {
@@ -162,7 +168,9 @@ describe("roster manager", () => {
     expect(screen.queryByLabelText("Harness")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ schemaVersion: 3, revision: 5 })));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 4, entries: [{ agentId: "codex-sol", enabled: false }] });
+    const saveCall = fetchMock.mock.calls.at(1);
+    if (!saveCall?.[1]?.body) throw new Error("Expected the roster save request body.");
+    expect(JSON.parse(String(saveCall[1].body))).toEqual({ expectedRevision: 4, entries: [{ agentId: "codex-sol", enabled: false }] });
   });
 
   it("preserves a local draft on conflict and requires loading the latest roster", async () => {
@@ -191,7 +199,7 @@ describe("roster manager", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 1, entries: [entry] }, catalog: [], modelDiscovery: discovery }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 }, csrfToken: "csrf" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ ...entry, selectionConfirmationRequired: undefined, sessionInvalidationReason: "" }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ roster: { schemaVersion: 3, revision: 2, entries: [{ agentId, conversationalName: "Alpha", providerId: "openai", modelId: "configured", enabled: true }] }, catalog: [], modelDiscovery: discovery }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<RosterManagerDialog onOpenAdministration={() => undefined} initialRoster={{ revision: 1, entries: [] }} returnFocusTo={null} onSaved={() => undefined} onClose={() => undefined} />);
@@ -200,8 +208,13 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Confirm selected OpenCode model" }));
     await user.click(screen.getByRole("button", { name: "Save roster" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).toMatchObject({ agentId, sessionInvalidationReason: "" });
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).entries[0]).not.toHaveProperty("selectionConfirmationRequired");
+    const saveCall = fetchMock.mock.calls.at(2);
+    if (!saveCall?.[1]?.body) throw new Error("Expected the confirmed roster save request body.");
+    const [savedEntry] = JSON.parse(String(saveCall[1].body)).entries as Array<Record<string, unknown>>;
+    if (!savedEntry) throw new Error("Expected the saved roster entry.");
+    expect(savedEntry).toMatchObject({ agentId });
+    expect(savedEntry).not.toHaveProperty("sessionInvalidationReason");
+    expect(savedEntry).not.toHaveProperty("selectionConfirmationRequired");
   });
 
   it("keeps deactivation reversible and confirms configuration deletion separately", async () => {
@@ -335,6 +348,8 @@ describe("roster manager", () => {
     await user.click(screen.getByRole("button", { name: "Save roster" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ expectedRevision: 9, entries: [{ agentId: "codex-sol", enabled: false }] });
+    const saveCall = fetchMock.mock.calls.at(1);
+    if (!saveCall?.[1]?.body) throw new Error("Expected the roster save request body.");
+    expect(JSON.parse(String(saveCall[1].body))).toEqual({ expectedRevision: 9, entries: [{ agentId: "codex-sol", enabled: false }] });
   });
 });

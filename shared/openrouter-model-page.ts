@@ -18,9 +18,20 @@ export function parseOpenRouterModelPageUrl(value: string): OpenRouterModelPageR
     const url = new URL(value.trim());
     if (url.protocol !== "https:" || url.username || url.password || url.port) return undefined;
     if (url.hostname !== "openrouter.ai" && url.hostname !== "www.openrouter.ai") return undefined;
-    const segments = url.pathname.split("/").filter(Boolean).map((segment) => decodeURIComponent(segment));
-    if (segments.length !== 2 || !OPENROUTER_SEGMENT.test(segments[0]) || !OPENROUTER_MODEL_SEGMENT.test(segments[1])) return undefined;
-    const modelId = `${segments[0]}/${segments[1]}`;
+    const segments = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+    const [providerSegment, modelSegment] = segments;
+    if (
+      !providerSegment ||
+      !modelSegment ||
+      segments.length !== 2 ||
+      !OPENROUTER_SEGMENT.test(providerSegment) ||
+      !OPENROUTER_MODEL_SEGMENT.test(modelSegment)
+    )
+      return undefined;
+    const modelId = `${providerSegment}/${modelSegment}`;
     return { modelId, pageUrl: `https://openrouter.ai/${segments.map(encodeURIComponent).join("/")}` };
   } catch {
     return undefined;

@@ -18,7 +18,8 @@ export function continuationDelayMs(text: string, sequence: number) {
 export function messagesSinceAgentSpoke(messages: RoomMessage[], agent: AgentId) {
   let lastAgentMessage = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].speaker === agent) {
+    const message = messages[index];
+    if (message?.speaker === agent) {
       lastAgentMessage = index;
       break;
     }

@@ -10,7 +10,7 @@ import {
   type Improvement,
   type ImprovementChange,
 } from "../shared/improvement-domain.js";
-import { AGENT_PROFILES, isActiveAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
+import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId, migrateLegacyAgentId, normalizeWritableAgent } from "../shared/participants.js";
 import {
   emergencyStopProjection,
   emptyJsonImprovementState,
@@ -78,7 +78,6 @@ function migrateSessions(input: unknown, roster = legacyDefaultRoomAgentRoster()
   for (const [rawAgent, session] of Object.entries(value)) {
     const agent = migrateLegacyAgentId(rawAgent);
     const entry = agent ? roomAgentEntry(roster, agent) : undefined;
-    const fingerprint = entry ? participantConfigurationFingerprint(entry) : undefined;
     const rawHarness = rawEntries.find((candidate) => migrateLegacyAgentId(candidate.agentId) === agent)?.harness;
     const portableOpenCodeSession = Boolean(entry && participantConfigurationFingerprintMatches(session?.configurationFingerprint, entry))
       || !session?.configurationFingerprint && rawHarness === "opencode";
@@ -89,7 +88,7 @@ function migrateSessions(input: unknown, roster = legacyDefaultRoomAgentRoster()
       sessions[agent] = {
         id: session.id,
         permission: session.permission,
-        configurationFingerprint: fingerprint,
+        configurationFingerprint: participantConfigurationFingerprint(entry),
         configurationRevision: entry.configurationRevision || 1,
         ...(codeEpoch ? { codeEpoch } : {}),
       };
@@ -292,8 +291,9 @@ export class RoomStore implements RoomRepository {
           ...(legacyPreflightMode ? { preflightMode: "off" } : {}),
         })
         : undefined;
+      const { activeAgent: _activeAgent, error: _error, ...storedState } = stored;
       const state: RoomState = {
-        ...stored,
+        ...storedState,
         messages,
         sessions: topicWasMissing ? {} : sessions,
         settings: {
@@ -308,8 +308,6 @@ export class RoomStore implements RoomRepository {
         },
         roster,
         status: "idle",
-        activeAgent: undefined,
-        error: undefined,
         ...(deployment ? { deployment } : {}),
         ...(roomConfiguration ? { roomConfiguration } : {}),
         ...(configurationRevisionWasMissing ? { agentContextSummaries: [] } : {}),
@@ -479,7 +477,9 @@ export class RoomStore implements RoomRepository {
   }
 
   async updateParticipantStyle(participant: StyledParticipant, style: ChatStyle) {
-    this.state.settings.participantStyles[participant] = sanitizeChatStyle(style, this.state.settings.participantStyles[participant]);
+    const current = this.state.settings.participantStyles[participant];
+    if (!current) throw new Error(`Participant style invariant is missing for ${participant}.`);
+    this.state.settings.participantStyles[participant] = sanitizeChatStyle(style, current);
     this.clearAgentContextSummaries();
     await this.save();
   }
@@ -516,8 +516,10 @@ export class RoomStore implements RoomRepository {
     if (key.configRevision !== normalizeRoomConfiguration(this.state.roomConfiguration).configurationRevision) return;
     this.contextSummaries.set(this.contextSummaryKey(key), summary);
     this.state.agentContextSummaries = [...this.contextSummaries.entries()].map(([encoded, value]) => {
-      const [agentId, spanStartId, spanEndId, configRevision] = encoded.split("\u0000");
-      return { agentId: agentId as AgentId, spanStartId, spanEndId, configRevision: Number(configRevision), summary: value };
+      const parts = encoded.split("\u0000");
+      const [agentId, spanStartId, spanEndId, configRevision] = parts;
+      if (parts.length !== 4 || !isAgentId(agentId) || !spanStartId || !spanEndId || !Number.isSafeInteger(Number(configRevision))) throw new Error("Agent context summary key invariant is invalid.");
+      return { agentId, spanStartId, spanEndId, configRevision: Number(configRevision), summary: value };
     });
     await this.save();
   }
@@ -534,8 +536,10 @@ export class RoomStore implements RoomRepository {
 
   async setStatus(status: RoomState["status"], activeAgent?: AgentId, error?: string) {
     this.state.status = status;
-    this.state.activeAgent = activeAgent;
-    this.state.error = error;
+    if (activeAgent !== undefined) this.state.activeAgent = activeAgent;
+    else delete this.state.activeAgent;
+    if (error !== undefined) this.state.error = error;
+    else delete this.state.error;
     await this.save();
   }
 
@@ -862,7 +866,7 @@ export class RoomStore implements RoomRepository {
       if (current.revision !== expectedRevision) return { result: { kind: "conflict" as const, expectedRevision, actualRevision: current.revision } };
       const identity = { roomId: source.roomId, taskId: newTaskId };
       if (state.tasks[taskKey(identity)]) return { result: { kind: "rejected" as const, reason: `Task ${newTaskId} already exists` } };
-      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, title, actor, now });
+      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, ...(title !== undefined ? { title } : {}), actor, now });
       if (result.kind !== "accepted") return { result };
       const snapshot = structuredClone(result.task);
       const event: TaskEvent = { roomId: snapshot.roomId, taskId: snapshot.taskId, revision: 1, actorId: actor.id, at: now, change: { kind: "fork", source }, snapshot };

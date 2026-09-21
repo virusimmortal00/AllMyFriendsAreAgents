@@ -90,6 +90,22 @@ describe("room style persistence", () => {
     expect(await reopened.getAgentContextSummary(key)).toBe("durable cache");
   });
 
+  it("removes transient status details when the room returns to idle", async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-status-"));
+    temporaryDirectories.push(projectRoot);
+    const stateDirectory = path.join(projectRoot, "state");
+    const store = await RoomStore.open(projectRoot, stateDirectory);
+    await store.setStatus("error", "codex-sol", "provider failed");
+    expect(store.snapshot()).toMatchObject({ status: "error", activeAgent: "codex-sol", error: "provider failed" });
+
+    await store.setStatus("idle");
+    expect(Object.hasOwn(store.snapshot(), "activeAgent")).toBe(false);
+    expect(Object.hasOwn(store.snapshot(), "error")).toBe(false);
+    const reopened = await RoomStore.open(projectRoot, stateDirectory);
+    expect(Object.hasOwn(reopened.snapshot(), "activeAgent")).toBe(false);
+    expect(Object.hasOwn(reopened.snapshot(), "error")).toBe(false);
+  });
+
   it("persists revisioned live roster changes and clears deactivated authority", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "all-my-friends-roster-"));
     temporaryDirectories.push(projectRoot);

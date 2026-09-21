@@ -87,7 +87,7 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
     if (locked || !changed) return;
     setError("");
     try {
-      await onProfileChange({ name: cleanName, avatarUrl });
+      await onProfileChange({ name: cleanName, ...(avatarUrl ? { avatarUrl } : {}) });
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Your profile could not be saved.");
@@ -96,7 +96,7 @@ export function HumanProfileDialog({ human, busy, returnFocusTo, onProfileChange
 
   return (
     <DialogFrame title="Your profile" closeLabel="Close profile settings" closeDisabled={locked} className="human-avatar-window" backdropClassName="human-avatar-backdrop" bodyClassName="human-avatar-body" returnFocusTo={returnFocusTo} onClose={requestClose} view={VIEWS.yourProfile} actionsClassName="human-profile-footer" actions={<><button type="button" className="classic-button" disabled={locked} onClick={requestClose}>Cancel</button><button type="button" className="classic-button" data-default-button disabled={locked || !changed || !cleanName} onClick={() => void saveProfile()}>{busy ? "Saving…" : "Save profile"}</button></>}>
-          <HumanAvatar name={cleanName || human.name} avatarUrl={avatarUrl} />
+          <HumanAvatar name={cleanName || human.name} {...(avatarUrl ? { avatarUrl } : {})} />
           <label className="human-profile-name">Display name<input data-dialog-initial-focus className="classic-input" maxLength={32} value={name} aria-invalid={!cleanName} onChange={(event) => { setName(event.target.value); setError(""); }} /></label>
           <input ref={inputRef} className="sr-only" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { void chooseFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
           <div className="human-avatar-actions"><button type="button" className="classic-button" disabled={locked} onClick={() => inputRef.current?.click()}>{processing ? "Processing…" : avatarUrl ? "Choose another image" : "Choose image"}</button>{avatarUrl ? <button type="button" className="classic-button human-avatar-remove" disabled={locked} onClick={() => { setAvatarUrl(undefined); setError(""); }}>Remove photo</button> : null}</div>

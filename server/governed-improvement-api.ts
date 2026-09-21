@@ -25,7 +25,7 @@ export async function listGovernedImprovements(repository: RoomRepository, scope
   const items = [] as GovernedImprovementSummary[];
   let cursor: string | undefined;
   do {
-    const page = await repository.listImprovements({ cursor, limit: 100 });
+    const page = await repository.listImprovements({ ...(cursor !== undefined ? { cursor } : {}), limit: 100 });
     for (const improvement of page.items) {
       if (scope === "active" && TERMINAL_STATES.has(improvement.state)) continue;
       items.push({

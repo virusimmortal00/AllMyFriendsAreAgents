@@ -247,13 +247,17 @@ async function buildPromptBundle(
   context?: AgentContextRuntime,
   structuredOutput = false,
 ) {
-  const profile = AGENT_PROFILES[agent];
+  const conversationalName = roomAgentEntry(state.roster, agent)?.conversationalName || AGENT_PROFILES[agent]?.conversationalName;
+  if (!conversationalName) throw new Error("The participant has no registered conversation name.");
+  const profile = { conversationalName };
   const rosterAgents = enabledRoomAgentIds(normalizeRoomAgentRoster(state.roster));
   const otherParticipants = rosterAgents.filter((candidate) => candidate !== agent).map(agentScreenName);
   const humanNames = state.humans?.map(({ name }) => name) || [];
   const humanDescription = humanNames.length > 0 ? humanNames.join(", ") : "the room's humans";
   const currentStyle = state.settings.participantStyles[agent];
-  const conversationalNames = rosterAgents.map((participant) => AGENT_PROFILES[participant].conversationalName).join(", ");
+  const conversationalNames = rosterAgents
+    .map((participant) => roomAgentEntry(state.roster, participant)?.conversationalName || agentScreenName(participant))
+    .join(", ");
   const reviewContext = includeDiff
     ? `\nEXPLICIT REVIEW CONTEXT
 - The human explicitly requested a worktree review for this turn.
@@ -266,7 +270,14 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
     ? `\nDEVELOPMENT EXECUTION\n- This turn has a trusted assignment worktree. You may make the requested source changes there.\n- Preserve existing work and keep all writes inside the assigned worktree.\n- Start with focused verification. For Vitest files, invoke \`pnpm exec vitest run <file...>\`; do not use \`pnpm test -- <file...>\`, because that package script can expand into the full suite.\n- The worktree persists across turns. Leave it coherent and report concrete progress even when the complete task needs another bounded turn.\n`
     : "";
   const deploymentContext = `\nDEPLOYMENT SOURCE PROVENANCE (server-derived, read-only snapshot)\n${deploymentPromptContext(state.deployment)}\n- Reading a current file establishes only its current contents. It is not evidence of what another commit contained.\n- Claim a commit-to-commit or worktree diff only when explicit diff evidence is present in this prompt.\n`;
-  const roomContext = await transcriptFor(state, { agentId: agent, summaryStore: context?.summaryStore, summarizer: context?.summarizer, activeAssignment: context?.activeAssignment, onSummaryUsage: context?.onSummaryUsage ? (usage) => context.onSummaryUsage!(agent, usage) : undefined });
+  const onSummaryUsage = context?.onSummaryUsage;
+  const roomContext = await transcriptFor(state, {
+    agentId: agent,
+    ...(context?.summaryStore ? { summaryStore: context.summaryStore } : {}),
+    ...(context?.summarizer ? { summarizer: context.summarizer } : {}),
+    ...(context?.activeAssignment === undefined ? {} : { activeAssignment: context.activeAssignment }),
+    ...(onSummaryUsage ? { onSummaryUsage: (usage: AgentContextSummarizerUsage) => onSummaryUsage(agent, usage) } : {}),
+  });
   const basePrompt = roomBasePrompt(state.roomConfiguration);
   const basePromptSection = basePrompt ? `\nROOM BASE PROMPT\n${basePrompt}\n` : "";
   const commandGuide = context?.commandTool?.guide ? `\n${context.commandTool.guide}\n` : "";
@@ -731,7 +742,12 @@ function resumableOpenCodeSession(agent: AgentId, participant: RoomAgentRosterEn
 function refreshAgentScopedTools(context: AgentContextRuntime | undefined, attempt: RoomToolAttempt) {
   if (!context?.refreshScopedTools) return context;
   const tools = context.refreshScopedTools(attempt);
-  return { ...context, commandTool: tools.commandTool, diagnosticsTool: tools.diagnosticsTool };
+  const { commandTool: _commandTool, diagnosticsTool: _diagnosticsTool, ...unchanged } = context;
+  return {
+    ...unchanged,
+    ...(tools.commandTool ? { commandTool: tools.commandTool } : {}),
+    ...(tools.diagnosticsTool ? { diagnosticsTool: tools.diagnosticsTool } : {}),
+  };
 }
 
 export async function runAgent(
@@ -772,8 +788,8 @@ export async function runAgent(
     // can receive the assignment worktree as its cwd.
     const projectPath = resolveExecutionProjectPath(permission, state.settings.projectPath, assignmentWorkspace);
     const participant = roomAgentEntry(state.roster, agent);
-    const profile = participant ? { provider: "opencode", modelId: participant.modelId!, conversationalName: participant.conversationalName! } : undefined;
-    if (!participant || !profile) throw new Error("The participant is not configured in this room.");
+    if (!participant?.modelId || !participant.conversationalName) throw new Error("The participant is not configured in this room.");
+    const profile = { provider: "opencode", modelId: participant.modelId, conversationalName: participant.conversationalName };
     if (participant.selectionConfirmationRequired) throw new Error(participant.sessionInvalidationReason || "Confirm this participant's OpenCode model before it can run.");
     const discovery = discoveryService ? await discoveryService.discover() : undefined;
     if (discovery) {
@@ -821,12 +837,12 @@ export async function runAgent(
       includeDiff,
       permission,
       provider: profile.provider,
-      providerId: participant.providerId,
+      ...(participant.providerId ? { providerId: participant.providerId } : {}),
       modelId: profile.modelId,
-      variant: participant.variant,
+      ...(participant.variant ? { variant: participant.variant } : {}),
       resumedSession: Boolean(existing),
-      sessionId: existing?.id,
-      deploymentEpoch: state.deployment?.epoch,
+      ...(existing ? { sessionId: existing.id } : {}),
+      ...(state.deployment ? { deploymentEpoch: state.deployment.epoch } : {}),
       prompt,
       promptCharacters: prompt.length,
     });
@@ -851,6 +867,8 @@ export async function runAgent(
         } : {}),
       });
       if (structuredOutput) {
+        const providerId = participant.providerId;
+        if (!providerId) throw new Error("Structured OpenCode turns require a configured provider.");
         const transport = activeContext?.structuredTransport || new OpenCodePerTurnStructuredTransport(processSupervisor);
         const invokeStructured = async (sessionId?: string) => withLogContext({ attemptOrdinal }, async () => {
           if (commandControl?.evidence) commandControl.evidence.attemptOrdinal = attemptOrdinal;
@@ -872,15 +890,15 @@ export async function runAgent(
           return transport.run({
             command: runtimeCommand,
             projectPath,
-            providerId: participant.providerId!,
+            providerId,
             modelId: profile.modelId,
-            variant: participant.variant,
+            ...(participant.variant ? { variant: participant.variant } : {}),
             agent: "plan",
             prompt,
             system: "Participate under the supplied room contract and return only the requested structured room-turn result.",
-            sessionId,
+            ...(sessionId ? { sessionId } : {}),
             environment,
-            signal,
+            ...(signal ? { signal } : {}),
             timeoutMs: runTimeout(permission, includeDiff),
             scope: processScopes,
           });
@@ -902,7 +920,7 @@ export async function runAgent(
         await append({
           type: "generation.completed", generationId, agent, durationMs, sessionId: structuredResult.sessionId,
           structuredResponse: structuredResult.structured, responseCharacters: text.length,
-          providerId: participant.providerId, providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
+          ...(participant.providerId ? { providerId: participant.providerId } : {}), providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
           finish: structuredResult.finish, transport: "sdk-server",
         });
         await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, transport: "sdk-server" });
@@ -935,7 +953,10 @@ export async function runAgent(
           environment: opencodeEnvironment(environment, permission, Boolean(activeContext?.commandTool?.allowedCommands.length), Boolean(activeContext?.diagnosticsTool)),
           scopedToolEnvironment,
           redactOutputValues: scopedAgentToolOutputRedactionValues(scopedToolEnvironment),
-          trustedEnvironment: secureWriterRequested, signal, supervisor: processSupervisor, scope: processScopes,
+          trustedEnvironment: secureWriterRequested,
+          ...(signal ? { signal } : {}),
+          supervisor: processSupervisor,
+          scope: processScopes,
           timeoutMs: runTimeout(permission, includeDiff),
         } satisfies RunProcessOptions;
         await logScopedAgentToolReadiness(
@@ -974,12 +995,22 @@ export async function runAgent(
       await append({
         type: "generation.completed", generationId, agent, durationMs, sessionId,
         rawResponse: parsed.text, responseCharacters: parsed.text.length,
-        providerId: participant.providerId,
+        ...(participant.providerId ? { providerId: participant.providerId } : {}),
         ...openCodeJournalMetadata(parsed),
         cliStdout: result.stdout, cliStderr: result.stderr,
       });
       await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
-      return { sessionId, text: parsed.text, generationId, attemptOrdinal, durationMs, permission, ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}), ...(cursorMessageId ? { cursorMessageId } : {}), costUsd: parsed.cost };
+      return {
+        sessionId,
+        text: parsed.text,
+        generationId,
+        attemptOrdinal,
+        durationMs,
+        permission,
+        ...(state.deployment?.epoch ? { codeEpoch: state.deployment.epoch } : {}),
+        ...(cursorMessageId ? { cursorMessageId } : {}),
+        ...(parsed.cost === undefined ? {} : { costUsd: parsed.cost }),
+      };
     } catch (error) {
       if (error instanceof OpenCodeStructuredTurnCancelledError) {
         await append({ type: "generation.cancelled", generationId, agent, durationMs: Date.now() - startedAt, reason: error.message, transport: "sdk-server" });

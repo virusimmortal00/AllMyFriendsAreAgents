@@ -16,8 +16,10 @@ describe("roster request authorization", () => {
     await refreshModelDiscovery();
     await initiateProviderSetup();
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/roster", "/api/model-discovery/refresh", "/api/control/me", "/api/provider-setup/initiate"]);
-    expect(new Headers(fetchMock.mock.calls[1][1].headers).get("X-AMFAA-CSRF")).toBe("member-proof");
-    expect(new Headers(fetchMock.mock.calls[3][1].headers).get("X-AMFAA-CSRF")).toBe("control-proof");
+    const [, refreshCall, , setupCall] = fetchMock.mock.calls;
+    if (!refreshCall || !setupCall) throw new Error("Expected model refresh and provider setup requests.");
+    expect(new Headers(refreshCall[1]?.headers).get("X-AMFAA-CSRF")).toBe("member-proof");
+    expect(new Headers(setupCall[1]?.headers).get("X-AMFAA-CSRF")).toBe("control-proof");
   });
 
   it("does not attempt provider setup when only room membership is available", async () => {
@@ -25,6 +27,8 @@ describe("roster request authorization", () => {
     vi.stubGlobal("fetch", fetchMock);
     await expect(initiateProviderSetup()).rejects.toMatchObject({ status: 401 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/control/me");
+    const [sessionCall] = fetchMock.mock.calls;
+    if (!sessionCall) throw new Error("Expected the control-session request.");
+    expect(sessionCall[0]).toBe("/api/control/me");
   });
 });

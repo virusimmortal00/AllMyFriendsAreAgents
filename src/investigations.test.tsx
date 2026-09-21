@@ -15,8 +15,10 @@ describe("investigation visibility and controls", () => {
   afterEach(cleanup);
   it("keeps protected checkpoints and unassessed inbox findings out of the autonomous presentation", async () => {
     const data = await loadInvestigations(); const entries = await loadInvestigationInbox("codex-sol");
-    vi.mocked(loadInvestigations).mockResolvedValueOnce({ ...data, jobs: [{ ...data.jobs[0], investigationId: "protected-fixture" }] });
-    vi.mocked(loadInvestigationInbox).mockResolvedValueOnce([{ ...entries[0], investigationId: "protected-fixture" }]);
+    const [job] = data.jobs; const [entry] = entries;
+    if (!job || !entry) throw new Error("Expected the investigation fixtures to include a job and inbox entry.");
+    vi.mocked(loadInvestigations).mockResolvedValueOnce({ ...data, jobs: [{ ...job, investigationId: "protected-fixture" }] });
+    vi.mocked(loadInvestigationInbox).mockResolvedValueOnce([{ ...entry, investigationId: "protected-fixture" }]);
     render(<Investigations refreshKey={0} />);
     await screen.findByText(/Corroborate identity mismatch/);
     expect(screen.queryByText(/Checked the mapping/)).toBeNull();

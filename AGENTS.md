@@ -68,6 +68,12 @@ existing Vite/bundler import style.
 - Search for the existing type, service, route, component, and nearest tests
   before introducing a new abstraction. Extend canonical code paths rather than
   creating a parallel implementation.
+- For the strict TypeScript migration, read
+  `docs/planning/strict-typescript-migration.md` and run
+  `pnpm run types:strict:inventory` before editing. Run the owned slice with
+  `--slice=<name>` at the start and `--assert-clean=<name>` before completion;
+  update the planning record in the same commit so decisions and evidence do
+  not drift from the code.
 - Files mapped by `integration-contracts/opencode.json` consume behavior from
   OpenCode's public source. Before editing one, run
   `pnpm check:integration-contracts -- --inspect-files <repository-relative-path>`,
@@ -87,8 +93,11 @@ existing Vite/bundler import style.
 - Treat `pnpm canary:investigations` as the provider-free canary. Do not run
   `pnpm canary:investigations:real`, publish, deploy, or invoke paid or live
   external services without explicit authorization.
-- Follow the style of the surrounding file. This repository has no standalone
-  lint or format script, so do not invent one as a required check.
+- Use `pnpm run format` for Biome formatting and `pnpm run lint` for the
+  repository's Biome lint baseline. Run `pnpm run typecheck` for the complete
+  strict TypeScript check, including visual tooling. Rules explicitly disabled
+  in `biome.json` document migration debt; do not expand that list to bypass a
+  new diagnostic.
 
 ## Validation
 
@@ -100,6 +109,11 @@ pnpm exec vitest run path/to/file.test.ts
 
 # Full repository quality gate
 pnpm run check:quality
+
+# Formatting, linting, and strict type checks independently
+pnpm run format
+pnpm run lint
+pnpm run typecheck
 
 # Planning/template changes
 pnpm check:planning-docs -- --self-check

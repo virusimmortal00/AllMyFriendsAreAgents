@@ -72,6 +72,16 @@ class ControlledEventSource {
   }
 }
 
+function requiredAt<T>(values: readonly T[], index: number, label: string): T {
+  const value = values.at(index);
+  if (value === undefined) throw new Error(`Expected ${label} at index ${index}.`);
+  return value;
+}
+
+function eventSourceAt(index: number) {
+  return requiredAt(ControlledEventSource.instances, index, "controlled event source");
+}
+
 const human: HumanPresence = {
   id: "browser-human-1234",
   name: "Reconnect Tester",
@@ -112,8 +122,9 @@ async function renderConnected(messages: RoomState["messages"] = [], beforeRende
   beforeRender?.();
   render(<App />);
   await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(1));
-  expect(ControlledEventSource.instances[0].url).toBe("/api/events");
-  act(() => ControlledEventSource.instances[0].emit(room("server-before", messages)));
+  const source = eventSourceAt(0);
+  expect(source.url).toBe("/api/events");
+  act(() => source.emit(room("server-before", messages)));
   return screen.findByRole("textbox", { name: "Message" });
 }
 
@@ -163,7 +174,7 @@ describe("rendered reconnect recovery", () => {
     await renderConnected();
     const agentId = "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       roster: {
         schemaVersion: 3,
         revision: 2,
@@ -181,7 +192,7 @@ describe("rendered reconnect recovery", () => {
   it("applies contiguous state and message deltas, deduplicates delivery, and resyncs a version gap", async () => {
     const user = userEvent.setup();
     const composer = await renderConnected([{ id: "before", speaker: "you", text: "Before", timestamp: "2026-08-24T12:00:00.000Z" }]);
-    const source = ControlledEventSource.instances[0];
+    const source = eventSourceAt(0);
     const nextMessage = { id: "after", speaker: "codex-sol" as const, text: "After", timestamp: "2026-08-24T12:00:01.000Z" };
     const { messages: _messages, ...deltaState } = room("server-before", [], { status: "working", activeGenerations: { active: "codex-sol" } });
 
@@ -201,7 +212,7 @@ describe("rendered reconnect recovery", () => {
     act(() => source.emitEvent({ kind: "messages-appended", streamId: "stream-1", fromVersion: 3, version: 4, messages: [] }));
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
-    act(() => ControlledEventSource.instances[1].emit(room("server-restarted", [nextMessage])));
+    act(() => eventSourceAt(1).emit(room("server-restarted", [nextMessage])));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByText("Before")).toBeNull();
     expect(screen.getAllByText("After")).toHaveLength(1);
@@ -219,14 +230,14 @@ describe("rendered reconnect recovery", () => {
     await user.type(composer, "survives identity replacement");
     composer.blur();
 
-    act(() => ControlledEventSource.instances[0].fail());
+    act(() => eventSourceAt(0).fail());
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
 
     expect(api.joinRoom).toHaveBeenLastCalledWith(human);
     expect(JSON.parse(window.localStorage.getItem("all-my-friends-are-agents-human") || "null")).toEqual(replacement);
     expect(loadDraftSnapshot(window.localStorage, replacement.id).text).toBe("survives identity replacement");
     expect(loadPendingSend(window.localStorage, replacement.id)).toEqual(pending);
-    act(() => ControlledEventSource.instances[1].emit(room("server-after", [], { humans: [replacement] })));
+    act(() => eventSourceAt(1).emit(room("server-after", [], { humans: [replacement] })));
     expect((await screen.findByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("survives identity replacement");
   });
 
@@ -237,8 +248,8 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
     expect(screen.getAllByText("Optimistic once")).toHaveLength(1);
-    const clientMessageId = api.sendMessage.mock.calls[0][1];
-    act(() => ControlledEventSource.instances[0].emitEvent({
+    const clientMessageId = requiredAt(api.sendMessage.mock.calls, 0, "send-message call")[1];
+    act(() => eventSourceAt(0).emitEvent({
       kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
       messages: [{ id: "authoritative", clientMessageId, humanId: human.id, speaker: "you", text: "Optimistic once", timestamp: "2026-08-24T12:00:00.000Z" }],
     }));
@@ -254,10 +265,10 @@ describe("rendered reconnect recovery", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
     expect(screen.queryByText("/help")).toBeNull();
-    act(() => resolveCommand({ command: true, clientSubmissionId: api.sendMessage.mock.calls[0][1], result: { kind: "private-help", commands: ["help"] } }));
+    act(() => resolveCommand({ command: true, clientSubmissionId: requiredAt(api.sendMessage.mock.calls, 0, "command call")[1], result: { kind: "private-help", commands: ["help"] } }));
     expect(screen.queryByText("/help")).toBeNull();
     expect(screen.queryByText("Commands: /help")).toBeNull();
-    act(() => ControlledEventSource.instances[0].emitEvent({kind:"messages-appended",streamId:"stream-1",fromVersion:0,version:1,messages:[{id:"private-help",speaker:"system",kind:"status",text:"Room commands available to you:\n/help — List commands",timestamp:"2026-08-27T12:00:00Z"}]}));
+    act(() => eventSourceAt(0).emitEvent({kind:"messages-appended",streamId:"stream-1",fromVersion:0,version:1,messages:[{id:"private-help",speaker:"system",kind:"status",text:"Room commands available to you:\n/help — List commands",timestamp:"2026-08-27T12:00:00Z"}]}));
     expect(await screen.findByText(/Room commands available to you/)).toBeTruthy();
   });
 
@@ -296,8 +307,8 @@ describe("rendered reconnect recovery", () => {
     await user.type(composer, "Delta won the race");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledOnce());
-    const clientMessageId = api.sendMessage.mock.calls[0][1];
-    act(() => ControlledEventSource.instances[0].emitEvent({
+    const clientMessageId = requiredAt(api.sendMessage.mock.calls, 0, "send-message call")[1];
+    act(() => eventSourceAt(0).emitEvent({
       kind: "messages-appended", streamId: "stream-1", fromVersion: 0, version: 1,
       messages: [{ id: "delivered-first", clientMessageId, humanId: human.id, speaker: "you", text: "Delta won the race", timestamp: "2026-08-24T12:00:00.000Z" }],
     }));
@@ -339,27 +350,27 @@ describe("rendered reconnect recovery", () => {
     await renderConnected();
     expect(screen.getByText("Room is idle")).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       status: "working",
       activeAgent: "claude-opus",
       activeGenerations: { successful: "codex-sol" },
     })));
     expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       status: "working",
       activeAgent: "claude-opus",
       activeGenerations: {},
     })));
     expect(screen.getByText("Room is idle")).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       status: "working",
       activeGenerations: { failing: "claude-sonnet" },
     })));
     expect(screen.getByText("OpenCode [anthropic/claude-sonnet-5] is typing...")).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       status: "idle",
       activeGenerations: {},
       agentHealth: {
@@ -376,15 +387,15 @@ describe("rendered reconnect recovery", () => {
 
   it("replaces stale typing state with the authoritative reconnect snapshot", async () => {
     await renderConnected();
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       status: "working",
       activeGenerations: { abandoned: "cursor-gemini" },
     })));
     expect(screen.getByText("Cursor [Gemini 3.1 Pro] is typing...")).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].fail());
+    act(() => eventSourceAt(0).fail());
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
-    act(() => ControlledEventSource.instances[1].emit(room("server-after", [], {
+    act(() => eventSourceAt(1).emit(room("server-after", [], {
       status: "working",
       activeAgent: "cursor-gemini",
       activeGenerations: {},
@@ -396,13 +407,13 @@ describe("rendered reconnect recovery", () => {
 
   it("uses a collective label for different overlapping agents and a specific label when overlap has one agent", async () => {
     await renderConnected();
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       activeGenerations: { first: "codex-sol", second: "codex-sol" },
     })));
     expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
     expect(screen.getByRole("status", { name: "Sol is generating a response" })).toBeTruthy();
 
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], {
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
       activeGenerations: { first: "codex-sol", second: "claude-sonnet" },
     })));
     expect(screen.getByText("Agents are typing...")).toBeTruthy();
@@ -430,7 +441,7 @@ describe("rendered reconnect recovery", () => {
     }), { status: 200 })));
     const user = userEvent.setup();
     await renderConnected();
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], { roster })));
+    act(() => eventSourceAt(0).emit(room("server-before", [], { roster })));
     const row = screen.getByRole("button", { name: /Configure Opus:/ });
 
     await user.dblClick(row);
@@ -485,7 +496,7 @@ describe("rendered reconnect recovery", () => {
   it("keeps Room Properties editable while agents are responding", async () => {
     const user = userEvent.setup();
     await renderConnected();
-    act(() => ControlledEventSource.instances[0].emit(room("working-settings", [], {
+    act(() => eventSourceAt(0).emit(room("working-settings", [], {
       status: "working",
       activeGenerations: { response: "codex-sol" },
     })));
@@ -573,7 +584,7 @@ describe("rendered reconnect recovery", () => {
     const roomTrigger = screen.getByRole("menuitem", { name: "Room" });
     await chooseMenuItem(user, "Room", "Assign task...");
     const dialog = within(screen.getByRole("dialog", { name: "Assign task" }));
-    const [agent] = legacyDefaultRoomAgentRoster().entries.filter((entry) => entry.enabled);
+    const agent = requiredAt(legacyDefaultRoomAgentRoster().entries.filter((entry) => entry.enabled), 0, "enabled roster agent");
     await user.selectOptions(dialog.getByRole("combobox", { name: "Agent" }), agent.agentId);
     await user.type(dialog.getByRole("textbox", { name: "Task" }), "  inspect the error path  ");
     await user.click(dialog.getByRole("button", { name: "OK" }));
@@ -606,7 +617,7 @@ describe("rendered reconnect recovery", () => {
     }), { status: 200 })));
     const user = userEvent.setup();
     await renderConnected();
-    act(() => ControlledEventSource.instances[0].emit(room("server-before", [], { roster })));
+    act(() => eventSourceAt(0).emit(room("server-before", [], { roster })));
     const roomTrigger = screen.getByRole("menuitem", { name: "Room" });
 
     await chooseMenuItem(user, "Room", "Manage agents...");
@@ -781,21 +792,21 @@ describe("rendered reconnect recovery", () => {
     const pending = await screen.findByText(/Not sent — send now\?/);
     expect(pending.closest(".pending-send")?.textContent).toContain("Did this land?");
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
-    const originalClientId = api.sendMessage.mock.calls[0][1];
+    const originalClientId = requiredAt(api.sendMessage.mock.calls, 0, "initial send-message call")[1];
     expect(originalClientId).toMatch(/^message_/);
 
-    act(() => ControlledEventSource.instances[0].fail());
+    act(() => eventSourceAt(0).fail());
     await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
     expect((screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(true);
 
-    act(() => ControlledEventSource.instances[1].emit(room("server-after")));
+    act(() => eventSourceAt(1).emit(room("server-after")));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(false));
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/Not sent — send now\?/)).not.toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Send now" }));
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2));
-    expect(api.sendMessage.mock.calls[1]).toEqual(["Did this land?", originalClientId, []]);
+    expect(requiredAt(api.sendMessage.mock.calls, 1, "retry send-message call")).toEqual(["Did this land?", originalClientId, []]);
     expect((screen.getByRole("button", { name: "Sending…" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Keep as draft" }) as HTMLButtonElement).disabled).toBe(true);
     act(() => resolveResend(room("server-after")));
@@ -810,7 +821,7 @@ describe("rendered reconnect recovery", () => {
     await user.type(composer, "Keep this draft");
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
 
-    act(() => ControlledEventSource.instances[0].fail());
+    act(() => eventSourceAt(0).fail());
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
     await waitFor(() => expect(loadDraftSnapshot(window.localStorage, human.id).text).toBe("Keep this draft"));
@@ -820,7 +831,7 @@ describe("rendered reconnect recovery", () => {
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
 
-    act(() => ControlledEventSource.instances[1].emit(room("server-after", [before, during])));
+    act(() => eventSourceAt(1).emit(room("server-after", [before, during])));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
     expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText("Before outage")).not.toBeNull();
@@ -843,7 +854,7 @@ describe("rendered reconnect recovery", () => {
   it("dismisses only the local server-error notice and shows a later occurrence again", async () => {
     const user = userEvent.setup();
     await renderConnected();
-    const source = ControlledEventSource.instances[0];
+    const source = eventSourceAt(0);
     const { messages: _messages, ...clearState } = room("notice");
     const state = { ...clearState, error: "Room action failed" };
     act(() => source.emitEvent({ kind: "state-delta", streamId: "stream-1", fromVersion: 0, version: 1, state }));

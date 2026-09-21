@@ -41,7 +41,10 @@ describe("Windows-style application menu", () => {
     expect(document.activeElement).toBe(screen.getByRole("menuitemcheckbox", { name: "Timestamps" }));
     await user.keyboard("{ArrowDown}{Enter}");
     expect(onSelect).toHaveBeenCalledOnce();
-    expect(onSelect.mock.calls[0][0]).toBe(screen.getByRole("menuitem", { name: "View" }));
+    const selection = onSelect.mock.calls.at(0);
+    expect(selection).toBeDefined();
+    if (!selection) throw new Error("Expected the selected menu trigger.");
+    expect(selection[0]).toBe(screen.getByRole("menuitem", { name: "View" }));
     expect(screen.queryByRole("menu", { name: "View" })).toBeNull();
   });
 

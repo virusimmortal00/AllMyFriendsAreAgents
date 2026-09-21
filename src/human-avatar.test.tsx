@@ -32,7 +32,7 @@ describe("human profile photos", () => {
     await user.click(screen.getByRole("button", { name: "Remove photo" }));
     await user.click(screen.getByRole("button", { name: "Save profile" }));
 
-    await waitFor(() => expect(onProfileChange).toHaveBeenCalledWith({ name: "Grace Hopper", avatarUrl: undefined }));
+    await waitFor(() => expect(onProfileChange).toHaveBeenCalledWith({ name: "Grace Hopper" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 

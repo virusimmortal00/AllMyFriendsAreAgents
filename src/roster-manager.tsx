@@ -14,7 +14,7 @@ import { selectedModelAvailability, type ModelDiscoveryResult } from "../shared/
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { ConfirmationDialog } from "./components";
 import { RichModelPicker } from "./model-picker";
-import { ProviderMark } from "./provider-mark";
+import { ProviderMark, providerMarkProps } from "./provider-mark";
 import { formatUsd } from "../shared/currency";
 import { OpenRouterMark } from "./openrouter-mark";
 import { AGENT_LIST_SORT_OPTIONS, agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
@@ -25,6 +25,7 @@ import { AdministratorRequired } from "./server-administration";
 import { DialogFrame } from "./dialog-frame";
 import { useScrollEdges } from "./scroll-edges";
 import { VIEWS, viewAttributes } from "./view-registry";
+import { confirmRosterSelection, replaceRosterModel, replaceRosterVariant } from "./roster-entry-edit";
 
 export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, agentListSort = "room", onAgentListSortChange, returnFocusTo, onSaved, onClose, onOpenAdministration, onOpenOpenRouterAccount }: {
   onOpenAdministration: () => void;
@@ -111,13 +112,14 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
     const profile = catalogById.get(entry.agentId);
     const providerId = entry.providerId || profile?.provider;
     const modelId = entry.modelId || profile?.modelId || "configured";
+    const authorId = modelAuthorId(providerId, modelId);
     return {
       entry,
       agentId: entry.agentId,
       alias: entry.conversationalName || profile?.conversationalName || entry.agentId,
-      providerId,
+      ...(providerId ? { providerId } : {}),
       modelId,
-      authorId: modelAuthorId(providerId, modelId),
+      ...(authorId ? { authorId } : {}),
     };
   }), agentListSort), [entries, catalogById, agentListSort]);
   // These panes can be mounted after the dialog body's initial scroll-edge scan.
@@ -271,14 +273,15 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       const routeName = providerDisplayName(providerId);
                       const isSelected = entry.agentId === selectedAgentId;
                       const groupLabel = agentListGroupLabel(item, agentListSort);
-                      const previousGroupLabel = index > 0 ? agentListGroupLabel(displayedEntries[index - 1], agentListSort) : undefined;
+                      const previousItem = index > 0 ? displayedEntries[index - 1] : undefined;
+                      const previousGroupLabel = previousItem ? agentListGroupLabel(previousItem, agentListSort) : undefined;
                       return (
                         <Fragment key={entry.agentId}>
                         {groupLabel && groupLabel !== previousGroupLabel ? <div className="roster-group-label" role="presentation">{groupLabel}</div> : null}
                         <div className={`roster-editor-row presence-row${isSelected ? " presence-row--active" : ""}${entry.enabled ? "" : " roster-editor-row--disabled"}`} role="listitem">
                           <button type="button" className="roster-agent-select" aria-pressed={isSelected} aria-label={`View ${name} configuration`} onClick={() => { setSelectedAgentId(entry.agentId); setChangingModelForAgentId(null); setMobilePane("detail"); }}>
                             <span className={`presence-status${entry.enabled ? "" : " presence-status--offline"}`} aria-hidden="true" />
-                            <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
+                            <ProviderMark {...providerMarkProps(authorId, providerId, true)} />
                             <span className="presence-identity"><strong className="speaker" title={name}>{name}</strong><small className="presence-model-label">{modelName}{providerId ? ` · via ${routeName}` : ""}</small><small className={`roster-agent-state${entry.enabled ? "" : " roster-agent-state--inactive"}`}>{entry.enabled ? "Active in room" : "Deactivated"}</small>{usage?.agents[entry.agentId] ? <small className="roster-agent-spend">Spent {formatUsd(usage.agents[entry.agentId]!.costUsd)}</small> : null}</span>
                             <span className="roster-row-chevron" aria-hidden="true">›</span>
                           </button>
@@ -302,16 +305,16 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                   <section className="roster-config-workspace" aria-label={`${selectedName} configuration`}>
                     {draftCreatedAgentIds.has(selectedEntry.agentId) ? <p className="roster-draft-notice" role="status"><strong>{selectedName} is ready in this draft.</strong> Review the settings, then choose <b>Save roster</b> to add this agent to the room.</p> : null}
                     <header className="roster-config-header">
-                      <label className="roster-config-identity"><ProviderMark authorId={modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId)} accessProviderId={selectedReference.providerId || selectedProfile?.provider} /><span id="roster-config-heading">Agent alias</span><input aria-labelledby="roster-config-heading" value={selectedName} maxLength={48} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, conversationalName: event.target.value })} /></label>
+                      <label className="roster-config-identity"><ProviderMark {...providerMarkProps(modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId), selectedReference.providerId || selectedProfile?.provider)} /><span id="roster-config-heading">Agent alias</span><input aria-labelledby="roster-config-heading" value={selectedName} maxLength={48} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, conversationalName: event.target.value })} /></label>
                       <label className="roster-active-switch classic-check"><input type="checkbox" role="switch" checked={selectedEntry.enabled} disabled={saving} aria-label={`Active in room for ${selectedName}`} onChange={(event) => replaceAt(selectedIndex, { ...selectedEntry, enabled: event.target.checked })} /><span><strong>{selectedEntry.enabled ? "Active in room" : "Deactivated"}</strong><small>{selectedEntry.enabled ? "This agent can participate in conversations." : "The configuration is saved, but this agent will not participate."}</small></span></label>
                     </header>
                     <div className="roster-config-fields">
                       <section className="roster-current-model" aria-labelledby="current-model-heading">
                         <header><span><strong id="current-model-heading">Model</strong><small className="roster-current-model__identity">{friendlyModelName(selectedReference.modelId)} · by {providerDisplayName(modelAuthorId(selectedReference.providerId || selectedProfile?.provider, selectedReference.modelId))} · via {providerDisplayName(selectedReference.providerId || selectedProfile?.provider)}</small></span><button type="button" className="classic-button" aria-expanded={changingModelForAgentId === selectedEntry.agentId} onClick={() => setChangingModelForAgentId((current) => current === selectedEntry.agentId ? null : selectedEntry.agentId)}>{changingModelForAgentId === selectedEntry.agentId ? "Done" : "Change model"}</button></header>
                         {!selectedModel && selectedReference.modelId ? <p className="roster-model-unavailable">The configured model is not in the current catalog. Choose another model to change it.</p> : null}
-                        {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} view={VIEWS.manageAgentsModelPicker} onChange={(model) => { replaceAt(selectedIndex, { ...selectedEntry, providerId: model.providerId || undefined, modelId: model.modelId, variant: undefined, reasoningEffort: undefined, sessionInvalidationReason: undefined, selectionConfirmationRequired: undefined }); setChangingModelForAgentId(null); }} /> : null}
+                        {changingModelForAgentId === selectedEntry.agentId ? <RichModelPicker models={discoveredModels} providerId={selectedReference.providerId || ""} modelId={selectedReference.modelId} view={VIEWS.manageAgentsModelPicker} onChange={(model) => { replaceAt(selectedIndex, replaceRosterModel(selectedEntry, model)); setChangingModelForAgentId(null); }} /> : null}
                       </section>
-                      <div className="roster-model-options"><label className="classic-property-row"><span>Variant / reasoning effort</span><select className="classic-select" value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => { const { reasoningEffort: _legacyEffort, ...entry } = selectedEntry; replaceAt(selectedIndex, { ...entry, variant: event.target.value || undefined }); }}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
+                      <div className="roster-model-options"><label className="classic-property-row"><span>Variant / reasoning effort</span><select className="classic-select" value={selectedEntry.variant || selectedEntry.reasoningEffort || ""} onChange={(event) => replaceAt(selectedIndex, replaceRosterVariant(selectedEntry, event.target.value))}><option value="">Default</option>{(selectedEntry.variant || selectedEntry.reasoningEffort) && !selectedModel?.variants?.some(({ id }) => id === (selectedEntry.variant || selectedEntry.reasoningEffort)) ? <option value={selectedEntry.variant || selectedEntry.reasoningEffort}>{selectedEntry.variant || selectedEntry.reasoningEffort} (currently unavailable)</option> : null}{selectedModel?.variants?.map(({ id, displayName }) => <option key={id} value={id}>{displayName}{selectedModel.capabilities?.reasoningEffort?.includes(id) ? " (reasoning effort)" : ""}</option>)}</select></label></div>
                       <section className="roster-capabilities" aria-label={`Effective capabilities for ${selectedName}`}>
                         <h4>Effective capabilities</h4>
                         {!selectedCapabilityStatus ? <p>Capability diagnostics are not available from this server version.</p> : Object.entries(selectedCapabilityStatus.capabilities).map(([name, status]) => { const github = name === "github_read"; const exclusion = github ? selectedGhGate?.exclusions[0] : undefined; return <div className={`roster-capability roster-capability--${status.effective ? "available" : "disabled"}`} key={name}><span><strong>{github ? "GitHub /gh" : name === "project_write" ? "Project writes" : "Conversation"}</strong><small>{github ? `Requested: ${selectedGhRequested ? "granted" : "not granted"} · Effective: ${status.effective ? "available" : "unavailable"}` : status.effective ? "Available" : "Unavailable"}{status.contract ? ` · ${status.contract}` : ""}</small></span><p>{status.effective ? "Configured and available at runtime." : `${(exclusion || status.reason).replaceAll("_", " ")}. ${status.guidance}`}</p></div>; })}
@@ -333,7 +336,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                         </div>
                         <small className="roster-command-status" id={`capability-gh-${selectedEntry.agentId}`}>GitHub /gh: {selectedGhGate?.featureCompiled === false ? "feature unavailable in this server build" : `requested ${selectedGhRequested ? "on" : "off"}; effective ${selectedGhGate?.effective ? "on" : "off"}`}</small>
                       </fieldset>
-                      {selectedEntry.sessionInvalidationReason ? <div className="roster-diagnostic"><p>{selectedEntry.sessionInvalidationReason}</p>{selectedEntry.selectionConfirmationRequired && selectedModelAvailable ? <button type="button" className="classic-button" onClick={() => replaceAt(selectedIndex, { ...selectedEntry, sessionInvalidationReason: "", selectionConfirmationRequired: undefined })}>Confirm selected OpenCode model</button> : null}</div> : null}
+                      {selectedEntry.sessionInvalidationReason ? <div className="roster-diagnostic"><p>{selectedEntry.sessionInvalidationReason}</p>{selectedEntry.selectionConfirmationRequired && selectedModelAvailable ? <button type="button" className="classic-button" onClick={() => replaceAt(selectedIndex, confirmRosterSelection(selectedEntry))}>Confirm selected OpenCode model</button> : null}</div> : null}
                     </div>
                     <section className="roster-danger-zone"><span><strong>Delete configuration</strong><small>Deactivation is reversible. Deleting removes this alias and its settings from the room.</small></span><button type="button" disabled={saving} onClick={(event) => setDeleteRequest({ agentId: selectedEntry.agentId, returnFocusTo: event.currentTarget })}>Delete agent…</button></section>
                   </section>
@@ -343,7 +346,7 @@ export function RosterManagerDialog({ initialRoster, initialSelectedAgentId, age
                       <>
                         <header className="roster-journey-heading"><span className="roster-step-badge">Step 2 of 2</span><div><h3 id="roster-explore-heading">Create your agent</h3><p>Give this model a memorable name. You can change its model or deactivate it later.</p></div><button type="button" className="classic-button" onClick={() => { setNewProvider(""); setNewModel(""); setNewVariant(""); }}>← Choose a different model</button></header>
                         <section className="roster-selected-model" aria-label={`Selected model: ${newSelectedModel.displayName}`}>
-                          <ProviderMark authorId={newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId)} accessProviderId={newSelectedModel.providerId} />
+                          <ProviderMark {...providerMarkProps(newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId), newSelectedModel.providerId)} />
                           <div><strong>{newSelectedModel.displayName}</strong><span>Built by {newSelectedModel.authorDisplayName || providerDisplayName(newSelectedModel.authorId || modelAuthorId(newSelectedModel.providerId, newSelectedModel.modelId))}{newSelectedModel.providerId ? ` · accessed through ${newSelectedModel.accessProviderDisplayName || providerDisplayName(newSelectedModel.providerId)}` : ""}</span>{newSelectedModel.description ? <p>{newSelectedModel.description}</p> : null}</div>
                           <dl><div><dt>Input</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.inputPerMillion)} / 1M</dd></div><div><dt>Output</dt><dd>{formatCatalogPrice(newSelectedModel.pricing?.outputPerMillion)} / 1M</dd></div></dl>
                         </section>

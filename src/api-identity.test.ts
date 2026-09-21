@@ -52,7 +52,7 @@ describe("browser identity requests", () => {
     await sendMessage("Hello", "message_123");
     await updateMyStyle(style);
     await updateMyAvatar("data:image/jpeg;base64,/9j/AA==");
-    await updateMyProfile({ name: "Grace", avatarUrl: undefined });
+    await updateMyProfile({ name: "Grace" });
     await updateSettings({ roomName: "Architecture Room" });
     await authorizeHeartbeat(3);
     await emergencyStopHeartbeat(4);
@@ -92,7 +92,10 @@ describe("browser identity requests", () => {
     await controlLogin("owner", "twelve-character-password");
     await updateRoster(4, []);
 
-    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    const secondCall = fetchMock.mock.calls.at(1);
+    expect(secondCall).toBeDefined();
+    if (!secondCall) throw new Error("Expected the roster update request.");
+    const init = secondCall[1] as RequestInit;
     const headers = new Headers(init.headers);
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(headers.get("X-AMFAA-CSRF")).toBe("csrf-token");

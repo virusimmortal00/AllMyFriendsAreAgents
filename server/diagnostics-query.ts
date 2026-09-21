@@ -278,7 +278,7 @@ function normalizeQuery(input: DiagnosticQuery): NormalizedQuery {
   const limit = boundedInteger(input.limit, DIAGNOSTICS_QUERY_LIMITS.defaultResults, 1, DIAGNOSTICS_QUERY_LIMITS.maxResults);
   const maxScannedBytes = boundedInteger(input.maxScannedBytes, DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes, 1, DIAGNOSTICS_QUERY_LIMITS.maxScannedBytes);
   const maxSerializedBytes = boundedInteger(input.maxSerializedBytes, DIAGNOSTICS_QUERY_LIMITS.maxSerializedBytes, DIAGNOSTICS_QUERY_LIMITS.minSerializedBytes, DIAGNOSTICS_QUERY_LIMITS.maxSerializedBytes);
-  const basis = { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), scope: input.scope, streams, severities, events, identity, correlation, limit, maxScannedBytes, maxSerializedBytes };
+  const basis = { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), scope: input.scope, streams, severities, events, ...(identity !== undefined ? { identity } : {}), ...(correlation !== undefined ? { correlation } : {}), limit, maxScannedBytes, maxSerializedBytes };
   const fingerprint = digest(basis);
   let after: OrderKey | null = null;
   let chunkOffset = 0;

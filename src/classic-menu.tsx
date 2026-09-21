@@ -15,6 +15,10 @@ export interface ClassicMenuCommand {
 export interface ClassicMenuSeparator { type: "separator" }
 export type ClassicMenuItem = ClassicMenuCommand | ClassicMenuSeparator;
 
+function isMenuCommand(item: ClassicMenuItem): item is ClassicMenuCommand {
+  return item.type !== "separator";
+}
+
 export interface ClassicMenuDefinition {
   id: string;
   label: string;
@@ -166,17 +170,20 @@ export function ClassicMenuBar({ menus, onHelp }: { menus: ClassicMenuDefinition
     }
     if (event.key.length !== 1) return;
     const menu = menus[menuIndex];
-    const itemIndex = menu.items.findIndex((item) => item.type !== "separator" && !item.disabled && item.accessKey.toLocaleLowerCase() === event.key.toLocaleLowerCase());
+    if (!menu) return;
+    const itemIndex = menu.items.findIndex((item) =>
+      isMenuCommand(item)
+      && !item.disabled
+      && item.accessKey.toLocaleLowerCase() === event.key.toLocaleLowerCase());
     if (itemIndex < 0) return;
     event.preventDefault();
     const item = menu.items[itemIndex];
-    if (item.type !== "separator") {
-      const returnFocusTo = titleRefs.current[menuIndex];
-      deactivate();
-      if (returnFocusTo) {
-        returnFocusTo.focus();
-        item.onSelect(returnFocusTo);
-      }
+    if (!item || !isMenuCommand(item)) return;
+    const returnFocusTo = titleRefs.current[menuIndex];
+    deactivate();
+    if (returnFocusTo) {
+      returnFocusTo.focus();
+      item.onSelect(returnFocusTo);
     }
   }
 

@@ -21,7 +21,9 @@ describe("protected work controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start protected work" }));
     await screen.findByRole("alert"); fireEvent.click(screen.getByRole("button", { name: "Start protected work" }));
     await waitFor(() => expect(startProtectedWork).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(startProtectedWork).mock.calls[0][0].requestId).toBe(vi.mocked(startProtectedWork).mock.calls[1][0].requestId);
+    const [firstStart, secondStart] = vi.mocked(startProtectedWork).mock.calls;
+    if (!firstStart || !secondStart) throw new Error("Expected both protected-work start attempts.");
+    expect(firstStart[0].requestId).toBe(secondStart[0].requestId);
   });
   it("reuses an action identity after a lost response and renews it only after success", async () => {
     vi.mocked(protectedWorkAction).mockRejectedValueOnce(new Error("response lost")).mockResolvedValue({});
@@ -33,8 +35,9 @@ describe("protected work controls", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Retry catch-up" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Retry catch-up" }));
     await waitFor(() => expect(protectedWorkAction).toHaveBeenCalledTimes(3));
-    const calls = vi.mocked(protectedWorkAction).mock.calls;
-    expect(calls[0][2]).toBe(calls[1][2]); expect(calls[2][2]).not.toBe(calls[1][2]);
+    const [firstAction, secondAction, thirdAction] = vi.mocked(protectedWorkAction).mock.calls;
+    if (!firstAction || !secondAction || !thirdAction) throw new Error("Expected all protected-work action attempts.");
+    expect(firstAction[2]).toBe(secondAction[2]); expect(thirdAction[2]).not.toBe(secondAction[2]);
   });
   it("separates stop requested from confirmation and offers explicit recovery after termination", async () => {
     const changed = vi.fn(async () => {}); vi.mocked(protectedWorkAction).mockResolvedValue({});

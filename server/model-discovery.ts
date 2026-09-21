@@ -82,17 +82,23 @@ export function parseOpenCodeRuntimeVersion(stdout: string) {
   const rawVersion = stripAnsi(stdout).trim();
   const match = rawVersion.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/);
   if (!match) return undefined;
-  const version = `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${match[4] ? `-${match[4]}` : ""}${match[5] ? `+${match[5]}` : ""}`;
-  const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const [, major, minor, patch, prerelease, build] = match;
+  if (major === undefined || minor === undefined || patch === undefined) return undefined;
+  const version = `${Number(major)}.${Number(minor)}.${Number(patch)}${prerelease ? `-${prerelease}` : ""}${build ? `+${build}` : ""}`;
+  const parts = [Number(major), Number(minor), Number(patch)] as const;
   const minimum = MINIMUM_OPENCODE_VERSION.split(".").map(Number);
   const maximum = MAXIMUM_AUDITED_OPENCODE_VERSION.split(".").map(Number);
   const compare = (boundary: readonly number[]) => {
-    const firstDifference = parts.findIndex((part, index) => part !== boundary[index]);
-    return firstDifference === -1 ? 0 : parts[firstDifference] > boundary[firstDifference] ? 1 : -1;
+    for (const [index, part] of parts.entries()) {
+      const boundaryPart = boundary[index];
+      if (boundaryPart === undefined) throw new Error("OpenCode version boundary is invalid.");
+      if (part !== boundaryPart) return part > boundaryPart ? 1 : -1;
+    }
+    return 0;
   };
   const canonical = rawVersion === version;
   const downstream = canonical && version === APPROVED_DOWNSTREAM_OPENCODE_VERSION;
-  const upstream = canonical && !match[4] && !match[5] && compare(minimum) >= 0 && compare(maximum) <= 0;
+  const upstream = canonical && !prerelease && !build && compare(minimum) >= 0 && compare(maximum) <= 0;
   const compatible = upstream || downstream;
   return {
     version,
@@ -125,16 +131,19 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
   const lines = plain.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
+    if (raw === undefined) continue;
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const token = line.split(/\s+/)[0];
+    if (!token) continue;
     const slash = token.indexOf("/");
     if (slash <= 0) continue;
     const providerId = token.slice(0, slash);
     const modelId = token.slice(slash + 1);
     if (!validDiscoveryId(providerId) || !validModelDiscoveryId(modelId)) continue;
     const variantMatch = line.match(/\bvariants?[:=]\s*([A-Za-z0-9._,+@/-]+)/i);
-    let variantIds = variantMatch?.[1].split(",").filter(validDiscoveryId) || [];
+    const inlineVariants = variantMatch?.[1];
+    let variantIds = inlineVariants?.split(",").filter(validDiscoveryId) || [];
     let detail: {
       name?: unknown;
       family?: unknown;
@@ -156,6 +165,7 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
       let depth = 0;
       for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
         const fragment = lines[cursor];
+        if (fragment === undefined) break;
         json += `${fragment}\n`;
         depth += (fragment.match(/{/g) || []).length - (fragment.match(/}/g) || []).length;
         if (depth === 0) {
@@ -181,16 +191,23 @@ export function parseOpenCodeModelCatalog(stdout: string): readonly DiscoveredMo
       const variant = value as { reasoningEffort?: unknown; reasoning?: { effort?: unknown } };
       return typeof variant.reasoningEffort === "string" || typeof variant.reasoning?.effort === "string" ? [id] : [];
     });
+    const inputPrice = number(detail?.cost?.input);
+    const outputPrice = number(detail?.cost?.output);
+    const cacheReadPrice = number(detail?.cost?.cache?.read);
+    const cacheWritePrice = number(detail?.cost?.cache?.write);
     const pricing = {
-      inputPerMillion: number(detail?.cost?.input),
-      outputPerMillion: number(detail?.cost?.output),
-      cacheReadPerMillion: number(detail?.cost?.cache?.read),
-      cacheWritePerMillion: number(detail?.cost?.cache?.write),
+      ...(inputPrice === undefined ? {} : { inputPerMillion: inputPrice }),
+      ...(outputPrice === undefined ? {} : { outputPerMillion: outputPrice }),
+      ...(cacheReadPrice === undefined ? {} : { cacheReadPerMillion: cacheReadPrice }),
+      ...(cacheWritePrice === undefined ? {} : { cacheWritePerMillion: cacheWritePrice }),
     };
+    const contextLimit = number(detail?.limit?.context);
+    const inputLimit = number(detail?.limit?.input);
+    const outputLimit = number(detail?.limit?.output);
     const limits = {
-      context: number(detail?.limit?.context),
-      input: number(detail?.limit?.input),
-      output: number(detail?.limit?.output),
+      ...(contextLimit === undefined ? {} : { context: contextLimit }),
+      ...(inputLimit === undefined ? {} : { input: inputLimit }),
+      ...(outputLimit === undefined ? {} : { output: outputLimit }),
     };
     const capabilities = {
       ...(reasoningEffort.length ? { reasoningEffort } : {}),
@@ -280,7 +297,13 @@ export class ModelDiscoveryService {
       const output = await this.execute(command, ["models", "--verbose"], signal);
       const models = parseOpenCodeModelCatalog(output.stdout);
       if (!models.length) throw new Error("OpenCode returned a malformed or empty model catalog.");
-      return { status: "available", models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models), runtime, configuredDefault, discoveredAt };
+      return {
+        status: "available",
+        models: uniqueModels(configuredDefault ? [...models, configuredModel(configuredDefault)] : models),
+        runtime,
+        ...(configuredDefault ? { configuredDefault } : {}),
+        discoveredAt,
+      };
     } catch (error) {
       return { ...classifyError(error), models: [], runtime, discoveredAt };
     }

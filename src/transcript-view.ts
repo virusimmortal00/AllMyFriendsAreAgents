@@ -16,7 +16,7 @@ export function adjacentTranscriptMagnification(current: number, direction: -1 |
   const normalized = sanitizeTranscriptMagnification(current);
   const index = TRANSCRIPT_MAGNIFICATION_LEVELS.indexOf(normalized as typeof TRANSCRIPT_MAGNIFICATION_LEVELS[number]);
   const nextIndex = Math.min(TRANSCRIPT_MAGNIFICATION_LEVELS.length - 1, Math.max(0, index + direction));
-  return TRANSCRIPT_MAGNIFICATION_LEVELS[nextIndex];
+  return TRANSCRIPT_MAGNIFICATION_LEVELS[nextIndex] ?? normalized;
 }
 
 export function loadTranscriptMagnification() {

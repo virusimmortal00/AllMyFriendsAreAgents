@@ -134,7 +134,10 @@ export function participantConfigurationFingerprintMatches(stored: string | unde
       (legacy.harness !== undefined && legacy.harness !== "opencode")
       || Object.keys(legacy).some((key) => !["harness", "providerId", "modelId", "variant", "reasoningEffort"].includes(key))
     ) return false;
-    const selection = resolveOpenCodeVariant({ variant: typeof legacy.variant === "string" ? legacy.variant : undefined, reasoningEffort: typeof legacy.reasoningEffort === "string" ? legacy.reasoningEffort : undefined });
+    const selection = resolveOpenCodeVariant({
+      ...(typeof legacy.variant === "string" ? { variant: legacy.variant } : {}),
+      ...(typeof legacy.reasoningEffort === "string" ? { reasoningEffort: legacy.reasoningEffort } : {}),
+    });
     if (selection.conflict) return false;
     return JSON.stringify({ ...(typeof legacy.providerId === "string" ? { providerId: legacy.providerId } : {}), modelId: legacy.modelId, ...(selection.variant ? { variant: selection.variant } : {}) }) === current;
   } catch {

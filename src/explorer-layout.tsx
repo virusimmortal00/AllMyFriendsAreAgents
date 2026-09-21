@@ -17,7 +17,7 @@ export interface ExplorerPage<Key extends string> {
  */
 export function ExplorerLayout<Key extends string>({ label, pages, selected, onSelect, status, children }: {
   label: string;
-  pages: readonly ExplorerPage<Key>[];
+  pages: readonly [ExplorerPage<Key>, ...ExplorerPage<Key>[]];
   selected: Key;
   onSelect: (page: Key) => void;
   status?: ReactNode;
@@ -35,9 +35,11 @@ export function ExplorerLayout<Key extends string>({ label, pages, selected, onS
       : event.key === "ArrowUp" || event.key === "ArrowLeft" ? (index - 1 + enabled.length) % enabled.length
         : event.key === "Home" ? 0 : event.key === "End" ? enabled.length - 1 : -1;
     if (next < 0 || !enabled.length) return;
+    const nextPage = enabled[next];
+    if (!nextPage) return;
     event.preventDefault();
-    onSelect(enabled[next].key);
-    event.currentTarget.querySelector<HTMLButtonElement>(`#${CSS.escape(`${id}-${enabled[next].key}`)}`)?.focus();
+    onSelect(nextPage.key);
+    event.currentTarget.querySelector<HTMLButtonElement>(`#${CSS.escape(`${id}-${nextPage.key}`)}`)?.focus();
   }
 
   return <div className="explorer">

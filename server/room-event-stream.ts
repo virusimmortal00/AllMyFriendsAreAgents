@@ -7,7 +7,7 @@ export const ROOM_EVENT_HEARTBEAT_MS = 3_000;
 
 export class RoomEventStream {
   private readonly clients = new Set<Response>();
-  private heartbeat?: NodeJS.Timeout;
+  private heartbeat: NodeJS.Timeout | undefined;
   private state?: PublicRoomState;
   private version = 0;
 

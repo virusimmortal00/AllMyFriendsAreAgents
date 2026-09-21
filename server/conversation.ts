@@ -66,6 +66,16 @@ export interface ConversationRunResult {
   summary: ConversationRunSummary;
 }
 
+function inheritDiffPreference(turn: ConversationTurn, source: Pick<ConversationTurn, "includeDiff">): ConversationTurn {
+  return source.includeDiff === undefined ? turn : { ...turn, includeDiff: source.includeDiff };
+}
+
+function takeQueuedTurn(turns: ConversationTurn[], index = 0): ConversationTurn {
+  const [turn] = turns.splice(index, 1);
+  if (!turn) throw new Error("Conversation turn queue invariant is invalid.");
+  return turn;
+}
+
 const NEXT_MESSAGE = /^\s*<<<NEXT>>>\s*$/gim;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
 const CONVERSATION_STATE = /^\s*CONVERSATION_STATE:\s*(SETTLED|OPEN|BLOCKED)\s*$/im;
@@ -126,6 +136,7 @@ export function rankRoomAgents(state: RoomState, jitter: (agent: AgentId) => num
   let continuityAgent: AgentId | undefined;
   for (let index = latestHumanIndex - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (!message) continue;
     if (message.kind === "topic") break;
     if (isActiveAgentId(message.speaker)) {
       continuityAgent = message.speaker as AgentId;
@@ -259,6 +270,7 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
   const mentionedAgents = otherAgents.filter((candidate) => {
     const profile = AGENT_PROFILES[candidate];
+    if (!profile) return false;
     const namePattern = new RegExp(`\\b${profile.conversationalName}\\b`, "i");
     return namePattern.test(combinedText);
   });
@@ -431,7 +443,7 @@ export async function runEnergyConversation(
         else pendingMentions.push({
           source: turn.agent,
           target,
-          includeDiff: turn.includeDiff,
+          ...(turn.includeDiff === undefined ? {} : { includeDiff: turn.includeDiff }),
           targetWasRunning: activePeersAtCompletion.has(target),
           observation: requested.observation!,
         });
@@ -453,6 +465,7 @@ export async function runEnergyConversation(
       async () => {
         while (nextTurn < turns.length && !cancelled && !broadcastSettled && !failed) {
           const turn = turns[nextTurn];
+          if (!turn) throw new Error("Concurrent conversation queue invariant is invalid.");
           nextTurn += 1;
           unstartedOpenings -= 1;
           try {
@@ -477,36 +490,40 @@ export async function runEnergyConversation(
     for (const turn of candidates) remaining.push(decisions.queue(turn, "initial-candidate"));
     const concurrentOpenings = concurrencyLimit > 1 && !options.stopOnSettledResponse;
     if (concurrentOpenings && remaining.length > 0) {
-      const openingTurns = options.inviteAll ? remaining.splice(0) : [remaining.shift()!];
+      const openingTurns = options.inviteAll ? remaining.splice(0) : [takeQueuedTurn(remaining)];
       while (!options.inviteAll
         && openingTurns.length < participantLimit
         && remaining.length > 0) {
         secondaryAttempts += 1;
         const draw = random();
-        decisions.decision(remaining[0].observation!, draw > policy.secondaryChance ? "blocked" : "queued", draw > policy.secondaryChance ? "secondary-chance-missed" : "eligible", { randomDraw: draw, randomThreshold: policy.secondaryChance });
+        const nextCandidate = remaining[0];
+        if (!nextCandidate?.observation) throw new Error("Queued conversation candidate is missing its selection identity.");
+        decisions.decision(nextCandidate.observation, draw > policy.secondaryChance ? "blocked" : "queued", draw > policy.secondaryChance ? "secondary-chance-missed" : "eligible", { randomDraw: draw, randomThreshold: policy.secondaryChance });
         if (draw > policy.secondaryChance) {
           secondaryAttemptAlreadyFailed = true;
           break;
         }
-        openingTurns.push(remaining.shift()!);
+        openingTurns.push(takeQueuedTurn(remaining));
       }
       await recordConcurrent(openingTurns, openingTurns.length > 1 ? 1 : 3);
       while (!options.inviteAll && remaining.length > 0 && !lastOutcome && !cancelled) {
-        await record(remaining.shift()!);
+        await record(takeQueuedTurn(remaining));
       }
     } else if (options.inviteAll) {
       while (remaining.length > 0 && !cancelled && !broadcastSettled && visibleMessagesDelivered < hardMessageCeiling) {
-        await record(remaining.shift()!, 1);
+        await record(takeQueuedTurn(remaining), 1);
       }
     } else {
       while (remaining.length > 0 && !lastOutcome && !cancelled) {
-        await record(remaining.shift()!);
+        await record(takeQueuedTurn(remaining));
       }
     }
     if (!lastOutcome && !cancelled && options.conversationalFloor && completedDeclines === invited.size && invited.size > 0) {
       phase = "conversation-floor";
+      const floorCandidate = candidates.find(({ agent }) => invited.has(agent));
+      if (!floorCandidate) throw new Error("Conversation floor requires an invited candidate.");
       await record({
-        ...candidates[0],
+        ...floorCandidate,
         instruction: conversationalFloorInstruction(),
       }, 1);
       return finish(cancelled ? "cancelled" : "conversation-floor-completed", { settled: !cancelled });
@@ -530,12 +547,11 @@ export async function runEnergyConversation(
         }
         pairReplies.set(pair, replyCount + 1);
         decisions.decision(mention.observation, "queued", "eligible", { pairCount: replyCount, pairLimit: 2 });
-        await record({
+        await record(inheritDiffPreference({
           agent: mention.target,
           instruction: followUpInstruction(mention.source, "direct"),
-          includeDiff: mention.includeDiff,
           observation: mention.observation,
-        });
+        }, mention));
         continue;
       }
 
@@ -552,7 +568,7 @@ export async function runEnergyConversation(
         if (draw <= policy.secondaryChance) {
           const index = nextFreshCandidate();
           if (index >= 0) {
-            const [candidate] = remaining.splice(index, 1);
+            const candidate = takeQueuedTurn(remaining, index);
             await record(decisions.select({
               ...candidate,
               instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
@@ -572,7 +588,7 @@ export async function runEnergyConversation(
         usedContinuationSources.add(lastOutcome.key);
         const index = nextFreshCandidate();
         if (index >= 0) {
-          const [candidate] = remaining.splice(index, 1);
+          const candidate = takeQueuedTurn(remaining, index);
           const continuation = await record(decisions.select({
             ...candidate,
             instruction: followUpInstruction(lastOutcome.turn.agent, options.conversationalFloor ? "ambient" : "substantive"),
@@ -601,11 +617,10 @@ export async function runEnergyConversation(
 
     const synthesizer = lastOutcome.turn.agent;
     phase = "synthesis";
-    const synthesis = await record({
+    const synthesis = await record(inheritDiffPreference({
       agent: synthesizer,
       instruction: synthesisInstruction(),
-      includeDiff: lastOutcome.turn.includeDiff,
-    }, 1);
+    }, lastOutcome.turn), 1);
     if (cancelled) return finish("cancelled", { settled: false });
     if (!synthesis.responded || synthesis.result.conversationState === "settled") return finish(!synthesis.responded ? "synthesis-no-response" : "synthesis-settled", { settled: true });
     if (synthesis.result.conversationState === "blocked") {
@@ -728,7 +743,7 @@ export async function runAgentConversation(
 
   const fillAvailableSlots = () => {
     const limit = Math.max(1, Math.floor(concurrencyLimit));
-    while (queued.length > 0 && pending.size < limit) startTurn(queued.shift()!);
+    while (queued.length > 0 && pending.size < limit) startTurn(takeQueuedTurn(queued));
   };
   const agentIsScheduled = (agent: AgentId) => queued.some((turn) => turn.agent === agent)
     || [...pending.values()].some(({ turn }) => turn.agent === agent);
@@ -759,12 +774,11 @@ export async function runAgentConversation(
       if (deferredMention && followUps < maxFollowUps) {
         phase = "follow-up";
         deferredMentions.delete(completed.turn.agent);
-        queued.unshift({
+        queued.unshift(inheritDiffPreference({
           agent: completed.turn.agent,
           instruction: followUpInstruction(deferredMention.source.agent, "direct"),
-          includeDiff: deferredMention.source.includeDiff,
           observation: deferredMention.observation,
-        });
+        }, deferredMention.source));
         decisions.decision(deferredMention.observation, "queued", "eligible");
         followUps += 1;
       }
@@ -781,11 +795,10 @@ export async function runAgentConversation(
           deferredMentions.set(mentionedAgent, { source: completed.turn, observation });
           continue;
         }
-        queued.push(decisions.queue({
+        queued.push(decisions.queue(inheritDiffPreference({
           agent: mentionedAgent,
           instruction: followUpInstruction(completed.turn.agent, "direct"),
-          includeDiff: completed.turn.includeDiff,
-        }, "legacy-name-match", completed.turn));
+        }, completed.turn), "legacy-name-match", completed.turn));
         phase = "follow-up";
         followUps += 1;
       }
@@ -805,11 +818,10 @@ export async function runAgentConversation(
         })
         .sort((left, right) => completedOrder.get(left)! - completedOrder.get(right)!)[0];
       if (!replyCandidate) continue;
-      queued.push(decisions.queue({
+      queued.push(decisions.queue(inheritDiffPreference({
         agent: replyCandidate,
         instruction: followUpInstruction(completed.turn.agent, "substantive"),
-        includeDiff: completed.turn.includeDiff,
-      }, "ambient-continuation", completed.turn));
+      }, completed.turn), "ambient-continuation", completed.turn));
       phase = "follow-up";
       followUps += 1;
       fillAvailableSlots();

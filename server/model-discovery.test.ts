@@ -27,6 +27,9 @@ describe("OpenCode model discovery", () => {
       limits: { context: 1_048_576, output: 65_536 },
       capabilities: { reasoning: true, toolCall: true, attachment: true, inputModalities: ["text", "image"], outputModalities: ["text"], reasoningEffort: ["high"] },
     });
+    if (!model?.pricing || !model.limits) throw new Error("Expected catalog pricing and limits.");
+    expect(Object.hasOwn(model.pricing, "cacheWritePerMillion")).toBe(false);
+    expect(Object.hasOwn(model.limits, "input")).toBe(false);
   });
 
   it("accepts a bounded OpenRouter-sized verbose catalog", () => {
@@ -46,6 +49,21 @@ describe("OpenCode model discovery", () => {
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", variant: "removed" }, result)).toMatchObject({ available: false, reason: "variant_removed" });
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", reasoningEffort: "removed" }, result)).toMatchObject({ available: false, reason: "reasoning_effort_removed" });
     expect(selectedModelAvailability({ providerId: "provider", modelId: "model", variant: "fast", reasoningEffort: "high" }, result)).toMatchObject({ available: false, reason: "variant_conflict" });
+  });
+
+  it("omits unavailable runtime diagnostics when discovery did not provide one", () => {
+    const unavailable = { status: "error" as const, discoveredAt: new Date(0).toISOString(), models: [] };
+    const diagnosed = { ...unavailable, diagnostic: "runtime failed" };
+
+    expect(selectedModelAvailability({ modelId: "model" }, unavailable)).toEqual({
+      available: false,
+      reason: "runtime_unavailable",
+    });
+    expect(selectedModelAvailability({ modelId: "model" }, diagnosed)).toEqual({
+      available: false,
+      reason: "runtime_unavailable",
+      diagnostic: "runtime failed",
+    });
   });
 
   it("discovers OpenCode models with their provider identity", async () => {

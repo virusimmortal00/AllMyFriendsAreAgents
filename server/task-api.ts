@@ -73,7 +73,8 @@ export function registerTaskRoutes(input: {
   app.get("/api/tasks", async (request, response) => {
     if (!requireHuman(request, response)) return;
     const states = typeof request.query.state === "string" ? request.query.state.split(",").filter((state): state is typeof TASK_LIFECYCLE_STATES[number] => TASK_LIFECYCLE_STATES.includes(state as never)) : undefined;
-    response.set("Cache-Control", "no-store").json(await store.listTasks({ roomId: CANONICAL_ROOM_ID, states, cursor: typeof request.query.cursor === "string" ? request.query.cursor : undefined, limit: Number(request.query.limit) || 50 }));
+    const cursor = typeof request.query.cursor === "string" ? request.query.cursor : undefined;
+    response.set("Cache-Control", "no-store").json(await store.listTasks({ roomId: CANONICAL_ROOM_ID, ...(states !== undefined ? { states } : {}), ...(cursor !== undefined ? { cursor } : {}), limit: Number(request.query.limit) || 50 }));
   });
   app.post("/api/tasks", async (request, response) => {
     const actor = requireHuman(request, response); if (!actor || rejectIdentity(request, response)) return;

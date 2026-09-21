@@ -57,6 +57,18 @@ describe("structured room turns", () => {
     });
   });
 
+  it("ignores an unregistered room participant when matching conversational mentions", () => {
+    expect(interpretStructuredRoomTurn("codex-sol", {
+      schemaVersion: 1,
+      action: "speak",
+      messages: ["The unregistered participant can still read this."],
+      conversationState: "open",
+    }, undefined, 3, ["codex-sol", "agent-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"])).toMatchObject({
+      mentionedAgents: [],
+      continuationWorthy: false,
+    });
+  });
+
   it("publishes a closed provider-compatible object schema", () => {
     expect(STRUCTURED_ROOM_TURN_JSON_SCHEMA.type).toBe("object");
     expect(STRUCTURED_ROOM_TURN_JSON_SCHEMA).not.toHaveProperty("oneOf");

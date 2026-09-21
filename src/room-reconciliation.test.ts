@@ -27,7 +27,7 @@ function snapshot(room: RoomState, streamId = "stream-1", version = 0) {
 }
 
 function message(id: string, clientMessageId?: string): RoomMessage {
-  return { id, clientMessageId, speaker: "you", text: id, timestamp: "2026-08-24T12:00:00.000Z" };
+  return { id, ...(clientMessageId ? { clientMessageId } : {}), speaker: "you", text: id, timestamp: "2026-08-24T12:00:00.000Z" };
 }
 
 describe("room delta reconciliation", () => {
@@ -147,5 +147,19 @@ describe("room delta reconciliation", () => {
     const current = state([], { providerHealth: { cursor: { status: "action_required", reason: "usage_exhausted", message: "Cursor usage is exhausted; increase the limit or change provider mode.", since: "2026-08-27T12:00:00.000Z" } } });
     const reconciled = reconcileRoomEvent(current, { streamId: "old", version: 2 }, snapshot(state([], { providerHealth: {} }), "new", 0));
     expect(reconciled).toMatchObject({ kind: "applied", room: { providerHealth: {} } });
+  });
+
+  it("preserves optional connection state without materializing absent fields", () => {
+    const absent = reconcileRoomEvent(state(), undefined, snapshot(state()));
+    expect(absent.kind).toBe("applied");
+    if (absent.kind !== "applied") return;
+    expect(Object.hasOwn(absent.room, "availability")).toBe(false);
+    expect(Object.hasOwn(absent.room, "agentHealth")).toBe(false);
+    expect(Object.hasOwn(absent.room, "githubReadStatus")).toBe(false);
+    expect(Object.hasOwn(absent.room, "providerHealth")).toBe(false);
+
+    const current = state([], { availability: { "codex-sol": false } });
+    const preserved = reconcileRoomEvent(current, undefined, snapshot(state()));
+    expect(preserved).toMatchObject({ kind: "applied", room: { availability: { "codex-sol": false } } });
   });
 });

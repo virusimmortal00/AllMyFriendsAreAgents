@@ -27,7 +27,7 @@ import type { RoomAgentRoster } from "../shared/roster";
 import { openCodeRuntimeStatusMessage, type OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 import { friendlyModelName, modelAuthorId, providerDisplayName } from "../shared/model-presentation";
 import { formatUsd } from "../shared/currency";
-import { ProviderMark } from "./provider-mark";
+import { ProviderMark, providerMarkProps } from "./provider-mark";
 import { agentListGroupLabel, sortAgentListItems, type AgentListSort } from "./agent-list-sort";
 import { HumanAvatar } from "./human-avatar";
 import { commandMessageDisclosure } from "../shared/command-message";
@@ -138,7 +138,15 @@ export function RoomRoster({
     const alias = rosterEntry?.conversationalName || profile?.conversationalName || participantScreenName(agent);
     const providerId = rosterEntry?.providerId || profile?.provider;
     const modelId = rosterEntry?.modelId || profile?.modelId || "configured";
-    return { agentId: agent, alias, providerId, modelId, authorId: modelAuthorId(providerId, modelId), available: availability?.[agent] !== false };
+    const authorId = modelAuthorId(providerId, modelId);
+    return {
+      agentId: agent,
+      alias,
+      ...(providerId ? { providerId } : {}),
+      modelId,
+      ...(authorId ? { authorId } : {}),
+      available: availability?.[agent] !== false,
+    };
   }), agentListSort);
   return (
     <aside className="presence-panel beveled-inset" aria-label="People in this room">
@@ -150,13 +158,14 @@ export function RoomRoster({
           const { alias, providerId, modelId, authorId, available } = item;
           const modelName = friendlyModelName(modelId);
           const routeName = providerDisplayName(providerId);
-          const health = providerHealth?.[providerId] || agentHealth?.[agent];
+          const health = (providerId ? providerHealth?.[providerId] : undefined) || agentHealth?.[agent];
           const availableLabel = `${alias}: ${modelName} via ${routeName}`;
           const connectionLabel = !available ? openCodeRuntimeStatusMessage(openCodeRuntime) : health?.message || "available";
           const connectionState = !available ? "offline" : health?.status;
           const configurable = Boolean(onManageRoster);
           const groupLabel = agentListGroupLabel(item, agentListSort);
-          const previousGroupLabel = index > 0 ? agentListGroupLabel(presentAgents[index - 1], agentListSort) : undefined;
+          const previousItem = index > 0 ? presentAgents[index - 1] : undefined;
+          const previousGroupLabel = previousItem ? agentListGroupLabel(previousItem, agentListSort) : undefined;
           return (
             <Fragment key={agent}>
             {groupLabel && groupLabel !== previousGroupLabel ? <div className="presence-group-label" role="presentation">{groupLabel}</div> : null}
@@ -187,7 +196,7 @@ export function RoomRoster({
                 aria-label={`${availableLabel}: ${connectionLabel}`}
                 title={connectionLabel}
               />
-              <ProviderMark authorId={authorId} accessProviderId={providerId} compact />
+              <ProviderMark {...providerMarkProps(authorId, providerId, true)} />
               <span className="presence-identity">
                 <strong className={`speaker speaker--${agent}`} title={alias}>{alias}</strong>
                 <span className="presence-meta">
@@ -214,7 +223,7 @@ export function RoomRoster({
         {humans.map((human) => (
           <div className="presence-row presence-row--human" role="listitem" key={human.id}>
             <span className="presence-status" aria-hidden="true" />
-            <HumanAvatar name={human.name} avatarUrl={human.avatarUrl} compact />
+            <HumanAvatar name={human.name} {...(human.avatarUrl ? { avatarUrl: human.avatarUrl } : {})} compact />
             <strong className="speaker speaker--you presence-human-name">{human.name}{human.id === currentHumanId ? " (You)" : ""}</strong>
             {human.id === currentHumanId && onConfigureHumanAvatar ? <button type="button" className="agent-settings-button human-avatar-settings-button" aria-label="Edit your profile" title="Your profile" onClick={(event) => onConfigureHumanAvatar(event.currentTarget)}>📷</button> : <span className="presence-row-spacer" aria-hidden="true" />}
           </div>
@@ -352,6 +361,7 @@ function markdownDestinationEnd(text: string, start: number) {
   let nestedParentheses = 0;
   for (let index = start; index < text.length; index += 1) {
     const character = text[index];
+    if (character === undefined) return -1;
     if (/\s|[<>"']/.test(character)) return -1;
     if (character === "(") {
       nestedParentheses += 1;
@@ -372,6 +382,7 @@ function linkedMessageText(text: string, keyPrefix: string): ReactNode[] {
     if (!match || match.index === undefined) break;
     const start = searchOffset + match.index;
     const label = match[1];
+    if (label === undefined) break;
     const destinationStart = start + match[0].length;
     const destinationEnd = markdownDestinationEnd(text, destinationStart);
     if (destinationEnd < 0) {
@@ -548,7 +559,14 @@ export const Transcript = memo(function Transcript({
         }}
       >
         <div ref={contentRef} className="transcript-content">
-          {visibleMessages.map((message) => <TranscriptMessage key={message.id} message={message} magnification={magnification} onOpenImprovement={onOpenImprovement} />)}
+          {visibleMessages.map((message) => (
+            <TranscriptMessage
+              key={message.id}
+              message={message}
+              magnification={magnification}
+              {...(onOpenImprovement ? { onOpenImprovement } : {})}
+            />
+          ))}
         </div>
       </div>
       {hasNewMessages ? (
@@ -710,7 +728,7 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
   function queryAt(value: string, cursor: number) {
     const before = value.slice(0, cursor);
     const at = before.lastIndexOf("@");
-    if (at < 0 || (at > 0 && !/\s/.test(before[at - 1])) || /\s/.test(before.slice(at + 1))) return null;
+    if (at < 0 || (at > 0 && !/\s/.test(before.charAt(at - 1))) || /\s/.test(before.slice(at + 1))) return null;
     return { start: at, end: cursor, text: before.slice(at + 1) };
   }
 
@@ -724,8 +742,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
       targetKind: candidate.targetKind,
       targetId: candidate.targetId,
       label: candidate.label,
-      providerSnapshot: candidate.providerSnapshot,
-      modelSnapshot: candidate.modelSnapshot,
+      ...(candidate.providerSnapshot ? { providerSnapshot: candidate.providerSnapshot } : {}),
+      ...(candidate.modelSnapshot ? { modelSnapshot: candidate.modelSnapshot } : {}),
       revision: candidate.revision,
       start: mentionQuery.start,
       end: mentionQuery.start + token.length,
@@ -924,7 +942,8 @@ export function ChatComposer({ draft, mentions = [], mentionCandidates = [], sty
           }
           if (matchingMentions.length && (event.key === "Enter" || event.key === "Tab")) {
             event.preventDefault();
-            chooseMention(matchingMentions[activeMention]);
+            const candidate = matchingMentions[activeMention];
+            if (candidate) chooseMention(candidate);
             return;
           }
           if (event.key === "Enter" && !event.shiftKey) {

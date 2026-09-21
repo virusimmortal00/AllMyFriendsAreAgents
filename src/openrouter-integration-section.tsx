@@ -103,7 +103,7 @@ export function RoomSpendPanel({ agentLabels, refreshKey = 0 }: { agentLabels?: 
               <strong className="room-spend__total">{formatUsd(usage.room.costUsd)} spent · {usage.room.generations} turn{usage.room.generations === 1 ? "" : "s"}</strong>
             </div>
             {usage.truncated ? <p className="roster-diagnostic" role="status">Retained history doesn't reach back this far; totals may undercount.</p> : null}
-            <div className="classic-summary room-spend__chart"><OpenRouterSpendChart agents={usage.agents} labels={agentLabels} /></div>
+            <div className="classic-summary room-spend__chart"><OpenRouterSpendChart agents={usage.agents} {...(agentLabels ? { labels: agentLabels } : {})} /></div>
           </> : null}
   </div>;
 }

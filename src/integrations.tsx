@@ -10,7 +10,7 @@ export function IntegrationsPage({ refreshKey }: { refreshKey?: number }) {
     <header className="page-header"><h2>Integrations</h2><p>Connected accounts are configured once per server and shared by every room in a project.</p></header>
     <div className="integrations-body">
       <GitHubIntegrationPanel />
-      <OpenRouterCreditsSection refreshKey={refreshKey} />
+      <OpenRouterCreditsSection {...(refreshKey === undefined ? {} : { refreshKey })} />
     </div>
   </div>;
 }

@@ -17,23 +17,43 @@ export interface ImprovementWorkshopView {
 
 export function workshopView(improvement: Improvement): ImprovementWorkshopView {
   return {
-    id: improvement.id, revision: improvement.revision, state: improvement.state, risk: improvement.risk,
+    id: improvement.id,
+    revision: improvement.revision,
+    state: improvement.state,
+    risk: improvement.risk,
     technicalConsensus: improvement.technicalConsensus,
-    actionAuthority: { status: improvement.actionAuthority.status, grantedByHuman: improvement.actionAuthority.grantedByHuman, allowedActions: improvement.actionAuthority.allowedActions },
+    actionAuthority: {
+      status: improvement.actionAuthority.status,
+      grantedByHuman: improvement.actionAuthority.grantedByHuman,
+      allowedActions: improvement.actionAuthority.allowedActions,
+    },
     claims: improvement.claims.map(({ id, statement }) => ({ id, statement })),
-    workClaim: { holderMemberId: improvement.workClaim.holderMemberId, leaseExpiresAt: improvement.workClaim.leaseExpiresAt, status: improvement.workClaim.status },
+    workClaim: {
+      holderMemberId: improvement.workClaim.holderMemberId,
+      leaseExpiresAt: improvement.workClaim.leaseExpiresAt,
+      status: improvement.workClaim.status,
+    },
     statusContract: structuredClone(improvement.statusContract),
     evidence: improvement.evidence.map(({ id, uri, description, addedAt }) => ({ id, uri, description, addedAt })),
     updatedAt: improvement.updatedAt,
   };
 }
 
-export interface WorkshopReference { id: string; start: number; end: number; label: string; }
+export interface WorkshopReference {
+  id: string;
+  start: number;
+  end: number;
+  label: string;
+}
 const REF = /\[\[improvement:([A-Za-z0-9_-]{1,120})\]\]/g;
 
 export function improvementReferences(text: string): WorkshopReference[] {
   const references: WorkshopReference[] = [];
-  for (const match of text.matchAll(REF)) references.push({ id: match[1], start: match.index!, end: match.index! + match[0].length, label: `Improvement ${match[1]}` });
+  for (const match of text.matchAll(REF)) {
+    const id = match[1];
+    if (!id) continue;
+    references.push({ id, start: match.index, end: match.index + match[0].length, label: `Improvement ${id}` });
+  }
   return references;
 }
 

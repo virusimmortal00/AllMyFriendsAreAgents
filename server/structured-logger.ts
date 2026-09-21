@@ -23,6 +23,7 @@ export interface LogContext {
   operatorId?: string;
   agentId?: string;
 }
+type OptionalLogContextKey = Exclude<keyof LogContext, "traceId" | "spanId">;
 const storage = new AsyncLocalStorage<LogContext>();
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-0[01]$/;
 export function parseOrCreateTraceparent(value?: string) { const match = value?.toLowerCase().match(TRACEPARENT); const traceId = match?.[1] || randomBytes(16).toString("hex"); const parentSpanId = match?.[2]; const spanId = randomBytes(8).toString("hex"); return { traceId, spanId, ...(parentSpanId ? { parentSpanId } : {}), traceparent: `00-${traceId}-${spanId}-01` }; }
@@ -119,4 +120,15 @@ export function conversationLogFields(context: Partial<LogContext> | undefined =
 export interface StructuredLogIdentity { schemaVersion: 1; service: string; serviceVersion: string; instanceId: string; deploymentCommit: string | null; deploymentEpoch: string | null; environment: string }
 
 export function traceMiddleware(logger: { log(level: "debug" | "info" | "warn" | "error", event: string, fields?: Record<string, unknown>): Promise<unknown> }): express.RequestHandler { return (request, response, next) => { const trace = parseOrCreateTraceparent(request.header("traceparent")); const context = { traceId: trace.traceId, spanId: trace.spanId, requestId: request.header("x-request-id")?.slice(0, 100) || crypto.randomUUID() }; response.set("traceparent", trace.traceparent); response.set("x-request-id", context.requestId); const started = Date.now(); storage.run(context, () => { response.once("finish", () => { void logger.log("info", "http.request.completed", { method: request.method, path: request.path, statusCode: response.statusCode, durationMs: Date.now() - started }).catch(() => undefined); }); next(); }); }; }
-export function withLogContext<T>(fields: Partial<LogContext>, callback: () => T) { return storage.run({ ...(storage.getStore() || { traceId: randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex") }), ...fields }, callback); }
+export function withLogContext<T>(
+  fields: Partial<LogContext>,
+  callback: () => T,
+  clearFields: readonly OptionalLogContextKey[] = [],
+) {
+  const context: LogContext = {
+    ...(storage.getStore() || { traceId: randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex") }),
+    ...fields,
+  };
+  for (const field of clearFields) delete context[field];
+  return storage.run(context, callback);
+}

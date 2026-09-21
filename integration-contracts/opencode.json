@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 44,
-    "reviewedOn": "2026-09-18",
-    "result": "Refresh trigger: server/index.ts, server/agent-runner.ts, and server/context-summarizer.ts changed to publish application-owned spend activity after OpenCode runs, while server/index.ts also gained an advisory intent-classifier consult ahead of the pure pre-flight gate and cost/duration fields on recorded pre-flight dispositions. A follow-up now bounds classifier context to the selected trigger and cancels routing when room activity changes during the consult. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, cli-jsonl, model-discovery, permissions-and-tools, mcp-adapter, and native-setup-auth, and compared the affected upstream paths with v1.18.18 (31406ccc51b4bd2a4e1e086b2bcaa5f7f804f26d). Confirmed: CLI JSON event generation, session/provider telemetry, loopback server/SDK contracts, model listing, credential control routes, inline permission, and custom-tool discovery remain consumed through the existing invocation and parser boundaries. The application-owned callbacks and classifier consult do not change OpenCode arguments, transport selection, permissions, tool schemas, provider transforms, credentials, or upstream session semantics. The recorded focused contract tests pass.",
+    "revision": 48,
+    "reviewedOn": "2026-09-19",
+    "result": "Refresh trigger: server/index.ts now preserves omission across generation evidence, scoped tools, spend metadata, command defaults, MCP cursors, and optional runtime services while enforcing normalized participant-style and turn-queue invariants. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-inspected every recorded path for structured-sdk-server, including authenticated loopback startup, server health, SDK session creation and prompts, cancellation, permissions, and structured response types. Confirmed: these runtime-composition changes do not alter OpenCode executable selection, server arguments, credentials, SDK requests, tool permissions, or structured-turn behavior. The complete approved downstream diff from cb7d8b2f5e44876ef98b661dc10590c915af3a9f through 6883ca5bd35a5494fb2759018373308911c79e01 remains confined to its recorded paths and introduces no additional runtime contract change. The recorded focused contract tests pass.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",

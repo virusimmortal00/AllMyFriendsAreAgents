@@ -89,6 +89,23 @@ describe("durable control plane", () => {
     expect(() => store.require(request(operator?.token), "ROSTER_MANAGE")).toThrowError(/Authenticate/);
   });
 
+  it("transfers the single owner invariant and revokes both principals' sessions", async () => {
+    const { directory, store, secret } = await fixture();
+    await store.bootstrap(secret, "owner", "correct horse battery staple");
+    const ownerSession = (await store.authenticate("owner", "correct horse battery staple"))!;
+    const owner = store.require(request(ownerSession.token)).principal;
+    await store.createPrincipal(owner, { username: "successor", password: "successor password long", role: "ADMIN", capabilities: [] });
+    const successorSession = (await store.authenticate("successor", "successor password long"))!;
+
+    await expect(store.transferOwnerLocal(secret, "successor")).resolves.toMatchObject({ username: "successor", role: "OWNER" });
+    expect(() => store.require(request(ownerSession.token))).toThrow(/Authenticate/);
+    expect(() => store.require(request(successorSession.token))).toThrow(/Authenticate/);
+
+    const reopened = await ControlPlaneStore.open(directory, secret);
+    await expect(reopened.authenticate("owner", "correct horse battery staple")).resolves.toMatchObject({ principal: { role: "ADMIN" } });
+    await expect(reopened.authenticate("successor", "successor password long")).resolves.toMatchObject({ principal: { role: "OWNER" } });
+  });
+
   it("removes the retired ambient write grant from persisted principals", async () => {
     const { directory, store, secret } = await fixture();
     await store.bootstrap(secret, "owner", "correct horse battery staple");

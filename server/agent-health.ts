@@ -30,17 +30,25 @@ function errorText(error: unknown) {
 function providerRetryDelayMs(text: string, now: number) {
   const absoluteReset = text.match(/resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
   if (absoluteReset) {
+    const [, hourText, minuteText, period] = absoluteReset;
+    if (!hourText || !period) return undefined;
     const target = new Date(now);
-    let hour = Number(absoluteReset[1]) % 12;
-    if (absoluteReset[3].toLowerCase() === "pm") hour += 12;
-    target.setHours(hour, Number(absoluteReset[2] || 0), 0, 0);
+    let hour = Number(hourText) % 12;
+    if (period.toLowerCase() === "pm") hour += 12;
+    target.setHours(hour, Number(minuteText || 0), 0, 0);
     if (target.getTime() <= now) target.setDate(target.getDate() + 1);
     return target.getTime() - now;
   }
   const retryAfter = text.match(/retry[- ]after[^\d]*(\d+)\s*(seconds?|minutes?)/i);
-  if (retryAfter) return Number(retryAfter[1]) * (/minute/i.test(retryAfter[2]) ? MINUTE : SECOND);
+  if (retryAfter) {
+    const [, amount, unit] = retryAfter;
+    if (amount && unit) return Number(amount) * (/minute/i.test(unit) ? MINUTE : SECOND);
+  }
   const tryAgain = text.match(/(?:try again|resets?)[^\d]*(\d+)\s*(seconds?|minutes?)/i);
-  if (tryAgain) return Number(tryAgain[1]) * (/minute/i.test(tryAgain[2]) ? MINUTE : SECOND);
+  if (tryAgain) {
+    const [, amount, unit] = tryAgain;
+    if (amount && unit) return Number(amount) * (/minute/i.test(unit) ? MINUTE : SECOND);
+  }
   return undefined;
 }
 

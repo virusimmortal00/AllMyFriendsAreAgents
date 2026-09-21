@@ -15,8 +15,16 @@ function tableCells(line: string) {
 }
 
 const rows = audit.split("\n").map(tableCells).filter((cells) => cells.length > 0);
-const inventory = rows.filter((cells) => cells.length === 4 && VIEW_ID.test(cells[0])).map(([id, name, state, status]) => ({ id, name, state, status }));
-const answers = rows.filter((cells) => cells.length === 8 && VIEW_ID.test(cells[0]));
+const inventory = rows.flatMap((cells) => {
+  const [id, name, state, status] = cells;
+  return id !== undefined && name !== undefined && state !== undefined && status !== undefined && cells.length === 4 && VIEW_ID.test(id)
+    ? [{ id, name, state, status }]
+    : [];
+});
+const answers = rows.filter((cells) => {
+  const [id] = cells;
+  return id !== undefined && cells.length === 8 && VIEW_ID.test(id);
+});
 const sourceDirectory = fileURLToPath(new URL(".", import.meta.url));
 const productionViewSource = readdirSync(sourceDirectory, { recursive: true, encoding: "utf8" })
   .filter((path) => path.endsWith(".tsx") && !path.endsWith(".test.tsx"))
@@ -26,7 +34,9 @@ const productionViewSource = readdirSync(sourceDirectory, { recursive: true, enc
 function coveredViewports(answer: string) {
   const covered = new Set<string>();
   for (const match of answer.matchAll(/(?:^|[.;]\s+)([PTLD](?:\/[PTLD])*)\s*:/g)) {
-    for (const viewport of match[1].split("/")) covered.add(viewport);
+    const encodedViewports = match[1];
+    if (!encodedViewports) continue;
+    for (const viewport of encodedViewports.split("/")) covered.add(viewport);
   }
   return [...covered].sort();
 }
