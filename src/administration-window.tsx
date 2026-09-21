@@ -77,7 +77,10 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
     : current.key === "Rooms" ? <RoomsRepositories refreshKey={refreshKey} onOpenIntegrations={openIntegrations} onCountChange={setRoomsSummary} />
       : current.key === "RoomBehavior" ? <section className="administration-page administration-room-behavior" {...viewAttributes(VIEWS.roomAgentBehavior)}>
         <header className="page-header"><h2>Room behavior</h2><p>Administrator-managed prompts, summarization, and agent routing for this room.</p></header>
-        <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} onSavingChange={setRoomBehaviorSaving} />
+        {preview ? <p id="administration-preview-note" className="administration-preview__note"><span aria-hidden="true">🔒</span> Preview only. Sign in on <strong>Owner login</strong> to use this page.</p> : null}
+        <fieldset className={preview ? "administration-preview" : ""} disabled={preview} {...(preview ? { "aria-describedby": "administration-preview-note" } : {})}>
+          <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} onSavingChange={setRoomBehaviorSaving} />
+        </fieldset>
       </section>
       : <Diagnostics />;
 
@@ -86,7 +89,7 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
       actions={<button type="button" className="classic-button" disabled={roomBehaviorSaving} onClick={requestClose}>Close</button>}>
       <ExplorerLayout label="Administration pages" pages={ADMINISTRATION_PAGES} selected={current.key} onSelect={requestPage} status={current.key === "Rooms" && roomsSummary && !preview ? `${signInState} · ${roomsSummary}` : signInState}>
       {current.key === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
-        : preview ? <fieldset className="administration-preview" disabled aria-describedby="administration-preview-note">
+        : preview && current.key !== "RoomBehavior" ? <fieldset className="administration-preview" disabled aria-describedby="administration-preview-note">
           <p id="administration-preview-note" className="administration-preview__note"><span aria-hidden="true">🔒</span> Preview only. Sign in on <strong>Owner login</strong> to use this page.</p>
           {content}
         </fieldset>

@@ -287,7 +287,6 @@ for (const scenario of APP_SCENARIOS) {
     if (scenario.id === "room-summarizer-model-picker") await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
     await expect(page.getByText(/^(Loading roster…|Loading configuration…|Loading settings…|Loading contribution…|Loading tasks…|Loading improvements…)$/)).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
-    await capture(page, info, scenario, "top");
     if (scenario.id === "room-agent-behavior-shared-behavior") {
       const rules = surface.locator(".room-behavior-rules");
       const disclosure = rules.locator("summary");
@@ -303,6 +302,7 @@ for (const scenario of APP_SCENARIOS) {
       }
       await expect(surface.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
     }
+    await capture(page, info, scenario, "top");
     if (scenario.id === "room-agent-behavior") {
       const toggle = page.getByRole("checkbox", { name: "Include a room base prompt" });
       await toggle.focus();

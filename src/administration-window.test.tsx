@@ -4,14 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdministrationWindow } from "./administration-window";
 
+let currentSession: { expiresAt: string; principal: { id: string; username: string; role: string; capabilities: string[]; revision: number } } | null = null;
+
 vi.mock("./control-session", () => ({
   useControlSession: () => ({
     checked: true,
-    session: { expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 } },
+    session: currentSession,
   }),
 }));
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); currentSession = null; vi.unstubAllGlobals(); });
+
+function signedInSession() {
+  return { expiresAt: "2099-01-01T00:00:00Z", principal: { id: "owner", username: "owner", role: "OWNER", capabilities: [], revision: 1 } };
+}
 
 function roomConfiguration() {
   return {
@@ -34,6 +40,7 @@ function roomConfiguration() {
 
 describe("AdministrationWindow", () => {
   it("confirms before leaving unsaved Room behavior edits and preserves them when canceled", async () => {
+    currentSession = signedInSession();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(roomConfiguration())));
     const onSelectPage = vi.fn();
     const user = userEvent.setup();
@@ -55,6 +62,7 @@ describe("AdministrationWindow", () => {
   });
 
   it("uses the same discard confirmation for both window close controls", async () => {
+    currentSession = signedInSession();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(roomConfiguration())));
     const onClose = vi.fn();
     const user = userEvent.setup();
@@ -70,5 +78,22 @@ describe("AdministrationWindow", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(within(screen.getByRole("alertdialog", { name: "Discard room behavior changes?" })).getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an unsaved Room behavior draft when the administrator session expires", async () => {
+    currentSession = signedInSession();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(roomConfiguration())));
+    const user = userEvent.setup();
+    const props = { page: "RoomBehavior" as const, destination: null, refreshKey: 0, onSelectPage: vi.fn(), onContinue: vi.fn(), onClose: vi.fn() };
+    const view = render(<AdministrationWindow {...props} />);
+
+    const prompt = await screen.findByLabelText("Additional room prompt", { selector: "textarea" });
+    await user.clear(prompt);
+    await user.type(prompt, "Keep this draft");
+    currentSession = null;
+    view.rerender(<AdministrationWindow {...props} />);
+
+    expect((screen.getByLabelText("Additional room prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
+    expect(screen.getByText(/Preview only/)).toBeTruthy();
   });
 });
