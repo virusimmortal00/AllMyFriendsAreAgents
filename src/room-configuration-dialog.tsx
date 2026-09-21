@@ -19,7 +19,7 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
   onClose: () => void;
 }
 
-export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { active: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [saved, setSaved] = useState<RoomConfiguration>();
@@ -94,7 +94,7 @@ export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { act
 
   async function save(closeAfter: boolean) {
     if (!dirty || saving) {
-      if (closeAfter && !dirty) onClose();
+      if (closeAfter && !dirty) (onSaved ?? onClose)();
       return;
     }
     setSaving(true);
@@ -111,7 +111,7 @@ export function RoomConfigurationPanel({ active, onClose, onDirtyChange }: { act
       };
       const result = await updateRoomConfiguration(update);
       setSaved(result.settings);
-      if (closeAfter) onClose();
+      if (closeAfter) (onSaved ?? onClose)();
     } catch (failure) {
       const requiresSignIn = failure instanceof ApiRequestError && [401, 403].includes(failure.status || 0);
       setError(requiresSignIn ? "Your administrator session expired. Sign in again from Owner login, then return to apply these changes." : failure instanceof Error ? failure.message : "Could not save agent behavior.");

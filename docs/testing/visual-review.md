@@ -57,8 +57,7 @@ capture run must never be reported as a visually approved interface.
   accessibility-tree visibility alone cannot detect that CSS failure.
   Agent Behavior also checks shared compact headings, separator-only sections,
   a non-stretched prompt reset, resizable prompt editors, and the square classic
-  checkbox including keyboard toggling and focus treatment. General's window and
-  action bounds must remain unchanged across a tab round trip.
+  checkbox including keyboard toggling and focus treatment.
 - Manage Agents checks the complete default detail form fits at regular Phone,
   Tablet, Short laptop, and Desktop sizes, with every explanation and action
   retained. Short phone/Minimum phone and longer runtime diagnostics may scroll.
