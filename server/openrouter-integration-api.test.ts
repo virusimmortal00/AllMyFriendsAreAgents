@@ -15,7 +15,7 @@ async function harness(intelligence?: { credits: (forceRefresh?: boolean) => Pro
   const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-openrouter-integration-api-"));
   const control = await ControlPlaneStore.open(path.join(directory, "control"), "local-bootstrap-secret-with-32-characters");
   const app = express(); app.use(express.json());
-  registerOpenRouterIntegrationRoutes({ app, control, intelligence });
+  registerOpenRouterIntegrationRoutes({ app, control, ...(intelligence?{intelligence}:{}) });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   cleanups.push(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

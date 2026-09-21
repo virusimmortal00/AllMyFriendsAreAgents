@@ -17,7 +17,7 @@ const exec = promisify(execFile); const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 class FakeExternal implements ContributionExternalExecutor {
-  calls: string[] = []; fail?: { message: string; retryable: boolean };
+  calls: string[] = []; fail: { message: string; retryable: boolean } | undefined;
   private check(kind: string) { this.calls.push(kind); if (this.fail) { const failure = this.fail; this.fail = undefined; throw Object.assign(new Error(failure.message), { retryable: failure.retryable }); } }
   async publish() { this.check("publish"); return { number: 55, url: "https://github.test/pull/55", resultId: "pr-55" }; }
   async merge() { this.check("merge"); return { commitSha: "c".repeat(40), resultId: "merge-55" }; }

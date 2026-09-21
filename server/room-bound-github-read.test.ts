@@ -28,7 +28,7 @@ function fixture(options:{maxEntries?:number;fetcher?:GitHubReadFetch}={}){
   };
   let scopeCalls=0;let pauseAt=Number.POSITIVE_INFINITY;let reached:undefined|(()=>void);let release:undefined|(()=>void);
   const identities={
-    async getStorageScope(roomId:string){scopeCalls++;if(scopeCalls===pauseAt){reached?.();await new Promise<void>((resolve)=>{release=resolve;});}if(!rooms.has(roomId))return undefined;const projectId=rooms.get(roomId)!;return{schemaVersion:1 as const,serverId:"server-one",roomId,projectId,roomAttachmentRevision:attachmentRevisions.get(roomId),repositoryReferenceId:null,repositoryReferenceRevision:null};},
+    async getStorageScope(roomId:string){scopeCalls++;if(scopeCalls===pauseAt){reached?.();await new Promise<void>((resolve)=>{release=resolve;});}if(!rooms.has(roomId))return undefined;const projectId=rooms.get(roomId)!;const roomAttachmentRevision=attachmentRevisions.get(roomId);if(roomAttachmentRevision===undefined)throw new Error(`Missing attachment revision for ${roomId}.`);return{schemaVersion:1 as const,serverId:"server-one",roomId,projectId,roomAttachmentRevision,repositoryReferenceId:null,repositoryReferenceRevision:null};},
     async getDurableProject(projectId:string){if(![...rooms.values()].includes(projectId)||projectId==="project-missing")return undefined;return{schemaVersion:1 as const,projectId,serverId:"server-one",revision:1,name:projectId,repositoryCapacity:1 as const,repositoryReferenceId:projectId==="project-unverified"?"legacy-ref":projectId==="project-stale"?"stale-ref":null,createdAt:"2026-08-28T00:00:00.000Z",updatedAt:"2026-08-28T00:00:00.000Z"};},
     async getRepositoryReference(repositoryReferenceId:string){return repositoryReferenceId==="legacy-ref"?{schemaVersion:1 as const,repositoryReferenceId,projectId:"project-unverified",revision:1,state:"unverified-legacy-placeholder" as const,localPath:"/legacy",sanitizedRemoteIdentity:"github.com/owner/legacy",createdAt:"2026-08-28T00:00:00.000Z",updatedAt:"2026-08-28T00:00:00.000Z"}:undefined;},
   };
@@ -36,7 +36,7 @@ function fixture(options:{maxEntries?:number;fetcher?:GitHubReadFetch}={}){
   const service=new RoomBoundGitHubReadService(identities,(projectId)=>({
     inspectServer:()=>records.get(projectId),
     revalidateAuthority:async(expectedRevision:number)=>{const current=records.get(projectId);return current?.state==="verified"&&current.revision===expectedRevision?{kind:"ok" as const,connection:structuredClone(current)}:{kind:"rejected" as const,reason:current?.revision!==expectedRevision?"Repository connection revision is stale.":"Repository identity drift."};},
-  }) as never,credentials,{fetcher,maxEntries:options.maxEntries});
+  }) as never,credentials,{fetcher,...(options.maxEntries===undefined?{}:{maxEntries:options.maxEntries})});
   const pauseBeforeNextValidation=()=>{pauseAt=scopeCalls+2;const waiting=new Promise<void>((resolve)=>{reached=resolve;});return{waiting,release:()=>release?.()};};
   const rotateCredential=(projectId:string,reference:string,token:string)=>credentialRecords.set(`${projectId}\0${reference}`,{token,provider:"legacy-pat",authorityRevision:`legacy:rotated:${projectId}`});
   return{service,fetcher,records,rooms,attachmentRevisions,rotateCredential,pauseBeforeNextValidation};

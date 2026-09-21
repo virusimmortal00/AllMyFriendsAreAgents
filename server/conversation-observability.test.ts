@@ -10,6 +10,7 @@ import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { RoomActivity } from "./room-activity.js";
 import { currentLogContext, withLogContext } from "./structured-logger.js";
+import { requiredAt } from "./test-invariants.js";
 import type { RoomMessage } from "./types.js";
 
 function deferred() {
@@ -65,13 +66,15 @@ describe("conversation job observability", () => {
     const enqueue = (requestId: string, triggerMessageId: string, run: Parameters<typeof enqueueObservedConversation>[2]) =>
       withLogContext({ requestId, traceId: requestId.at(-1)!.repeat(32), visibility: "project" }, () =>
         enqueueObservedConversation(dependencies, { key: "conversation", source: "room-message", triggerMessageId }, run));
+    const initialMessage = requiredAt(messages, 0, "initial conversation message");
 
     enqueue("request-a", "message-a", async () => { await gate.promise; });
-    messages.push({ ...messages[0], id: "message-b" }); activity.interrupt();
+    messages.push({ ...initialMessage, id: "message-b" }); activity.interrupt();
     enqueue("request-b", "message-b", async (snapshot) => {
-      consumed.push({ messageId: snapshot.messages.at(-1)?.id, requestId: currentLogContext()?.requestId, jobId: currentLogContext()?.jobId });
+      const messageId=snapshot.messages.at(-1)?.id;const context=currentLogContext();
+      consumed.push({ ...(messageId?{messageId}:{}), ...(context?.requestId?{requestId:context.requestId}:{}), ...(context?.jobId?{jobId:context.jobId}:{}) });
     });
-    messages.push({ ...messages[0], id: "message-c" }); activity.interrupt();
+    messages.push({ ...initialMessage, id: "message-c" }); activity.interrupt();
     let discardedRuns = 0;
     expect(enqueue("request-c", "message-c", async () => { discardedRuns++; })).toBe(false);
     expect(enqueue("request-d", "message-c", async () => { discardedRuns++; })).toBe(false);
@@ -92,7 +95,7 @@ describe("conversation job observability", () => {
       consumed: { activityRevision: 2, latestMessageId: "message-c", latestHumanMessageId: "message-c" },
     });
     expect(records.every((record) => record.visibility === "operator" && record.eventVersion === 1)).toBe(true);
-    expect(JSON.stringify(records)).not.toContain(messages[0].text);
+    expect(JSON.stringify(records)).not.toContain(initialMessage.text);
     expect(records.every((record) => !Object.hasOwn(record, "runId") && record.generationId === null)).toBe(true);
     expect(logging.metrics().generations.coalesced).toBe(0);
   });
@@ -105,7 +108,7 @@ describe("conversation job observability", () => {
     const records = sinks.get("generations")!.records;
     expect(records.map((record) => record.event)).toEqual(["conversation.job.decision", "conversation.job.decision", "conversation.job.consumed"]);
     expect(records.every((record) => record.source === source && record.requestId === null && record.traceId === jobContext?.traceId)).toBe(true);
-    expect(records[0].jobId).toBe(jobContext?.jobId);
+    expect(requiredAt(records, 0, "initial background job record").jobId).toBe(jobContext?.jobId);
     expect(currentLogContext()).toBeUndefined();
   });
 
@@ -121,8 +124,10 @@ describe("conversation job observability", () => {
     gate.resolve(); await idle(queue); await logging.flush();
     const pending = sinks.get("generations")!.records.filter((record) => record.requestId === "pending-request");
     expect(pending.map((record) => record.action)).toEqual(["queued", "dropped"]);
-    expect(pending[0].traceId).toBe(pending[1].traceId);
-    expect(pending[0].jobId).toBe(pending[1].jobId);
+    const queued = requiredAt(pending, 0, "queued pending job record");
+    const dropped = requiredAt(pending, 1, "dropped pending job record");
+    expect(queued.traceId).toBe(dropped.traceId);
+    expect(queued.jobId).toBe(dropped.jobId);
     expect(sinks.get("generations")!.records.at(-1)).toMatchObject({ requestId: "late-request", action: "rejected", jobId: null });
   });
 

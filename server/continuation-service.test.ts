@@ -31,7 +31,7 @@ async function fixture(dispatch: ((input: ContinuationExecutorInput) => Promise<
   store.authorizeSourceWorkForCurrentBoot("assignment", assignment.assignmentId);
   let authority = async (id: string, owner: string) => id === assignment.assignmentId && owner === assignment.agent ? { kind: "ok" as const, assignment, workspace: root } : { kind: "revoked" as const, reason: "Assignment mismatch." };
   const lifecycle = { authorityForContinuation: (id: string, owner: string) => authority(id, owner), authorityForRoomContinuation: (id: string) => authority(id, assignment.agent) } as unknown as AssignmentLifecycleService;
-  const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { now, ...options }); await service.initialize();
+  const executor = typeof dispatch === "function" ? { dispatch } : dispatch; const service = new ContinuationService(store, store, lifecycle, executor, { ...(now?{now}:{}), ...options }); await service.initialize();
   return { store, service, task, assignment, setAuthority(next: typeof authority) { authority = next; }, async enable() { const policy = await service.policy(); expect(policy).toBeTruthy(); expect((await service.updatePolicy(policy!.revision, { enabled: true }, "human")).kind).toBe("accepted"); }, create: () => service.create({ owner: "codex-sol", developerMemberId: "dev-1", developerMemberConfigRevision: 1, taskId: task.taskId, taskRevision: task.revision, assignmentReferenceId: "assignment-ref", objective: "Continue the approved task", trigger: "Explicit test trigger" }) };
 }
 

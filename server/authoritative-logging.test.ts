@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApplicationLoggerFacade, AUTHORITATIVE_STREAMS, AuthoritativeLogging, DEFAULT_STREAM_ROTATION, migrateLegacyLogs, type AuthoritativeStream } from "./authoritative-logging.js";
 import { GenerationJournal } from "./generation-journal.js";
 import { traceMiddleware, withLogContext } from "./structured-logger.js";
+import { requiredAt } from "./test-invariants.js";
 
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
@@ -195,9 +196,9 @@ describe("authoritative logging foundation", () => {
     ] as const) {
       const found = records(destinations.get(stream)!).filter((record) => record.event === event);
       expect(found, event).toHaveLength(4);
-      found.forEach((record, index) => expect(record).toMatchObject({
-        ...work[index], jobId: "job-one", traceId: "c".repeat(32), requestId: "request-one", correlationId: work[index].generationId,
-      }));
+      found.forEach((record, index) => {const expected=requiredAt(work,index,`coalesced ${stream} work record`);expect(record).toMatchObject({
+        ...expected, jobId: "job-one", traceId: "c".repeat(32), requestId: "request-one", correlationId: expected.generationId,
+      });});
       expect(logging.metrics()[stream].coalesced).toBe(0);
     }
     expect(records(destinations.get("generations")!).every((entry) => entry.rawResponse === "same complete output" && entry.prompt === "same useful prompt")).toBe(true);

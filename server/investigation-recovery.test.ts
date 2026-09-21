@@ -9,6 +9,7 @@ import { makeInvestigationEvent } from "./investigation-record.js";
 import { projectInvestigation } from "./investigation-api.js";
 import { InvestigationStore } from "./investigation-store.js";
 import { InvestigationService, type InvestigationExecutorInput, type InvestigationExecutorResult } from "./investigation-service.js";
+import { requiredAt } from "./test-invariants.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -59,20 +60,21 @@ describe.each(["json", "sqlite"] as const)("investigation durable recovery (%s)"
     expect(requested.kind).toBe("ok");
     if (requested.kind === "ok") expect(projectInvestigation(requested.value)).not.toHaveProperty("admission");
     await expect.poll(() => first.worker.inputs.length).toBe(1);
-    const input = first.worker.inputs[0];
+    const input = requiredAt(first.worker.inputs, 0, "initial investigation dispatch");
     expect(await input.progress("WAITING_TOOL", "Reading", { summary: "Partial evidence", opaqueState: "next:fixture" })).toBe(true);
     await first.stop();
     const second = await f.open();
-    const checkpoint = (await second.service.list())[0];
+    const checkpoint = requiredAt(await second.service.list(), 0, "recovered investigation checkpoint");
     expect(checkpoint).toMatchObject({ status: "CHECKPOINTED", checkpoint: { summary: "Partial evidence" } });
     expect(second.worker.inputs).toHaveLength(0);
     const results = await Promise.all([second.service.resume(checkpoint.investigationId), second.service.resume(checkpoint.investigationId)]);
     expect(results.filter((result) => result.kind === "ok")).toHaveLength(1);
     await expect.poll(() => second.worker.inputs.length).toBe(1);
-    expect(second.worker.inputs[0]).toMatchObject({ attempt: 2, checkpoint: { summary: "Partial evidence" } });
+    const resumedInput = requiredAt(second.worker.inputs, 0, "resumed investigation dispatch");
+    expect(resumedInput).toMatchObject({ attempt: 2, checkpoint: { summary: "Partial evidence" } });
     expect(await input.progress("RUNNING")).toBe(false);
     second.worker.finish();
-    await expect.poll(async () => (await second.service.list())[0].status).toBe("COMPLETED");
+    await expect.poll(async () => (await second.service.list()).at(0)?.status).toBe("COMPLETED");
     await second.stop();
     const third = await f.open();
     expect(await third.service.inbox("codex-sol")).toHaveLength(1);
@@ -83,9 +85,10 @@ describe.each(["json", "sqlite"] as const)("investigation durable recovery (%s)"
     const first = await f.open();
     await first.service.request({ owner: "codex-sol", objective: "Review", trigger: "Explicit review", signal: "AUTHENTICATED_HUMAN" });
     await expect.poll(() => first.worker.inputs.length).toBe(1);
-    await first.worker.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Retained checkpoint", opaqueState: "next:fixture" });
+    const initialInput = requiredAt(first.worker.inputs, 0, "investigation dispatch before authority change");
+    await initialInput.progress("WAITING_TOOL", "Reading", { summary: "Retained checkpoint", opaqueState: "next:fixture" });
     await first.stop();
-    const record = (await first.work.list())[0];
+    const record = requiredAt(await first.work.list(), 0, "durable investigation record");
     if (change === "policy") {
       const policy = (await first.work.policy())!;
       await first.work.setPolicy(policy.revision, { ...policy, revision: policy.revision + 1 });
@@ -97,7 +100,7 @@ describe.each(["json", "sqlite"] as const)("investigation durable recovery (%s)"
       expect(await first.work.compareAndSet(record.revision, next, event)).toBe(true);
     }
     const second = await f.open(change === "room" ? "another-room" : "room");
-    const recovered = (await second.service.list())[0];
+    const recovered = requiredAt(await second.service.list(), 0, "denied recovery record");
     expect(recovered).toMatchObject({ status: "CANCELLED", checkpoint: { summary: "Retained checkpoint" } });
     expect(recovered.blocker).toContain(change === "room" ? "room-scope-changed" : change === "legacy" ? "admission-missing" : "authority epoch changed");
     expect((await second.service.resume(record.investigationId)).kind).not.toBe("ok");
@@ -110,23 +113,24 @@ describe.each(["json", "sqlite"] as const)("investigation durable recovery (%s)"
     const requested = await first.service.request({ owner: "codex-sol", objective: "Review", trigger: "Explicit review", signal: "AUTHENTICATED_HUMAN" });
     expect(requested.kind).toBe("ok");
     await expect.poll(() => first.worker.inputs.length).toBe(1);
-    await first.worker.inputs[0].progress("WAITING_TOOL", "Reading", { summary: "Checkpoint", opaqueState: "next:fixture" });
+    const input = requiredAt(first.worker.inputs, 0, "reconciliation investigation dispatch");
+    await input.progress("WAITING_TOOL", "Reading", { summary: "Checkpoint", opaqueState: "next:fixture" });
     if (first.rooms instanceof SqliteRoomRepository) {
       const scope = (await first.rooms.getStorageScope(first.rooms.roomId))!;
       const now = new Date().toISOString();
-      await first.rooms.putSourceWorkBinding({ schemaVersion: 1, kind: "investigation", workId: first.worker.inputs[0].investigationId,
+      await first.rooms.putSourceWorkBinding({ schemaVersion: 1, kind: "investigation", workId: input.investigationId,
         roomId: scope.roomId, projectId: scope.projectId, repositoryReferenceId: null, repositoryReferenceRevision: null,
         originTaskId: null, originTaskRevision: null, implementationJobId: null, implementationWorkerId: null,
         state: "needs-reconciliation", reasonCode: "operator-review-required", evidence: {}, revision: 1, createdAt: now, updatedAt: now });
-      expect(await first.worker.inputs[0].progress("RUNNING")).toBe(false);
-      expect((await first.service.list())[0].blocker).toContain("operator-review-required");
+      expect(await input.progress("RUNNING")).toBe(false);
+      expect((await first.service.list()).at(0)?.blocker).toContain("operator-review-required");
     } else {
       // A room path change invalidates a read-only admission even if legacy boot
       // authority was granted for the same work identity.
-      first.rooms.authorizeSourceWorkForCurrentBoot("investigation", first.worker.inputs[0].investigationId);
+      first.rooms.authorizeSourceWorkForCurrentBoot("investigation", input.investigationId);
       await first.rooms.updateSettings({ projectPath: path.join(f.root, "changed-project") });
-      expect(await first.worker.inputs[0].progress("RUNNING")).toBe(false);
-      expect((await first.service.list())[0].status).toBe("CANCELLED");
+      expect(await input.progress("RUNNING")).toBe(false);
+      expect((await first.service.list()).at(0)?.status).toBe("CANCELLED");
     }
   });
 

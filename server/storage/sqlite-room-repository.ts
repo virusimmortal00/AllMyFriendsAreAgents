@@ -198,21 +198,24 @@ function storedKind(value: string | null): RoomMessage["kind"] {
   return value === "chat" || value === "review" || value === "status" || value === "topic" || value === "command" ? value : undefined;
 }
 
+function participantStyle(styles:RoomSettings["participantStyles"],participant:StyledParticipant){return styles[participant]||DEFAULT_PARTICIPANT_STYLES.you;}
+
 function messageFromRow(row: MessageRow, participantStyles: RoomSettings["participantStyles"]): RoomMessage {
   const speaker = storedSpeaker(row.speaker);
   const participant = isParticipantId(speaker) ? speaker : undefined;
   const rawStyle = parseJson<unknown>(row.style_json, undefined);
   const style = participant && rawStyle
-    ? sanitizeChatStyle(rawStyle, participantStyles[participant])
+    ? sanitizeChatStyle(rawStyle, participantStyle(participantStyles,participant))
     : undefined;
   const mentions = parseJson<NonNullable<RoomMessage["mentions"]>>(row.mentions_json, []);
   const continuationRequest = parseJson<RoomContinuationWorkRequest | undefined>(row.continuation_request_json, undefined);
+  const kind=storedKind(row.kind);
   return {
     id: row.id,
     speaker,
     text: row.text,
     timestamp: row.created_at,
-    ...(storedKind(row.kind) ? { kind: storedKind(row.kind) } : {}),
+    ...(kind ? { kind } : {}),
     ...(style ? { style } : {}),
     ...(row.burst_id ? { burstId: row.burst_id } : {}),
     ...(row.burst_sequence !== null ? { sequence: row.burst_sequence } : {}),
@@ -260,7 +263,7 @@ function messageFor(
 }
 
 export class SqliteRoomRepository implements RoomRepository {
-  private state?: RoomState;
+  private state: RoomState | undefined;
 
   private constructor(
     readonly databasePath: string,
@@ -517,7 +520,7 @@ export class SqliteRoomRepository implements RoomRepository {
     const compatibleState = { ...structuredClone(input.state), sessions: Object.fromEntries(Object.entries(input.state.sessions).filter(([, session]) => session?.permission === "read-only")) } as RoomState;
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      if (!this.hasPersistedRoom() || input.overwrite) this.replaceState(input.state, { overwrite: input.overwrite });
+      if (!this.hasPersistedRoom() || input.overwrite) this.replaceState(input.state, input.overwrite === undefined ? {} : { overwrite: input.overwrite });
       else if (!samePersistedRoomState(this.snapshot(), compatibleState)) throw new Error("The SQLite database already contains a different default room. Pass overwrite=true to replace it.");
       for (const assignment of input.assignments) await this.putAssignment(assignment);
       this.importTasks(input.tasks, input.taskEvents);
@@ -677,7 +680,7 @@ export class SqliteRoomRepository implements RoomRepository {
 
   async updateParticipantStyle(participant: StyledParticipant, style: ChatStyle) {
     const state = this.snapshot();
-    state.settings.participantStyles[participant] = sanitizeChatStyle(style, state.settings.participantStyles[participant]);
+    state.settings.participantStyles[participant] = sanitizeChatStyle(style, participantStyle(state.settings.participantStyles,participant));
     this.persistSettings(state.settings);
     this.invalidateAgentContextSummaries();
     this.state = state;
@@ -1116,10 +1119,12 @@ export class SqliteRoomRepository implements RoomRepository {
     const current = await this.getContinuationPolicy(); if (current && (current.roomId !== value.roomId || current.projectPathHash !== value.projectPathHash || current.policyVersion !== value.policyVersion)) throw new Error("Continuation policy provenance is immutable");
     if (expectedRevision === 0) {
       const result = this.database.prepare("INSERT OR IGNORE INTO continuation_policies(room_id, revision, projection_json, updated_at) VALUES (?, ?, ?, ?)").run(this.roomId, value.revision, JSON.stringify(value), value.updatedAt);
-      return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", actualRevision: (await this.getContinuationPolicy())?.revision };
+      const actualRevision=(await this.getContinuationPolicy())?.revision;
+      return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", ...(actualRevision===undefined?{}:{actualRevision}) };
     }
     const result = this.database.prepare("UPDATE continuation_policies SET revision = ?, projection_json = ?, updated_at = ? WHERE room_id = ? AND revision = ?").run(value.revision, JSON.stringify(value), value.updatedAt, this.roomId, expectedRevision);
-    return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", actualRevision: (await this.getContinuationPolicy())?.revision };
+    const actualRevision=(await this.getContinuationPolicy())?.revision;
+    return result.changes ? { kind: "accepted", value: structuredClone(value) } : { kind: "conflict", ...(actualRevision===undefined?{}:{actualRevision}) };
   }
   async listContinuations(owner?: AgentId) {
     const rows = (owner
@@ -1335,7 +1340,7 @@ export class SqliteRoomRepository implements RoomRepository {
       if (current.revision !== expectedRevision) { this.database.exec("ROLLBACK"); return { kind: "conflict", expectedRevision, actualRevision: current.revision }; }
       const identity = { roomId: source.roomId, taskId: newTaskId };
       if (this.taskRow(identity)) { this.database.exec("ROLLBACK"); return { kind: "rejected", reason: `Task ${newTaskId} already exists` }; }
-      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, title, actor, now });
+      const result = forkDomainTask(current, expectedRevision, { taskId: newTaskId, ...(title===undefined?{}:{title}), actor, now });
       if (result.kind !== "accepted") { this.database.exec("ROLLBACK"); return result; }
       const snapshot = result.task;
       this.insertTask(snapshot);
@@ -1446,8 +1451,8 @@ export class SqliteRoomRepository implements RoomRepository {
       .run(status, activeAgent || null, error || null, new Date().toISOString(), this.roomId);
     const state = this.snapshot();
     state.status = status;
-    state.activeAgent = activeAgent;
-    state.error = error;
+    if(activeAgent===undefined)delete state.activeAgent;else state.activeAgent=activeAgent;
+    if(error===undefined)delete state.error;else state.error=error;
     this.state = state;
   }
 
@@ -1540,6 +1545,7 @@ export class SqliteRoomRepository implements RoomRepository {
     `);
     for (const agent of SUPPORTED_AGENT_IDS) {
       const profile = AGENT_PROFILES[agent];
+      if(!profile)throw new Error(`Missing built-in profile for ${agent}.`);
       statement.run(agent, profile.displayName, profile.provider, profile.modelId, now, now);
     }
   }
@@ -1584,7 +1590,7 @@ export class SqliteRoomRepository implements RoomRepository {
           continue;
         }
         const codeEpoch = normalizeDeploymentEpoch(session.code_epoch);
-        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, configurationFingerprint: fingerprint, configurationRevision: session.configuration_revision || entry?.configurationRevision || 1, ...(codeEpoch ? { codeEpoch } : {}) };
+        sessions[session.agent_id] = { id: session.provider_session_id, permission: session.permission, ...(fingerprint?{configurationFingerprint:fingerprint}:{}), configurationRevision: session.configuration_revision || entry?.configurationRevision || 1, ...(codeEpoch ? { codeEpoch } : {}) };
       }
     }
     const deployment = normalizeDeploymentProvenance(parseJson(row.deployment_provenance_json, undefined));

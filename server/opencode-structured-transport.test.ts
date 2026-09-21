@@ -51,7 +51,9 @@ describe("OpenCode structured transport", () => {
 
     await expect(executeOpenCodeStructuredTurn(sdk, input)).resolves.toMatchObject({ structured: { messages: ["Corrected."] }, cost: 0.02, tokens: { input: 20, output: 10 } });
     expect(sdk.prompt).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(sdk.prompt).mock.calls[1][1].prompt).toContain("previous structured room-turn result");
+    const correctionCall=vi.mocked(sdk.prompt).mock.calls[1];
+    if(!correctionCall)throw new Error("Expected a structured-turn correction request.");
+    expect(correctionCall[1].prompt).toContain("previous structured room-turn result");
   });
 
   it("reuses an explicit compatible session without creating another", async () => {

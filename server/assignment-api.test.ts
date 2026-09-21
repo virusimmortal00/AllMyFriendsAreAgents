@@ -11,7 +11,7 @@ async function withApi(service: Partial<AssignmentLifecycleService>, run: (baseU
     app,
     service: service as AssignmentLifecycleService,
     developers: { authenticate: () => options.authenticated ? ({ member: {} }) : null } as unknown as DeveloperTeamRegistry,
-    onChanged: options.onChanged,
+    ...(options.onChanged?{onChanged:options.onChanged}:{}),
   });
   const server = app.listen(0); await new Promise<void>((resolve) => server.once("listening", resolve));
   try { await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`); }

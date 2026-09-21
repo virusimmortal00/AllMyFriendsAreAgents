@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenCodeContextSummarizer } from "./context-summarizer.js";
 import { ProviderHealthRegistry } from "./provider-health.js";
+import { requiredAt } from "./test-invariants.js";
 
 function protocolError(data: Record<string, unknown>) {
   return Object.assign(new Error("OpenCode failed"), {
@@ -28,7 +29,7 @@ describe("OpenCode context summarizer", () => {
       onUsage,
     })).resolves.toBe("Fallback summary");
     expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute.mock.calls[1][1]).toContain("openrouter/~deepseek/deepseek-v4-flash-latest");
+    expect(requiredAt(execute.mock.calls,1,"fallback summarizer call")[1]).toContain("openrouter/~deepseek/deepseek-v4-flash-latest");
     expect(onUsage).toHaveBeenCalledWith({ model: "openrouter/~deepseek/deepseek-v4-flash-latest", fallbackModels: ["opencode/muse-spark-1.2-contributor-free"] });
   });
 

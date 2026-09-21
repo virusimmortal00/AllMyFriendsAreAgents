@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveAgentCapabilities, resolveCommandCapability } from "./capability-policy.js";
+import { requiredValue } from "./test-invariants.js";
 
 const entry = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, supportsProjectWrites: true };
 const available = { available: true as const };
@@ -29,7 +30,7 @@ describe("authoritative agent capability policy", () => {
     const result = resolveAgentCapabilities({ entry, model: available, runtimeAvailable: true, githubReadConfigured: true, githubReadGranted: true, exclusiveWritableAgent: "nobody", serverCeiling: ["gh"], requestedGrants: ["gh"], catalogRevisionCurrent: false, providerSessionFresh: false });
     expect(result.capabilities.github_read.effective).toBe(false);
     expect(result.capabilities.github_read.reason).toBe("runtime_unavailable");
-    expect(result.commands.gh.exclusions).toEqual(["catalog-revision-stale", "provider-session-stale"]);
+    expect(requiredValue(result.commands.gh,"GitHub command capability").exclusions).toEqual(["catalog-revision-stale", "provider-session-stale"]);
     expect(result.effectiveCommands).not.toContain("gh");
   });
 

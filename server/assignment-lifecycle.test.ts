@@ -10,6 +10,7 @@ import { ASSIGNMENT_LIFECYCLE_METADATA, type AssignmentRecord } from "./assignme
 import { AssignmentLifecycleService, __testing } from "./assignment-lifecycle.js";
 import { DeveloperBridgeService } from "./developer-bridge.js";
 import { DeveloperTeamRegistry, hashToken, type DeveloperTeamMemberRevision } from "./developer-team.js";
+import { requiredAt } from "./test-invariants.js";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import { legacyDefaultRoomAgentRoster } from "../shared/roster.js";
@@ -264,7 +265,7 @@ describe("trusted single-writer assignment lifecycle", () => {
     expect((await service.create(`Bearer ${token}`, {
       assignmentId: "replacement-for-missing", improvementId: "imp-1", agent: "codex-sol", fencingToken: 1, manifestRevision: 1,
     })).kind).toBe("conflict");
-    expect((await service.cleanup())[0].workspacePath).toBe(created.value.workspacePath);
+    expect(requiredAt(await service.cleanup(),0,"cleaned missing assignment").workspacePath).toBe(created.value.workspacePath);
   });
 
   it("classifies unmerged work and preserves its canonical path", async () => {

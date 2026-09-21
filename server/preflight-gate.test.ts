@@ -3,6 +3,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
+import { requiredAt } from "./test-invariants.js";
 
 const agents = ["codex-sol", "claude-sonnet", "cursor-grok", "cursor-composer"] as const satisfies readonly AgentId[];
 
@@ -50,10 +51,10 @@ describe("pre-flight responder selection", () => {
     for (const turn of routePreflightTurns(turns, "enforce", decision, "decision-1")) await runAgent(turn);
     expect(runAgent).toHaveBeenCalledTimes(1);
     expect(runAgent).toHaveBeenCalledWith({
-      ...turns[0],
+      ...requiredAt(turns,0,"first preflight turn"),
       preflight: { decisionId: "decision-1", shadowSuppressed: false },
     });
-    expect(routePreflightTurns(turns, "enforce", decision, "decision-1")[0].preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: false });
+    expect(requiredAt(routePreflightTurns(turns, "enforce", decision, "decision-1"),0,"enforced preflight turn").preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: false });
   });
 
   it("records shadow annotations without changing the invoked roster", () => {
@@ -66,7 +67,7 @@ describe("pre-flight responder selection", () => {
     };
     const routed = routePreflightTurns(turns, "shadow", decision, "decision-1");
     expect(routed.map(({ agent }) => agent)).toEqual(agents);
-    expect(routed[1].preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: true });
+    expect(requiredAt(routed,1,"second shadow preflight turn").preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: true });
   });
 
   it("always invokes a healthy mentioned agent while retaining one balanced ambient seat", () => {

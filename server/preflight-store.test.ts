@@ -4,6 +4,7 @@ import os from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { PreflightStore } from "./preflight-store.js";
 import type { AgentRoutingDecision } from "./preflight-gate.js";
+import { requiredAt } from "./test-invariants.js";
 
 const directories: string[] = [];
 
@@ -177,7 +178,7 @@ describe("pre-flight classification persistence and evidence", () => {
 
     const reopened = await PreflightStore.open(directory);
     const decisions = await reopened.rawDecisions();
-    expect(decisions[0].classification).toEqual(classification);
+    expect(requiredAt(decisions,0,"reopened preflight decision").classification).toEqual(classification);
   });
 
   it("drops a malformed classification while keeping the routing decision", async () => {
@@ -189,8 +190,9 @@ describe("pre-flight classification persistence and evidence", () => {
     });
 
     const decisions = await routing.rawDecisions();
-    expect(decisions[0].classification).toBeUndefined();
-    expect(decisions[0].agents).toHaveLength(2);
+    const decision=requiredAt(decisions,0,"sanitized preflight decision");
+    expect(decision.classification).toBeUndefined();
+    expect(decision.agents).toHaveLength(2);
   });
 
   it("aggregates counterfactual savings only from turns that ran with metrics", async () => {

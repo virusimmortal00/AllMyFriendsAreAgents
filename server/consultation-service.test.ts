@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsultationProvenance } from "../shared/consultation-domain.js";
 import { ConsultationRunner, sanitizeConsultationContext, type ConsultationDialogueExecutor, type ConsultationSynthesisOutput, type ConsultationSynthesisService } from "./consultation-service.js";
 import { JsonConsultationRepository } from "./storage/json-consultation-repository.js";
+import { requiredAt } from "./test-invariants.js";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); vi.restoreAllMocks(); });
@@ -75,7 +76,7 @@ describe("ConsultationRunner", () => {
     const first = new ConsultationRunner(fixture.repository, firstSynthesis, dialogue);
     await first.start({ roomId: "room-a", consultationId: "restart", idempotencyKey: "restart", request: { topic: "Recover this consultation safely", requestedParticipantIds: ["agent-a"] }, provenance, dialogue: { enabled: true, participantLimit: 1, turnLimit: 1, roundLimit: 1, concurrencyLimit: 1 } });
     await eventually(async () => (await first.get({ roomId: "room-a", consultationId: "restart" }))?.execution?.turns.length === 1 && vi.mocked(firstSynthesis.synthesize).mock.calls.length === 1);
-    const originalKey = vi.mocked(firstSynthesis.synthesize).mock.calls[0][0].idempotencyKey;
+    const originalKey = requiredAt(vi.mocked(firstSynthesis.synthesize).mock.calls,0,"initial synthesis call")[0].idempotencyKey;
     first.close(); rejectFirst(new Error("shutdown")); await new Promise((resolve) => setTimeout(resolve, 10));
     const secondSynthesis = settled("Recovered once."); const second = new ConsultationRunner(await JsonConsultationRepository.open(path.join(fixture.directory, "consultations.json")), secondSynthesis, dialogue);
     await second.reconcile("room-a");

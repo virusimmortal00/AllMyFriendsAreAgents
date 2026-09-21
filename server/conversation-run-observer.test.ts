@@ -13,6 +13,7 @@ import { GenerationJournal } from "./generation-journal.js";
 import { withGenerationDelivery } from "./generation-delivery.js";
 import { currentLogContext, withLogContext } from "./structured-logger.js";
 import { LocalFileDiagnosticsQueryService, type DiagnosticCaller, type DiagnosticQuery, type DiagnosticRecord } from "./diagnostics-query.js";
+import { requiredAt } from "./test-invariants.js";
 
 class Sink extends EventEmitter {
   records: Record<string, any>[] = [];
@@ -27,7 +28,7 @@ async function fixture(files = false, maxBufferedBytes?: number) {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-run-events-"));
   cleanup.push(() => rm(root, { recursive: true, force: true }));
   const sinks = new Map<AuthoritativeStream, Sink>();
-  const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-fixture", projectPath: "/projects/fixture", roomId: "room-fixture", maxIdentical: 1, maxBufferedBytes,
+  const logging = await AuthoritativeLogging.open({ dataDirectory: root, projectId: "project-fixture", projectPath: "/projects/fixture", roomId: "room-fixture", maxIdentical: 1, ...(maxBufferedBytes===undefined?{}:{maxBufferedBytes}),
     ...(files ? {} : { sinkFactory: async (stream: AuthoritativeStream) => { const sink = new Sink(); sinks.set(stream, sink); return sink; } }),
   });
   cleanup.push(async () => { for (const sink of sinks.values()) { sink.blocked = false; sink.emit("drain"); } await logging.close(); });
@@ -140,11 +141,13 @@ describe("conversation run event adapter", () => {
     const turns = Array.from({ length: 32 }, (_, index) => ({ agent: `${index}-${"\u0001".repeat(38)}` as typeof AGENT_IDS[number], instruction: "never retained" }));
     await withConversationRun(() => observeConversationRun(logging, "energy", (observer) => runEnergyConversation(turns, "party", async () => ({}), () => 0, { observer, inviteAll: true, concurrencyLimit: 2 })));
     await logging.flush();
-    expect(records().every((record) => Buffer.byteLength(JSON.stringify(record)) <= CONVERSATION_EVENT_MAX_BYTES)).toBe(true);
-    expect(records()[0].omittedDetailCount).toBeGreaterThan(0);
-    expect(records()[0].configuration.candidateCount).toBe(32);
-    expect(records().at(-1)?.summary.counts.attemptedTurns).toBe(32);
-    expect(JSON.stringify(records())).not.toContain("never retained");
+    const capturedRecords = records();
+    const configuration = requiredAt(capturedRecords, 0, "maximum-roster configuration record");
+    expect(capturedRecords.every((record) => Buffer.byteLength(JSON.stringify(record)) <= CONVERSATION_EVENT_MAX_BYTES)).toBe(true);
+    expect(configuration.omittedDetailCount).toBeGreaterThan(0);
+    expect(configuration.configuration.candidateCount).toBe(32);
+    expect(capturedRecords.at(-1)?.summary.counts.attemptedTurns).toBe(32);
+    expect(JSON.stringify(capturedRecords)).not.toContain("never retained");
   });
 
   it("reconstructs yield, truncation, a pair-cap drop, and completion through the real OWNER query after reopening files", async () => {
@@ -187,14 +190,16 @@ describe("conversation run event adapter", () => {
     const found: DiagnosticRecord[] = [];
     let cursor: string | undefined;
     do {
-      const page = await service.query(owner, { ...query, cursor }); found.push(...page.records); cursor = page.nextCursor || undefined;
+      const page = await service.query(owner, { ...query, ...(cursor?{cursor}:{}) }); found.push(...page.records); cursor = page.nextCursor || undefined;
       expect(page.chunks).toHaveLength(0);
     } while (cursor);
     const structured = found.filter(({ event }) => event.startsWith("conversation.")).sort((a, b) => Number(a.content.runEventSequence) - Number(b.content.runEventSequence));
     const turnFinished = structured.filter(({ event }) => event === "conversation.turn.finished");
     expect(turnFinished).toHaveLength(4);
-    expect(turnFinished[0].content).toMatchObject({ outcome: "yielded", interpretation: { dispositionAction: "yield", yieldReason: "already_covered" } });
-    expect(turnFinished[1].content).toMatchObject({ interpretation: { parsedBurstCount: 4, retainedBurstCount: 3, truncatedBurstCount: 1 }, delivery: { confirmedDeliveredBurstCount: 3 } });
+    const yieldedTurn = requiredAt(turnFinished, 0, "yielded conversation turn record");
+    const truncatedTurn = requiredAt(turnFinished, 1, "truncated conversation turn record");
+    expect(yieldedTurn.content).toMatchObject({ outcome: "yielded", interpretation: { dispositionAction: "yield", yieldReason: "already_covered" } });
+    expect(truncatedTurn.content).toMatchObject({ interpretation: { parsedBurstCount: 4, retainedBurstCount: 3, truncatedBurstCount: 1 }, delivery: { confirmedDeliveredBurstCount: 3 } });
     expect(structured.find(({ content }) => content.reason === "pair-cap-reached")?.content).toMatchObject({ action: "dropped", selectionFamily: "legacy-name-match", sourceGenerationId: "fixture-generation-4" });
     expect(structured.at(-1)?.content).toMatchObject({ reason: "no-explicit-unresolved-state", summary: { counts: { yieldedTurns: 1, confirmedDeliveredBursts: 5 } }, attemptedEventCount: structured.length });
     expect(structured.map(({ content }) => content.runEventSequence)).toEqual(structured.map((_record, index) => index + 1));

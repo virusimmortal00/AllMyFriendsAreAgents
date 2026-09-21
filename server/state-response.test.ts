@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import type { RoomState } from "./types.js";
 import { publicRoomState, roomStateWithAvailability } from "./state-response.js";
+import { requiredAt } from "./test-invariants.js";
 
 describe("room state responses", () => {
   it("hides legacy orchestration instructions without deleting ordinary status messages", () => {
@@ -60,7 +61,7 @@ describe("room state responses", () => {
     releaseAvailability();
 
     const resolved = await response;
-    expect(resolved.messages[0].text).toBe("after");
+    expect(requiredAt(resolved.messages,0,"resolved state message").text).toBe("after");
     expect(resolved).not.toHaveProperty("sessions");
     expect(resolved).not.toHaveProperty("error");
     expect(resolved.settings).not.toHaveProperty("projectPath");

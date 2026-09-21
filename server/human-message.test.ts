@@ -7,6 +7,7 @@ import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-mes
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
 import type { RoomRepository } from "./storage/room-repository.js";
+import { requiredAt } from "./test-invariants.js";
 
 const temporaryDirectories: string[] = [];
 const human = {
@@ -45,7 +46,7 @@ describe("human message idempotency", () => {
   });
 
   it("returns the same minimal correlation acknowledgement for a duplicate", async () => {
-    const [store] = await repositories();
+    const store = requiredAt(await repositories(),0,"primary room repository");
     const first = await addHumanMessageOnce(store, human, "Did this land?", "message_ack_1234");
     const duplicate = await addHumanMessageOnce(store, human, "Did this land?", "message_ack_1234");
 

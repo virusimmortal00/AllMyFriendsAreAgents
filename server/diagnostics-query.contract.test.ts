@@ -83,7 +83,8 @@ function diagnosticsQueryContract(name: string, make: typeof fixture) {
       const outside = { ...projectCaller, projectIds: ["project-two"] };
       await expect(service.query(outside, baseQuery)).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query(projectCaller, { ...range, scope: "self", identity: { selfId: "agent-two" } })).rejects.toMatchObject({ code: "forbidden" });
-      await expect(service.query({ ...projectCaller, selfId: undefined }, { ...range, scope: "self" })).rejects.toMatchObject({ code: "forbidden" });
+      const {selfId:_selfId,...callerWithoutSelf}=projectCaller;
+      await expect(service.query(callerWithoutSelf, { ...range, scope: "self" })).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query({ ...projectCaller, roomIds: [] }, { ...range, scope: "room", identity: { roomId: "room-one" } })).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query({ ...projectCaller, projectIds: [] }, baseQuery)).rejects.toMatchObject({ code: "forbidden" });
       await expect(service.query(projectCaller, { ...baseQuery, streams: ["unknown" as never] })).rejects.toMatchObject({ code: "invalid-query" });

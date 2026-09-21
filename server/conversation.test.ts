@@ -4,6 +4,7 @@ import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
 import { emptyRoomAgentRoster } from "../shared/roster.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
   return {
@@ -280,12 +281,13 @@ describe("agent conversations", () => {
       const index = AGENT_IDS.findIndex((agent) => agent === turn.agent);
       active += 1;
       maximumActive = Math.max(maximumActive, active);
-      return completions[index].promise.finally(() => { active -= 1; });
+      const completion = requiredValue(index < 0 ? undefined : completions[index], `completion for ${turn.agent}`);
+      return completion.promise.finally(() => { active -= 1; });
     });
 
     const conversation = runAgentConversation(candidatesForAllAgents(), 0, performTurn, 3);
     await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
-    completions[0].resolve({});
+    requiredAt(completions, 0, "first bulk completion").resolve({});
     await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(4));
     for (const completion of completions) completion.resolve({});
     await conversation;
@@ -463,9 +465,10 @@ describe("conversation energy", () => {
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
-    expect(performTurn.mock.calls[1][0].instruction).toContain("optional chance to join");
-    expect(performTurn.mock.calls[1][0].instruction).toContain("distinct, natural contribution");
-    expect(performTurn.mock.calls[1][0].instruction).toContain("TURN_DISPOSITION");
+    const secondTurn = requiredAt(requiredAt(performTurn.mock.calls, 1, "second balanced call"), 0, "second balanced turn");
+    expect(secondTurn.instruction).toContain("optional chance to join");
+    expect(secondTurn.instruction).toContain("distinct, natural contribution");
+    expect(secondTurn.instruction).toContain("TURN_DISPOSITION");
   });
 
   it("allows a cheap distinct-flavored reaction in an ambient conversational follow-up", async () => {
@@ -476,9 +479,10 @@ describe("conversation energy", () => {
     await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { conversationalFloor: true });
 
     expect(performTurn).toHaveBeenCalledTimes(2);
-    expect(performTurn.mock.calls[1][0].instruction).toContain("one-line reaction is welcome");
-    expect(performTurn.mock.calls[1][0].instruction).toContain("does not bar your own distinct-flavored reaction");
-    expect(performTurn.mock.calls[1][0].instruction).toContain("Do not manufacture a question");
+    const reactionTurn = requiredAt(requiredAt(performTurn.mock.calls, 1, "ambient reaction call"), 0, "ambient reaction turn");
+    expect(reactionTurn.instruction).toContain("one-line reaction is welcome");
+    expect(reactionTurn.instruction).toContain("does not bar your own distinct-flavored reaction");
+    expect(reactionTurn.instruction).toContain("Do not manufacture a question");
   });
 
   it("fires the conversational floor exactly once after every invited agent declines", async () => {
@@ -494,7 +498,8 @@ describe("conversation energy", () => {
     await runEnergyConversation(turns, "low", performTurn, () => 1, latestHumanBroadcastPolicy(state));
 
     expect(performTurn).toHaveBeenCalledTimes(turns.length + 1);
-    expect(performTurn.mock.calls.at(-1)?.[0].agent).toBe(turns[0].agent);
+    const initialTurn = requiredAt(turns, 0, "initial conversational-floor turn");
+    expect(performTurn.mock.calls.at(-1)?.[0].agent).toBe(initialTurn.agent);
     expect(performTurn.mock.calls.at(-1)?.[0].instruction).toContain("Nobody has reacted yet");
     expect(performTurn.mock.calls.at(-1)?.[0].instruction).toContain("one final conversational-floor turn");
   });
@@ -605,9 +610,12 @@ describe("conversation energy", () => {
 
     expect(result).toEqual({ settled: true, summary: expect.any(Object) });
     expect(performTurn).toHaveBeenCalledTimes(5);
-    expect(performTurn.mock.calls[2][0].instruction).toContain("discussion synthesizer");
-    expect(performTurn.mock.calls[3][0].instruction).toContain("material omission");
-    expect(performTurn.mock.calls[4][0].instruction).toContain("Reconcile");
+    const synthesis = requiredAt(requiredAt(performTurn.mock.calls, 2, "synthesis call"), 0, "synthesis turn");
+    const objection = requiredAt(requiredAt(performTurn.mock.calls, 3, "objection call"), 0, "objection turn");
+    const reconciliation = requiredAt(requiredAt(performTurn.mock.calls, 4, "reconciliation call"), 0, "reconciliation turn");
+    expect(synthesis.instruction).toContain("discussion synthesizer");
+    expect(objection.instruction).toContain("material omission");
+    expect(reconciliation.instruction).toContain("Reconcile");
   });
 
   it("reports when synthesis is blocked on human input", async () => {
@@ -748,11 +756,12 @@ describe("conversation energy", () => {
     await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(3));
     await conversation;
 
-    expect(performTurn.mock.calls[2][0]).toMatchObject({ agent: "cursor-grok" });
-    expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
-    expect(performTurn.mock.calls[2][0].instruction).toContain("Reply by default");
-    expect(performTurn.mock.calls[2][0].instruction).toContain("Silence is exceptional");
-    expect(performTurn.mock.calls[2][0].instruction).toContain("TURN_DISPOSITION");
+    const mentionTurn = requiredAt(requiredAt(performTurn.mock.calls, 2, "mention follow-up call"), 0, "mention follow-up turn");
+    expect(mentionTurn).toMatchObject({ agent: "cursor-grok" });
+    expect(mentionTurn.instruction).toContain("addressed you directly");
+    expect(mentionTurn.instruction).toContain("Reply by default");
+    expect(mentionTurn.instruction).toContain("Silence is exceptional");
+    expect(mentionTurn.instruction).toContain("TURN_DISPOSITION");
   });
 
   it("preserves a mention follow-up when the concurrent target completes last", async () => {
@@ -779,8 +788,9 @@ describe("conversation energy", () => {
       "claude-sonnet",
       "claude-sonnet",
     ]);
-    expect(performTurn.mock.calls[2][0].instruction).toContain("addressed you directly");
-    expect(performTurn.mock.calls[2][0].instruction).toContain("Reply by default");
+    const followUp = requiredAt(requiredAt(performTurn.mock.calls, 2, "preserved mention call"), 0, "preserved mention turn");
+    expect(followUp.instruction).toContain("addressed you directly");
+    expect(followUp.instruction).toContain("Reply by default");
   });
 
   it("stops launching queued openings after concurrent cancellation", async () => {

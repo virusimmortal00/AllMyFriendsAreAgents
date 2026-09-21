@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 const exec = promisify(execFile);
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -28,7 +29,7 @@ async function fixture(backend: "json" | "sqlite", withPeer = false) {
   await rooms.updateRoster(rooms.snapshot().roster!.revision, [{ agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1, commandPermissions: { allowAll: false, allowed: ["help", "task", "pov"] } }]);
   if (withPeer) {
     const roster = rooms.snapshot().roster!;
-    await rooms.updateRoster(roster.revision, [...roster.entries, { ...roster.entries[0], agentId: "codex-terra", conversationalName: "Terra" }]);
+    await rooms.updateRoster(roster.revision, [...roster.entries, { ...requiredAt(roster.entries,0,"primary protected-work agent"), agentId: "codex-terra", conversationalName: "Terra" }]);
   }
   if (rooms instanceof SqliteRoomRepository) rooms.close();
   let input: any; let workerResponse: http.ServerResponse | undefined; let termination = true;
@@ -63,7 +64,7 @@ async function fixture(backend: "json" | "sqlite", withPeer = false) {
     cleanups.push(() => stop(child));
     await until(async () => { if (child.exitCode !== null) throw new Error("Application exited before readiness"); try { return (await fetch(base + "/api/ready")).ok; } catch { return false; } });
     const joined = await fetch(base + "/api/humans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Fixture operator" }) });
-    expect(joined.status).toBe(201); const cookie = joined.headers.get("set-cookie")!.split(";")[0];
+    expect(joined.status).toBe(201); const cookie = requiredAt(requiredValue(joined.headers.get("set-cookie"),"protected-work session cookie").split(";"),0,"protected-work cookie pair");
     const call = (route: string, body?: unknown) => fetch(base + route, { method: body ? "POST" : "GET", headers: { cookie, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
     await call("/api/roster");
     return { child, call };

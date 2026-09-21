@@ -142,7 +142,7 @@ describe("species-neutral governed improvement proposals", () => {
   });
 
   it("accepts capability-bearing participant kinds through one command path", async () => {
-    for (const [id, kind] of [["human-42", "human"], ["agent-7", "software-agent"], ["collective-3", "collective"]]) {
+    for (const [id, kind] of [["human-42", "human"], ["agent-7", "software-agent"], ["collective-3", "collective"]] as const) {
       const result = await improvementPropose(repository, proposal(id, kind), proposedAt);
       expect(result).toMatchObject({
         kind: "accepted",

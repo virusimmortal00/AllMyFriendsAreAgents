@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { RoomStore } from "./room-store.js";
 import { SqliteRoomRepository } from "./storage/sqlite-room-repository.js";
+import { requiredAt, requiredValue } from "./test-invariants.js";
 
 const exec = promisify(execFile);
 const sourceRoot = path.resolve(import.meta.dirname, "..");
@@ -80,7 +81,7 @@ async function fixture(backend: "json" | "sqlite") {
     }, "application readiness");
     const joined = await fetch(base + "/api/humans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Fixture human" }) });
     expect(joined.status).toBe(201);
-    const cookie = joined.headers.get("set-cookie")!.split(";")[0];
+    const cookie = requiredAt(requiredValue(joined.headers.get("set-cookie"),"room-tool session cookie").split(";"),0,"room-tool cookie pair");
     const call = (route: string, method = "GET", body?: unknown) => fetch(base + route, { method, headers: { cookie, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const state = async () => await (await call("/api/state")).json() as { messages: { text: string }[]; activeGenerations: Record<string, string> };
     // This route resolves live discovery/capability state before the first turn.

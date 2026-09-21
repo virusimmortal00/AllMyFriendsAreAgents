@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CoalescingJobQueue, type JobQueueDecision } from "./job-queue.js";
 import { currentLogContext, withLogContext } from "./structured-logger.js";
+import { requiredAt } from "./test-invariants.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -88,7 +89,7 @@ describe("CoalescingJobQueue", () => {
     const first = deferred();
     const observations: Array<{ decision: JobQueueDecision; requestId?: string }> = [];
     const observe = (decision: JobQueueDecision) => {
-      observations.push({ decision, requestId: currentLogContext()?.requestId });
+      const requestId=currentLogContext()?.requestId;observations.push({ decision, ...(requestId?{requestId}:{}) });
     };
     const executions: string[] = [];
     withLogContext({ requestId: "request-a" }, () => queue.enqueue("conversation", async ({ jobId }) => {
@@ -104,12 +105,14 @@ describe("CoalescingJobQueue", () => {
     expect(observations.map(({ decision, requestId }) => [decision.action, requestId])).toEqual([
       ["queued", "request-a"], ["started", "request-a"], ["queued", "request-b"], ["coalesced", "request-c"],
     ]);
-    const accepted = observations[2].decision;
-    expect(observations[3].decision).toMatchObject({ action: "coalesced", reason: "key-already-pending", jobId: null, retainedJobId: accepted.jobId, pendingCount: 1, active: true });
-    expect(observations[3].decision.admissionId).not.toBe(accepted.admissionId);
+    const active = requiredAt(observations, 0, "active queue admission").decision;
+    const accepted = requiredAt(observations, 2, "pending queue admission").decision;
+    const coalesced = requiredAt(observations, 3, "coalesced queue admission").decision;
+    expect(coalesced).toMatchObject({ action: "coalesced", reason: "key-already-pending", jobId: null, retainedJobId: accepted.jobId, pendingCount: 1, active: true });
+    expect(coalesced.admissionId).not.toBe(accepted.admissionId);
     first.resolve();
     await eventually(() => expect(queue.busy).toBe(false));
-    expect(executions).toEqual([observations[0].decision.jobId, accepted.jobId]);
+    expect(executions).toEqual([active.jobId, accepted.jobId]);
     expect(observations.at(-1)).toMatchObject({ requestId: "request-b", decision: { action: "started", jobId: accepted.jobId, admissionId: accepted.admissionId } });
     expect(new Set(observations.map(({ decision }) => decision.decisionId)).size).toBe(observations.length);
   });
@@ -118,7 +121,7 @@ describe("CoalescingJobQueue", () => {
     const queue = new CoalescingJobQueue();
     const first = deferred();
     const observations: Array<{ decision: JobQueueDecision; requestId?: string }> = [];
-    const observe = (decision: JobQueueDecision) => { observations.push({ decision, requestId: currentLogContext()?.requestId }); };
+    const observe = (decision: JobQueueDecision) => { const requestId=currentLogContext()?.requestId;observations.push({ decision, ...(requestId?{requestId}:{}) }); };
     queue.enqueue("active", async () => { await first.promise; }, observe);
     withLogContext({ requestId: "pending-request" }, () => queue.enqueue("pending", async () => { throw new Error("Dropped job ran"); }, observe));
     withLogContext({ requestId: "shutdown-request" }, () => { queue.close(); queue.close(); });
@@ -127,8 +130,9 @@ describe("CoalescingJobQueue", () => {
     });
     first.resolve();
     await eventually(() => expect(queue.busy).toBe(false));
+    const pending = requiredAt(observations, 2, "pending queue admission").decision;
     expect(observations.filter(({ decision }) => decision.action === "dropped")).toEqual([
-      { requestId: "pending-request", decision: expect.objectContaining({ reason: "queue-closed", jobId: observations[2].decision.jobId, pendingCount: 0 }) },
+      { requestId: "pending-request", decision: expect.objectContaining({ reason: "queue-closed", jobId: pending.jobId, pendingCount: 0 }) },
     ]);
     expect(observations.at(-1)).toMatchObject({ requestId: "late-request", decision: { action: "rejected", reason: "queue-closed", jobId: null, retainedJobId: null } });
   });
