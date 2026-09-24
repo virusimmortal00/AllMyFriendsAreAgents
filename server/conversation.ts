@@ -10,6 +10,7 @@ import { CONVERSATION_ENERGY_POLICIES, CONVERSATION_OPTIONAL_SEATS, type Convers
 import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatTextWithDiagnostics, type YieldReason } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
+import { followUpAddress, type FollowUpAddressContext } from "./follow-up-address.js";
 
 export interface ConversationTurn {
   agent: AgentId;
@@ -37,6 +38,8 @@ export interface TurnResult {
   visibleMessageCount?: number;
   continuationWorthy?: boolean;
   conversationState?: ConversationState;
+  humanHandoff?: boolean;
+  materialDisagreement?: boolean;
   cancelled?: boolean;
   failed?: boolean;
   investigationRequest?: InvestigationRequest;
@@ -52,6 +55,8 @@ export interface ParsedAgentTurn {
   visibleMessageCount: number;
   continuationWorthy: boolean;
   conversationState?: ConversationState;
+  humanHandoff?: boolean;
+  materialDisagreement?: boolean;
   styleUpdate?: ChatStyle;
   investigationRequest?: InvestigationRequest;
   disposition?: "speak";
@@ -210,7 +215,7 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
   });
 }
 
-export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS, limitSource: VisibleMessageLimitSource = visibleMessageLimit === 3 ? "default-burst-cap" : "caller-limit"): ParsedAgentTurn {
+export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: ChatStyle, visibleMessageLimit = 3, roomAgents: readonly AgentId[] = AGENT_IDS, limitSource: VisibleMessageLimitSource = visibleMessageLimit === 3 ? "default-burst-cap" : "caller-limit", addressContext?: FollowUpAddressContext): ParsedAgentTurn {
   const speakerName = AGENT_PROFILES[agent]?.conversationalName;
   const originalLength = text.length;
   text = stripAgentSelfLabel(text, speakerName);
@@ -269,12 +274,8 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     retainedBurstCount: visibleMessages.length, truncatedBurstCount: eligible.length - visibleMessages.length });
   const combinedText = visibleMessages.join("\n");
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
-  const mentionedAgents = otherAgents.filter((candidate) => {
-    const profile = AGENT_PROFILES[candidate];
-    if (!profile) return false;
-    const namePattern = new RegExp(`\\b${profile.conversationalName}\\b`, "i");
-    return namePattern.test(combinedText);
-  });
+  const followUp = followUpAddress(combinedText, agent, roomAgents, addressContext);
+  const mentionedAgents = followUp.directAgents;
   const styleUpdate = currentStyle ? extractStyleDirective(text, currentStyle) : undefined;
   diagnostics.effectiveConversationState = declaredState ?? null;
   diagnostics.continuationWorthy = visibleMessages.length > 0 && (mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText));
@@ -285,6 +286,8 @@ export function parseAgentTurn(agent: AgentId, text: string, currentStyle?: Chat
     mentionedAgents,
     visibleMessageCount: visibleMessages.length,
     continuationWorthy: diagnostics.continuationWorthy,
+    humanHandoff: followUp.humanHandoff,
+    materialDisagreement: followUp.materialDisagreement,
     ...(declaredState ? { conversationState: declaredState } : {}),
     ...(styleUpdate ? { styleUpdate } : {}),
     ...(investigationRequest ? { investigationRequest } : {}),
@@ -387,8 +390,10 @@ export async function runEnergyConversation(
   let nextOutcomeKey = 0;
   let cancelled = false;
   let broadcastSettled = false;
+  let humanHandoffObserved = false;
   let completedDeclines = 0;
   const visibleOutcomes: EnergyOutcome[] = [];
+  const ownershipDeclines = new Set<AgentId>();
   const concurrencyLimit = Math.max(1, Math.floor(options.concurrencyLimit || 1));
   const facts = new ConversationRunFacts();
   let phase: ConversationPhase = "opening";
@@ -450,6 +455,8 @@ export async function runEnergyConversation(
     const visibleMessageCount = Math.max(0, result.visibleMessageCount || 0);
     const responded = visibleMessageCount > 0;
     if (!responded && !result.cancelled && !result.failed) completedDeclines += 1;
+    if (!responded && (result.interpretation?.yieldReason === "not_addressed"
+      || result.interpretation?.yieldReason === "another_agent_owns_this")) ownershipDeclines.add(turn.agent);
     const outcome = { turn: observedTurn, result, responded, key: nextOutcomeKey };
     nextOutcomeKey += 1;
     if (responded) {
@@ -469,6 +476,7 @@ export async function runEnergyConversation(
       }
       lastOutcome = outcome;
       visibleOutcomes.push(outcome);
+      if (result.conversationState === "blocked" || result.humanHandoff) humanHandoffObserved = true;
       if (options.stopOnSettledResponse && result.conversationState === "settled") broadcastSettled = true;
     }
     return outcome;
@@ -483,7 +491,7 @@ export async function runEnergyConversation(
       { length: Math.min(concurrencyLimit, turns.length) },
       async () => {
         while (nextTurn < turns.length && !cancelled && !failed
-          && (!broadcastSettled || hasRequiredTargets && nextTurn < requiredCandidates.length)) {
+          && (!(broadcastSettled || humanHandoffObserved) || hasRequiredTargets && nextTurn < requiredCandidates.length)) {
           const turn = turns[nextTurn];
           if (!turn) throw new Error("Concurrent conversation queue invariant is invalid.");
           nextTurn += 1;
@@ -543,8 +551,8 @@ export async function runEnergyConversation(
     }
     if (!lastOutcome && !cancelled && options.conversationalFloor && completedDeclines === invited.size && invited.size > 0) {
       phase = "conversation-floor";
-      const floorCandidate = candidates.find(({ agent }) => invited.has(agent));
-      if (!floorCandidate) throw new Error("Conversation floor requires an invited candidate.");
+      const floorCandidate = candidates.find(({ agent }) => invited.has(agent) && !ownershipDeclines.has(agent));
+      if (!floorCandidate) return finish("no-visible-output", { settled: true });
       await record({
         ...floorCandidate,
         instruction: conversationalFloorInstruction(),
@@ -552,13 +560,15 @@ export async function runEnergyConversation(
       return finish(cancelled ? "cancelled" : "conversation-floor-completed", { settled: !cancelled });
     }
     if (!lastOutcome || cancelled) return finish(cancelled ? "cancelled" : "no-visible-output", { settled: !cancelled });
+    const humanFloor = () => humanHandoffObserved;
+    if (humanFloor()) return finish("blocked-input", { settled: false, pauseReason: "The floor is with a human participant." });
     if (broadcastSettled) return finish("broadcast-settled-response", { settled: true });
 
     phase = "follow-up";
     while (responseTurns < hardTurnCeiling
       && visibleMessagesDelivered < hardMessageCeiling
       && !cancelled
-      && !broadcastSettled) {
+      && !broadcastSettled && !humanFloor()) {
       const mention = pendingMentions.shift();
       if (mention) {
         const pair = [mention.source, mention.target].sort().join(":");
@@ -627,11 +637,14 @@ export async function runEnergyConversation(
     }
 
     if (cancelled) return finish("cancelled", { settled: false });
+    if (humanFloor()) return finish("blocked-input", { settled: false, pauseReason: "The floor is with a human participant." });
     if (broadcastSettled) return finish("broadcast-settled-response", { settled: true });
 
-    const explicitlyUnresolved = visibleOutcomes.some(({ result }) => result.conversationState === "open" || result.conversationState === "blocked");
-    if (!explicitlyUnresolved) return finish("no-explicit-unresolved-state", { settled: true });
-    if (visibleOutcomes.length < 2) {
+    // A historical OPEN does not outlive a later visible SETTLED response.
+    // The lexical cue is conservative evidence of a material point, not proof.
+    const materiallyOpen = lastOutcome.result.conversationState === "open" && lastOutcome.result.materialDisagreement === true;
+    if (!materiallyOpen) return finish(lastOutcome.result.conversationState === "open" ? "no-material-disagreement" : "no-explicit-unresolved-state", { settled: true });
+    if (new Set(visibleOutcomes.map(({ turn }) => turn.agent)).size < 2) {
       return finish("open-without-second-responder", { settled: false, pauseReason: "The discussion remains open, but no second agent took up the unresolved point in this bounded round." });
     }
     if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
@@ -645,10 +658,11 @@ export async function runEnergyConversation(
       instruction: synthesisInstruction(),
     }, lastOutcome.turn), 1);
     if (cancelled) return finish("cancelled", { settled: false });
-    if (!synthesis.responded || synthesis.result.conversationState === "settled") return finish(!synthesis.responded ? "synthesis-no-response" : "synthesis-settled", { settled: true });
     if (synthesis.result.conversationState === "blocked") {
       return finish("blocked-input", { settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
     }
+    if (humanFloor()) return finish("blocked-input", { settled: false, pauseReason: "The floor is with a human participant." });
+    if (!synthesis.responded || synthesis.result.conversationState === "settled") return finish(!synthesis.responded ? "synthesis-no-response" : "synthesis-settled", { settled: true });
     if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
       return finish("safety-ceiling", { settled: false, pauseReason: "The discussion reached its safety limit with the synthesis still open." });
     }
@@ -661,11 +675,14 @@ export async function runEnergyConversation(
     for (const agent of objectors) {
       if (cancelled || visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) break;
       const objection = await record(decisions.queue({ agent, instruction: objectionInstruction(synthesizer) }, "objection", synthesis.turn), 1);
+      if (cancelled) return finish("cancelled", { settled: false });
       if (objection.result.conversationState === "blocked") {
         return finish("blocked-input", { settled: false, pauseReason: "The agents need human input to resolve the remaining decision." });
       }
+      if (humanFloor()) return finish("blocked-input", { settled: false, pauseReason: "The floor is with a human participant." });
       materialObjection ||= objection.responded && objection.result.conversationState === "open";
     }
+    if (cancelled) return finish("cancelled", { settled: false });
     if (!materialObjection) return finish("no-material-objection", { settled: true });
     if (visibleMessagesDelivered >= hardMessageCeiling || responseTurns >= hardTurnCeiling) {
       return finish("safety-ceiling", { settled: false, pauseReason: "The discussion reached its safety limit with a material objection still open." });
@@ -674,6 +691,7 @@ export async function runEnergyConversation(
     phase = "reconciliation";
     const reconciliation = await record(decisions.queue({ agent: synthesizer, instruction: reconciliationInstruction() }, "reconciliation", synthesis.turn), 1);
     if (cancelled) return finish("cancelled", { settled: false });
+    if (humanFloor()) return finish("blocked-input", { settled: false, pauseReason: "The floor is with a human participant." });
     if (reconciliation.result.conversationState === "settled" || !reconciliation.responded) return finish(reconciliation.result.conversationState === "settled" ? "reconciliation-settled" : "reconciliation-no-response", { settled: true });
     return finish(reconciliation.result.conversationState === "blocked" ? "blocked-input" : "unresolved-reconciliation", {
       settled: false,
@@ -712,6 +730,7 @@ export async function runAgentConversation(
   const deferredMentions = new Map<AgentId, { source: ConversationTurn; observation: ConversationSelectionIdentity }>();
   const completedOrder = new Map<AgentId, number>();
   let followUps = 0;
+  let humanHandoffObserved = false;
   let nextId = 0;
   let completionSequence = 0;
   const facts = new ConversationRunFacts();
@@ -797,6 +816,18 @@ export async function runAgentConversation(
       }
       completedOrder.set(completed.turn.agent, completionSequence);
       completionSequence += 1;
+      if (completed.result?.conversationState === "blocked" || completed.result?.humanHandoff) humanHandoffObserved = true;
+      if (humanHandoffObserved) {
+        for (let index = queued.length - 1; index >= 0; index -= 1) {
+          const turn = queued[index];
+          if (turn?.observation?.selectionFamily === "initial-candidate") continue;
+          const [removed] = queued.splice(index, 1);
+          if (removed?.observation) decisions.drop(removed.observation, "human-handoff");
+        }
+        for (const { observation } of deferredMentions.values()) decisions.drop(observation, "human-handoff");
+        deferredMentions.clear();
+        continue;
+      }
 
       const deferredMention = deferredMentions.get(completed.turn.agent);
       if (deferredMention && followUps < maxFollowUps) {
@@ -854,7 +885,7 @@ export async function runAgentConversation(
       followUps += 1;
       fillAvailableSlots();
     }
-    terminalSummary = summarize(followUps >= maxFollowUps ? "follow-up-limit" : "queue-exhausted");
+    terminalSummary = summarize(humanHandoffObserved ? "blocked-input" : followUps >= maxFollowUps ? "follow-up-limit" : "queue-exhausted");
     return { summary: terminalSummary };
   } finally {
     // A synchronous callback throw can bypass the normal rejected-promise drain.

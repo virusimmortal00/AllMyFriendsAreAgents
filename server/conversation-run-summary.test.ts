@@ -27,10 +27,10 @@ describe("additive conversation terminal facts", () => {
     expect(random).not.toHaveBeenCalled();
   });
 
-  it("preserves the exact convergence schedule and RNG budget while identifying the terminal branch", async () => {
+  it("records the convergence schedule and RNG budget for a material open disagreement", async () => {
     const script: TurnResult[] = [
-      { visibleMessageCount: 1, conversationState: "open" },
-      { visibleMessageCount: 1, conversationState: "settled" },
+      { visibleMessageCount: 1, conversationState: "open", materialDisagreement: true },
+      { visibleMessageCount: 1, conversationState: "open", materialDisagreement: true },
       { visibleMessageCount: 1, conversationState: "open" },
       { visibleMessageCount: 1, conversationState: "open" },
       { visibleMessageCount: 1, conversationState: "settled" },
@@ -86,14 +86,14 @@ describe("additive conversation terminal facts", () => {
     expect(summaries[0]).toMatchObject({ engine, reason: "run-failed", engineSettled: null, counts: { attemptedTurns: 2, failedTurns: 1, respondedTurns: 1, confirmedDeliveredBursts: 1, unconfirmedBursts: 1 }, pending: { candidates: candidates.length - 2, activeTurns: 0, disposition: "abandoned" } });
   });
 
-  it("records cancellation during objections without silently changing the existing settled flag", async () => {
-    const script: TurnResult[] = [{ visibleMessageCount: 1, conversationState: "open" }, { visibleMessageCount: 1 }, { visibleMessageCount: 1, conversationState: "open" }, { cancelled: true }];
+  it("records cancellation during objections without claiming settlement", async () => {
+    const script: TurnResult[] = [{ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true }, { visibleMessageCount: 1, conversationState: "open", materialDisagreement: true }, { visibleMessageCount: 1, conversationState: "open" }, { cancelled: true }];
     const result = await runEnergyConversation(candidates, "balanced", async () => script.shift() || {}, () => 0, { concurrencyLimit: 2 });
-    expect(result).toMatchObject({ settled: true, summary: { reason: "no-material-objection", engineSettled: true, phase: "objection", counts: { cancelledTurns: 1 } } });
+    expect(result).toMatchObject({ settled: false, summary: { reason: "cancelled", engineSettled: false, phase: "objection", counts: { cancelledTurns: 1 } } });
   });
 
   it("distinguishes message and turn ceilings using the engine's original policy counters", async () => {
-    const result = await runEnergyConversation(candidates, "low", async (turn) => ({ ...(turn.visibleMessageLimit===undefined?{}:{visibleMessageCount:turn.visibleMessageLimit}), conversationState: "open", mentionedAgents: [requiredAt(AGENT_IDS,1,"second conversation agent")] }), () => 1);
+    const result = await runEnergyConversation(candidates, "low", async (turn) => ({ ...(turn.visibleMessageLimit===undefined?{}:{visibleMessageCount:turn.visibleMessageLimit}), conversationState: "open", materialDisagreement: true, mentionedAgents: [requiredAt(AGENT_IDS,1,"second conversation agent")] }), () => 1);
     expect(result.summary.policy).toMatchObject({ messageCeilingReached: true, turnCeilingReached: false, visibleMessages: 3, responseTurns: 1 });
     // The pre-existing single-responder branch precedes the ceiling branch.
     expect(result.summary.reason).toBe("open-without-second-responder");

@@ -156,7 +156,7 @@ describe("conversation run event adapter", () => {
     const texts = [
       'TURN_DISPOSITION: {"action":"yield","reason":"already_covered"}',
       "Sol, what do you think?\n<<<NEXT>>>\nSecond unit\n<<<NEXT>>>\nThird unit\n<<<NEXT>>>\nTruncated unit",
-      "Claude, a concise answer.", "Sol, noted.",
+      "Claude, can you check this?", "Sol, can you check this?",
     ];
     let generation = 0;
     const traceId = "a".repeat(32);

@@ -5,6 +5,7 @@ import { stripAgentSelfLabel, YIELD_REASONS } from "../shared/message-format.js"
 import { AGENT_IDS, AGENT_PROFILES, type AgentId } from "../shared/participants.js";
 import type { TurnInterpretationDiagnostics, VisibleMessageLimitSource } from "../shared/conversation-observability.js";
 import type { InvestigationRequest, ParsedAgentTurn } from "./conversation.js";
+import { followUpAddress, type FollowUpAddressContext } from "./follow-up-address.js";
 
 const MAX_STRUCTURED_MESSAGE_CHARACTERS = 12_000;
 const CONTINUATION_CUE = /\?|\b(?:actually|but|counterpoint|curious|disagree|however|not sure|on the other hand)\b/i;
@@ -138,6 +139,7 @@ export function interpretStructuredRoomTurn(
   visibleMessageLimit = 3,
   roomAgents: readonly AgentId[] = AGENT_IDS,
   limitSource: VisibleMessageLimitSource = visibleMessageLimit === 3 ? "default-burst-cap" : "caller-limit",
+  addressContext?: FollowUpAddressContext,
 ): ParsedAgentTurn {
   const effectiveLimit = Math.trunc(Math.max(0, Math.min(3, visibleMessageLimit))) || 0;
   const diagnostics = (overrides: Partial<TurnInterpretationDiagnostics> = {}): TurnInterpretationDiagnostics => ({
@@ -218,10 +220,8 @@ export function interpretStructuredRoomTurn(
   }
   const combinedText = visibleMessages.join("\n");
   const otherAgents = roomAgents.filter((candidate) => candidate !== agent);
-  const mentionedAgents = otherAgents.filter((candidate) => {
-    const profile = AGENT_PROFILES[candidate];
-    return profile ? new RegExp(`\\b${profile.conversationalName}\\b`, "i").test(combinedText) : false;
-  });
+  const followUp = followUpAddress(combinedText, agent, roomAgents, addressContext);
+  const mentionedAgents = followUp.directAgents;
   interpretation.continuationWorthy = mentionedAgents.length > 0 || CONTINUATION_CUE.test(combinedText);
   return {
     diagnostics: interpretation,
@@ -230,6 +230,8 @@ export function interpretStructuredRoomTurn(
     mentionedAgents,
     visibleMessageCount: visibleMessages.length,
     continuationWorthy: interpretation.continuationWorthy,
+    humanHandoff: followUp.humanHandoff,
+    materialDisagreement: followUp.materialDisagreement,
     conversationState: output.conversationState,
     ...(currentStyle && output.style ? { styleUpdate: sanitizeChatStyle(output.style, currentStyle) } : {}),
     ...(output.investigationRequest ? { investigationRequest: output.investigationRequest as InvestigationRequest } : {}),
