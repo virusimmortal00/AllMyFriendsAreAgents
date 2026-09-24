@@ -110,6 +110,7 @@ describe("intent classifier", () => {
   });
 
   it("falls back to computed cost when OpenRouter omits usage cost", async () => {
+    const outcomes: IntentClassificationOutcome[] = [];
     const classifier = new IntentClassifier({
       apiKey: () => "stored-openrouter-key",
       fetchImpl: (async () =>
@@ -117,8 +118,10 @@ describe("intent classifier", () => {
           classifiedResponse({ usage: { input_tokens: 1500, output_tokens: 60 } }),
         )) as unknown as typeof fetch,
     });
-    const snapshot = await classifier.classify({ transcript: "Sol, thoughts?", agents });
+    const snapshot = await classifier.classify({ transcript: "Sol, thoughts?", agents, onOutcome: (outcome) => { outcomes.push(outcome); } });
     expect(snapshot?.costUsd).toBe((1500 / 1_000_000) * JEV_INPUT_COST_PER_MILLION_TOKENS);
+    expect(outcomes[0]).toMatchObject({ outcome: "completed", costUsd: snapshot?.costUsd, reportedInputTokens: 1500, reportedOutputTokens: 60 });
+    expect(outcomes[0]).not.toHaveProperty("reportedCostUsd");
   });
 
   it("fails open on transport errors, HTTP failures, and malformed answers", async () => {
@@ -150,6 +153,7 @@ describe("intent classifier", () => {
       const outcomes: IntentClassificationOutcome[] = [];
       const classifier = new IntentClassifier({
         apiKey: () => "secret",
+        timeoutMs: 50_000,
         fetchImpl: fetchImpl as unknown as typeof fetch,
       });
       const pending = classifier.classify({

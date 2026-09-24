@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONVERSATION_EVENT_MAX_BYTES, CONVERSATION_EVIDENCE_ID_MAX_LENGTH, type ConversationJobSource } from "../shared/conversation-observability.js";
 import { AuthoritativeLogging, type AuthoritativeStream } from "./authoritative-logging.js";
-import { conversationSnapshotEvidence, createConversationJobObserver, enqueueObservedConversation } from "./conversation-observability.js";
+import { ConversationActivityTracker, ConversationTriggerTrace, conversationSnapshotEvidence, conversationTriggerStageRecord, createConversationJobObserver, enqueueObservedConversation, type ConversationJobLifecycle } from "./conversation-observability.js";
 import { LocalFileDiagnosticsQueryService } from "./diagnostics-query.js";
 import { CoalescingJobQueue } from "./job-queue.js";
 import { RoomActivity } from "./room-activity.js";
@@ -59,6 +59,103 @@ async function fixture(realFiles = false) {
 }
 
 describe("conversation job observability", () => {
+  it("logs only finite allowlisted trigger telemetry and excludes raw output", async () => {
+    const { logging, sinks } = await fixture();
+    const trace = new ConversationTriggerTrace("room-message", "message-a", () => 1_000);
+    trace.jobId = "job-a";
+    const record = conversationTriggerStageRecord(trace, "classifier", {
+      outcome: "failed", failureCategory: "schema", durationMs: 250,
+      modelOutput: "PRIVATE MODEL OUTPUT", error: "Bearer secret", transcript: "PRIVATE ROOM TEXT",
+      costUsd: Number.POSITIVE_INFINITY, reason: "PRIVATE ROOM TEXT",
+    });
+    expect(record).toEqual({ eventVersion: 1, source: "room-message", queuedTriggerMessageId: "message-a", triggerMessageId: "message-a", jobId: "job-a", stage: "classifier", elapsedMs: 0, outcome: "failed", failureCategory: "schema", durationMs: 250 });
+    expect(conversationTriggerStageRecord(trace, "terminal", { reason: "no-material-disagreement" })?.reason).toBe("no-material-disagreement");
+    expect(conversationTriggerStageRecord(trace, "PRIVATE ROOM TEXT", { outcome: "failed" })).toBeUndefined();
+    await logging.log("generations", "info", "conversation.trigger.stage", record, { visibility: "operator" });
+    await logging.flush();
+    expect(JSON.stringify(sinks.get("generations")?.records)).not.toMatch(/PRIVATE|Bearer|Infinity/);
+  });
+
+  it("rebases consumed trigger timing when a retained job sees a newer human message", () => {
+    let now = Date.parse("2026-08-31T12:00:00Z");
+    const trace = new ConversationTriggerTrace("room-message", "old-message", () => now);
+    now += 4_000;
+    trace.consume("new-message", new Date(now - 200).toISOString());
+    expect(trace.queuedTriggerMessageId).toBe("old-message");
+    expect(trace.triggerMessageId).toBe("new-message");
+    expect(trace.sinceQueueMs()).toBe(4_000);
+    expect(trace.sinceAcceptedMs()).toBe(200);
+  });
+
+  it("keeps room actions unattributed to an earlier human trigger", () => {
+    let now = 1_000;
+    const trace = new ConversationTriggerTrace("room-action", null, () => now);
+    now = 1_200;
+    expect(trace.triggerMessageId).toBeNull();
+    expect(trace.queuedTriggerMessageId).toBeNull();
+    expect(trace.sinceAcceptedMs()).toBe(200);
+    expect(conversationTriggerStageRecord(trace, "consumed", { queueDelayMs: 200 })).toMatchObject({
+      triggerMessageId: null,
+      queuedTriggerMessageId: null,
+      queueDelayMs: 200,
+    });
+  });
+
+  it("keeps deciding visible through overlapping preparation until the job settles", () => {
+    const phases: Array<string | undefined> = [];
+    let tracker!: ConversationActivityTracker;
+    tracker = new ConversationActivityTracker(() => phases.push(tracker.snapshot()?.phase));
+    const base = { decisionId: "decision", admissionId: "admission", key: "room-message", active: false, pendingCount: 1 };
+    tracker.observe({ stage: "decision", elapsedMs: 0, decision: { ...base, action: "queued", reason: "eligible", jobId: "job", retainedJobId: null } });
+    tracker.observe({ stage: "decision", elapsedMs: 10, decision: { ...base, action: "started", reason: "queue-ready", jobId: "job", retainedJobId: null } });
+    tracker.preparing("job");
+    expect(tracker.snapshot()).toEqual({ phase: "deciding" });
+    tracker.observe({ stage: "settled", job: { jobId: "job", admissionId: "admission" }, elapsedMs: 100 });
+    expect(tracker.snapshot()).toBeUndefined();
+    expect(phases).toEqual(["queued", "deciding", undefined]);
+  });
+
+  it("clears queued activity when a pending job is dropped before generation", () => {
+    const tracker = new ConversationActivityTracker(() => {});
+    const base = { decisionId: "decision", admissionId: "admission", key: "room-message", active: true, pendingCount: 1 };
+    tracker.observe({ stage: "decision", elapsedMs: 0, decision: { ...base, action: "queued", reason: "eligible", jobId: "job", retainedJobId: null } });
+    expect(tracker.snapshot()).toEqual({ phase: "queued" });
+    tracker.observe({ stage: "decision", elapsedMs: 20, decision: { ...base, action: "dropped", reason: "queue-closed", jobId: "job", retainedJobId: null } });
+    expect(tracker.snapshot()).toBeUndefined();
+  });
+
+  it("reports bounded queue lifecycle facts from the consumed snapshot and contains observer failures", async () => {
+    const { dependencies, queue, logging } = await fixture();
+    const lifecycle: ConversationJobLifecycle[] = [];
+    enqueueObservedConversation(
+      dependencies,
+      {
+        key: "conversation",
+        source: "room-message",
+        triggerMessageId: "message-a",
+        onLifecycle: (event) => {
+          lifecycle.push(event);
+          if (event.stage === "consumed") throw new Error("observer failure");
+        },
+      },
+      async () => {},
+    );
+    await idle(queue);
+    await logging.flush();
+    expect(lifecycle.map((event) => event.stage)).toEqual(["decision", "decision", "consumed", "settled"]);
+    expect(lifecycle[0]).toMatchObject({
+      stage: "decision",
+      decision: { action: "queued" },
+      elapsedMs: expect.any(Number),
+    });
+    expect(lifecycle[2]).toMatchObject({
+      stage: "consumed",
+      evidence: { latestHumanMessageId: "message-a" },
+      queueDelayMs: expect.any(Number),
+    });
+    expect(JSON.stringify(lifecycle)).not.toContain("Private fixture message");
+  });
+
   it("records accepted/coalesced requests and the exact newer snapshot consumed by retained work", async () => {
     const { sinks, logging, queue, activity, messages, dependencies } = await fixture();
     const gate = deferred();

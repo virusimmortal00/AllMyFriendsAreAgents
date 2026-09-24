@@ -15,7 +15,16 @@ const FAILURE_THRESHOLD = 3;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
 
 export type IntentClassificationOutcome =
-  | { outcome: "completed"; durationMs: number; inputTokens: number; outputTokens: number; costUsd: number }
+  | {
+      outcome: "completed";
+      durationMs: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      reportedInputTokens?: number;
+      reportedOutputTokens?: number;
+      reportedCostUsd?: number;
+    }
   | { outcome: "skipped"; durationMs: number; reason: "disabled" | "cooldown" | "empty_input" | "no_credential" }
   | {
       outcome: "failed";
@@ -53,7 +62,7 @@ export interface IntentClassificationInput {
   transcript: string;
   agents: readonly IntentClassifierAgent[];
   /** Per-consult outcome sink. A sink failure must not affect routing. */
-  onOutcome?: (outcome: IntentClassificationOutcome) => void | Promise<void>;
+  onOutcome?: (outcome: IntentClassificationOutcome) => unknown;
 }
 
 interface TypeSafeAnswer {
@@ -115,7 +124,8 @@ export class IntentClassifier {
     if (endpoint.protocol !== "https:") throw new Error("The intent classifier endpoint must use HTTPS.");
     this.endpoint = endpoint.toString();
     this.disabled = options.disabled === true;
-    this.timeoutMs = Math.max(250, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const configuredTimeout = options.timeoutMs;
+    this.timeoutMs = Math.min(DEFAULT_TIMEOUT_MS, Math.max(250, typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) ? configuredTimeout : DEFAULT_TIMEOUT_MS));
     this.fetchImpl = (options.fetchImpl ?? fetch) as unknown as FetchLike;
     this.now = options.now ?? Date.now;
     this.log = options.log;
@@ -238,6 +248,9 @@ export class IntentClassifier {
         inputTokens: snapshot.usage.inputTokens,
         outputTokens: snapshot.usage.outputTokens,
         costUsd: snapshot.costUsd,
+        ...(typeof parsed.usage?.input_tokens === "number" && Number.isFinite(parsed.usage.input_tokens) && parsed.usage.input_tokens >= 0 ? { reportedInputTokens: inputTokens } : {}),
+        ...(typeof parsed.usage?.output_tokens === "number" && Number.isFinite(parsed.usage.output_tokens) && parsed.usage.output_tokens >= 0 ? { reportedOutputTokens: snapshot.usage.outputTokens } : {}),
+        ...(reportedCost === undefined ? {} : { reportedCostUsd: reportedCost }),
       });
       return snapshot;
     } catch (error) {

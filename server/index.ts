@@ -1,4 +1,5 @@
 import express from "express";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { registerRepositoryReadiness } from "./repository-readiness.js";
 import { registerInstallerRedirects } from "./installer-redirects.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
@@ -8,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { CONVERSATION_ENERGY_POLICIES, isConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightEvidence } from "../shared/preflight.js";
-import type { ConversationJobSource } from "../shared/conversation-observability.js";
+import type { ConversationFact, ConversationJobSource } from "../shared/conversation-observability.js";
 import { AGENT_PROFILES, isActiveAgentId, isAgentId, isParticipantId } from "../shared/participants.js";
 import { ROOM_PROTOCOL_VERSION, type ImplementationCapability } from "../shared/protocol.js";
 import { AgentProcessSupervisor, isAgentGenerationCancelledError, runAgent, type AgentContextRuntime } from "./agent-runner.js";
@@ -27,7 +28,8 @@ import { observeConversationRun } from "./conversation-run-observer.js";
 import { HumanPresenceAnnouncements, HumanPresenceRegistry, humanPresenceAnnouncement, humanPresenceInstruction, type HumanPresenceEvent } from "./human-presence.js";
 import { addHumanMessageOnce, messageMutationAcknowledgement } from "./human-message.js";
 import { CoalescingJobQueue } from "./job-queue.js";
-import { enqueueObservedConversation } from "./conversation-observability.js";
+import { ConversationActivityTracker, ConversationTriggerTrace, conversationTriggerStageRecord, enqueueObservedConversation, type ConversationJobLifecycle } from "./conversation-observability.js";
+import { observeSafely } from "./nonblocking-observer.js";
 import { pacingStartTime, responseDelayMs } from "./response-pacing.js";
 import { RoomActivity } from "./room-activity.js";
 import { RoomEventStream } from "./room-event-stream.js";
@@ -203,6 +205,28 @@ const roomEvents = new Map<string, RoomEventStream>();
 const activeGenerations = new ActiveGenerationTracker(() => broadcast());
 const jobs = new CoalescingJobQueue();
 const roomActivity = new RoomActivity();
+const triggerTelemetry = new AsyncLocalStorage<ConversationTriggerTrace>();
+const conversationActivity = new ConversationActivityTracker(() => broadcast());
+function emitTriggerStage(telemetry: ConversationTriggerTrace, stage: string, fields: Record<string, unknown> = {}) {
+  const record = conversationTriggerStageRecord(telemetry, stage, fields);
+  if (record) observeSafely(() => loggingFoundation.log("generations", "info", "conversation.trigger.stage", record, { visibility: "operator" }), undefined);
+}
+function emitTriggerStageIfPresent(telemetry: ConversationTriggerTrace | undefined, stage: string, fields: Record<string, unknown> = {}) {
+  if (telemetry) emitTriggerStage(telemetry, stage, fields);
+}
+function observeTriggerLifecycle(telemetry: ConversationTriggerTrace, event: ConversationJobLifecycle) {
+  conversationActivity.observe(event);
+  if (event.stage === "decision") {
+    const decision = event.decision;
+    if (decision.action === "started") telemetry.jobId = decision.jobId;
+    emitTriggerStage(telemetry, "queue", { action: decision.action, queueElapsedMs: event.elapsedMs });
+  } else if (event.stage === "consumed") {
+    emitTriggerStage(telemetry, "consumed", { queueDelayMs: event.queueDelayMs, ...(telemetry.source === "room-action" ? {} : { consumedTriggerMessageId: event.evidence.latestHumanMessageId }) });
+  } else {
+    if (!telemetry.terminalRecorded) emitTriggerStage(telemetry, "terminal", { reason: "run-failed" });
+    emitTriggerStage(telemetry, "settled");
+  }
+}
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
@@ -213,7 +237,7 @@ const intentClassifier = new IntentClassifier({
   ...(intentClassifierModel === undefined ? {} : { model: intentClassifierModel }),
   ...(intentClassifierEndpoint === undefined ? {} : { endpoint: intentClassifierEndpoint }),
   disabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED === "true",
-  log: (level, event, fields) => { void structuredLogger.log(level, event, fields); },
+  log: (level, event, fields) => structuredLogger.log(level, event, fields),
 });
 if (await intentClassifier.available()) await structuredLogger.log("info", "intent.classification.configured", { model: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL || "~typesafe/jev-latest" });
 let preflightEvidence: PreflightEvidence = await preflightStore.evidence();
@@ -555,7 +579,7 @@ function reserveCanonicalGeneration(agent: import("../shared/participants.js").A
 }
 
 function publicRoomSnapshot(viewerHumanId?: string) {
-  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), availability: runtimeAvailability(currentEnabledAgents(), openCodeRuntime), openCodeRuntime, githubReadStatus: projectGitHubReadStatus(currentProjectId), activeGenerations: activeGenerations.snapshot(), preflightEvidence, server: serverIdentity };
+  return { ...publicRoomState(roomSnapshot(), implementationCapabilities, viewerHumanId, { agentHealth: agentHealth.snapshot(), providerHealth: providerHealth.snapshot() }), availability: runtimeAvailability(currentEnabledAgents(), openCodeRuntime), openCodeRuntime, githubReadStatus: projectGitHubReadStatus(currentProjectId), activeGenerations: activeGenerations.snapshot(), ...(conversationActivity.snapshot() ? { conversationActivity: conversationActivity.snapshot() } : {}), preflightEvidence, server: serverIdentity };
 }
 
 async function refreshPreflightEvidence() {
@@ -563,21 +587,23 @@ async function refreshPreflightEvidence() {
 }
 
 async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
+  const telemetry = triggerTelemetry.getStore();
+  emitTriggerStageIfPresent(telemetry, "preflight-started");
   const activityRevision = roomActivity.current();
   const turns = roomMessageTurns(state);
   const mode = normalizeRoomConfiguration(state.roomConfiguration).preflightMode;
   // This is intentionally a literal bypass. Do not calculate, persist, annotate,
   // clone, reorder, or filter turns in off mode.
-  if (mode === "off") return turns;
+  if (mode === "off") { emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "off", candidateCount: turns.length }); return turns; }
   const trigger = state.messages.findLast(({ speaker }) => speaker === "you");
-  if (!trigger) return turns;
+  if (!trigger) { emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "no-trigger", candidateCount: turns.length }); return turns; }
   const continuationTargets = trigger.continuationRequest
     ? (await store.listContinuations()).filter(({ roomOrigin }) => roomOrigin?.messageId === trigger.id).map(({ owner }) => owner)
     : [];
-  if (!roomActivity.isCurrent(activityRevision)) return [];
+  if (!roomActivity.isCurrent(activityRevision)) { emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "cancelled" }); return []; }
   const rankedAgents = turns.map(({ agent }) => agent);
   const classification = await classifyTrigger(state, trigger.id, rankedAgents);
-  if (!roomActivity.isCurrent(activityRevision)) return [];
+  if (!roomActivity.isCurrent(activityRevision)) { emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "cancelled" }); return []; }
   const gateInput = {
     trigger,
     room: state,
@@ -603,23 +629,30 @@ async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
     ...(classification && baseline ? { classification: classificationAudit(classification, baseline.decisions) } : {}),
   });
   await refreshPreflightEvidence();
-  if (!roomActivity.isCurrent(activityRevision)) return [];
-  return routePreflightTurns(turns, mode, decision, record.decisionId);
+  if (!roomActivity.isCurrent(activityRevision)) { emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "cancelled" }); return []; }
+  const routed = routePreflightTurns(turns, mode, decision, record.decisionId);
+  emitTriggerStageIfPresent(telemetry, "preflight-completed", { outcome: "routed", candidateCount: turns.length, selectedCount: routed.length, mode, classifier: classification ? "completed" : "fallback" });
+  return routed;
 }
 
 /** Consults the advisory address classifier; any failure or absence yields undefined. */
 async function classifyTrigger(state: ReturnType<typeof roomSnapshot>, triggerMessageId: string, rankedAgents: readonly AgentId[]) {
   // The room toggle is the participant-visible switch; the server-owned
   // environment kill switch is consulted inside the classifier itself.
-  if (!normalizeRoomConfiguration(state.roomConfiguration).intentClassifierEnabled || !rankedAgents.length) return undefined;
-  if (!(await intentClassifier.available())) return undefined;
+  const telemetry = triggerTelemetry.getStore();
+  if (!normalizeRoomConfiguration(state.roomConfiguration).intentClassifierEnabled || !rankedAgents.length) {
+    emitTriggerStageIfPresent(telemetry, "classifier", { outcome: "skipped", reason: !rankedAgents.length ? "no-candidates" : "room-disabled", durationMs: 0 });
+    return undefined;
+  }
   const roster = normalizeRoomAgentRoster(state.roster);
   const agents = rankedAgents.flatMap((agentId) => {
     const entry = roster.entries.find((candidate) => candidate.agentId === agentId);
     return entry ? [{ agentId, name: entry.conversationalName || entry.agentId }] : [];
   });
-  if (!agents.length) return undefined;
-  return intentClassifier.classify({ transcript: classificationTranscriptThrough(state, triggerMessageId), agents });
+  if (!agents.length) { emitTriggerStageIfPresent(telemetry, "classifier", { outcome: "skipped", reason: "no-candidates", durationMs: 0 }); return undefined; }
+  return intentClassifier.classify({ transcript: classificationTranscriptThrough(state, triggerMessageId), agents, onOutcome: (outcome) => {
+    emitTriggerStageIfPresent(telemetry, "classifier", outcome);
+  } });
 }
 
 async function refreshImplementationCapabilities() {
@@ -825,13 +858,27 @@ function developerRoomDescriptor() {
 }
 
 function enqueueConversation(key: string, source: ConversationJobSource, triggerMessageId: string | null, run: (state: ReturnType<typeof roomSnapshot>) => Promise<void>) {
-  return enqueueObservedConversation({ queue: jobs, logging: loggingFoundation, snapshot: roomSnapshot, activity: roomActivity, runJob }, { key, source, triggerMessageId }, run);
+  const telemetry = new ConversationTriggerTrace(source, triggerMessageId);
+  if (triggerMessageId) {
+    const accepted = roomSnapshot().messages.find((message) => message.id === triggerMessageId);
+    telemetry.consume(triggerMessageId, accepted?.timestamp);
+  }
+  return enqueueObservedConversation({ queue: jobs, logging: loggingFoundation, snapshot: roomSnapshot, activity: roomActivity, runJob }, {
+    key, source, triggerMessageId,
+    onLifecycle: (event) => observeTriggerLifecycle(telemetry, event),
+  }, (state) => {
+    if (source !== "room-action") {
+      const consumed = state.messages.findLast(({ speaker }) => speaker === "you");
+      telemetry.consume(consumed?.id ?? null, consumed?.timestamp);
+    }
+    return triggerTelemetry.run(telemetry, () => run(state));
+  });
 }
 
 function enqueueDeveloperConversation(triggerMessageId: string) {
   broadcast();
   enqueueConversation("developer-message-conversation", "developer-message", triggerMessageId, async (conversationState) => {
-    await performConversation(roomMessageTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
+    await performConversation(await preflightTurns(conversationState), true, latestHumanBroadcastPolicy(conversationState));
   });
 }
 
@@ -879,6 +926,10 @@ function sendBridgeResult(response: express.Response, result: { readonly kind: s
 }
 
 async function performTurnUnchecked({ agent, instruction, includeDiff = false, visibleMessageLimit = 3, visibleMessageLimitSource, preflight, deliveryId, evidence }: ConversationTurn): Promise<TurnResult> {
+  const telemetry = triggerTelemetry.getStore();
+  const preparationStartedAt = Date.now();
+  if (telemetry) conversationActivity.preparing(telemetry.jobId);
+  emitTriggerStageIfPresent(telemetry, "turn-preparation", { agentId: agent });
   const activeAgent = isActiveAgentId(agent) ? agent : undefined;
   if (!protectedReservations.allows(agent)) return { failed: true, outcomeReason: "participant-protected" };
   const initialRoster = normalizeRoomAgentRoster(store.snapshot().roster);
@@ -929,7 +980,15 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         ...(activeAgent ? { refreshScopedTools: (attempt: RoomToolAttempt) => scopedAgentTools(activeAgent, before, attempt) } : {}),
       },
       {
-        ...(sharedReservation ? { onGenerationStart: async (generationId: string) => sharedReservation.activate(generationId) } : {}),
+        ...(sharedReservation ? { onGenerationStart: async (generationId: string) => {
+          const activated = await sharedReservation.activate(generationId);
+          if (activated) emitTriggerStageIfPresent(telemetry, "generation-active", { agentId: agent, generationId, preparationDurationMs: Math.max(0, Date.now() - preparationStartedAt) });
+          if (activated && telemetry && !telemetry.firstGenerationActive) {
+            telemetry.firstGenerationActive = true;
+            emitTriggerStage(telemetry, "first-generation-active", { queueToGenerationActiveMs: telemetry.sinceQueueMs() });
+          }
+          return activated;
+        } } : {}),
         ...(evidence ? { evidence } : {}),
       },
     );
@@ -962,6 +1021,13 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     sharedReservation?.release();
     generationCancellation.dispose();
   }
+  emitTriggerStageIfPresent(telemetry, "generation-completed", {
+    agentId: agent,
+    generationId: result.generationId,
+    attemptOrdinal: result.attemptOrdinal,
+    durationMs: result.durationMs,
+    ...(result.costUsd === undefined ? {} : { providerReportedCostUsd: result.costUsd }),
+  });
   const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {
     await store.clearSession(agent);
@@ -975,9 +1041,14 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
   if (providerRecovered || participantRecovered) broadcast();
   const permission = result.permission;
   const currentStyle = participantStyle(before, agent);
+  const addressContext = {
+    agents: normalizeRoomAgentRoster(before.roster).entries
+      .map((entry) => ({ agentId: entry.agentId, name: entry.conversationalName || entry.agentId })),
+    humanNames: before.humans?.map(({ name }) => name) ?? [],
+  };
   const parsed = result.structuredTurn
-    ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource)
-    : parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource);
+    ? interpretStructuredRoomTurn(agent, result.structuredTurn, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource, addressContext)
+    : parseAgentTurn(agent, result.text, currentStyle, visibleMessageLimit, currentEnabledAgents(), visibleMessageLimitSource, addressContext);
   if (evidence) evidence.interpretation = parsed.diagnostics;
   const diagnosticText = result.structuredTurn ? JSON.stringify(result.structuredTurn) : result.text;
   const visibleCharacters = parsed.visibleMessages.reduce((total, message) => total + message.length, 0);
@@ -1059,6 +1130,10 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
         await delivery.write(sequence, () => deliveryId
           ? store.addCommandDeliveryMessageOnce(deliveryId,sequence,agent,visibleMessage,parsed.styleUpdate||currentStyle,{burstId:deliveryId,sequence},generationSpend(result.generationId, result.costUsd))
           : store.addMessage(agent,visibleMessage,includeDiff ? "review" : "chat",parsed.styleUpdate || currentStyle,{burstId,sequence},undefined,generationSpend(result.generationId, result.costUsd)));
+        if (telemetry && !telemetry.firstVisible) {
+          telemetry.firstVisible = true;
+          emitTriggerStage(telemetry, "first-visible", { timeToFirstVisibleMs: telemetry.sinceAcceptedMs() });
+        }
         broadcast();
       },
     });
@@ -1121,6 +1196,8 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
       mentionedAgents: parsed.mentionedAgents,
       visibleMessageCount: parsed.visibleMessageCount,
       continuationWorthy: parsed.continuationWorthy,
+      ...(parsed.humanHandoff === undefined ? {} : { humanHandoff: parsed.humanHandoff }),
+      ...(parsed.materialDisagreement === undefined ? {} : { materialDisagreement: parsed.materialDisagreement }),
       ...(parsed.conversationState ? { conversationState: parsed.conversationState } : {}),
     };
   });
@@ -1139,6 +1216,19 @@ async function performTurn(turn: ConversationTurn) {
 
 async function performConversation(turns: ConversationTurn[], staged = false, broadcastPolicy: Partial<BroadcastPolicy> = {}, concurrencyLimit = agentConcurrency) {
   return withConversationRun(() => observeConversationRun(loggingFoundation, staged ? "energy" : "legacy", async (observer) => {
+    const telemetry = triggerTelemetry.getStore();
+    const observed = (fact: ConversationFact) => {
+      observer(fact);
+      if (fact.kind === "summary" && telemetry) {
+        telemetry.terminalRecorded = true;
+        emitTriggerStage(telemetry, "terminal", {
+          reason: fact.summary.reason,
+          attemptedTurns: fact.summary.counts.attemptedTurns,
+          yieldedTurns: fact.summary.counts.yieldedTurns,
+          respondedTurns: fact.summary.counts.respondedTurns,
+        });
+      }
+    };
     const snapshot = store.snapshot();
     const energy = snapshot.settings.conversationEnergy;
     const soleTurn = turns.length === 1 ? turns[0] : undefined;
@@ -1149,12 +1239,12 @@ async function performConversation(turns: ConversationTurn[], staged = false, br
       await runEnergyConversation(turns, energy, performTurn, conversationRandom(snapshot), {
         ...broadcastPolicy,
         concurrencyLimit: Math.max(1, concurrencyLimit),
-        observer,
+        observer: observed,
       });
       return;
     }
     const followUpAllowance = Math.max(0, CONVERSATION_ENERGY_POLICIES[energy].hardTurnCeiling - turns.length);
-    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit), undefined, observer);
+    await runAgentConversation(turns, followUpAllowance, performTurn, Math.max(1,concurrencyLimit), undefined, observed);
   }));
 }
 
