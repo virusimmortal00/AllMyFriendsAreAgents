@@ -385,6 +385,8 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .room-properties-body .room-settings-form, .room-configuration-panel { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; }
 .room-properties-page-content { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .room-configuration-panel > .room-properties-page-content { display: grid; align-content: start; gap: 10px; padding: 12px; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
+.administration-room-behavior .room-configuration-panel { overflow: visible; }
+.administration-room-behavior .room-configuration-panel > .room-properties-page-content { overflow: visible; }
 .room-properties-body .room-settings-actions { margin: 0; padding: 8px; border-top: 1px solid white; }
 .room-configuration-model { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 8px; }
 .room-configuration-model > strong { min-width: 0; overflow-wrap: anywhere; }
@@ -424,7 +426,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overf
 .github-empty-repositories .classic-button { flex: 0 0 auto; color: inherit; text-decoration: none; }
 .room-properties-body .room-settings-form { height: 100%; padding: 0; }
 .room-properties-body .room-settings-form > .room-properties-page-content { padding: 12px; }
-.room-properties-body .room-properties-general-content { display: grid; align-content: start; gap: 10px; }
+.room-properties-body .room-properties-general-content { display: grid; align-content: start; gap: 10px; font: 12px/1.35 "MS Sans Serif", Arial, sans-serif; }
 .room-properties-header { margin: 0; }
 .room-properties-header h3 { margin: 0; font: 700 13px/1.3 "MS Sans Serif", Arial, sans-serif; }
 .room-properties-header p { margin: 3px 0 0; color: #444; }

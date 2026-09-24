@@ -293,6 +293,9 @@ for (const scenario of APP_SCENARIOS) {
       const rules = surface.locator(".room-behavior-rules");
       const disclosure = rules.locator("summary");
       await disclosure.focus();
+      await expect(rules).not.toHaveAttribute("open", "");
+      await disclosure.press("Enter");
+      await expect(rules).toHaveAttribute("open", "");
       await disclosure.press("Enter");
       await expect(rules).not.toHaveAttribute("open", "");
       await disclosure.press("Enter");
