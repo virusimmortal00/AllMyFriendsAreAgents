@@ -271,10 +271,12 @@ for (const scenario of APP_SCENARIOS) {
       }
       return route.continue();
     });
-    if (["room-chat", "compact-room-chat", "agent-status"].includes(scenario.id)) await page.clock.setFixedTime(new Date(fixtureTime));
+    if (["room-chat", "compact-room-chat", "agent-status"].includes(scenario.id) || scenario.id.includes("room-chat-")) await page.clock.setFixedTime(new Date(fixtureTime));
     await page.goto(`/tests/visual/index.html?scenario=${scenario.id}`);
     if (scenario.view.category !== "application") await expect(page.locator(".app-window")).toBeVisible();
     await openScenario(page, scenario.id);
+    if (scenario.id.endsWith("-queued")) await expect(page.getByText("Waiting to respond...", { exact: true })).toBeVisible();
+    if (scenario.id.endsWith("-deciding")) await expect(page.getByText("Preparing responses...", { exact: true })).toBeVisible();
     if (scenario.id === "room-properties-general") {
       const dialog = page.getByRole("dialog", { name: "Room Properties" });
       await expect(dialog.locator(".room-properties-general-content")).toHaveCSS("font-size", "12px");

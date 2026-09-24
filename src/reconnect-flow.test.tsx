@@ -385,6 +385,43 @@ describe("rendered reconnect recovery", () => {
     expect(screen.getByText("Room is idle")).toBeTruthy();
   });
 
+  it("shows room-level preparation before generation and clears it on terminal or reconnect snapshots", async () => {
+    await renderConnected();
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
+      status: "working",
+      activeGenerations: {},
+      conversationActivity: { phase: "queued" },
+    })));
+    expect(screen.getByText("Waiting to respond...")).toBeTruthy();
+    expect(screen.queryByText(/typing\.\.\./)).toBeNull();
+
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
+      status: "working",
+      activeGenerations: {},
+      conversationActivity: { phase: "deciding" },
+    })));
+    expect(screen.getByText("Preparing responses...")).toBeTruthy();
+
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
+      status: "working",
+      activeGenerations: { started: "codex-sol" },
+      conversationActivity: { phase: "deciding" },
+    })));
+    expect(screen.getByText("OpenCode [openai/gpt-5.6-sol] is typing...")).toBeTruthy();
+
+    act(() => eventSourceAt(0).emit(room("server-before", [], { status: "idle", activeGenerations: {} })));
+    expect(screen.getByText("Room is idle")).toBeTruthy();
+
+    act(() => eventSourceAt(0).emit(room("server-before", [], {
+      status: "working", activeGenerations: {}, conversationActivity: { phase: "queued" },
+    })));
+    act(() => eventSourceAt(0).fail());
+    await waitFor(() => expect(ControlledEventSource.instances).toHaveLength(2), { timeout: 2_000 });
+    act(() => eventSourceAt(1).emit(room("server-after", [], { status: "idle", activeGenerations: {} })));
+    await waitFor(() => expect(screen.getByText("Room is idle")).toBeTruthy());
+    expect(screen.queryByText("Waiting to respond...")).toBeNull();
+  });
+
   it("replaces stale typing state with the authoritative reconnect snapshot", async () => {
     await renderConnected();
     act(() => eventSourceAt(0).emit(room("server-before", [], {

@@ -1871,3 +1871,21 @@ digest `eee5a31e12dbc6fef1c31a72a0b2b3c5929379fd7da4fd1f1344c6c754ef457c`:
 
 Physical-device behavior, native browser chrome, software keyboards, and text
 enlargement remain outside this browser-matrix evidence.
+
+## Room preparation status — 2026-09-23
+
+`CHAT-01` and `CHAT-02` now show room-level queued and deciding states in the
+existing status bar before an agent generation starts. The queued label says
+“Waiting to respond…” and the deciding label says “Preparing responses…”.
+An active generation still uses the agent typing label. A terminal or fresh
+reconnect snapshot clears preparation state. No participant is shown as typing
+before generation is active.
+
+The fictional browser capture covers idle baseline plus queued and deciding
+states in Chromium and WebKit at Phone, Short phone, Minimum phone, Tablet,
+Short laptop, and Desktop where each registered chat view applies. The source
+uses the existing status bar and changes no chat layout hierarchy. Capture and
+independent-review identifiers will be recorded after the current full-matrix
+run and account-backed review. Until then, visual verdicts for this change
+remain **Pending**. Physical-device behavior, native browser chrome, software
+keyboards, text enlargement, and deployed-room timing remain unverified.

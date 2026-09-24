@@ -20,6 +20,10 @@ export const fixtureRoom: RoomState = {
   status: "idle", humans: [fixtureHuman], roster: normalizeRoomAgentRoster(visualRoster),
   server: { instanceId: "visual-server", protocolVersion: ROOM_PROTOCOL_VERSION },
 };
+export function fixtureRoomForScenario(scenario: string): RoomState {
+  const phase = scenario.endsWith("-queued") ? "queued" : scenario.endsWith("-deciding") ? "deciding" : undefined;
+  return phase ? { ...fixtureRoom, status: "working", conversationActivity: { phase } } : fixtureRoom;
+}
 export const fixtureModels: ModelDiscoveryResult = {
   status: "available", discoveredAt: fixtureTime,
   models: ["Atlas", "Beacon", "Compass", "Delta"].map((name, index) => ({
@@ -56,7 +60,7 @@ export function appFixtureResponse(path: string, method: string, scenario: strin
   if (method === "GET") {
     if (route === "/api/protected-work") return ok(["room-chat", "compact-room-chat", "agent-status", "background-investigations"].includes(scenario) ? [{ workId: "protected-fixture", roomId: "00000000-0000-4000-8000-000000000001", owner: primaryAgent.agentId, objective: "Review navigation recovery", phase: "busy", createdAt: fixtureTime, startedAt: new Date(Date.parse(fixtureTime) - 65_000).toISOString(), stoppedAt: null, updatedAt: fixtureTime, blocker: null, disposition: null }] : []);
     if (route === "/api/ready") return ok(fixtureRoom.server);
-    if (route === "/api/state") return ok(fixtureRoom);
+    if (route === "/api/state") return ok(fixtureRoomForScenario(scenario));
     if (route === "/api/polls") return ok({ items: scenario === "poll-cards" ? [{ pollId: "poll-navigation", revision: 1, question: "Which view should we review next?", options: ["Room properties", "Task details"], tallies: [2, 1], state: "OPEN", totalVotes: 3, closedAt: null, ownVote: null, canClose: true }] : [] });
     if (route === "/api/roster") return scenario === "manage-agents-sign-in"
       ? unauthorized

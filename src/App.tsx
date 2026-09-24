@@ -682,6 +682,10 @@ export default function App() {
       : "Agents are typing..."
     : room.status === "error"
       ? "Room needs attention"
+      : room.conversationActivity?.phase === "queued"
+        ? "Waiting to respond..."
+        : room.conversationActivity?.phase === "deciding"
+          ? "Preparing responses..."
       : "Room is idle";
   function openAdministration(destination: AdministrationDestination | null = null, page: AdministrationPage = "Login", trigger: HTMLElement | null = null) {
     administrationTrigger.current = trigger;
