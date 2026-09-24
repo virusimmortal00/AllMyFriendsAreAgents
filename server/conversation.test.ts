@@ -4,6 +4,7 @@ import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
 import { emptyRoomAgentRoster } from "../shared/roster.js";
+import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { requiredAt, requiredValue } from "./test-invariants.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
@@ -418,6 +419,101 @@ describe("room message policy", () => {
 
 describe("conversation energy", () => {
   const candidates = candidatesForAllAgents();
+
+  it.each([true, false])("preserves plain-name multi-address ownership through gate and scheduler with classification %s", async (withClassification) => {
+    const trigger: RoomMessage = { id: "multi-address", speaker: "you", text: "Claude and Grok, can you compare your answers?", timestamp: "2026-09-23T12:00:00Z", kind: "chat" };
+    const room = roomState([trigger]);
+    const input = {
+      trigger, room, rankedAgents: AGENT_IDS, health: {}, routing: {}, energy: "low" as const, wholeRoomInvitation: false,
+    };
+    const decision = decidePreflight(withClassification
+      ? { ...input, classification: { agents: { "claude-sonnet": 0.01, "cursor-grok": 0.01 }, wholeRoom: 0 } }
+      : input);
+    const routed = routePreflightTurns(candidates, "enforce", decision, "decision-multi-address");
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(routed, "low", performTurn, () => 1);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["claude-sonnet", "cursor-grok"]);
+    expect(performTurn.mock.calls.every(([turn]) => turn.preflight?.required === true)).toBe(true);
+  });
+
+  it.each(["low", "balanced", "lively", "party"] as const)("considers every required target at %s energy despite missed optional draws", async (energy) => {
+    const targets = AGENT_IDS.slice(-3);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    const result = await runEnergyConversation(turns, energy, performTurn, () => 1, { concurrencyLimit: 2, stopOnSettledResponse: true });
+
+    expect(performTurn.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+    expect(result.summary.counts.attemptedTurns).toBeGreaterThanOrEqual(targets.length);
+    expect(result.summary.policy.hardAttemptCeiling).toBeGreaterThanOrEqual(targets.length);
+  });
+
+  it("reserves a visible-message opening for required targets even when the first agent fills its burst", async () => {
+    const targets = AGENT_IDS.slice(0, 4);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(turns, "low", performTurn, () => 1);
+
+    expect(performTurn.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+    expect(performTurn.mock.calls.slice(0, targets.length).every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
+    expect(result.summary.policy.hardMessageCeiling).toBeGreaterThanOrEqual(targets.length);
+  });
+
+  it("caps attempted turns separately from visible messages and responding turns", async () => {
+    const performTurn = vi.fn(async (turn: ConversationTurn) => performTurn.mock.calls.length <= AGENT_IDS.length + 1
+      ? { visibleMessageCount: 1, mentionedAgents: AGENT_IDS.filter((agent) => agent !== turn.agent) }
+      : { visibleMessageCount: 0 });
+
+    const result = await runEnergyConversation(candidates, "party", performTurn, () => 0, { inviteAll: true });
+
+    expect(result.summary.reason).toBe("attempt-ceiling");
+    expect(result.summary.policy.attemptCeilingReached).toBe(true);
+    expect(result.summary.counts.attemptedTurns).toBe(result.summary.policy.hardAttemptCeiling);
+    expect(result.summary.policy.responseTurns).toBeLessThan(result.summary.policy.hardTurnCeiling!);
+    expect(result.summary.policy.visibleMessages).toBeLessThan(result.summary.policy.hardMessageCeiling!);
+  });
+
+  it("continues required openings after a yield and respects cancellation", async () => {
+    const targets = AGENT_IDS.slice(0, 3);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const yielded = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+    await runEnergyConversation(turns, "low", yielded, () => 1, { concurrencyLimit: 2 });
+    expect(yielded.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+
+    const cancelled = vi.fn().mockResolvedValue({ cancelled: true });
+    const result = await runEnergyConversation(turns, "low", cancelled, () => 1);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(result.summary.reason).toBe("cancelled");
+  });
+
+  it.each([
+    ["low", 0],
+    ["balanced", 1],
+    ["lively", 3],
+  ] as const)("admits at most the configured optional seats at %s energy after required yields", async (energy, optionalSeats) => {
+    const targets = AGENT_IDS.slice(0, 2);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(turns, energy, performTurn, () => 0, { concurrencyLimit: 3 });
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS.slice(0, targets.length + optionalSeats));
+  });
 
   function deferred<T>() {
     let resolve!: (value: T) => void;

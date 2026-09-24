@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, DEFAULT_CONVERSATION_ENERGY, isConversationEnergy, migrateMaxRounds } from "./conversation-energy.js";
+import { CONVERSATION_ENERGY_LEVELS, CONVERSATION_ENERGY_POLICIES, CONVERSATION_OPTIONAL_SEATS, DEFAULT_CONVERSATION_ENERGY, isConversationEnergy, migrateMaxRounds } from "./conversation-energy.js";
 
 describe("conversation energy", () => {
   it("defines increasingly permissive policies with absolute ceilings", () => {
@@ -8,6 +8,7 @@ describe("conversation energy", () => {
     expect(CONVERSATION_ENERGY_LEVELS.map((level) => CONVERSATION_ENERGY_POLICIES[level].hardMessageCeiling)).toEqual([3, 6, 10, 16]);
     expect(CONVERSATION_ENERGY_LEVELS.every((level) => CONVERSATION_ENERGY_POLICIES[level].hardTurnCeiling > 0)).toBe(true);
     expect(CONVERSATION_ENERGY_POLICIES.party.participantLimit).toBe("all");
+    expect(CONVERSATION_OPTIONAL_SEATS).toEqual({ low: 0, balanced: 1, lively: 3, party: "all" });
   });
 
   it("validates levels and migrates the legacy numeric setting", () => {

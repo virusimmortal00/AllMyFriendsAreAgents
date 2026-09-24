@@ -6,7 +6,7 @@ import { ConversationDecisions } from "./conversation-decisions.js";
 import type { ConversationObserver, ConversationSelectionIdentity, ConversationTurnReason } from "../shared/conversation-observability.js";
 import { observeSafely } from "./nonblocking-observer.js";
 import { extractStyleDirective, type ChatStyle } from "../shared/chat-style.js";
-import { CONVERSATION_ENERGY_POLICIES, type ConversationEnergy } from "../shared/conversation-energy.js";
+import { CONVERSATION_ENERGY_POLICIES, CONVERSATION_OPTIONAL_SEATS, type ConversationEnergy } from "../shared/conversation-energy.js";
 import { isNoResponseNeeded, parseTurnDisposition, stripAgentSelfLabel, visibleAgentChatTextWithDiagnostics, type YieldReason } from "../shared/message-format.js";
 import { AGENT_IDS, AGENT_PROFILES, agentScreenName, isActiveAgentId } from "../shared/participants.js";
 import { enabledRoomAgentIds, normalizeRoomAgentRoster } from "../shared/roster.js";
@@ -20,6 +20,7 @@ export interface ConversationTurn {
   preflight?: {
     decisionId: string;
     shadowSuppressed: boolean;
+    required?: boolean;
   };
   deliveryId?: string;
   observation?: ConversationSelectionIdentity;
@@ -326,6 +327,7 @@ interface EnergyOutcome {
 }
 
 const MAX_OBJECTION_TURNS = 4;
+class AttemptCeilingReached extends Error {}
 
 function synthesisInstruction() {
   return "Act as the discussion synthesizer. Summarize the positions that are actually present, identify any material disagreement, and propose the smallest concrete resolution. Do not invent consensus. If this is casual conversation or there is nothing meaningful to resolve, yield with the appropriate TURN_DISPOSITION reason. End a visible response with CONVERSATION_STATE: SETTLED when the room has a usable conclusion, OPEN when a specific unresolved point still merits agent discussion, or BLOCKED when human input is required.";
@@ -347,15 +349,28 @@ export async function runEnergyConversation(
   options: { inviteAll?: boolean; stopOnSettledResponse?: boolean; conversationalFloor?: boolean; concurrencyLimit?: number; onSummary?: (summary: ConversationRunSummary) => unknown; observer?: ConversationObserver } = {},
 ): Promise<ConversationRunResult> {
   const policy = CONVERSATION_ENERGY_POLICIES[energy];
-  const participantLimit = policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
+  const requiredCandidates = candidates.filter((turn) => turn.preflight?.required === true);
+  const hasRequiredTargets = requiredCandidates.length > 0;
+  const optionalSeats = CONVERSATION_OPTIONAL_SEATS[energy];
+  const optionalLimit = optionalSeats === "all" ? candidates.length - requiredCandidates.length : optionalSeats;
+  const selectedCandidates = hasRequiredTargets && !options.inviteAll
+    ? [...requiredCandidates, ...candidates.filter((candidate) => candidate.preflight?.required !== true).slice(0, optionalLimit)]
+    : candidates;
+  const participantLimit = hasRequiredTargets
+    ? selectedCandidates.length
+    : policy.participantLimit === "all" ? candidates.length : policy.participantLimit;
   const convergenceReserve = 2 + Math.min(MAX_OBJECTION_TURNS, Math.max(0, participantLimit - 1));
-  const scalesToWholeRoom = options.inviteAll || policy.participantLimit === "all";
+  const scalesToWholeRoom = options.inviteAll || policy.participantLimit === "all" || hasRequiredTargets;
   const hardMessageCeiling = scalesToWholeRoom
-    ? Math.max(policy.hardMessageCeiling, candidates.length + convergenceReserve)
+    ? Math.max(policy.hardMessageCeiling, (hasRequiredTargets ? requiredCandidates.length : candidates.length) + convergenceReserve)
     : policy.hardMessageCeiling;
   const hardTurnCeiling = scalesToWholeRoom
-    ? Math.max(policy.hardTurnCeiling, candidates.length + convergenceReserve)
+    ? Math.max(policy.hardTurnCeiling, (hasRequiredTargets ? requiredCandidates.length : candidates.length) + convergenceReserve)
     : policy.hardTurnCeiling;
+  // This bounds turn admissions, including yields and failed preparation. runAgent
+  // can retry a stale session once, so its explicit invocations are at most twice
+  // this limit; internal OpenCode steps are measured separately.
+  const hardAttemptCeiling = Math.max(hardTurnCeiling * 2, candidates.length + convergenceReserve);
   const remaining: ConversationTurn[] = [];
   const invited = new Set<AgentId>();
   const activeTurns = new Set<AgentId>();
@@ -364,6 +379,7 @@ export async function runEnergyConversation(
   const usedContinuationSources = new Set<number>();
   let lastOutcome: EnergyOutcome | undefined;
   let responseTurns = 0;
+  let attemptedGenerations = 0;
   let visibleMessagesDelivered = 0;
   let energySpent = 0;
   let secondaryAttempts = 0;
@@ -388,8 +404,9 @@ export async function runEnergyConversation(
     eventVersion: 1, engine: "energy", reason, phase, engineSettled,
     counts: { ...facts.counts },
     policy: {
-      responseTurns, visibleMessages: visibleMessagesDelivered, energySpent, hardTurnCeiling, hardMessageCeiling,
+      responseTurns, visibleMessages: visibleMessagesDelivered, energySpent, hardTurnCeiling, hardMessageCeiling, hardAttemptCeiling,
       turnCeilingReached: responseTurns >= hardTurnCeiling, messageCeilingReached: visibleMessagesDelivered >= hardMessageCeiling,
+      attemptCeilingReached: attemptedGenerations >= hardAttemptCeiling,
       followUps: null, maxFollowUps: null, followUpLimitReached: false,
     },
     pending: {
@@ -403,6 +420,8 @@ export async function runEnergyConversation(
   };
 
   const record = async (turn: ConversationTurn, messageLimit = 3): Promise<EnergyOutcome> => {
+    if (attemptedGenerations >= hardAttemptCeiling) throw new AttemptCeilingReached();
+    attemptedGenerations += 1;
     if (!turn.observation) turn = decisions.queue(turn, phase === "opening" ? "initial-candidate" : phase === "follow-up" ? "fresh-candidate" : phase, lastOutcome?.turn);
     invited.add(turn.agent);
     activeTurns.add(turn.agent);
@@ -463,7 +482,8 @@ export async function runEnergyConversation(
     const workers = Array.from(
       { length: Math.min(concurrencyLimit, turns.length) },
       async () => {
-        while (nextTurn < turns.length && !cancelled && !broadcastSettled && !failed) {
+        while (nextTurn < turns.length && !cancelled && !failed
+          && (!broadcastSettled || hasRequiredTargets && nextTurn < requiredCandidates.length)) {
           const turn = turns[nextTurn];
           if (!turn) throw new Error("Concurrent conversation queue invariant is invalid.");
           nextTurn += 1;
@@ -484,13 +504,16 @@ export async function runEnergyConversation(
   try {
     decisions.emit({ kind: "configuration", configuration: {
       engine: "energy", energy, policyRevision: 1, candidateIds: candidates.map(({ agent }) => agent), candidateCount: candidates.length,
-      concurrencyLimit, participantLimit, hardMessageCeiling, hardTurnCeiling, softMessageBudget: policy.softMessageBudget,
+      concurrencyLimit, participantLimit, hardMessageCeiling, hardTurnCeiling, hardAttemptCeiling, softMessageBudget: policy.softMessageBudget,
       secondaryChance: policy.secondaryChance, maxFollowUps: null, inviteAll: Boolean(options.inviteAll), stopOnSettledResponse: Boolean(options.stopOnSettledResponse), conversationalFloor: Boolean(options.conversationalFloor),
     } });
-    for (const turn of candidates) remaining.push(decisions.queue(turn, "initial-candidate"));
+    for (const turn of hasRequiredTargets ? selectedCandidates : candidates) {
+      remaining.push(decisions.queue(turn, "initial-candidate"));
+    }
     const concurrentOpenings = concurrencyLimit > 1 && !options.stopOnSettledResponse;
-    if (concurrentOpenings && remaining.length > 0) {
-      const openingTurns = options.inviteAll ? remaining.splice(0) : [takeQueuedTurn(remaining)];
+    if ((concurrentOpenings || hasRequiredTargets) && remaining.length > 0) {
+      const openingTurns = options.inviteAll ? remaining.splice(0)
+        : hasRequiredTargets ? remaining.splice(0, requiredCandidates.length) : [takeQueuedTurn(remaining)];
       while (!options.inviteAll
         && openingTurns.length < participantLimit
         && remaining.length > 0) {
@@ -505,7 +528,7 @@ export async function runEnergyConversation(
         }
         openingTurns.push(takeQueuedTurn(remaining));
       }
-      await recordConcurrent(openingTurns, openingTurns.length > 1 ? 1 : 3);
+      await recordConcurrent(openingTurns, openingTurns.length > 1 || hasRequiredTargets ? 1 : 3);
       while (!options.inviteAll && remaining.length > 0 && !lastOutcome && !cancelled) {
         await record(takeQueuedTurn(remaining));
       }
@@ -658,9 +681,12 @@ export async function runEnergyConversation(
         ? "The agents need human input to resolve the remaining decision."
         : "The agents still have a material disagreement after a bounded synthesis round.",
     });
+  } catch (error) {
+    if (!(error instanceof AttemptCeilingReached)) throw error;
+    return finish("attempt-ceiling", { settled: false, pauseReason: "The discussion reached its attempted-turn safety limit." });
   } finally {
     const summary = terminalSummary || summarize("run-failed", null);
-    decisions.end(summary.reason === "run-failed" ? "run-failed" : cancelled ? "run-cancelled" : summary.policy.messageCeilingReached ? "hard-message-ceiling" : summary.policy.turnCeilingReached ? "hard-turn-ceiling" : "run-ended");
+    decisions.end(summary.reason === "run-failed" ? "run-failed" : cancelled ? "run-cancelled" : summary.policy.attemptCeilingReached ? "hard-attempt-ceiling" : summary.policy.messageCeilingReached ? "hard-message-ceiling" : summary.policy.turnCeilingReached ? "hard-turn-ceiling" : "run-ended");
     decisions.emit({ kind: "summary", summary });
     observeSafely(options.onSummary, summary);
   }
@@ -696,7 +722,8 @@ export async function runAgentConversation(
     counts: { ...facts.counts },
     policy: {
       responseTurns: facts.counts.respondedTurns, visibleMessages: policyVisibleMessages, energySpent: 0,
-      hardTurnCeiling: null, hardMessageCeiling: null, turnCeilingReached: false, messageCeilingReached: false,
+      hardTurnCeiling: null, hardMessageCeiling: null, hardAttemptCeiling: null,
+      turnCeilingReached: false, messageCeilingReached: false, attemptCeilingReached: false,
       followUps, maxFollowUps, followUpLimitReached: followUps >= maxFollowUps,
     },
     pending: {
@@ -752,7 +779,8 @@ export async function runAgentConversation(
     decisions.emit({ kind: "configuration", configuration: {
       engine: "legacy", energy: null, policyRevision: 1, candidateIds: initialTurns.map(({ agent }) => agent), candidateCount: initialTurns.length,
       concurrencyLimit: Math.max(1, Math.floor(concurrencyLimit)), participantLimit: initialTurns.length,
-      hardMessageCeiling: null, hardTurnCeiling: null, softMessageBudget: null, secondaryChance: null, maxFollowUps,
+      hardMessageCeiling: null, hardTurnCeiling: null, hardAttemptCeiling: null,
+      softMessageBudget: null, secondaryChance: null, maxFollowUps,
       inviteAll: false, stopOnSettledResponse: false, conversationalFloor: false,
     } });
     for (const turn of initialTurns) queued.push(decisions.queue(turn, "initial-candidate"));
