@@ -3,6 +3,14 @@ export const CONVERSATION_ENERGY_LEVELS = ["low", "balanced", "lively", "party"]
 export type ConversationEnergy = (typeof CONVERSATION_ENERGY_LEVELS)[number];
 export const DEFAULT_CONVERSATION_ENERGY: ConversationEnergy = "party";
 
+/** Optional participants selected in addition to every required target. */
+export const CONVERSATION_OPTIONAL_SEATS: Record<ConversationEnergy, number | "all"> = {
+  low: 0,
+  balanced: 1,
+  lively: 3,
+  party: "all",
+};
+
 export interface ConversationEnergyPolicy {
   label: string;
   description: string;

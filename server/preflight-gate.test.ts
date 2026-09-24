@@ -52,9 +52,9 @@ describe("pre-flight responder selection", () => {
     expect(runAgent).toHaveBeenCalledTimes(1);
     expect(runAgent).toHaveBeenCalledWith({
       ...requiredAt(turns,0,"first preflight turn"),
-      preflight: { decisionId: "decision-1", shadowSuppressed: false },
+      preflight: { decisionId: "decision-1", shadowSuppressed: false, required: false },
     });
-    expect(requiredAt(routePreflightTurns(turns, "enforce", decision, "decision-1"),0,"enforced preflight turn").preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: false });
+    expect(requiredAt(routePreflightTurns(turns, "enforce", decision, "decision-1"),0,"enforced preflight turn").preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: false, required: false });
   });
 
   it("records shadow annotations without changing the invoked roster", () => {
@@ -84,6 +84,39 @@ describe("pre-flight responder selection", () => {
       { agent: "cursor-grok", outcome: "suppress", reason: "no_routing_signal" },
       { agent: "cursor-composer", outcome: "suppress", reason: "no_routing_signal" },
     ]);
+  });
+
+  it("requires clear plain-name addresses despite low classifier probabilities and retains ambient selection", () => {
+    const trigger = humanMessage({ text: "Claude and Grok, can you compare your answers?" });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced", wholeRoomInvitation: false,
+      classification: { agents: { "claude-sonnet": 0.01, "cursor-grok": 0.01, "codex-sol": 0.01 }, wholeRoom: 0 },
+    });
+    expect(decision.decisions).toEqual([
+      { agent: "codex-sol", outcome: "invoke", reason: "ambient_selection" },
+      { agent: "claude-sonnet", outcome: "invoke", reason: "required_plain_address" },
+      { agent: "cursor-grok", outcome: "invoke", reason: "required_plain_address" },
+      { agent: "cursor-composer", outcome: "suppress", reason: "no_routing_signal" },
+    ]);
+    const turns = agents.map((agent) => ({ agent, instruction: `original:${agent}` }));
+    expect(routePreflightTurns(turns, "enforce", decision, "decision-plain").map(({ agent, preflight }) => [agent, preflight?.required])).toEqual([
+      ["codex-sol", false], ["claude-sonnet", true], ["cursor-grok", true],
+    ]);
+  });
+
+  it("reports an unavailable plain-name addressee and does not require ambiguous human names", () => {
+    const trigger = humanMessage({ text: "Grok, can you check this?" });
+    const unavailable = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents,
+      health: { "cursor-grok": { status: "cooldown", reason: "rate_limit", message: "Cooling down", since: trigger.timestamp } },
+      routing: {}, energy: "low", wholeRoomInvitation: false,
+    });
+    expect(unavailable.decisions.find(({ agent }) => agent === "cursor-grok")).toEqual({ agent: "cursor-grok", outcome: "unavailable", reason: "unavailable" });
+    const ambiguous = decidePreflight({
+      trigger, room: { ...room(trigger), humans: [{ id: "human-grok", name: "Grok", style: DEFAULT_PARTICIPANT_STYLES.you }] },
+      rankedAgents: agents, health: {}, routing: {}, energy: "low", wholeRoomInvitation: false,
+    });
+    expect(ambiguous.decisions.find(({ agent }) => agent === "cursor-grok")?.reason).toBe("no_routing_signal");
   });
 
   it("selects a trusted structured task target without inferring one from prose", () => {
@@ -174,7 +207,7 @@ describe("pre-flight advisory classification", () => {
       classification: { agents: { "codex-sol": 0.93 }, wholeRoom: 0.02 },
     });
     expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
-      agent: "codex-sol", outcome: "invoke", reason: "classified_addressed",
+      agent: "codex-sol", outcome: "invoke", reason: "required_plain_address",
     });
     expect(decision.qualifyingForStarvation).toBe(false);
   });
@@ -190,7 +223,7 @@ describe("pre-flight advisory classification", () => {
     });
   });
 
-  it("excludes a classified-irrelevant agent from ambient selection and reports the reason", () => {
+  it("keeps a low scored agent eligible for a distinct ambient contribution", () => {
     const trigger = humanMessage();
     const earlier = [{ id: "agent-1", speaker: "cursor-composer" as const, text: "Earlier thought", timestamp: "2026-08-27T11:59:00.000Z", kind: "chat" as const }];
     const decision = decidePreflight({
@@ -198,10 +231,10 @@ describe("pre-flight advisory classification", () => {
       classification: { agents: { "cursor-composer": 0.02, "codex-sol": 0.5, "cursor-grok": 0.5 }, wholeRoom: 0.0 },
     });
     expect(decision.decisions.find(({ agent }) => agent === "cursor-composer")).toEqual({
-      agent: "cursor-composer", outcome: "suppress", reason: "classified_irrelevant",
+      agent: "cursor-composer", outcome: "invoke", reason: "recent_thread_affinity",
     });
     expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
-      agent: "codex-sol", outcome: "invoke", reason: "ambient_selection",
+      agent: "codex-sol", outcome: "suppress", reason: "no_routing_signal",
     });
   });
 
