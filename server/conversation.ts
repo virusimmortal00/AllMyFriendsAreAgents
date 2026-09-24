@@ -541,7 +541,7 @@ export async function runEnergyConversation(
         await record(takeQueuedTurn(remaining));
       }
     } else if (options.inviteAll) {
-      while (remaining.length > 0 && !cancelled && !broadcastSettled && visibleMessagesDelivered < hardMessageCeiling) {
+      while (remaining.length > 0 && !cancelled && !broadcastSettled && !humanHandoffObserved && visibleMessagesDelivered < hardMessageCeiling) {
         await record(takeQueuedTurn(remaining), 1);
       }
     } else {

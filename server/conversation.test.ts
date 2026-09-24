@@ -838,6 +838,19 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
   });
 
+  it.each([
+    ["blocked state", { visibleMessageCount: 1, conversationState: "blocked" as const }],
+    ["named human request", { visibleMessageCount: 1, conversationState: "open" as const, humanHandoff: true }],
+  ])("leaves a sequential optional whole-room round with the human after %s", async (_label, firstResult) => {
+    const performTurn = vi.fn().mockResolvedValueOnce(firstResult).mockResolvedValue({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 1, { inviteAll: true, concurrencyLimit: 1 });
+
+    expect(performTurn).toHaveBeenCalledTimes(1);
+    expect(result.summary.reason).toBe("blocked-input");
+    expect(result.settled).toBe(false);
+  });
+
   it("bounds whole-room invitations by the configured concurrency limit", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
