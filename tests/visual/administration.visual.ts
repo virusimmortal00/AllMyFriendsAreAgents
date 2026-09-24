@@ -99,6 +99,9 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("tab", { name: "Room behavior", exact: true }).click();
   await expect(page.getByText(/Preview only/)).toBeVisible();
   await expect(page.getByLabel("Additional room prompt", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "OK", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
   // The administration window remains modal over the chat window.
   await page.keyboard.press("F10");
   await expect(page.getByRole("menuitem", { name: "You", exact: true })).not.toBeFocused();
@@ -117,6 +120,11 @@ test("administration recovery and room membership", async ({ page }) => {
   await page.getByRole("tab", { name: "Room behavior", exact: true }).click();
   await expect(page.getByText(/Preview only/)).toBeVisible();
   await expect(page.getByLabel("Additional room prompt", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "OK", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeInViewport({ ratio: 1 });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Server Administration", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Server", exact: true })).toBeFocused();
   expect(mutations.filter((path) => /humans|leave/.test(path))).toEqual(["/api/humans"]);
   expect(errors).toEqual([]);
 });

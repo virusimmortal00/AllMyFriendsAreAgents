@@ -286,7 +286,23 @@ for (const scenario of APP_SCENARIOS) {
     }
     const surface = page.locator(`[data-view-id="${scenario.view.id}"], [data-responsive-view-id="${scenario.view.id}"]`).first();
     await expect(surface).toBeVisible();
-    if (scenario.id === "room-summarizer-model-picker") await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
+    if (scenario.id === "room-agent-behavior") {
+      await expect(surface.locator(":scope > fieldset")).toHaveCSS("border-top-width", "0px");
+      await expect(page.getByRole("button", { name: "OK", exact: true })).toBeInViewport({ ratio: 1 });
+      await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeInViewport({ ratio: 1 });
+    }
+    if (scenario.id === "room-summarizer-model-picker") {
+      await expect(surface.locator('.model-picker__toolbar input')).toBeInViewport({ ratio: 1 });
+      if (info.project.use.viewport!.width <= 360 && info.project.use.viewport!.height <= 600) {
+        await expect(surface.locator(".model-row").first()).toBeInViewport({ ratio: 0.99 });
+        const resultsWidth = (await surface.locator(".model-picker__results").boundingBox())!.width;
+        expect(resultsWidth / info.project.use.viewport!.width).toBeGreaterThanOrEqual(0.75);
+        for (const tab of await page.getByRole("tablist", { name: "Administration pages" }).getByRole("tab").all()) {
+          expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        }
+        await expect(page.getByRole("dialog", { name: "Server Administration" }).getByRole("button", { name: "Cancel", exact: true })).toBeInViewport({ ratio: 1 });
+      }
+    }
     await expect(page.getByText(/^(Loading roster…|Loading configuration…|Loading settings…|Loading contribution…|Loading tasks…|Loading improvements…)$/)).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     if (scenario.id === "room-agent-behavior-shared-behavior") {
@@ -301,11 +317,37 @@ for (const scenario of APP_SCENARIOS) {
       await disclosure.press("Enter");
       await expect(rules).toHaveAttribute("open", "");
       for (const rule of await rules.locator("li").all()) {
-        await rule.scrollIntoViewIfNeeded();
-        // Native scrolling can leave a fractional CSS pixel at the boundary.
-        await expect(rule).toBeInViewport({ ratio: 0.99 });
+        const fits = await rule.evaluate((item) => {
+          const pane = item.closest<HTMLElement>(".room-properties-page-content");
+          return Boolean(pane && item.getBoundingClientRect().height <= pane.getBoundingClientRect().height - 2);
+        });
+        if (fits) {
+          await rule.scrollIntoViewIfNeeded();
+          // Native scrolling can leave a fractional CSS pixel at the boundary.
+          await expect(rule).toBeInViewport({ ratio: 0.99 });
+          continue;
+        }
+        // A long rule can exceed the minimum-phone editor viewport. Check that
+        // native scrolling exposes its beginning and end instead of requiring
+        // the entire item to fit at once.
+        await rule.evaluate((item) => item.scrollIntoView({ block: "start", behavior: "instant" }));
+        await expect.poll(() => rule.evaluate((item) => {
+          const pane = item.closest<HTMLElement>(".room-properties-page-content");
+          if (!pane) return false;
+          const bounds = item.getBoundingClientRect();
+          const visible = pane.getBoundingClientRect();
+          return bounds.top >= visible.top - 1 && bounds.top < visible.bottom;
+        })).toBe(true);
+        await rule.evaluate((item) => item.scrollIntoView({ block: "end", behavior: "instant" }));
+        await expect.poll(() => rule.evaluate((item) => {
+          const pane = item.closest<HTMLElement>(".room-properties-page-content");
+          if (!pane) return false;
+          const bounds = item.getBoundingClientRect();
+          const visible = pane.getBoundingClientRect();
+          return bounds.bottom <= visible.bottom + 1 && bounds.bottom > visible.top;
+        })).toBe(true);
       }
-      await expect(surface.getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
+      await expect(page.getByRole("dialog", { name: "Server Administration" }).getByRole("button", { name: "Apply", exact: true })).toBeDisabled();
     }
     await capture(page, info, scenario, "top");
     if (scenario.id === "room-agent-behavior") {
@@ -328,6 +370,10 @@ for (const scenario of APP_SCENARIOS) {
         if (pickerOnly) root.scrollIntoView({ block: "end", behavior: "instant" });
       }, scenario.id === "room-summarizer-model-picker");
       await capture(page, info, scenario, "bottom");
+      if (scenario.id === "room-agent-behavior") {
+        await expect(page.getByRole("button", { name: "OK", exact: true })).toBeInViewport({ ratio: 1 });
+        await expect(page.getByRole("button", { name: "Apply", exact: true })).toBeInViewport({ ratio: 1 });
+      }
     }
     if (["room-summarizer-model-picker", "manage-agents-model-picker"].includes(scenario.id) && info.project.use.viewport!.width <= 720) {
       const filter = surface.getByRole("combobox", { name: "Filter models", exact: true });
