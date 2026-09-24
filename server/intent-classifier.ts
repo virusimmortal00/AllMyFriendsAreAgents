@@ -10,10 +10,24 @@ export const JEV_INPUT_COST_PER_MILLION_TOKENS = 0.042;
 
 const DEFAULT_MODEL = "~typesafe/jev-latest";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
-const DEFAULT_TIMEOUT_MS = 2_500;
+const DEFAULT_TIMEOUT_MS = 1_000;
 const FAILURE_THRESHOLD = 3;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
-const ERROR_MESSAGE_LIMIT = 200;
+
+export type IntentClassificationOutcome =
+  | { outcome: "completed"; durationMs: number; inputTokens: number; outputTokens: number; costUsd: number }
+  | { outcome: "skipped"; durationMs: number; reason: "disabled" | "cooldown" | "empty_input" | "no_credential" }
+  | {
+      outcome: "failed";
+      durationMs: number;
+      failureCategory: "timeout" | "authentication" | "http" | "transport" | "schema";
+    };
+
+class ClassificationFailure extends Error {
+  constructor(readonly category: Extract<IntentClassificationOutcome, { outcome: "failed" }>["failureCategory"]) {
+    super(category);
+  }
+}
 
 export interface IntentClassifierAgent {
   agentId: AgentId;
@@ -32,7 +46,14 @@ export interface IntentClassifierOptions {
   fetchImpl?: typeof fetch;
   now?: () => number;
   /** Diagnostic sink. Never receives message text or credentials. */
-  log?: (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>) => void;
+  log?: (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>) => void | Promise<void>;
+}
+
+export interface IntentClassificationInput {
+  transcript: string;
+  agents: readonly IntentClassifierAgent[];
+  /** Per-consult outcome sink. A sink failure must not affect routing. */
+  onOutcome?: (outcome: IntentClassificationOutcome) => void | Promise<void>;
 }
 
 interface TypeSafeAnswer {
@@ -47,12 +68,15 @@ interface TypeSafeResponse {
   usage?: { input_tokens?: unknown; output_tokens?: unknown; cost?: unknown };
 }
 
-type FetchLike = (input: string, init: {
-  method: string;
-  headers: Record<string, string>;
-  body: string;
-  signal: AbortSignal;
-}) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+type FetchLike = (
+  input: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  },
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 function probability(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
@@ -60,11 +84,6 @@ function probability(value: unknown): number | undefined {
 
 function boundedInteger(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-}
-
-function sanitizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.slice(0, ERROR_MESSAGE_LIMIT);
 }
 
 /**
@@ -116,10 +135,33 @@ export class IntentClassifier {
     }
   }
 
-  async classify(input: { transcript: string; agents: readonly IntentClassifierAgent[] }): Promise<PreflightClassificationSnapshot | undefined> {
-    if (this.disabled || this.now() < this.cooldownUntilMs || !input.agents.length || !input.transcript.trim()) return undefined;
-    const apiKey = await this.resolveKey();
-    if (!apiKey) return undefined;
+  async classify(input: IntentClassificationInput): Promise<PreflightClassificationSnapshot | undefined> {
+    const startedAt = this.now();
+    const durationMs = () => Math.max(0, this.now() - startedAt);
+    const report = (outcome: IntentClassificationOutcome) => {
+      try {
+        void Promise.resolve(input.onOutcome?.(outcome)).catch(() => {});
+      } catch {
+        /* Observability cannot change routing. */
+      }
+      try {
+        void Promise.resolve(
+          this.log?.(outcome.outcome === "failed" ? "warn" : "info", `intent.classification.${outcome.outcome}`, {
+            ...outcome,
+            agentCount: input.agents.length,
+          }),
+        ).catch(() => {});
+      } catch {
+        /* Observability cannot change routing. */
+      }
+    };
+    const skip = (reason: Extract<IntentClassificationOutcome, { outcome: "skipped" }>["reason"]) => {
+      report({ outcome: "skipped", reason, durationMs: durationMs() });
+      return undefined;
+    };
+    if (this.disabled) return skip("disabled");
+    if (this.now() < this.cooldownUntilMs) return skip("cooldown");
+    if (!input.agents.length || !input.transcript.trim()) return skip("empty_input");
     const questions: Record<string, unknown> = {
       whole_room: {
         type: "noul",
@@ -142,9 +184,30 @@ export class IntentClassifier {
       };
     }
 
-    const startedAt = this.now();
+    const controller = new AbortController();
+    let expired = false;
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => {
+          expired = true;
+          controller.abort();
+          reject(new ClassificationFailure("timeout"));
+        },
+        Math.max(0, this.timeoutMs - durationMs()),
+      );
+    });
     try {
-      const parsed = await this.request(apiKey, input.transcript, questions);
+      const attempt = async () => {
+        if (durationMs() >= this.timeoutMs) throw new ClassificationFailure("timeout");
+        const apiKey = await this.resolveKey();
+        if (controller.signal.aborted || durationMs() >= this.timeoutMs) throw new ClassificationFailure("timeout");
+        if (!apiKey) return undefined;
+        return this.request(apiKey, input.transcript, questions, controller.signal);
+      };
+      const parsed = await Promise.race([attempt(), deadline]);
+      if (expired || durationMs() >= this.timeoutMs) throw new ClassificationFailure("timeout");
+      if (!parsed) return skip("no_credential");
       const agents: Partial<Record<AgentId, number>> = {};
       for (const { agentId } of input.agents) {
         const value = probability(parsed.answers?.[agentId]?.noul);
@@ -152,11 +215,12 @@ export class IntentClassifier {
       }
       const wholeRoom = probability(parsed.answers?.whole_room?.noul);
       const primaryAddressee = parsed.answers?.primary_addressee?.choice;
-      if (wholeRoom === undefined) throw new Error("the decisions response is missing the whole_room answer");
+      if (wholeRoom === undefined) throw new ClassificationFailure("schema");
       const inputTokens = boundedInteger(parsed.usage?.input_tokens);
-      const reportedCost = typeof parsed.usage?.cost === "number" && Number.isFinite(parsed.usage.cost) && parsed.usage.cost >= 0
-        ? parsed.usage.cost
-        : undefined;
+      const reportedCost =
+        typeof parsed.usage?.cost === "number" && Number.isFinite(parsed.usage.cost) && parsed.usage.cost >= 0
+          ? parsed.usage.cost
+          : undefined;
       const snapshot: PreflightClassificationSnapshot = {
         model: typeof parsed.model === "string" && parsed.model ? parsed.model : this.model,
         agents,
@@ -164,53 +228,67 @@ export class IntentClassifier {
         ...(typeof primaryAddressee === "string" && primaryAddressee ? { primaryAddressee } : {}),
         usage: { inputTokens, outputTokens: boundedInteger(parsed.usage?.output_tokens) },
         costUsd: reportedCost ?? (inputTokens / 1_000_000) * JEV_INPUT_COST_PER_MILLION_TOKENS,
-        latencyMs: Math.max(0, this.now() - startedAt),
+        latencyMs: durationMs(),
       };
+      if (expired || durationMs() >= this.timeoutMs) throw new ClassificationFailure("timeout");
       this.consecutiveFailures = 0;
-      this.log?.("info", "intent.classification.completed", {
-        model: snapshot.model,
-        agentCount: input.agents.length,
-        latencyMs: snapshot.latencyMs,
-        inputTokens,
+      report({
+        outcome: "completed",
+        durationMs: snapshot.latencyMs,
+        inputTokens: snapshot.usage.inputTokens,
+        outputTokens: snapshot.usage.outputTokens,
         costUsd: snapshot.costUsd,
-        wholeRoom: snapshot.wholeRoom,
       });
       return snapshot;
     } catch (error) {
+      const failureCategory = expired ? "timeout" : error instanceof ClassificationFailure ? error.category : "schema";
       this.consecutiveFailures += 1;
       if (this.consecutiveFailures >= FAILURE_THRESHOLD) {
         this.cooldownUntilMs = this.now() + FAILURE_COOLDOWN_MS;
         this.consecutiveFailures = 0;
-        this.log?.("warn", "intent.classification.cooldown", { model: this.model, failureThreshold: FAILURE_THRESHOLD, cooldownMs: FAILURE_COOLDOWN_MS, error: sanitizeError(error) });
-      } else {
-        this.log?.("warn", "intent.classification.failed", { model: this.model, consecutiveFailures: this.consecutiveFailures, error: sanitizeError(error) });
       }
+      report({ outcome: "failed", failureCategory, durationMs: durationMs() });
       return undefined;
-    }
-  }
-
-  private async request(apiKey: string, state: string, questions: Record<string, unknown>): Promise<TypeSafeResponse> {
-    const fetchPromise = this.fetchImpl(this.endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, state, questions }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`decisions classification timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
-    });
-    try {
-      const response = await Promise.race([fetchPromise, timeout]);
-      if (!response.ok) throw new Error(`OpenRouter decisions responded with HTTP ${response.status}`);
-      const parsed = (await response.json()) as TypeSafeResponse;
-      if (!parsed || typeof parsed !== "object" || typeof parsed.answers !== "object" || !parsed.answers) {
-        throw new Error("OpenRouter decisions response is missing answers");
-      }
-      return parsed;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async request(
+    apiKey: string,
+    state: string,
+    questions: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<TypeSafeResponse> {
+    let response: Awaited<ReturnType<FetchLike>>;
+    try {
+      response = await this.fetchImpl(this.endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: this.model, state, questions }),
+        signal,
+      });
+    } catch {
+      throw new ClassificationFailure("transport");
+    }
+    if (!response.ok)
+      throw new ClassificationFailure(response.status === 401 || response.status === 403 ? "authentication" : "http");
+    let parsed: TypeSafeResponse;
+    try {
+      parsed = (await response.json()) as TypeSafeResponse;
+    } catch {
+      throw new ClassificationFailure("schema");
+    }
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.answers !== "object" ||
+      !parsed.answers ||
+      Array.isArray(parsed.answers)
+    ) {
+      throw new ClassificationFailure("schema");
+    }
+    return parsed;
   }
 }
 
