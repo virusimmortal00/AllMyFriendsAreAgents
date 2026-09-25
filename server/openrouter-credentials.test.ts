@@ -26,6 +26,37 @@ describe("openCodeAuthFilePath", () => {
 });
 
 describe("readOpenRouterApiKey", () => {
+  it("prefers a valid launch-time key over OpenCode's stored key", async () => {
+    const env = await withAuthFile({ openrouter: { type: "api", key: "sk-or-v1-stored-fixture-key" } });
+    env.OPENROUTER_API_KEY = "sk-or-v1-launch-fixture-key";
+    await expect(readOpenRouterApiKey(env)).resolves.toBe("sk-or-v1-launch-fixture-key");
+  });
+
+  it("uses a valid launch-time key when no OpenCode auth file exists", async () => {
+    const env = await withAuthFile(undefined);
+    env.OPENROUTER_API_KEY = "sk-or-v1-launch-fixture-key";
+    await expect(readOpenRouterApiKey(env)).resolves.toBe("sk-or-v1-launch-fixture-key");
+  });
+
+  it.each([
+    "",
+    "short",
+    " sk-or-v1-launch-fixture-key",
+    "sk-or-v1-launch-fixture-key\n",
+    "sk-or-v1-launch-fixture-key:",
+    "a".repeat(301),
+  ])("ignores an invalid launch-time key and falls back to OpenCode's stored key (%j)", async (invalidKey) => {
+    const env = await withAuthFile({ openrouter: { type: "api", key: "sk-or-v1-stored-fixture-key" } });
+    env.OPENROUTER_API_KEY = invalidKey;
+    await expect(readOpenRouterApiKey(env)).resolves.toBe("sk-or-v1-stored-fixture-key");
+  });
+
+  it("returns no credential without exposing an invalid launch-time value when the file is absent", async () => {
+    const env = await withAuthFile(undefined);
+    env.OPENROUTER_API_KEY = "invalid private value";
+    await expect(readOpenRouterApiKey(env)).resolves.toBeUndefined();
+  });
+
   it("reads the key OpenCode stores for an API-key connection", async () => {
     const env = await withAuthFile({ openrouter: { type: "api", key: "sk-or-v1-fixture-not-a-real-key" } });
     await expect(readOpenRouterApiKey(env)).resolves.toBe("sk-or-v1-fixture-not-a-real-key");
