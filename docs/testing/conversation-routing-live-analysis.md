@@ -166,7 +166,10 @@ roster order, factor profiles, and trigger ordinal. Known resolved Jev model
 mismatches or missing resolved identity in both-consulted pairs exclude those
 trigger comparisons. Failed, skipped, or absent Jev-on consultation remains in the
 completion/coverage counts and its trigger pair is excluded from arm-difference
-estimates. Judge score pairs also require matching resolved judge
+estimates. Across the full study, two or more distinct provider-resolved Jev
+snapshot IDs stop pooled analysis and the error lists those IDs. Older manifests
+without resolved IDs remain readable; an unknown ID is not inferred from the
+requested model. Judge score pairs also require matching resolved judge
 models. Actor provider-resolved identity is unavailable and never inferred.
 The report has no composite score or causal claim. Actor estimated cost,
 Jev-reported cost, judge-reported cost, OpenCode-observed tokens, and measured

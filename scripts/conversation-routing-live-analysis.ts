@@ -1064,6 +1064,15 @@ export function analyzeQualityStudy(
       ),
     })),
   );
+  const resolvedJevSnapshots = [
+    ...new Set(
+      all.flatMap(({ trigger }) =>
+        trigger.jev.outcome === "completed" && trigger.resolvedJevModelId !== null ? [trigger.resolvedJevModelId] : [],
+      ),
+    ),
+  ].sort();
+  if (resolvedJevSnapshots.length > 1)
+    throw new Error(`Mixed provider-resolved Jev snapshot IDs: ${resolvedJevSnapshots.join(", ")}`);
   const key = (scenarioId: string, runId: string) => `${scenarioId}\u0000${runId}`;
   const known = new Set(all.map(({ trigger }) => key(trigger.scenarioId, trigger.runId)));
   if (parsedRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))

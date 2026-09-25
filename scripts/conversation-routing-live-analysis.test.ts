@@ -776,6 +776,12 @@ describe("versioned quality study analysis", () => {
     });
     const parsed = batches.map(parseScalarCanaryManifest);
     expect(mergeScalarCanaryManifests(parsed).cases).toHaveLength(12);
+    Object.assign(batches[1]!.cases[0]!.triggers[0]!.classifier, {
+      resolvedModelId: "openrouter/example/other-snapshot",
+    });
+    expect(() => analyzeQualityStudy(mergeScalarCanaryManifests(batches.map(parseScalarCanaryManifest)))).toThrow(
+      /Mixed provider-resolved Jev snapshot IDs: openrouter\/example\/jev, openrouter\/example\/other-snapshot/,
+    );
     batches[0]!.cases[0]!.study.arcProfileId = "agent-exchange-v3";
     expect(() => parseScalarCanaryManifest(batches[0])).toThrow(/Invalid scalar canary manifest/);
   });
