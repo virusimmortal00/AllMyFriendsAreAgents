@@ -48,6 +48,7 @@ const EVIDENCE_ID = /^[A-Za-z0-9_-]{1,100}$/;
 
 export interface LiveScenarioResult {
   schemaVersion: 1;
+  openCodeUsageProvenance: "step-fields-v1";
   scenarioId: string;
   variant: "jev-on" | "jev-off";
   runId: string | null;
@@ -72,15 +73,15 @@ export interface LiveScenarioResult {
   generationStarts: number;
   generationCompletions: number;
   generationFailures: number;
-  reportedInputTokens: number | null;
-  reportedOutputTokens: number | null;
-  reportedReasoningTokens: number | null;
-  reportedCacheReadTokens: number | null;
-  reportedCacheWriteTokens: number | null;
-  reportedTotalTokens: number | null;
-  reportedCostUsd: number | null;
-  usageCoverage: "reported" | "partial" | "missing";
-  totalTokenCoverage: "reported" | "partial" | "missing";
+  openCodeObservedInputTokens: number | null;
+  openCodeObservedOutputTokens: number | null;
+  openCodeObservedReasoningTokens: number | null;
+  openCodeObservedCacheReadTokens: number | null;
+  openCodeObservedCacheWriteTokens: number | null;
+  openCodeObservedTotalTokens: number | null;
+  openCodeEstimatedCostUsd: number | null;
+  openCodeUsageCoverage: "reported" | "partial" | "missing";
+  openCodeTotalCoverage: "reported" | "partial" | "missing";
 }
 
 function object(value: unknown): RecordValue | null {
@@ -284,15 +285,15 @@ export function collectLiveScenarioEvidence(input: {
     if (matches.length > 1) throw new Error("Provider usage evidence is ambiguous.");
     const observed = matches[0];
     const values = object(observed?.usage);
-    const cache = object(values?.cache);
     return {
-      input: count(values?.inputTokens) ?? count(values?.input),
-      output: count(values?.outputTokens) ?? count(values?.output),
-      reasoning: count(values?.reasoningTokens) ?? count(values?.reasoning),
-      cacheRead: count(values?.cacheReadTokens) ?? count(cache?.read),
-      cacheWrite: count(values?.cacheWriteTokens) ?? count(cache?.write),
-      total: count(values?.totalTokens) ?? count(values?.total),
-      cost: nonnegative(observed?.costUsd),
+      input: count(values?.openCodeObservedInputTokens),
+      output: count(values?.openCodeObservedOutputTokens),
+      reasoning: count(values?.openCodeObservedReasoningTokens),
+      cacheRead: count(values?.openCodeObservedCacheReadTokens),
+      cacheWrite: count(values?.openCodeObservedCacheWriteTokens),
+      total: count(values?.openCodeObservedTotalTokens),
+      // costUsd is normalized and may contain a zero fallback; this is OpenCode's explicit estimate.
+      cost: nonnegative(observed?.openCodeEstimatedCostUsd),
     };
   });
   const allGenerationsCompleted =
@@ -313,6 +314,7 @@ export function collectLiveScenarioEvidence(input: {
   if (firstVisible.length > 1) throw new Error("First-visible timing evidence is ambiguous.");
   return {
     schemaVersion: 1,
+    openCodeUsageProvenance: "step-fields-v1",
     scenarioId,
     variant,
     runId,
@@ -330,14 +332,14 @@ export function collectLiveScenarioEvidence(input: {
     generationStarts: starts.length,
     generationCompletions: completions.length,
     generationFailures: failures.length,
-    reportedInputTokens: reported("input"),
-    reportedOutputTokens: reported("output"),
-    reportedReasoningTokens: reportedBreakdown("reasoning"),
-    reportedCacheReadTokens: reportedBreakdown("cacheRead"),
-    reportedCacheWriteTokens: reportedBreakdown("cacheWrite"),
-    reportedTotalTokens: reportedBreakdown("total"),
-    reportedCostUsd: reported("cost"),
-    usageCoverage: completeUsage ? "reported" : anyUsage ? "partial" : "missing",
-    totalTokenCoverage: completeTotal ? "reported" : anyTotal ? "partial" : "missing",
+    openCodeObservedInputTokens: reported("input"),
+    openCodeObservedOutputTokens: reported("output"),
+    openCodeObservedReasoningTokens: reportedBreakdown("reasoning"),
+    openCodeObservedCacheReadTokens: reportedBreakdown("cacheRead"),
+    openCodeObservedCacheWriteTokens: reportedBreakdown("cacheWrite"),
+    openCodeObservedTotalTokens: reportedBreakdown("total"),
+    openCodeEstimatedCostUsd: reported("cost"),
+    openCodeUsageCoverage: completeUsage ? "reported" : anyUsage ? "partial" : "missing",
+    openCodeTotalCoverage: completeTotal ? "reported" : anyTotal ? "partial" : "missing",
   };
 }

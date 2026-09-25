@@ -295,6 +295,7 @@ class CaseFailure extends Error {
 export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScenarioResult {
   return {
     schemaVersion: result.schemaVersion,
+    openCodeUsageProvenance: result.openCodeUsageProvenance,
     scenarioId: result.scenarioId,
     variant: result.variant,
     runId: result.runId,
@@ -319,15 +320,15 @@ export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScena
     generationStarts: result.generationStarts,
     generationCompletions: result.generationCompletions,
     generationFailures: result.generationFailures,
-    reportedInputTokens: result.reportedInputTokens,
-    reportedOutputTokens: result.reportedOutputTokens,
-    reportedReasoningTokens: result.reportedReasoningTokens,
-    reportedCacheReadTokens: result.reportedCacheReadTokens,
-    reportedCacheWriteTokens: result.reportedCacheWriteTokens,
-    reportedTotalTokens: result.reportedTotalTokens,
-    reportedCostUsd: result.reportedCostUsd,
-    usageCoverage: result.usageCoverage,
-    totalTokenCoverage: result.totalTokenCoverage,
+    openCodeObservedInputTokens: result.openCodeObservedInputTokens,
+    openCodeObservedOutputTokens: result.openCodeObservedOutputTokens,
+    openCodeObservedReasoningTokens: result.openCodeObservedReasoningTokens,
+    openCodeObservedCacheReadTokens: result.openCodeObservedCacheReadTokens,
+    openCodeObservedCacheWriteTokens: result.openCodeObservedCacheWriteTokens,
+    openCodeObservedTotalTokens: result.openCodeObservedTotalTokens,
+    openCodeEstimatedCostUsd: result.openCodeEstimatedCostUsd,
+    openCodeUsageCoverage: result.openCodeUsageCoverage,
+    openCodeTotalCoverage: result.openCodeTotalCoverage,
   };
 }
 export function projectCaseFailedEvent(input: {

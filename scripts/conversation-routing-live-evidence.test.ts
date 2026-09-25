@@ -88,12 +88,16 @@ function fixture() {
       usage: {
         inputTokens: 2,
         outputTokens: 29,
-        reasoningTokens: 0,
-        cacheReadTokens: 100,
-        cacheWriteTokens: 0,
         totalTokens: 131,
+        openCodeObservedInputTokens: 2,
+        openCodeObservedOutputTokens: 29,
+        openCodeObservedReasoningTokens: 0,
+        openCodeObservedCacheReadTokens: 100,
+        openCodeObservedCacheWriteTokens: 0,
+        openCodeObservedTotalTokens: 131,
       },
       costUsd: 0.009,
+      openCodeEstimatedCostUsd: 0.009,
     },
   ];
   const preflight: PreflightAuditRecord[] = [
@@ -147,15 +151,16 @@ describe("live routing scalar extraction", () => {
       respondedTurns: 1,
       generationStarts: 1,
       generationCompletions: 1,
-      reportedInputTokens: 2,
-      reportedOutputTokens: 29,
-      reportedReasoningTokens: 0,
-      reportedCacheReadTokens: 100,
-      reportedCacheWriteTokens: 0,
-      reportedTotalTokens: 131,
-      reportedCostUsd: 0.009,
-      usageCoverage: "reported",
-      totalTokenCoverage: "reported",
+      openCodeUsageProvenance: "step-fields-v1",
+      openCodeObservedInputTokens: 2,
+      openCodeObservedOutputTokens: 29,
+      openCodeObservedReasoningTokens: 0,
+      openCodeObservedCacheReadTokens: 100,
+      openCodeObservedCacheWriteTokens: 0,
+      openCodeObservedTotalTokens: 131,
+      openCodeEstimatedCostUsd: 0.009,
+      openCodeUsageCoverage: "reported",
+      openCodeTotalCoverage: "reported",
     });
     expect(JSON.stringify(result)).not.toContain("private-output");
   });
@@ -172,29 +177,47 @@ describe("live routing scalar extraction", () => {
       triggerMessageId: input.triggerMessageId,
     };
     expect(collectLiveScenarioEvidence(base)).toMatchObject({
-      reportedInputTokens: null,
-      reportedCostUsd: null,
-      usageCoverage: "missing",
+      openCodeObservedInputTokens: null,
+      openCodeEstimatedCostUsd: null,
+      openCodeUsageCoverage: "missing",
     });
     input.records.push({
       event: "provider.exchange.observed",
       runId: "run_12345678",
       generationId: "gen_12345678",
-      usage: { inputTokens: 2, outputTokens: 29, totalTokens: 131 },
+      usage: { openCodeObservedInputTokens: 2, openCodeObservedOutputTokens: 29, openCodeObservedTotalTokens: 131 },
       costUsd: 0.009,
+      openCodeEstimatedCostUsd: 0.009,
     });
     input.records.push({ event: "generation.started", runId: "run_12345678", generationId: "gen_failed" });
     expect(collectLiveScenarioEvidence(base)).toMatchObject({
-      usageCoverage: "partial",
-      totalTokenCoverage: "partial",
-      reportedTotalTokens: null,
+      openCodeUsageCoverage: "partial",
+      openCodeTotalCoverage: "partial",
+      openCodeObservedTotalTokens: null,
     });
   });
 
-  it("does not infer a provider total from uncached input and output or invalidate reported cost", () => {
+  it("does not infer OpenCode field presence from normalized token or cost fallback", () => {
     const input = fixture();
     const provider = input.records.find((record) => record.event === "provider.exchange.observed")!;
-    provider.usage = { inputTokens: 2, outputTokens: 29 };
+    provider.usage = { inputTokens: 2, outputTokens: 29, totalTokens: 31 };
+    delete provider.openCodeEstimatedCostUsd;
+    const legacy = collectLiveScenarioEvidence({
+      scenarioId: "direct-2-low-enforce",
+      variant: "jev-on",
+      preflightMode: "enforce",
+      records: input.records,
+      preflightDecisions: input.preflight,
+      triggerMessageId: input.triggerMessageId,
+    });
+    expect(legacy).toMatchObject({
+      openCodeUsageCoverage: "missing",
+      openCodeEstimatedCostUsd: null,
+      openCodeTotalCoverage: "missing",
+      openCodeObservedTotalTokens: null,
+    });
+    provider.usage = { openCodeObservedInputTokens: 2, openCodeObservedOutputTokens: 29, totalTokens: 31 };
+    provider.openCodeEstimatedCostUsd = 0.009;
     const result = collectLiveScenarioEvidence({
       scenarioId: "direct-2-low-enforce",
       variant: "jev-on",
@@ -204,13 +227,13 @@ describe("live routing scalar extraction", () => {
       triggerMessageId: input.triggerMessageId,
     });
     expect(result).toMatchObject({
-      usageCoverage: "reported",
-      reportedCostUsd: 0.009,
-      totalTokenCoverage: "missing",
-      reportedTotalTokens: null,
-      reportedCacheReadTokens: null,
-      reportedCacheWriteTokens: null,
-      reportedReasoningTokens: null,
+      openCodeUsageCoverage: "reported",
+      openCodeEstimatedCostUsd: 0.009,
+      openCodeTotalCoverage: "missing",
+      openCodeObservedTotalTokens: null,
+      openCodeObservedCacheReadTokens: null,
+      openCodeObservedCacheWriteTokens: null,
+      openCodeObservedReasoningTokens: null,
     });
   });
 

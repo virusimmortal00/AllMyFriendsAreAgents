@@ -28,6 +28,7 @@ describe("routing canary selection", () => {
   it("retains closed scalar evidence on a visible-delivery failure without copying private fields", () => {
     const collected = {
       schemaVersion: 1,
+      openCodeUsageProvenance: "step-fields-v1",
       scenarioId: "direct-1-low-enforce",
       variant: "jev-on",
       runId: "run_fixture",
@@ -52,15 +53,15 @@ describe("routing canary selection", () => {
       generationStarts: 1,
       generationCompletions: 1,
       generationFailures: 0,
-      reportedInputTokens: 2,
-      reportedOutputTokens: 20,
-      reportedReasoningTokens: 0,
-      reportedCacheReadTokens: 18,
-      reportedCacheWriteTokens: 0,
-      reportedTotalTokens: 40,
-      reportedCostUsd: 0.01,
-      usageCoverage: "reported",
-      totalTokenCoverage: "reported",
+      openCodeObservedInputTokens: 2,
+      openCodeObservedOutputTokens: 20,
+      openCodeObservedReasoningTokens: 0,
+      openCodeObservedCacheReadTokens: 18,
+      openCodeObservedCacheWriteTokens: 0,
+      openCodeObservedTotalTokens: 40,
+      openCodeEstimatedCostUsd: 0.01,
+      openCodeUsageCoverage: "reported",
+      openCodeTotalCoverage: "reported",
       rawText: "private fictional response",
       credential: "do-not-copy",
     } satisfies LiveScenarioResult & { rawText: string; credential: string };
@@ -70,8 +71,8 @@ describe("routing canary selection", () => {
       classifier: { outcome: "completed" },
       yieldedTurns: 1,
       confirmedDeliveredBursts: 0,
-      reportedTotalTokens: 40,
-      totalTokenCoverage: "reported",
+      openCodeObservedTotalTokens: 40,
+      openCodeTotalCoverage: "reported",
     });
     expect(JSON.stringify(projected)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
     const failed = projectCaseFailedEvent({

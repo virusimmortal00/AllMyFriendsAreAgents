@@ -89,17 +89,21 @@ The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, selected model IDs, policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
 generation outcomes, terminal reason, confirmed delivery count, and
-provider-reported token/cost fields when complete. Jev-on cases require an
+OpenCode-observed token fields and estimated actor cost when complete. Jev-on cases require an
 actual `classifier: completed` stage; a fallback fails the case. Structured
 records are joined by trigger, job, run, turn, generation, and attempt identity
 across base and rotated streams. Missing or partial usage remains unknown, not
-zero. The judge's usage is separate from actor/Jev measurements. No transcript,
+zero. Jev's API-reported token/cost fields and the judge's usage stay separate
+from OpenCode's actor estimates. No transcript,
 provider output, credential, local path, or private rating note is printed in
 the scalar manifest.
 Actor uncached input, output, reasoning, cache read/write, and total tokens are
-separate provider-reported fields. A total is never inferred from input and
-output; `totalTokenCoverage` tracks complete, partial, or missing reported
-totals independently of cost-bearing `usageCoverage`. For durable scalar
+separate OpenCode step fields. A total is never inferred from input and
+output; `openCodeTotalCoverage` tracks complete, partial, or missing observed
+totals independently of `openCodeUsageCoverage`. OpenCode's cost is an
+estimate based on model pricing, not a provider bill. The fixed
+`openCodeUsageProvenance` marker distinguishes new per-step evidence from older
+normalized fields that could default missing values to zero. For durable scalar
 evidence, redirect stdout to a new mode-`0600` JSONL file inside a private
 mode-`0700` directory; failed cases print closed scalar records but no final
 manifest.
