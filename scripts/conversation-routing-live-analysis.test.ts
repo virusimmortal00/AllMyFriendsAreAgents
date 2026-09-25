@@ -527,15 +527,17 @@ describe("versioned quality study analysis", () => {
     expect(report.axes.social_cadence).toMatchObject({
       judge: { rated: 4, missing: 0, failed: 0 },
       human: { rated: 2, missing: 2 },
-      pairedJudge: { pairedRuns: 2, candidateMinusBaselineMean: -1 },
-      pairedHuman: { pairedRuns: 1, candidateMinusBaselineMean: -3 },
       agreement: { jointlyRated: 2, scoreExact: 1, scoreWithinOne: 2 },
+    });
+    expect(report.byFactor.jev!.paired.axes.social_cadence).toMatchObject({
+      judgeArmBMinusA: { pairedRuns: 2, candidateMinusBaselineMean: -1 },
+      humanArmBMinusA: { pairedRuns: 1, candidateMinusBaselineMean: -3 },
     });
     expect(report.resources.judgeReportedCostUsd).toMatchObject({ reportedRuns: 4, total: 0.016 });
     expect(report.spotChecks).toHaveLength(3);
     expect(privateRatingTemplate(parsed)).toMatchObject({ schemaVersion: 2 });
     expect(privateRatingTemplate(parsed).ratings).toHaveLength(4);
-    expect(JSON.stringify(report)).not.toContain("prompt");
+    expect(JSON.stringify(report)).not.toContain('"prompt":');
   });
 
   it("excludes mismatched factor profiles and resolved judge model drift", () => {
@@ -546,8 +548,8 @@ describe("versioned quality study analysis", () => {
     const drift = structuredClone(fixture);
     drift.cases[1]!.qualityJudge[0]!.outcomes[0]!.result.resolvedJudgeModel = "google/other-model";
     const report = analyzeQualityStudy(parseScalarCanaryManifest(drift));
-    expect(report.axes.social_cadence!.pairedJudge.pairedRuns).toBe(1);
-    expect(report.axes.social_cadence!.resolvedJudgeModelMismatchPairs).toBe(1);
+    expect(report.byFactor.jev!.paired.axes.social_cadence!.judgeArmBMinusA.pairedRuns).toBe(1);
+    expect(report.byFactor.jev!.paired.axes.social_cadence!.resolvedJudgeModelMismatchPairs).toBe(1);
   });
 
   it("accepts a full uint32 study seed and rejects a changed prompt digest", () => {
@@ -604,5 +606,57 @@ describe("versioned quality study analysis", () => {
     } as never;
     const absent = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
     expect(absent.denominators).toMatchObject({ jevNotConsultedTriggers: 1, excludedTriggerPairsJevIncomplete: 1 });
+  });
+
+  it("separates opposite quality changes by factor and block without a pooled effect", () => {
+    const fixture = studyFixture();
+    const promptCases = structuredClone(fixture.cases);
+    for (const row of promptCases) {
+      const arm = row.study.arm;
+      row.study.blockId = "block2";
+      row.study.pairId = "pair2";
+      row.study.caseId = `prompt-${arm}`;
+      row.study.factor = "agent-prompt";
+      row.study.jevProfileId = "current-v1";
+      row.study.jevProfileDigest = "a".repeat(64);
+      row.study.agentPromptProfileId = arm === "a" ? "current-v1" : "social-v1";
+      row.study.agentPromptProfileDigest = arm === "a" ? sha : "c".repeat(64);
+      row.variant = "jev-on";
+      row.scenarioId = `prompt-${row.scenarioId}`;
+      for (const turn of row.triggers) {
+        turn.scenarioId = `prompt-${turn.scenarioId}`;
+        turn.runId = `prompt-${turn.runId}`;
+        turn.variant = "jev-on";
+        turn.classifier = { ...trigger("jev-on").classifier, resolvedModelId: "openrouter/example/jev" } as never;
+      }
+      for (const judgment of row.qualityJudge) {
+        judgment.scenarioId = `prompt-${judgment.scenarioId}`;
+        judgment.runId = `prompt-${judgment.runId}`;
+        for (const outcome of judgment.outcomes) {
+          outcome.result.scenarioId = judgment.scenarioId;
+          outcome.result.runId = judgment.runId;
+          if (judgment.runId.endsWith("-two")) continue;
+          outcome.result.score = arm === "a" ? 1 : 5;
+        }
+      }
+    }
+    const report = analyzeQualityStudy(
+      parseScalarCanaryManifest({ ...fixture, cases: [...fixture.cases, ...promptCases] }),
+    );
+    expect(report.byFactor.jev!.paired.axes.social_cadence!.judgeArmBMinusA).toEqual({
+      pairedRuns: 2,
+      candidateMinusBaselineMean: -1,
+    });
+    expect(report.byFactor["agent-prompt"]!.paired.axes.social_cadence!.judgeArmBMinusA).toEqual({
+      pairedRuns: 2,
+      candidateMinusBaselineMean: 2,
+    });
+    expect(report.blocks).toMatchObject([
+      { pairId: "pair1", paired: { triggerPairs: 2 } },
+      { pairId: "pair2", paired: { triggerPairs: 2 } },
+    ]);
+    expect(Object.hasOwn(report.axes.social_cadence!, "pairedJudge")).toBe(false);
+    expect(Object.hasOwn(report.resources, "pairedArmBMinusA")).toBe(false);
+    expect(report.byFactor.jev!.paired.resourcesArmBMinusA.actorEstimatedCostUsd.pairedRuns).toBe(2);
   });
 });

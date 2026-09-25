@@ -144,6 +144,13 @@ reference, neither judge nor human rating verifies factual truth.
 
 The study report lists cases, block/replicate pairs, and triggers separately;
 multi-trigger arcs carry earlier conversation history and are correlated.
+`byFactor` reports Jev-question, gate, and agent-prompt comparisons separately.
+Each block also carries its own paired readout. Arm B minus arm A judge and human
+score differences remain separate for each axis; actor estimated cost, Jev
+reported cost, judge reported cost, OpenCode-observed total tokens, and first
+visible latency each have their own paired denominator. A missing value or
+unrated axis reduces only its corresponding denominator. There is no pooled
+quality or resource effect across different factors.
 Each axis has its own rated, not-applicable, not-assessable, missing, and failed
 denominators. Human-versus-judge agreement reports status agreement across
 joint reviews and exact/within-one score agreement only for jointly rated

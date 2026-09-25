@@ -943,23 +943,6 @@ export function analyzeQualityStudy(
   }
   const axes = Object.fromEntries(
     QUALITY_AXES.map((axis) => {
-      const judgeDeltas: number[] = [];
-      const humanDeltas: number[] = [];
-      let resolvedUnknown = 0,
-        resolvedMismatch = 0;
-      for (const pair of pairs) {
-        const a = outcome(pair.a, axis),
-          b = outcome(pair.b, axis);
-        if (a?.status === "completed" && b?.status === "completed") {
-          if (a.result.resolvedJudgeModel === null || b.result.resolvedJudgeModel === null) resolvedUnknown++;
-          else if (a.result.resolvedJudgeModel !== b.result.resolvedJudgeModel) resolvedMismatch++;
-          else if (a.result.status === "rated" && b.result.status === "rated")
-            judgeDeltas.push(b.result.score! - a.result.score!);
-        }
-        const ha = human.get(key(pair.a.trigger.scenarioId, pair.a.trigger.runId))?.axes[axis];
-        const hb = human.get(key(pair.b.trigger.scenarioId, pair.b.trigger.runId))?.axes[axis];
-        if (ha?.status === "rated" && hb?.status === "rated") humanDeltas.push(hb.score - ha.score);
-      }
       const reviewed = all.map((item) => ({
         judge: outcome(item, axis),
         human: human.get(key(item.trigger.scenarioId, item.trigger.runId))?.axes[axis],
@@ -1003,10 +986,6 @@ export function analyzeQualityStudy(
                 Math.abs(judge.result.score! - human.score) <= 1,
             ).length,
           },
-          pairedJudge: delta(judgeDeltas),
-          pairedHuman: delta(humanDeltas),
-          resolvedJudgeModelUnknownPairs: resolvedUnknown,
-          resolvedJudgeModelMismatchPairs: resolvedMismatch,
         },
       ];
     }),
@@ -1055,9 +1034,9 @@ export function analyzeQualityStudy(
   )
     selected[selected.length - 1] = sorted.find((item) => rank(item) === 0)!;
   const metric = (get: (item: (typeof all)[number]) => number | null) => aggregate(all.map(get));
-  const pairedMetric = (get: (item: (typeof all)[number]) => number | null) =>
+  const pairedMetric = (selectedPairs: typeof pairs, get: (item: (typeof all)[number]) => number | null) =>
     delta(
-      pairs.flatMap(({ a, b }) => {
+      selectedPairs.flatMap(({ a, b }) => {
         const av = get(a),
           bv = get(b);
         return av === null || bv === null ? [] : [bv - av];
@@ -1073,6 +1052,64 @@ export function analyzeQualityStudy(
           0,
         )
       : null;
+  const pairedReadout = (selectedPairs: typeof pairs) => ({
+    triggerPairs: selectedPairs.length,
+    axes: Object.fromEntries(
+      QUALITY_AXES.map((axis) => {
+        const judgeDeltas: number[] = [];
+        const humanDeltas: number[] = [];
+        let resolvedJudgeModelUnknownPairs = 0;
+        let resolvedJudgeModelMismatchPairs = 0;
+        for (const { a, b } of selectedPairs) {
+          const first = outcome(a, axis);
+          const second = outcome(b, axis);
+          if (first?.status === "completed" && second?.status === "completed") {
+            if (first.result.resolvedJudgeModel === null || second.result.resolvedJudgeModel === null)
+              resolvedJudgeModelUnknownPairs++;
+            else if (first.result.resolvedJudgeModel !== second.result.resolvedJudgeModel)
+              resolvedJudgeModelMismatchPairs++;
+            else if (first.result.status === "rated" && second.result.status === "rated")
+              judgeDeltas.push(second.result.score! - first.result.score!);
+          }
+          const humanA = human.get(key(a.trigger.scenarioId, a.trigger.runId))?.axes[axis];
+          const humanB = human.get(key(b.trigger.scenarioId, b.trigger.runId))?.axes[axis];
+          if (humanA?.status === "rated" && humanB?.status === "rated") humanDeltas.push(humanB.score - humanA.score);
+        }
+        return [
+          axis,
+          {
+            judgeArmBMinusA: delta(judgeDeltas),
+            humanArmBMinusA: delta(humanDeltas),
+            judgeUnscoredPairs: selectedPairs.length - judgeDeltas.length,
+            humanUnscoredPairs: selectedPairs.length - humanDeltas.length,
+            resolvedJudgeModelUnknownPairs,
+            resolvedJudgeModelMismatchPairs,
+          },
+        ];
+      }),
+    ),
+    resourcesArmBMinusA: {
+      actorEstimatedCostUsd: pairedMetric(selectedPairs, (item) =>
+        item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.coverage === "reported"
+          ? item.trigger.actor.costUsd
+          : null,
+      ),
+      jevReportedCostUsd: pairedMetric(selectedPairs, (item) =>
+        item.trigger.jev.outcome === "completed"
+          ? item.trigger.jev.costUsd
+          : item.trigger.variant === "jev-off"
+            ? 0
+            : null,
+      ),
+      judgeReportedCostUsd: pairedMetric(selectedPairs, judgeCost),
+      openCodeObservedTotalTokens: pairedMetric(selectedPairs, (item) =>
+        item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.totalTokenCoverage === "reported"
+          ? item.trigger.actor.totalTokens
+          : null,
+      ),
+      firstVisibleMs: pairedMetric(selectedPairs, (item) => item.trigger.firstVisibleMs),
+    },
+  });
   return {
     schemaVersion: 2 as const,
     kind: "conversation-routing-live-study-analysis" as const,
@@ -1109,7 +1146,23 @@ export function analyzeQualityStudy(
       cases: rows.length,
       triggers: rows.reduce((sum, row) => sum + row.triggers.length, 0),
       matched: rows.length === 2 && pairs.some((pair) => pair.pairId === pairId),
+      paired: pairedReadout(pairs.filter((pair) => pair.pairId === pairId)),
     })),
+    byFactor: Object.fromEntries(
+      (["jev", "gate", "agent-prompt"] as const).map((factor) => {
+        const cases = manifest.cases.filter((row) => row.study!.factor === factor);
+        const selectedPairs = pairs.filter((pair) => pair.a.caseRow.study!.factor === factor);
+        return [
+          factor,
+          {
+            cases: cases.length,
+            blocks: new Set(cases.map((row) => `${row.study!.blockId}\u0000${row.study!.replicateId}`)).size,
+            triggers: cases.reduce((sum, row) => sum + row.triggers.length, 0),
+            paired: pairedReadout(selectedPairs),
+          },
+        ];
+      }),
+    ),
     triggerObservations: all.map((item) => ({
       scenarioId: item.trigger.scenarioId,
       runId: item.trigger.runId,
@@ -1153,27 +1206,6 @@ export function analyzeQualityStudy(
           : null,
       ),
       firstVisibleMs: metric((item) => item.trigger.firstVisibleMs),
-      pairedArmBMinusA: {
-        actorEstimatedCostUsd: pairedMetric((item) =>
-          item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.coverage === "reported"
-            ? item.trigger.actor.costUsd
-            : null,
-        ),
-        jevReportedCostUsd: pairedMetric((item) =>
-          item.trigger.jev.outcome === "completed"
-            ? item.trigger.jev.costUsd
-            : item.trigger.variant === "jev-off"
-              ? 0
-              : null,
-        ),
-        judgeReportedCostUsd: pairedMetric(judgeCost),
-        openCodeObservedTotalTokens: pairedMetric((item) =>
-          item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.totalTokenCoverage === "reported"
-            ? item.trigger.actor.totalTokens
-            : null,
-        ),
-        firstVisibleMs: pairedMetric((item) => item.trigger.firstVisibleMs),
-      },
     },
     spotChecks: selected.map((item) => ({
       scenarioId: item.trigger.scenarioId,
