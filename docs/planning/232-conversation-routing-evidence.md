@@ -2,7 +2,7 @@
 id: conversation-routing-evidence
 status: active
 issue: 232
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 # Outcome
@@ -113,7 +113,7 @@ the next four cases shared a separate isolated room, so recent-thread affinity
 in the casual case reflects that sequence. The separate-role disagreement case
 used another fresh room.
 
-| Scenario | Observed routing and result | Attempted / responding / yielded | First visible | Provider stream reported input / output tokens; cost |
+| Scenario | Observed routing and result | Attempted / responding / yielded | First visible | Legacy stream input / output tokens; cost |
 | --- | --- | ---: | ---: | ---: |
 | Direct address, low energy | Named target required; other suppressed; one visible reply; `no-explicit-unresolved-state` | 1 / 1 / 0 | 5,201 ms | 2 / 29; $0.00999075 |
 | Whole-room invitation, low energy | Both required by `explicit_broadcast`; two visible replies | 2 / 2 / 0 | 5,452 ms | 4 / 185; $0.01543295 |
@@ -122,8 +122,11 @@ used another fresh room.
 | Disagreement, low energy | Both required; one visible OPEN reply, other yielded; `open-without-second-responder`, no synthesis | 2 / 1 / 1 | 6,560 ms | 4 / 192; $0.02501565 |
 | Separate-role disagreement, low energy | Both required and both yielded; no visible reply or synthesis; `no-visible-output` | 2 / 0 / 2 | unavailable | 4 / 40; $0.01468545 |
 
-The stream token figures are provider-reported fields for each run, not a
-complete provider-call total; cached or internal usage may be absent. All
+The six exploratory cases predate the explicit OpenCode step-field provenance
+marker. Their normalized stream token and cost values are diagnostic only:
+missing step fields could have been filled with zero, the input/output figures
+exclude cached usage, and the actor cost is an OpenCode estimate rather than a
+provider bill. They are excluded from complete token or cost comparisons. All
 classifier consultations skipped with `no_credential` in the isolated
 environment and used deterministic fallback, so these runs do not validate
 Jev quality or latency. The disagreement samples never produced two visible
@@ -134,6 +137,64 @@ Earlier diagnostic attempts with a 90-second watchdog and log-filename or
 credential/argument setup defects were excluded from these acceptance results
 because their timelines could not be interpreted reliably. Temporary room state
 was cleaned, and the disposable fixture project was unchanged.
+
+## Isolated live pilot
+
+Twelve isolated room cases were exercised across source epochs, not twelve
+comparable manifests. The first six exploratory cases above used the earlier
+runner without verifiable actor-usage field presence. One later two-agent
+broadcast case ran at source commit `7f3b61a`; its room turn completed, but its
+original judge call failed, so it is not a matched quality comparison. A
+subsequent judge-only call on its retained fictional output produced a scalar
+rating without rerunning the room. The final five room cases ran at clean
+source commit `525baec` with the same OpenCode version, actor model, and source
+digest. They comprise a two-agent broadcast pair, a three-agent disagreement
+pair with a second resolution trigger in each room, and one three-agent casual
+case. Only the three Jev-on/off trigger pairs from this final epoch enter the
+comparisons below.
+
+All paired cases used `enforce` preflight, with low energy for broadcast and
+lively energy for disagreement and resolution. Jev-on consultations completed;
+Jev-off skipped consultation by design. In the three-agent case, Jev classified
+named targets as required on the disagreement and resolution triggers. The
+deterministic recognizer on Jev-off did not mark those two address constructions
+as required, although optional scheduling still invoked participants. Thus the
+observed routing difference is a required-target decision, not proof that an
+off-mode participant would never answer.
+
+| Matched trigger (one pair each) | Judge naturalness, on / off | First visible, on / off | Responding turns, on / off | OpenCode-observed total + Jev prompt/completion tokens, on / off | Actor-estimated + Jev-reported cost, on / off |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Broadcast, two agents | 5 / 1 | 6,821 / 12,003 ms | 2 / 1 | 16,162 / 15,612 | $0.014381048 / $0.015494 |
+| Disagreement, three agents | 5 / 3 | 9,694 / 12,138 ms | 2 / 2 | 25,051 / 23,752 | $0.021869010 / $0.020988750 |
+| Resolution, three agents | 4 / 4 | 6,251 / 9,643 ms | 2 / 2 | 34,952 / 33,218 | $0.015923998 / $0.015627550 |
+
+Across these **three matched trigger pairs**, judge-only naturalness averaged
+4.67/5 with Jev and 2.67/5 without; first visible output was 3,673 ms sooner
+with Jev on average. Each run attempted the same number of turns as its pair;
+the broadcast Jev-off run yielded once, while both variants of each
+three-agent trigger responded twice and yielded once. The combined observed
+token sums were 76,165 on and 72,582 off. The mixed-provenance cost sums were
+$0.052174056 on and $0.052110300 off. These sums include Jev's API-reported
+tokens and cost only on the on side; OpenCode's actor tokens are normalized
+step-finish observations, and its cost is a local pricing estimate. The
+independent judge's API-reported cost is separate from both room-turn sums.
+All six paired triggers have complete OpenCode-observed total-token and actor
+estimate coverage, complete applicable Jev usage, and judge ratings.
+
+The unmatched three-agent casual case consulted Jev, attempted one turn, yielded,
+and showed no visible reply. The judge marked naturalness **not assessable**;
+missing visible output is not a favorable zero or a human naturalness finding.
+No human ratings have been submitted for the seven final-epoch triggers. A
+deterministic private spot-check queue selects low-scored and seeded cases for
+human review. The named disagreement trigger ended with
+`no-material-disagreement`, so no live case yet proves continuation after a
+genuine unresolved dispute. These small stochastic, judge-rated observations
+do not establish a causal quality or savings effect. The reproducible isolated
+runner and provider-free multi-manifest analysis commands, including the
+private human-rating workflow, are documented in
+[`docs/testing/conversation-routing-live-canary.md`](../testing/conversation-routing-live-canary.md)
+and
+[`docs/testing/conversation-routing-live-analysis.md`](../testing/conversation-routing-live-analysis.md).
 
 A provider-free Chromium/WebKit full visual capture passed 636 browser cases
 with 36 matrix skips and produced 786/786 screenshots (run `IE02C0`, all
