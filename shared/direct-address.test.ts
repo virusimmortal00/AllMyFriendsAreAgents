@@ -16,6 +16,14 @@ describe("conservative direct-address recognition", () => {
     ).toEqual([]);
     expect(
       directAddressTargets({
+        text: "Sol, given the fictional sign options, describe a compromise.",
+        agents,
+        humanNames: ["Sol"],
+        speaker: "human",
+      }),
+    ).toEqual([]);
+    expect(
+      directAddressTargets({
         text: "Claude, can you check?",
         agents: [...agents, { agentId: "agent-second", name: "Claude" }],
         speaker: "human",
