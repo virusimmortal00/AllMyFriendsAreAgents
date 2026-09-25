@@ -85,6 +85,20 @@ group on every exit, deletes temporary state, and verifies the fixture project
 did not change. Raw server logs and provider output stay inside that root and
 are discarded.
 
+Each case records a closed `availabilityCheck` before sending a human message:
+the initial and final model-discovery statuses, sorted reasons for selected
+unavailable participants, whether a refresh was attempted, and whether it
+recovered. A fresh server may cache a transient discovery `error` for 30
+seconds. Only when that is the initial status and every selected unavailable
+participant has `runtime_unavailable` does the harness attempt one authenticated
+forced discovery refresh with the room member's CSRF token. It then rechecks
+the roster and proceeds only if every selected participant is available.
+Authentication, configuration, runtime-version, and model-selection failures
+are never retried. The refresh request has a separate 30-second deadline; the
+case and whole-study watchdogs still apply. Failed cases may carry the same
+closed check in their scalar failure record. No model catalog, diagnostic text,
+or token is included.
+
 The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
