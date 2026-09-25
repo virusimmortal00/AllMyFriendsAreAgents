@@ -13,6 +13,8 @@ import {
   parseReviewLocator,
   parseReviewQueue,
   reviewFingerprint,
+  selectCalibrationReviewQueue,
+  selectFlaggedReviewQueue,
   selectPairedReviewQueue,
 } from "./conversation-routing-live-review.js";
 
@@ -152,6 +154,80 @@ const exported = () => ({
 });
 
 describe("private offline review pack", () => {
+  it("samples 12 distinct factor-balanced pairs without judge-score influence and keeps flagged cases separate", () => {
+    const cases: Record<string, unknown>[] = [];
+    const entries: Array<{
+      reviewId: string;
+      scenarioId: string;
+      runId: string;
+      sourceFile: string;
+      priority: string;
+    }> = [];
+    const factors = ["jev", "gate", "agent-prompt"] as const;
+    let serial = 0;
+    for (const factor of factors)
+      for (let pairIndex = 0; pairIndex < 12; pairIndex++) {
+        const count = factor === "gate" ? [2, 3, 4][pairIndex % 3]! : [1, 2, 3, 4][pairIndex % 4]!;
+        const pairId = `${factor.replace("-", "")}-${pairIndex}`;
+        for (const arm of ["a", "b"]) {
+          const scenarioId = `${pairId}-${arm}`;
+          const triggers = [0, 1].map((ordinal) => {
+            const runId = `run-${scenarioId}-${ordinal}`;
+            const reviewId = `review-${(serial++).toString(16).padStart(12, "0")}`;
+            entries.push({ reviewId, scenarioId, runId, sourceFile: `source-${serial}.json`, priority: "unselected" });
+            return {
+              scenarioId,
+              runId,
+              requiredTargetCount: 1,
+              confirmedDeliveredBursts: pairIndex < 6 && ordinal === 0 ? 0 : 1,
+            };
+          });
+          cases.push({ agentCount: count, study: { pairId, arm, factor }, triggers, qualityJudge: [] });
+        }
+      }
+    const scalar = { schemaVersion: 1, kind: "conversation-routing-live-canary", cases };
+    const locator = { schemaVersion: 1, entries };
+    const calibration = selectCalibrationReviewQueue(scalar, locator, "fixed-before-outcomes");
+    expect(calibration.receipt.selected).toHaveLength(12);
+    expect(calibration.queue.reviewIds).toHaveLength(24);
+    expect(new Set(calibration.receipt.selected.map((row) => row.pairId)).size).toBe(12);
+    for (const factor of factors)
+      expect(calibration.receipt.selected.filter((row) => row.factor === factor)).toHaveLength(4);
+    const altered = {
+      ...scalar,
+      cases: cases.map((row) => ({ ...row, qualityJudge: [{ status: "failed", score: 1 }] })),
+    };
+    expect(selectCalibrationReviewQueue(altered, locator, "fixed-before-outcomes").queue).toEqual(calibration.queue);
+    for (const row of calibration.receipt.selected) {
+      const positions = row.reviewIds.map((id) => calibration.queue.reviewIds.indexOf(id));
+      expect(Math.abs(positions[0]! - positions[1]!)).toBeGreaterThan(1);
+    }
+    const flagged = selectFlaggedReviewQueue(scalar, locator, calibration.receipt, "fixed-before-outcomes");
+    expect(() =>
+      selectFlaggedReviewQueue(scalar, locator, { ...calibration.receipt, selected: [] }, "fixed-before-outcomes"),
+    ).toThrow();
+    expect(flagged.receipt.selected).toHaveLength(3);
+    expect(flagged.queue?.reviewIds).toHaveLength(6);
+    expect(flagged.receipt.selected.map((row) => row.factor).sort()).toEqual([...factors].sort());
+    for (const row of flagged.receipt.selected) {
+      expect(row.triggerOrdinal).toBe(0);
+      expect(
+        calibration.receipt.selected.some(
+          (item) => item.pairId === row.pairId && item.triggerOrdinal === row.triggerOrdinal,
+        ),
+      ).toBe(false);
+    }
+    expect(JSON.stringify(calibration.queue)).not.toContain("factor");
+    expect(JSON.stringify(flagged.queue)).not.toContain("required");
+    expect(() =>
+      selectFlaggedReviewQueue(
+        { ...scalar, sourceSha256: "changed" },
+        locator,
+        calibration.receipt,
+        "fixed-before-outcomes",
+      ),
+    ).toThrow();
+  });
   it("converts only known opaque IDs to the existing private four-axis schema", () => {
     const converted = convertOfflineReviewExport(exported(), queue, map, manifest, bundles);
     expect(converted).toEqual({

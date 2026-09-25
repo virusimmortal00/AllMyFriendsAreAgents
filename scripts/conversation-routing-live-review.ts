@@ -422,6 +422,233 @@ export function selectPairedReviewQueue(
   return parseReviewQueue({ schemaVersion: 1, reviewIds: [...first, ...second].map((entry) => entry.id) });
 }
 
+type StudyFactor = "jev" | "gate" | "agent-prompt";
+type ReviewPair = {
+  pairId: string;
+  factor: StudyFactor;
+  agentCount: number;
+  ordinals: Array<{ ids: [string, string]; requiredNoVisible: boolean }>;
+};
+type SelectedReviewPair = {
+  pairId: string;
+  factor: StudyFactor;
+  agentCount: number;
+  triggerOrdinal: number;
+  reviewIds: [string, string];
+};
+export interface PrivateReviewSelectionReceipt {
+  schemaVersion: 1;
+  kind: "calibration" | "flagged-inspection";
+  manifestFingerprint: string;
+  seed: string;
+  selected: SelectedReviewPair[];
+  unavailableFactors: StudyFactor[];
+}
+
+function seedHash(seed: string, label: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([seed, label]))
+    .digest("hex");
+}
+function validSeed(seed: string) {
+  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(seed)) throw new Error("Invalid private review selection.");
+}
+function studyPairs(manifest: unknown, locatorInput: unknown): ReviewPair[] {
+  const locator = parseReviewLocator(locatorInput, null, manifest);
+  const expected = scalarRunKeys(manifest);
+  const byRun = new Map(locator.entries.map((entry) => [`${entry.scenarioId}\u0000${entry.runId}`, entry.reviewId]));
+  if (byRun.size !== expected.size || [...expected].some((key) => !byRun.has(key)))
+    throw new Error("Incomplete private review locator.");
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const value of record(manifest).cases as unknown[]) {
+    const room = record(value);
+    const study = record(room.study);
+    if (
+      !safeId(study.pairId) ||
+      !["a", "b"].includes(String(study.arm)) ||
+      !["jev", "gate", "agent-prompt"].includes(String(study.factor)) ||
+      !Number.isSafeInteger(room.agentCount) ||
+      Number(room.agentCount) < 1 ||
+      Number(room.agentCount) > 4
+    )
+      throw new Error("Invalid private review selection.");
+    groups.set(study.pairId, [...(groups.get(study.pairId) ?? []), room]);
+  }
+  const pairs: ReviewPair[] = [];
+  for (const [pairId, rows] of groups) {
+    const a = rows.find((row) => record(row.study).arm === "a");
+    const b = rows.find((row) => record(row.study).arm === "b");
+    if (
+      !a ||
+      !b ||
+      rows.length !== 2 ||
+      a.agentCount !== b.agentCount ||
+      record(a.study).factor !== record(b.study).factor ||
+      !Array.isArray(a.triggers) ||
+      !Array.isArray(b.triggers) ||
+      a.triggers.length !== b.triggers.length ||
+      a.triggers.length < 1 ||
+      a.triggers.length > 3
+    )
+      throw new Error("Incomplete private study pair.");
+    const ordinals = a.triggers.map((value: unknown, ordinal: number) => {
+      const left = record(value),
+        right = record((b.triggers as unknown[])[ordinal]);
+      const idA = byRun.get(`${left.scenarioId}\u0000${left.runId}`);
+      const idB = byRun.get(`${right.scenarioId}\u0000${right.runId}`);
+      if (!idA || !idB || idA === idB) throw new Error("Incomplete private study pair.");
+      const missing = [left, right].some((trigger) => {
+        const required =
+          trigger.requiredTargetCount ??
+          (Array.isArray(trigger.requiredAddressAgents) ? trigger.requiredAddressAgents.length : null);
+        return typeof required === "number" && required > 0 && trigger.confirmedDeliveredBursts === 0;
+      });
+      return { ids: [idA, idB] as [string, string], requiredNoVisible: missing };
+    });
+    pairs.push({ pairId, factor: record(a.study).factor as StudyFactor, agentCount: Number(a.agentCount), ordinals });
+  }
+  return pairs;
+}
+function blindSelected(selected: SelectedReviewPair[], seed: string): PrivateReviewQueue {
+  if (!selected.length) throw new Error("No review pairs available.");
+  const cards = selected.map((pair) => {
+    const key = `${pair.pairId}:${pair.triggerOrdinal}`;
+    const flip = Number.parseInt(seedHash(seed, `orientation:${key}`).slice(0, 2), 16) % 2;
+    return { key, first: pair.reviewIds[flip]!, second: pair.reviewIds[1 - flip]! };
+  });
+  const first = [...cards].sort((a, b) =>
+    seedHash(seed, `first:${a.key}`).localeCompare(seedHash(seed, `first:${b.key}`)),
+  );
+  const second = [...cards].sort((a, b) =>
+    seedHash(seed, `second:${a.key}`).localeCompare(seedHash(seed, `second:${b.key}`)),
+  );
+  if (second.length > 1 && first.at(-1)?.key === second[0]?.key) [second[0], second[1]] = [second[1]!, second[0]!];
+  return parseReviewQueue({
+    schemaVersion: 1,
+    reviewIds: [...first.map((row) => row.first), ...second.map((row) => row.second)],
+  });
+}
+
+/** Twelve judge-independent, factor-balanced pairs; one seed-selected trigger per pair. */
+export function selectCalibrationReviewQueue(manifest: unknown, locator: unknown, seed: string) {
+  validSeed(seed);
+  const pairs = studyPairs(manifest, locator);
+  const factors: StudyFactor[] = ["jev", "gate", "agent-prompt"];
+  const selected: SelectedReviewPair[] = [];
+  for (const factor of factors) {
+    const available = pairs.filter((pair) => pair.factor === factor);
+    const counts = [...new Set(available.map((pair) => pair.agentCount))].sort();
+    if (available.length < 4 || counts.length < 2 || counts.length > 4)
+      throw new Error("Insufficient calibration strata.");
+    const chosen: ReviewPair[] = [];
+    for (const count of counts) {
+      const stratum = available.filter((pair) => pair.agentCount === count);
+      stratum.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
+      chosen.push(stratum[0]!);
+    }
+    const remainder = available.filter((pair) => !chosen.includes(pair));
+    remainder.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
+    chosen.push(...remainder.slice(0, 4 - chosen.length));
+    if (chosen.length !== 4) throw new Error("Insufficient calibration strata.");
+    for (const pair of chosen) {
+      const ordinals = pair.ordinals.map((_, ordinal) => ordinal);
+      ordinals.sort((a, b) =>
+        seedHash(seed, `ordinal:${pair.pairId}:${a}`).localeCompare(seedHash(seed, `ordinal:${pair.pairId}:${b}`)),
+      );
+      const triggerOrdinal = ordinals[0]!;
+      selected.push({
+        pairId: pair.pairId,
+        factor,
+        agentCount: pair.agentCount,
+        triggerOrdinal,
+        reviewIds: pair.ordinals[triggerOrdinal]!.ids,
+      });
+    }
+  }
+  const receipt: PrivateReviewSelectionReceipt = {
+    schemaVersion: 1,
+    kind: "calibration",
+    manifestFingerprint: manifestFingerprint(manifest),
+    seed,
+    selected,
+    unavailableFactors: [],
+  };
+  return { queue: blindSelected(selected, seed), receipt };
+}
+
+/** A separate outcome-conditioned inspection set; never mix it into calibration denominators. */
+export function selectFlaggedReviewQueue(manifest: unknown, locator: unknown, calibrationInput: unknown, seed: string) {
+  validSeed(seed);
+  const calibration = exact(calibrationInput, [
+    "schemaVersion",
+    "kind",
+    "manifestFingerprint",
+    "seed",
+    "selected",
+    "unavailableFactors",
+  ]);
+  if (
+    calibration.schemaVersion !== 1 ||
+    calibration.kind !== "calibration" ||
+    calibration.manifestFingerprint !== manifestFingerprint(manifest) ||
+    !Array.isArray(calibration.selected) ||
+    typeof calibration.seed !== "string"
+  )
+    throw new Error("Invalid private calibration receipt.");
+  const expectedCalibration = selectCalibrationReviewQueue(manifest, locator, calibration.seed).receipt;
+  if (JSON.stringify(calibration) !== JSON.stringify(expectedCalibration))
+    throw new Error("Invalid private calibration receipt.");
+  const covered = new Set(
+    calibration.selected.map((value: unknown) => {
+      const row = record(value);
+      if (!safeId(row.pairId) || !Number.isSafeInteger(row.triggerOrdinal))
+        throw new Error("Invalid private calibration receipt.");
+      return `${row.pairId}:${row.triggerOrdinal}`;
+    }),
+  );
+  const pairs = studyPairs(manifest, locator);
+  const factors: StudyFactor[] = ["jev", "gate", "agent-prompt"];
+  const selected: SelectedReviewPair[] = [];
+  const unavailableFactors: StudyFactor[] = [];
+  for (const factor of factors) {
+    const options = pairs
+      .filter((pair) => pair.factor === factor)
+      .flatMap((pair) =>
+        pair.ordinals.flatMap((ordinal, triggerOrdinal) =>
+          ordinal.requiredNoVisible && !covered.has(`${pair.pairId}:${triggerOrdinal}`)
+            ? [{ pair, triggerOrdinal, ids: ordinal.ids }]
+            : [],
+        ),
+      );
+    options.sort((a, b) =>
+      seedHash(seed, `flag:${a.pair.pairId}:${a.triggerOrdinal}`).localeCompare(
+        seedHash(seed, `flag:${b.pair.pairId}:${b.triggerOrdinal}`),
+      ),
+    );
+    const selectedOption = options[0];
+    if (!selectedOption) {
+      unavailableFactors.push(factor);
+      continue;
+    }
+    selected.push({
+      pairId: selectedOption.pair.pairId,
+      factor,
+      agentCount: selectedOption.pair.agentCount,
+      triggerOrdinal: selectedOption.triggerOrdinal,
+      reviewIds: selectedOption.ids,
+    });
+  }
+  const receipt: PrivateReviewSelectionReceipt = {
+    schemaVersion: 1,
+    kind: "flagged-inspection",
+    manifestFingerprint: manifestFingerprint(manifest),
+    seed,
+    selected,
+    unavailableFactors,
+  };
+  return { queue: selected.length ? blindSelected(selected, seed) : null, receipt };
+}
+
 const STYLE = `:root{font:16px system-ui,sans-serif;color:#17212b;background:#f4f7fa}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:1rem 1rem 4rem}header{position:sticky;top:0;background:#f4f7fa;padding:.75rem 0;z-index:1;border-bottom:1px solid #cad4de}h1{font-size:1.45rem;margin:.25rem 0}button,.file-button{border:1px solid #45657e;background:#fff;color:#123;padding:.55rem .75rem;border-radius:.4rem;cursor:pointer;font:inherit}button:focus-visible,input:focus-visible,.file-button:focus-within{outline:3px solid #2369b4}.toolbar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.toolbar output{margin-left:auto}section,.card,fieldset{background:white;border:1px solid #c7d2dc;border-radius:.5rem;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:.4rem 0}.message{border-left:3px solid #8aa4bc;padding:.4rem .75rem;margin:.7rem 0;background:#f8fafc}.message strong{display:block}fieldset legend{font-weight:700;padding:0 .3rem}.anchors{color:#40576b;font-size:.92rem}.choices{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:.65rem}.choices label{display:flex;align-items:center;gap:.2rem;min-height:2rem}#status{min-height:1.5rem;color:#345}#importFile{position:absolute;opacity:0;width:1px;height:1px}@media(max-width:550px){main{padding:.5rem}.toolbar output{margin-left:0;width:100%}}`;
 const SCRIPT = `(function(){"use strict";const data=__DATA__;const fingerprint=__FINGERPRINT__;const axes=__AXES__;const labels=__LABELS__;const anchors=__ANCHORS__;const choices=["1","2","3","4","5","NA","Clear"];let index=0;const ratings={};const byId=new Set(data.map(x=>x.reviewId));const $=id=>document.getElementById(id);function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}function el(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node}function complete(id){return axes.every(axis=>ratings[id]?.axes?.[axis])}function render(){const item=data[index];$("counter").textContent=(index+1)+" / "+data.length;$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete";$("reviewId").textContent=item.reviewId;$("kind").textContent=item.scenarioKind;$("human").textContent=item.qualityContext.originalHumanAlias;$("roster").textContent=item.qualityContext.roster.map(x=>x.conversationalName).join(", ");$("expected").textContent=item.expectedDirectAgents.map(id=>item.qualityContext.roster.find(x=>x.agentId===id)?.conversationalName||id).join(", ")||"None stated";$("prompt").textContent=item.prompt;const messages=$("messages");clear(messages);let latestHuman=-1;item.messages.forEach((message,i)=>{if(message.kind==="human")latestHuman=i});const currentReplies=item.messages.slice(latestHuman+1).filter(message=>message.kind==="agent").length;$("replyStatus").textContent=currentReplies===0?"No visible agent reply after the latest human prompt.":currentReplies+" visible agent reply"+(currentReplies===1?"":"ies")+" after the latest human prompt.";for(const message of item.messages){const box=el("div","message");box.append(el("strong","",message.speaker+" · "+message.kind),el("pre","",message.text));messages.append(box)}const scores=$("scores");clear(scores);for(const axis of axes){const group=el("fieldset","");group.dataset.axis=axis;group.append(el("legend","",labels[axis]),el("div","anchors",anchors[axis]));const row=el("div","choices");for(const option of choices){const label=el("label","");const input=document.createElement("input");input.type="radio";input.name=axis;input.value=option;input.checked=(option==="Clear"&&!ratings[item.reviewId]?.axes?.[axis])||(option==="NA"&&ratings[item.reviewId]?.axes?.[axis]?.status==="not_assessable")||(ratings[item.reviewId]?.axes?.[axis]?.status==="rated"&&String(ratings[item.reviewId].axes[axis].score)===option);input.addEventListener("change",()=>{const entry=ratings[item.reviewId]??={reviewId:item.reviewId,axes:{}};if(option==="Clear")delete entry.axes[axis];else entry.axes[axis]=option==="NA"?{status:"not_assessable"}:{status:"rated",score:Number(option)};if(!Object.keys(entry.axes).length)delete ratings[item.reviewId];$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete"});label.append(input,document.createTextNode(option));row.append(label)}group.append(row);scores.append(group)}$("previous").disabled=index===0;$("next").disabled=index===data.length-1}function validate(input){if(!input||input.schemaVersion!==1||input.kind!=="blinded-quality-ratings"||input.packFingerprint!==fingerprint||Object.keys(input).some(k=>!["schemaVersion","kind","packFingerprint","ratings"].includes(k))||!Array.isArray(input.ratings)||input.ratings.length>data.length)throw Error();const seen=new Set();const parsed={};for(const row of input.ratings){if(!row||typeof row.reviewId!=="string"||!byId.has(row.reviewId)||seen.has(row.reviewId)||!row.axes||typeof row.axes!=="object"||Array.isArray(row.axes)||Object.keys(row).some(k=>!["reviewId","axes"].includes(k)))throw Error();seen.add(row.reviewId);const entry={reviewId:row.reviewId,axes:{}};for(const axis of Object.keys(row.axes)){if(!axes.includes(axis))throw Error();const rating=row.axes[axis];if(!rating||typeof rating!=="object"||Array.isArray(rating))throw Error();if(rating.status==="rated"&&Number.isInteger(rating.score)&&rating.score>=1&&rating.score<=5&&Object.keys(rating).length===2)entry.axes[axis]={status:"rated",score:rating.score};else if(rating.status==="not_assessable"&&Object.keys(rating).length===1)entry.axes[axis]={status:"not_assessable"};else throw Error()}if(Object.keys(entry.axes).length)parsed[row.reviewId]=entry}return parsed}$("previous").onclick=()=>{index=Math.max(0,index-1);render()};$("next").onclick=()=>{index=Math.min(data.length-1,index+1);render()};$("export").onclick=()=>{const payload={schemaVersion:1,kind:"blinded-quality-ratings",packFingerprint:fingerprint,ratings:data.flatMap(x=>ratings[x.reviewId]?[ratings[x.reviewId]]:[])};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download="blinded-ratings.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),3000);$("status").textContent="Private ratings exported. Save outside the repository."};$("importFile").onchange=async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>128000)throw Error();const parsed=validate(JSON.parse(await file.text()));for(const key of Object.keys(ratings))delete ratings[key];Object.assign(ratings,parsed);$("status").textContent="Private partial ratings imported.";render()}catch{$("status").textContent="Invalid ratings file; current ratings were retained."}event.target.value=""};document.addEventListener("keydown",event=>{if(event.altKey&&event.key==="ArrowRight"){event.preventDefault();$("next").click()}else if(event.altKey&&event.key==="ArrowLeft"){event.preventDefault();$("previous").click()}else if(!event.altKey&&!event.metaKey&&!event.ctrlKey&&event.target.closest?.("[data-axis]")){const option=/^[1-5]$/.test(event.key)?event.key:event.key.toLowerCase()==="n"?"NA":null;if(option){event.preventDefault();const input=event.target.closest("[data-axis]").querySelector('input[value="'+option+'"]');input?.click()}}});render()})();`;
 
@@ -588,11 +815,15 @@ async function main() {
       ? ["--manifest", "--source-dir", "--output-dir"]
       : command === "select"
         ? ["--manifest", "--map", "--seed", "--pairs", "--output"]
-        : command === "pack"
-          ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
-          : command === "convert"
-            ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
-            : [];
+        : command === "select-calibration"
+          ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
+          : command === "select-flagged"
+            ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
+            : command === "pack"
+              ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
+              : command === "convert"
+                ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
+                : [];
   if (!required.length || flags.size !== required.length || required.some((key) => !flags.has(key)))
     throw new Error("Invalid review command.");
   if (
@@ -633,6 +864,19 @@ async function main() {
     });
     await privateWrite(one("--output"), `${JSON.stringify(queue, null, 2)}\n`);
     process.stdout.write("Private review artifact created.\n");
+    return;
+  }
+  if (command === "select-calibration" || command === "select-flagged") {
+    const locator = await readBounded(one("--map"));
+    const result =
+      command === "select-calibration"
+        ? selectCalibrationReviewQueue(manifest, locator, one("--seed"))
+        : selectFlaggedReviewQueue(manifest, locator, await readBounded(one("--calibration-receipt")), one("--seed"));
+    if (result.queue) await privateWrite(one("--output"), `${JSON.stringify(result.queue, null, 2)}\n`);
+    await privateWrite(one("--receipt"), `${JSON.stringify(result.receipt, null, 2)}\n`);
+    process.stdout.write(
+      result.queue ? "Private review selection created.\n" : "No additional flagged cards; private receipt created.\n",
+    );
     return;
   }
   const queue = parseReviewQueue(await readBounded(one("--queue")));
