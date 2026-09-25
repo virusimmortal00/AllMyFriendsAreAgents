@@ -89,8 +89,9 @@ The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
 generation outcomes, terminal reason, confirmed delivery count, and
-OpenCode-observed token fields and estimated actor cost when complete. Jev-on cases require an
-actual `classifier: completed` stage; a fallback fails the case. Structured
+OpenCode-observed token fields and estimated actor cost when complete. Legacy
+pilot Jev-on cases require an actual `classifier: completed` stage; a fallback
+fails the case. Structured
 records are joined by trigger, job, run, turn, generation, and attempt identity
 across base and rotated streams. Missing or partial usage remains unknown, not
 zero. Jev's API-reported token/cost fields and the judge's usage stay separate
@@ -165,6 +166,12 @@ appends a fixed optional-reaction instruction. Each case records a SHA-256
 digest of its full selected base prompt; the two arms otherwise use the same
 fictional fixture and requested actor model. Actor response identity is not
 independently proven by the room manifest.
+
+The legacy pilot still requires Jev completion proof in every Jev-on case. A
+study case instead retains a failed, skipped, or unconsulted classifier outcome when
+the same trigger has a correlated terminal deterministic fallback and persisted
+routing decision. Its classifier outcome and missing usage remain explicit in
+the scalar report; such a case is not a completed-Jev treatment observation.
 
 For a live study, add the audited absolute `--opencode` and
 `--secret-launcher` paths, a fresh `--retain-private-review` directory outside

@@ -780,10 +780,11 @@ async function runCase(
         preflightMode: scenario.preflightMode,
         records: latestRecords.length >= records.length ? latestRecords : records,
         preflightDecisions: await preflight.rawDecisions(200),
+        allowIncompleteJev: Boolean(scenario.study),
       });
       triggerResults.push(result);
       stage = "classifier";
-      if (scenario.classifierEnabled && result.classifier.outcome !== "completed")
+      if (!scenario.study && scenario.classifierEnabled && result.classifier.outcome !== "completed")
         throw new Error("Jev completion proof is missing.");
       if (
         scenario.study &&

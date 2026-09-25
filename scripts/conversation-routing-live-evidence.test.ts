@@ -128,6 +128,37 @@ function fixture() {
 }
 
 describe("live routing scalar extraction", () => {
+  it("retains a correlated study Jev fallback but keeps the legacy completion proof strict", () => {
+    for (const outcome of ["failed", "skipped", null] as const) {
+      const input = fixture();
+      const classifier = input.records.find((record) => record.stage === "classifier")!;
+      if (outcome === null) input.records.splice(input.records.indexOf(classifier), 1);
+      else Object.assign(classifier, { outcome, reason: outcome === "failed" ? "timeout" : "cooldown" });
+      Object.assign(input.records.find((record) => record.stage === "preflight-completed")!, {
+        classifier: "fallback",
+      });
+      const { classification: _classification, ...fallbackDecision } = input.preflight[0]!;
+      const request = {
+        scenarioId: "direct-2-low-enforce",
+        variant: "jev-on" as const,
+        preflightMode: "enforce" as const,
+        records: input.records,
+        preflightDecisions: [fallbackDecision],
+        triggerMessageId: input.triggerMessageId,
+      };
+      expect(() => collectLiveScenarioEvidence(request)).toThrow("Jev completion proof");
+      const result = collectLiveScenarioEvidence({ ...request, allowIncompleteJev: true });
+      expect(result.classifier.outcome).toBe(outcome ?? "not-consulted");
+      expect(result.classifier.resolvedModelId).toBeNull();
+      expect(result.respondedTurns).toBe(1);
+      Object.assign(input.records.find((record) => record.stage === "preflight-completed")!, {
+        classifier: "completed",
+      });
+      expect(() => collectLiveScenarioEvidence({ ...request, allowIncompleteJev: true })).toThrow(
+        "Jev completion proof",
+      );
+    }
+  });
   it("keeps provider resolution unknown unless explicitly audited and accepts a leading-tilde model ID", () => {
     const input = fixture();
     const collect = () =>
