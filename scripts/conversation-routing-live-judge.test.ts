@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  JudgeFailure,
   type JudgeScalarResult,
   judgeConversationCase,
   parsePrivateJudgeCase,
@@ -52,6 +53,8 @@ describe("private live conversation judge", () => {
       expect(request.provider.require_parameters).toBe(true);
       expect(request.response_format.type).toBe("json_schema");
       expect(request.response_format.json_schema.strict).toBe(true);
+      expect(request.response_format.json_schema.schema.properties.directMisses.maximum).toBe(1);
+      expect(request.response_format.json_schema.schema.properties.unnecessaryReplies.maximum).toBe(1);
       expect(JSON.stringify(request)).not.toContain("routingPolicy");
       expect(JSON.stringify(request)).not.toContain("reportedCostUsd");
       return Response.json({
@@ -108,6 +111,43 @@ describe("private live conversation judge", () => {
     await expect(judgeConversationCase(privateCase, { ...options, actorModel: options.model })).rejects.toThrow(
       "Judge configuration is invalid.",
     );
+  });
+
+  it("aligns broadcast count bounds and returns only closed failure categories", async () => {
+    const broadcast = { ...privateCase, scenarioKind: "broadcast", expectedDirectAgents: [] };
+    const requests: number[] = [];
+    const schemaFailure = async (_url: string, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      requests.push(request.response_format.json_schema.schema.properties.directMisses.maximum);
+      return Response.json({
+        choices: [
+          { message: { content: JSON.stringify({ ...judgment, directMisses: 1, rationale: "private reply" }) } },
+        ],
+      });
+    };
+    await expect(
+      judgeConversationCase(broadcast, { ...options, fetchImpl: schemaFailure as typeof fetch }),
+    ).rejects.toMatchObject({ category: "judgment-schema" });
+    expect(requests).toEqual([0]);
+    const categories = [
+      [Response.json({ error: "private key" }, { status: 401 }), "http-auth"],
+      [Response.json({ error: "private key" }, { status: 429 }), "http-rate-limit"],
+      [new Response("not-json"), "response-json"],
+      [new Response("x".repeat(32_769)), "response-too-large"],
+      [Response.json({ choices: [] }), "response-shape"],
+    ] as const;
+    for (const [response, category] of categories) {
+      try {
+        await judgeConversationCase(broadcast, { ...options, fetchImpl: (async () => response) as typeof fetch });
+        throw new Error("Expected the judge fixture to fail.");
+      } catch (error) {
+        expect(error).toBeInstanceOf(JudgeFailure);
+        expect(error).toMatchObject({ category });
+        expect(
+          JSON.stringify({ category: (error as JudgeFailure).category, message: (error as Error).message }),
+        ).not.toContain("private key");
+      }
+    }
   });
 
   it("selects discordance, low scores, then a seeded sample without output text", () => {

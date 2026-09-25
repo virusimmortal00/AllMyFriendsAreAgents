@@ -34,6 +34,28 @@ export interface JudgeScalarResult {
   judgeUsage: { inputTokens: number | null; outputTokens: number | null; reportedCostUsd: number | null };
 }
 
+export type JudgeFailureCategory =
+  | "timeout"
+  | "cancelled"
+  | "transport"
+  | "http-auth"
+  | "http-rate-limit"
+  | "http-client"
+  | "http-server"
+  | "http-other"
+  | "response-too-large"
+  | "response-json"
+  | "response-shape"
+  | "judgment-schema";
+
+/** Closed failure metadata; never retain the provider's message, body, or error cause. */
+export class JudgeFailure extends Error {
+  constructor(readonly category: JudgeFailureCategory) {
+    super("Judge request or result failed; private content was not exported.");
+    this.name = "JudgeFailure";
+  }
+}
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -60,6 +82,18 @@ const SCHEMA = {
     "closureCorrect",
   ],
 } as const;
+
+function judgmentSchema(expectedTargets: number, replies: number) {
+  return {
+    ...SCHEMA,
+    properties: {
+      ...SCHEMA.properties,
+      directMisses: { ...SCHEMA.properties.directMisses, maximum: expectedTargets },
+      unnecessaryReplies: { ...SCHEMA.properties.unnecessaryReplies, maximum: replies },
+      duplicateReplies: { ...SCHEMA.properties.duplicateReplies, maximum: replies },
+    },
+  };
+}
 
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid private judge input.");
@@ -169,27 +203,45 @@ function reportedNumber(value: unknown, max: number): number | null {
 
 async function boundedResponseJson(response: Response): Promise<Record<string, unknown>> {
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("Judge response is invalid.");
+  if (!reader) throw new JudgeFailure("response-shape");
   const decoder = new TextDecoder();
   let bytes = 0;
   let body = "";
   for (;;) {
-    const chunk = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch {
+      throw new JudgeFailure("transport");
+    }
     if (chunk.done) break;
     bytes += chunk.value.byteLength;
     if (bytes > 32_768) {
-      await reader.cancel();
-      throw new Error("Judge response is invalid.");
+      await reader.cancel().catch(() => undefined);
+      throw new JudgeFailure("response-too-large");
     }
     body += decoder.decode(chunk.value, { stream: true });
   }
   body += decoder.decode();
-  const parsed: unknown = JSON.parse(body);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Judge response is invalid.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new JudgeFailure("response-json");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new JudgeFailure("response-shape");
   return parsed as Record<string, unknown>;
 }
 
-/** One bounded live judge call, no retries. All failures are generic to avoid echoing private content. */
+function httpCategory(status: number): JudgeFailureCategory {
+  if (status === 401 || status === 403) return "http-auth";
+  if (status === 429) return "http-rate-limit";
+  if (status >= 400 && status < 500) return "http-client";
+  if (status >= 500 && status < 600) return "http-server";
+  return "http-other";
+}
+
+/** One bounded live judge call, no retries. Failures expose only closed categories. */
 export async function judgeConversationCase(
   input: unknown,
   options: {
@@ -222,8 +274,9 @@ export async function judgeConversationCase(
     prompt: privateCase.prompt,
     messages: privateCase.messages,
   });
+  let response: Response;
   try {
-    const response = await (options.fetchImpl ?? fetch)(ENDPOINT, {
+    response = await (options.fetchImpl ?? fetch)(ENDPOINT, {
       method: "POST",
       headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
       signal,
@@ -235,7 +288,14 @@ export async function judgeConversationCase(
         provider: { require_parameters: true },
         response_format: {
           type: "json_schema",
-          json_schema: { name: "room_turn_judgment", strict: true, schema: SCHEMA },
+          json_schema: {
+            name: "room_turn_judgment",
+            strict: true,
+            schema: judgmentSchema(
+              privateCase.expectedDirectAgents.length,
+              privateCase.messages.filter((message) => message.kind === "agent").length,
+            ),
+          },
         },
         messages: [
           {
@@ -247,33 +307,44 @@ export async function judgeConversationCase(
         ],
       }),
     });
-    if (!response.ok) throw new Error("Judge request failed.");
-    const body = await boundedResponseJson(response);
-    const choices = body.choices;
-    const choice = Array.isArray(choices) ? (choices[0] as { message?: { content?: unknown } } | undefined) : undefined;
-    if (typeof choice?.message?.content !== "string" || choice.message.content.length > 8_192)
-      throw new Error("Judge response is invalid.");
-    const judgment = parseJudgment(
-      JSON.parse(choice.message.content),
+  } catch {
+    throw new JudgeFailure(signal.aborted ? (options.signal?.aborted ? "cancelled" : "timeout") : "transport");
+  }
+  if (!response.ok) throw new JudgeFailure(httpCategory(response.status));
+  const body = await boundedResponseJson(response);
+  const choices = body.choices;
+  const choice = Array.isArray(choices) ? (choices[0] as { message?: { content?: unknown } } | undefined) : undefined;
+  if (typeof choice?.message?.content !== "string" || choice.message.content.length > 8_192)
+    throw new JudgeFailure("response-shape");
+  let judgmentValue: unknown;
+  try {
+    judgmentValue = JSON.parse(choice.message.content);
+  } catch {
+    throw new JudgeFailure("response-json");
+  }
+  let judgment: ReturnType<typeof parseJudgment>;
+  try {
+    judgment = parseJudgment(
+      judgmentValue,
       privateCase.expectedDirectAgents.length,
       privateCase.messages.filter((message) => message.kind === "agent").length,
     );
-    const usage = body.usage && typeof body.usage === "object" ? (body.usage as Record<string, unknown>) : {};
-    return {
-      schemaVersion: 1,
-      scenarioId: privateCase.scenarioId,
-      runId: privateCase.runId,
-      judgeModel: options.model,
-      ...judgment,
-      judgeUsage: {
-        inputTokens: reportedNumber(usage.prompt_tokens, 1_000_000),
-        outputTokens: reportedNumber(usage.completion_tokens, 1_000_000),
-        reportedCostUsd: reportedNumber(usage.cost, 1_000),
-      },
-    };
   } catch {
-    throw new Error("Judge request or result failed; private content was not exported.");
+    throw new JudgeFailure("judgment-schema");
   }
+  const usage = body.usage && typeof body.usage === "object" ? (body.usage as Record<string, unknown>) : {};
+  return {
+    schemaVersion: 1,
+    scenarioId: privateCase.scenarioId,
+    runId: privateCase.runId,
+    judgeModel: options.model,
+    ...judgment,
+    judgeUsage: {
+      inputTokens: reportedNumber(usage.prompt_tokens, 1_000_000),
+      outputTokens: reportedNumber(usage.completion_tokens, 1_000_000),
+      reportedCostUsd: reportedNumber(usage.cost, 1_000),
+    },
+  };
 }
 
 /** Deterministic triage: discordant human ratings, then low judge scores, then seeded coverage sample. */
