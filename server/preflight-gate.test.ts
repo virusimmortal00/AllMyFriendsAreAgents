@@ -247,6 +247,22 @@ describe("pre-flight advisory classification", () => {
     ]);
   });
 
+  it("keeps the anti-starvation probe even when predicted optional worth is low", () => {
+    const trigger = humanMessage();
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, energy: "balanced",
+      wholeRoomInvitation: false, gateProfileId: "relevance-v1",
+      routing: { "cursor-grok": { consecutiveQualifyingSuppressions: 25 } },
+      classification: {
+        agents: {}, wholeRoom: 0,
+        optionalWorth: { "codex-sol": 0.8, "claude-sonnet": 0.8, "cursor-grok": 0.01 },
+      },
+    });
+    expect(decision.decisions.filter(({ outcome }) => outcome === "invoke")).toEqual([
+      { agent: "cursor-grok", outcome: "invoke", reason: "anti_starvation_probe" },
+    ]);
+  });
+
   it("keeps a fallback but may suppress an extra optional seat, without implying saved calls", () => {
     const trigger = humanMessage();
     const input = {

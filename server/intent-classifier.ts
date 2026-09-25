@@ -14,6 +14,7 @@ const DEFAULT_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
 const DEFAULT_TIMEOUT_MS = 1_000;
 const FAILURE_THRESHOLD = 3;
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
+const REPORTED_MODEL_ID = /^(?=.{3,160}$)~?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/;
 
 export type IntentClassificationOutcome =
   | {
@@ -248,6 +249,7 @@ export class IntentClassifier {
           : undefined;
       const snapshot: PreflightClassificationSnapshot = {
         model: typeof parsed.model === "string" && parsed.model ? parsed.model : this.model,
+        ...(typeof parsed.model === "string" && REPORTED_MODEL_ID.test(parsed.model) ? { providerResolvedModelId: parsed.model } : {}),
         agents,
         wholeRoom,
         ...(profile.optionalWorthQuestion ? { optionalWorth } : {}),
@@ -328,6 +330,7 @@ export function classificationAudit(
 ): PreflightClassificationAudit {
   return {
     model: classification.model,
+    ...(classification.providerResolvedModelId ? { providerResolvedModelId: classification.providerResolvedModelId } : {}),
     latencyMs: classification.latencyMs,
     inputTokens: classification.usage.inputTokens,
     outputTokens: classification.usage.outputTokens,

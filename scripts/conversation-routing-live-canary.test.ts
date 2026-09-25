@@ -1,10 +1,11 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  buildPrivateReviewPayload,
   parseLiveCanaryOptions,
   projectCaseFailedEvent,
   projectFailedCaseEvidence,
@@ -13,6 +14,7 @@ import {
 import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
 import { JudgeFailure } from "./conversation-routing-live-judge.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
+import { parseStudyPlan } from "./conversation-routing-live-study.js";
 
 const base = [
   "--model",
@@ -25,6 +27,142 @@ const base = [
 const execute = promisify(execFile);
 
 describe("routing canary selection", () => {
+  it("accepts the checked-in twelve-case study under explicit live time and judge-call caps", async () => {
+    const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8"));
+    const study = parseStudyPlan(raw);
+    const options = parseLiveCanaryOptions(
+      [
+        "--study-plan",
+        "/fixture/study.json",
+        "--model",
+        "openrouter/anthropic/claude-haiku-4.5",
+        "--jev-model",
+        "typesafe/jev-1.13",
+        "--judge-model",
+        "openrouter/google/gemini-3.8-flash",
+        "--judge-rubric",
+        "v2",
+        "--opencode",
+        "/fixture/opencode",
+        "--secret-launcher",
+        "/fixture/bws-run",
+        "--max-cases",
+        "12",
+        "--max-judge-calls",
+        "104",
+        "--timeout-ms",
+        "120000",
+        "--total-timeout-ms",
+        "7200000",
+      ],
+      {},
+      study,
+    );
+    expect(options.cases).toHaveLength(12);
+    expect(options.maxJudgeCalls).toBe(104);
+    expect(options.planningAllowanceMs).toBe(6_850_000);
+    expect(options.totalTimeoutMs).toBeGreaterThan(options.planningAllowanceMs);
+  });
+  it("keeps v2 audience context private and excludes study policy from judge input", () => {
+    const scenario = {
+      ...buildLiveScenario({
+        dynamic: "multi-address",
+        agentCount: 2,
+        energy: "balanced",
+        preflightMode: "enforce",
+        classifierEnabled: true,
+      }),
+      rosterOrder: ["claude-sonnet", "codex-sol"] as Array<"claude-sonnet" | "codex-sol">,
+      study: { factor: "gate", gateProfileId: "relevance-v1" },
+    };
+    const payload = buildPrivateReviewPayload(
+      scenario as Parameters<typeof buildPrivateReviewPayload>[0],
+      { scenarioId: scenario.scenarioId, runId: "run_fixture" } as LiveScenarioResult,
+      "Sol and Nova, respond briefly.",
+      ["codex-sol", "claude-sonnet"],
+      [
+        { speaker: "you", kind: "chat", text: "Sol and Nova, respond briefly." },
+        { speaker: "codex-sol", kind: "chat", text: "One fictional idea." },
+      ],
+      false,
+      true,
+    );
+    expect(payload).toMatchObject({
+      schemaVersion: 2,
+      qualityContext: {
+        originalHumanAlias: "Avery",
+        roster: [
+          { agentId: "claude-sonnet", conversationalName: "Nova" },
+          { agentId: "codex-sol", conversationalName: "Sol" },
+        ],
+      },
+    });
+    expect(JSON.stringify(payload)).not.toMatch(/gateProfileId|relevance-v1|factor|study/);
+  });
+  it("prints a credential-free closed study dry-run with ordering and judge-call budget", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-study-test-"));
+    const file = path.join(root, "plan.json");
+    const plan = {
+      schemaVersion: 1,
+      planId: "fixture",
+      orderSeed: 42,
+      maxCases: 2,
+      blocks: [
+        {
+          blockId: "direct",
+          replicateId: "r1",
+          dynamic: "direct",
+          arcProfileId: "single-v1",
+          rosterOrder: ["codex-sol"],
+          energy: "low",
+          arms: {
+            a: { jevProfileId: "current-v1", gateProfileId: "current-v1", agentPromptProfileId: "current-v1" },
+            b: { jevProfileId: "current-v1", gateProfileId: "current-v1", agentPromptProfileId: "social-v1" },
+          },
+        },
+      ],
+    };
+    try {
+      await writeFile(file, JSON.stringify(plan));
+      const { stdout } = await execute(
+        "pnpm",
+        [
+          "exec",
+          "tsx",
+          "scripts/conversation-routing-live-canary.ts",
+          "--dry-run",
+          "--study-plan",
+          file,
+          "--model",
+          "openrouter/anthropic/claude-haiku-4.5",
+          "--jev-model",
+          "typesafe/jev-1.13",
+          "--judge-model",
+          "openrouter/google/gemini-3.8-flash",
+          "--judge-rubric",
+          "v2",
+          "--max-judge-calls",
+          "8",
+          "--total-timeout-ms",
+          "600000",
+        ],
+        { env: { ...process.env, AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false", OPENROUTER_API_KEY: "" } },
+      );
+      const printed = JSON.parse(stdout) as Record<string, unknown>;
+      expect(printed).toMatchObject({
+        kind: "conversation-routing-study-dry-run",
+        planId: "fixture",
+        maximumScheduledJudgeCalls: 8,
+        judgeRubric: "v2",
+        watchdogCoversPlanningAllowance: true,
+      });
+      expect(printed.cases as unknown[]).toHaveLength(2);
+      expect(stdout).not.toContain("fictional garden path");
+      expect(stdout).not.toContain(file);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("retains closed scalar evidence on a visible-delivery failure without copying private fields", () => {
     const collected = {
       schemaVersion: 1,
@@ -38,6 +176,7 @@ describe("routing canary selection", () => {
       classifier: {
         outcome: "completed",
         reason: null,
+        resolvedModelId: "typesafe/jev-1.13",
         durationMs: 73,
         reportedInputTokens: null,
         reportedOutputTokens: null,

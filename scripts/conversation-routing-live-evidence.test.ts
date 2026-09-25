@@ -128,6 +128,21 @@ function fixture() {
 }
 
 describe("live routing scalar extraction", () => {
+  it("keeps provider resolution unknown unless explicitly audited and accepts a leading-tilde model ID", () => {
+    const input = fixture();
+    const collect = () =>
+      collectLiveScenarioEvidence({
+        scenarioId: "direct-2-low-enforce",
+        variant: "jev-on",
+        preflightMode: "enforce",
+        records: input.records,
+        preflightDecisions: input.preflight,
+        triggerMessageId: input.triggerMessageId,
+      });
+    expect(collect().classifier.resolvedModelId).toBeNull();
+    Object.assign(input.preflight[0]!.classification!, { providerResolvedModelId: "~typesafe/jev-1.13" });
+    expect(collect().classifier.resolvedModelId).toBe("~typesafe/jev-1.13");
+  });
   it("joins one trigger, run, generation, provider report and required address without copying text", () => {
     const input = fixture();
     input.records.push({ event: "opencode.stdout", runId: "run_12345678", output: "private-output" });

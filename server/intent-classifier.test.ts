@@ -80,6 +80,7 @@ describe("intent classifier", () => {
     const snapshot = await classifier.classify({ transcript: "[YOU]\nSol, thoughts?", agents });
     expect(snapshot).toEqual({
       model: "typesafe/jev-1.13-20260917",
+      providerResolvedModelId: "typesafe/jev-1.13-20260917",
       agents: { "codex-sol": 0.94, "claude-sonnet": 0.03 },
       wholeRoom: 0.02,
       primaryAddressee: "codex-sol",
@@ -107,6 +108,19 @@ describe("intent classifier", () => {
         ["claude-sonnet", "noul"],
       ]),
     );
+  });
+
+  it("does not turn a requested alias fallback into a provider-resolved model claim", async () => {
+    for (const reportedModel of [undefined, "unvalidated model text"]) {
+      const classifier = new IntentClassifier({
+        apiKey: () => "stored-openrouter-key",
+        fetchImpl: (async () => responseFor(classifiedResponse({ model: reportedModel }))) as unknown as typeof fetch,
+      });
+      const snapshot = await classifier.classify({ transcript: "Fictional request", agents });
+      expect(snapshot).toBeDefined();
+      expect(snapshot).not.toHaveProperty("providerResolvedModelId");
+      expect(classificationAudit(snapshot!, [])).not.toHaveProperty("providerResolvedModelId");
+    }
   });
 
   it("changes only closed question shape and keeps missing optional-worth scores absent", async () => {
@@ -390,6 +404,7 @@ describe("classification audit projection", () => {
     const audit = classificationAudit(
       {
         model: "typesafe/jev-1.13-20260917",
+        providerResolvedModelId: "typesafe/jev-1.13-20260917",
         agents: { "codex-sol": 0.94 },
         wholeRoom: 0.02,
         primaryAddressee: "codex-sol",
@@ -401,6 +416,7 @@ describe("classification audit projection", () => {
     );
     expect(audit).toEqual({
       model: "typesafe/jev-1.13-20260917",
+      providerResolvedModelId: "typesafe/jev-1.13-20260917",
       latencyMs: 120,
       inputTokens: 1500,
       outputTokens: 60,

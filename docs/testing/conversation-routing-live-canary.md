@@ -86,7 +86,7 @@ did not change. Raw server logs and provider output stay inside that root and
 are discarded.
 
 The scalar manifest records source commit, scenario catalog digest, OpenCode
-version, selected model IDs, policy/configuration, run IDs, required-address
+version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
 generation outcomes, terminal reason, confirmed delivery count, and
 OpenCode-observed token fields and estimated actor cost when complete. Jev-on cases require an
@@ -115,3 +115,73 @@ savings. Ratings require a separate human annotation with its own denominator;
 the canary never infers a missed reply from scheduling alone. Its live report
 should retain failures and incomplete cases rather than treating them as
 passing samples.
+
+## Closed study plans
+
+The optional [fictional study example](conversation-routing-study-example.json)
+uses a versioned JSON plan to compare one factor at a time. Each block fixes
+its scenario, roster order, energy, and two explicit arms; the arms must differ
+in exactly one closed Jev question, optional gate, or agent base-prompt profile.
+The example has six matched blocks and twelve isolated cases: two blocks each
+for Jev questions, optional gating, and agent prompt guidance. It spans one-,
+two-, and three-agent rooms. Arc profiles
+script one to three human messages: single-turn direct/broadcast controls,
+casual continuation, agent exchange, handoff choice, and a dispute follow-up.
+The latter tests whether synthesis eligibility actually arises; it does not
+assert that a generated disagreement or synthesis will occur.
+
+Preview the complete plan **without a key, runtime probe, server, or provider
+call**. The path must be absolute, and the Jev model must be an explicit
+concrete ID rather than the production `~typesafe/jev-latest` alias:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --study-plan "$PWD/docs/testing/conversation-routing-study-example.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v2 \
+  --max-cases 12 --max-judge-calls 104 --max-generations 8 \
+  --timeout-ms 120000 --total-timeout-ms 7200000
+```
+
+The dry-run prints only closed identifiers, case order, source/plan digests,
+and watchdog allowances. The example's 104 possible judge calls and two-hour
+total watchdog are review limits for a candidate plan, not authorization to
+spend them. Plans with more triggers can exhaust the explicit judge-call cap
+before every case is scheduled; the dry-run rejects such a plan. Its seed shuffles block order and balances AB/BA arm
+order; it does **not** seed OpenCode, the model, or product scheduling, whose
+rank and follow-up draws depend on fresh server message IDs. A fresh room is
+used for every arm. Repeated blocks need distinct replicate IDs. The private
+prompt profile is one of the checked-in fixture values in
+`scripts/conversation-routing-live-study.ts`; the plan accepts no free-text
+prompt. The Jev `lean-v1` profile omits an unused question. The experimental
+`relevance-v1` gate only consumes a distinct optional-worth score supplied by
+the matching Jev question profile; it does not use direct-address probability
+to suppress optional participation. Neither experimental threshold is claimed
+to be human-calibrated.
+
+The `social-v1` agent prompt retains the complete default base prompt and
+appends a fixed optional-reaction instruction. Each case records a SHA-256
+digest of its full selected base prompt; the two arms otherwise use the same
+fictional fixture and requested actor model. Actor response identity is not
+independently proven by the room manifest.
+
+For a live study, add the audited absolute `--opencode` and
+`--secret-launcher` paths, a fresh `--retain-private-review` directory outside
+the repository, and the documented `AMFAA_CANARY_ALLOW_REAL_PROVIDER=true
+bws-run` prefix. A live study also requires a clean source tree. The runner
+records the requested Jev model and the provider-resolved model only when the
+provider response explicitly reports one; absent resolution is null, not an
+assumed match. It fingerprints the prompt, routing, policy, and fixture inputs
+as well as the study plan and rejects a changed fingerprint before completion.
+The independent v2 judge makes four bounded calls per trigger for social
+cadence, length fit, address radius, and contribution value. Its private v2
+bundle adds the fictional human alias and roster names for audience grading;
+the public scalar report contains only closed axis outcomes and separate judge
+usage. The case cap, generation-start cap, per-trigger room watchdog, explicit
+judge-call cap, and total watchdog limit exposure, but OpenCode may use several
+internal provider steps per generation, so these are not strict token or USD
+caps. The dry-run shows a conservative planning allowance and whether the
+chosen total watchdog covers it. One failed axis does not erase the other
+axes' scalar results. Human spot-check ratings remain separate from model
+scores.

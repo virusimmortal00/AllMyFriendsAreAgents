@@ -58,6 +58,7 @@ export interface LiveScenarioResult {
   classifier: {
     outcome: "completed" | "failed" | "skipped" | "not-consulted";
     reason: string | null;
+    resolvedModelId: string | null;
     durationMs: number | null;
     reportedInputTokens: number | null;
     reportedOutputTokens: number | null;
@@ -220,9 +221,21 @@ export function collectLiveScenarioEvidence(input: {
     throw new Error("Classifier reason is unsupported.");
   const classifierOutcome: LiveScenarioResult["classifier"]["outcome"] =
     outcome === "completed" || outcome === "failed" || outcome === "skipped" ? outcome : "not-consulted";
+  const classification = decision[0]?.classification as
+    | (NonNullable<(typeof decision)[number]["classification"]> & { providerResolvedModelId?: unknown })
+    | undefined;
+  // classification.model may fall back to the requested ID; only this exact optional
+  // provider field can support a resolved-model claim.
+  const resolvedModelId =
+    classifierOutcome === "completed" &&
+    typeof classification?.providerResolvedModelId === "string" &&
+    /^(?=.{3,160}$)~?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/.test(classification.providerResolvedModelId)
+      ? classification.providerResolvedModelId
+      : null;
   const classifier = {
     outcome: classifierOutcome,
     reason: classifierReason,
+    resolvedModelId,
     durationMs: nonnegative(classifierStage?.durationMs),
     reportedInputTokens: count(classifierStage?.reportedInputTokens),
     reportedOutputTokens: count(classifierStage?.reportedOutputTokens),

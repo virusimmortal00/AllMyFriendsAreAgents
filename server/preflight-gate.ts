@@ -169,19 +169,20 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
     }
 
     const recent = recentParticipants(input.room, input.trigger, Math.max(0, config.recentMessageWindow));
-    const optionalWorthThreshold = jevGateProfile(input.gateProfileId ?? "current-v1").optionalWorthThreshold;
-    const ambient = healthy.filter((agent) => {
-      if (required.has(agent)) return false;
-      if (optionalWorthThreshold === null) return true;
-      const score = input.classification?.optionalWorth?.[agent];
-      return score === undefined || score >= optionalWorthThreshold;
-    });
+    const ambient = healthy.filter((agent) => !required.has(agent));
     const starved = qualifyingForStarvation
       ? ambient.filter((agent) => (input.routing[agent]?.consecutiveQualifyingSuppressions || 0) >= config.starvationThreshold)
       : [];
     const probe = starved[0];
-    const rankedIndex = new Map(ambient.map((agent, index) => [agent, index]));
-    const boostedAmbient = ambient.filter((agent) => agent !== probe).sort((left, right) => {
+    const optionalWorthThreshold = jevGateProfile(input.gateProfileId ?? "current-v1").optionalWorthThreshold;
+    const eligibleAmbient = ambient.filter((agent) => {
+      if (agent === probe) return true;
+      if (optionalWorthThreshold === null) return true;
+      const score = input.classification?.optionalWorth?.[agent];
+      return score === undefined || score >= optionalWorthThreshold;
+    });
+    const rankedIndex = new Map(eligibleAmbient.map((agent, index) => [agent, index]));
+    const boostedAmbient = eligibleAmbient.filter((agent) => agent !== probe).sort((left, right) => {
       const score = (agent: AgentId) => (input.routing[agent]?.consecutiveQualifyingSuppressions || 0) + (recent.has(agent) ? 8 : 0);
       return score(right) - score(left) || (rankedIndex.get(left) || 0) - (rankedIndex.get(right) || 0);
     });

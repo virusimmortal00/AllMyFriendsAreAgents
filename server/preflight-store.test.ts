@@ -188,13 +188,13 @@ describe("pre-flight classification persistence and evidence", () => {
     await first.recordDecision({
       triggerMessageId: "message-1", mode: "shadow", energy: "balanced",
       decision: { qualifyingForStarvation: true, decisions: baselineDecisions.map((entry) => ({ ...entry })) },
-      classification: { ...classification, optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 } },
+      classification: { ...classification, providerResolvedModelId: "typesafe/jev-1.13", optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 } },
     });
 
     const reopened = await PreflightStore.open(directory);
     const decisions = await reopened.rawDecisions();
     expect(requiredAt(decisions,0,"reopened preflight decision").classification).toEqual({
-      ...classification, optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 },
+      ...classification, providerResolvedModelId: "typesafe/jev-1.13", optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 },
     });
   });
 
