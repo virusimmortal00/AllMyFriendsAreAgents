@@ -122,11 +122,13 @@ used another fresh room.
 | Disagreement, low energy | Both required; one visible OPEN reply, other yielded; `open-without-second-responder`, no synthesis | 2 / 1 / 1 | 6,560 ms | 4 / 192; $0.02501565 |
 | Separate-role disagreement, low energy | Both required and both yielded; no visible reply or synthesis; `no-visible-output` | 2 / 0 / 2 | unavailable | 4 / 40; $0.01468545 |
 
-The six exploratory cases predate the explicit OpenCode step-field provenance
-marker. Their normalized stream token and cost values are diagnostic only:
+The six earlier no-Jev-credential room checks in this table predate the
+explicit OpenCode step-field provenance marker. Their normalized stream token
+and cost values are diagnostic only:
 missing step fields could have been filled with zero, the input/output figures
 exclude cached usage, and the actor cost is an OpenCode estimate rather than a
-provider bill. They are excluded from complete token or cost comparisons. All
+provider bill. They are separate from the twelve-case live Jev pilot below and
+excluded from complete token or cost comparisons. All
 classifier consultations skipped with `no_credential` in the isolated
 environment and used deterministic fallback, so these runs do not validate
 Jev quality or latency. The disagreement samples never produced two visible
@@ -140,9 +142,12 @@ was cleaned, and the disposable fixture project was unchanged.
 
 ## Isolated live pilot
 
-Twelve isolated room cases were exercised across source epochs, not twelve
-comparable manifests. The first six exploratory cases above used the earlier
-runner without verifiable actor-usage field presence. One later two-agent
+Twelve additional isolated room cases were exercised across source epochs,
+not twelve comparable manifests. Their first six exploratory live cases
+included Jev-on and Jev-off configurations: Jev completed in some, and some
+received automated judge ratings. Their actor-usage fields lack verifiable
+step-field presence, so those legacy-unverified amounts cannot enter complete
+token or cost comparisons. One later two-agent
 broadcast case ran at source commit `7f3b61a`; its room turn completed, but its
 original judge call failed, so it is not a matched quality comparison. A
 subsequent judge-only call on its retained fictional output produced a scalar
