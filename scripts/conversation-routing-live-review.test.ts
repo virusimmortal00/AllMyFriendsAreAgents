@@ -16,6 +16,7 @@ import {
   selectCalibrationReviewQueue,
   selectFlaggedReviewQueue,
   selectPairedReviewQueue,
+  selectVisibleReviewQueue,
 } from "./conversation-routing-live-review.js";
 
 const ids = [
@@ -219,6 +220,43 @@ describe("private offline review pack", () => {
     }
     expect(JSON.stringify(calibration.queue)).not.toContain("factor");
     expect(JSON.stringify(flagged.queue)).not.toContain("required");
+    const visible = selectVisibleReviewQueue(scalar, locator, calibration.receipt, "fixed-before-outcomes");
+    expect(visible.queue.reviewIds).toHaveLength(20);
+    expect(visible.receipt.selected).toHaveLength(10);
+    expect(visible.receipt.selected.filter((row) => row.factor === "agent-prompt")).toHaveLength(2);
+    expect(visible.receipt.selected.filter((row) => row.factor === "gate")).toHaveLength(4);
+    expect(visible.receipt.selected.filter((row) => row.factor === "jev")).toHaveLength(4);
+    expect(new Set(visible.receipt.selected.map((row) => row.pairId)).size).toBe(10);
+    expect(selectVisibleReviewQueue(scalar, locator, calibration.receipt, "fixed-before-outcomes")).toEqual(visible);
+    expect(selectVisibleReviewQueue(altered, locator, calibration.receipt, "fixed-before-outcomes").queue).toEqual(
+      visible.queue,
+    );
+    for (const row of visible.receipt.selected) {
+      expect(
+        calibration.receipt.selected.some(
+          (item) => item.pairId === row.pairId && item.triggerOrdinal === row.triggerOrdinal,
+        ),
+      ).toBe(false);
+      expect(
+        Math.abs(visible.queue.reviewIds.indexOf(row.reviewIds[0]) - visible.queue.reviewIds.indexOf(row.reviewIds[1])),
+      ).toBeGreaterThan(1);
+    }
+    const noPromptVisible = {
+      ...scalar,
+      cases: cases.map((room) => ({
+        ...room,
+        triggers:
+          room.study && (room.study as { factor: string }).factor === "agent-prompt"
+            ? (room.triggers as Array<Record<string, unknown>>).map((trigger) => ({
+                ...trigger,
+                confirmedDeliveredBursts: 0,
+              }))
+            : room.triggers,
+      })),
+    };
+    expect(() =>
+      selectVisibleReviewQueue(noPromptVisible, locator, calibration.receipt, "fixed-before-outcomes"),
+    ).toThrow();
     expect(() =>
       selectFlaggedReviewQueue(
         { ...scalar, sourceSha256: "changed" },
