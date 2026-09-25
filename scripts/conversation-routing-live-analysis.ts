@@ -354,6 +354,11 @@ function parseQualityOutcome(
   nullableInteger(usage.inputTokens, 1_000_000);
   nullableInteger(usage.outputTokens, 1_000_000);
   nullableNumber(usage.reportedCostUsd, 1_000);
+  if (
+    (result.reasonCode === "required_reply_missing" || result.reasonCode === "no_visible_reply") &&
+    (usage.inputTokens !== null || usage.outputTokens !== null || usage.reportedCostUsd !== null)
+  )
+    throw new Error("Invalid scalar canary manifest.");
   return {
     axis,
     status: "completed",
@@ -1061,6 +1066,20 @@ export function analyzeQualityStudy(
           0,
         )
       : null;
+  const judgeAxisCosts = all.flatMap((item) =>
+    QUALITY_AXES.map((axis) => {
+      const entry = outcome(item, axis);
+      return {
+        reported: entry?.status === "completed" ? entry.result.judgeUsage.reportedCostUsd : null,
+        knownNoCall:
+          entry?.status === "completed" &&
+          entry.result.judgeUsage.reportedCostUsd === null &&
+          (entry.result.reasonCode === "required_reply_missing" || entry.result.reasonCode === "no_visible_reply"),
+      };
+    }),
+  );
+  const reportedAxisCosts = judgeAxisCosts.flatMap(({ reported }) => (reported === null ? [] : [reported]));
+  const knownNoCallAxes = judgeAxisCosts.filter(({ knownNoCall }) => knownNoCall).length;
   const pairedReadout = (selectedPairs: typeof pairs) => ({
     triggerPairs: selectedPairs.length,
     axes: Object.fromEntries(
@@ -1209,6 +1228,13 @@ export function analyzeQualityStudy(
             : null,
       ),
       judgeReportedCostUsd: metric(judgeCost),
+      judgeReportedAxisCostUsd: {
+        totalAxes: judgeAxisCosts.length,
+        reportedAxes: reportedAxisCosts.length,
+        knownNoCallAxes,
+        unresolvedCostAxes: judgeAxisCosts.length - reportedAxisCosts.length - knownNoCallAxes,
+        reportedTotalUsd: reportedAxisCosts.length ? reportedAxisCosts.reduce((sum, value) => sum + value, 0) : null,
+      },
       openCodeObservedTotalTokens: metric((item) =>
         item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.totalTokenCoverage === "reported"
           ? item.trigger.actor.totalTokens

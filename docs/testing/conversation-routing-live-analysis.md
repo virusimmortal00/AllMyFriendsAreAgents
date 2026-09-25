@@ -170,6 +170,14 @@ Jev-reported cost, judge-reported cost, OpenCode-observed tokens, and measured
 latency remain separate, each with its own coverage. Old v1 manifests retain
 their original analysis path and cannot be mixed into a v2 study.
 
+`resources.judgeReportedAxisCostUsd` sums every judge-axis cost actually
+reported, including axes from triggers whose other judge outcomes lack cost.
+It gives the total axis denominator, reported axes, confirmed deterministic
+no-call axes, and axes with unresolved cost. Its sum is a reported subtotal,
+not a full bill when an attempted or unknown call lacks reported usage.
+`resources.judgeReportedCostUsd` still requires all four axis costs on a
+trigger; paired judge-cost comparisons use only those complete triggers.
+
 The deterministic review queue prioritizes failed, unassessable, low-scored,
 or human-discordant axes and includes a seeded ordinary control when possible.
 Use the same seed and independently review queued private bundles before

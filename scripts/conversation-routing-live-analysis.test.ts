@@ -575,6 +575,13 @@ describe("versioned quality study analysis", () => {
     expect(report.axes.length_fit!.judge).toMatchObject({ failed: 1, missing: 1, rated: 2 });
     expect(report.axes.address_radius!.judge).toMatchObject({ notAssessable: 1, missing: 1, rated: 2 });
     expect(report.resources.judgeReportedCostUsd.missingRuns).toBe(2);
+    expect(report.resources.judgeReportedAxisCostUsd).toMatchObject({
+      totalAxes: 16,
+      reportedAxes: 11,
+      knownNoCallAxes: 0,
+      unresolvedCostAxes: 5,
+    });
+    expect(report.resources.judgeReportedAxisCostUsd.reportedTotalUsd).toBeCloseTo(0.011);
   });
 
   it("keeps failed study Jev consultation as coverage but excludes its paired effect", () => {
@@ -685,6 +692,34 @@ describe("versioned quality study analysis", () => {
     result.details = { direction: "appropriate" };
     result.reasonCode = "observable_exchange";
     fixture.cases[0]!.qualityJudge[0]!.outcomes[0]!.result.reasonCode = "silence_fit";
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+  });
+
+  it("counts deterministic no-call axes separately from missing reported judge cost", () => {
+    const fixture = studyFixture();
+    const quiet = fixture.cases[0]!.triggers[0]!;
+    quiet.requiredAddressAgents = [];
+    quiet.confirmedDeliveredBursts = 0;
+    quiet.respondedTurns = 0;
+    const outcomes = fixture.cases[0]!.qualityJudge[0]!.outcomes;
+    for (const index of [0, 2, 3]) {
+      outcomes[index] = qualityOutcome(axes[index]!, "study-example-a", "run-a", null);
+      outcomes[index]!.result.reasonCode = "no_visible_reply";
+      outcomes[index]!.result.judgeUsage = { inputTokens: null, outputTokens: null, reportedCostUsd: null } as never;
+    }
+    outcomes[1]!.result.reasonCode = "silence_fit";
+    outcomes[1]!.result.details = { direction: "appropriate" };
+    fixture.cases[1]!.qualityJudge[0]!.outcomes[0]!.result.judgeUsage.reportedCostUsd = null as never;
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(report.resources.judgeReportedAxisCostUsd).toMatchObject({
+      totalAxes: 16,
+      reportedAxes: 12,
+      knownNoCallAxes: 3,
+      unresolvedCostAxes: 1,
+    });
+    expect(report.resources.judgeReportedAxisCostUsd.reportedTotalUsd).toBeCloseTo(0.012);
+    expect(report.resources.judgeReportedCostUsd).toMatchObject({ reportedRuns: 2, missingRuns: 2 });
+    outcomes[0]!.result.judgeUsage.reportedCostUsd = 0.001;
     expect(() => parseScalarCanaryManifest(fixture)).toThrow();
   });
 });
