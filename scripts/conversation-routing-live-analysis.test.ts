@@ -865,6 +865,47 @@ describe("versioned quality study analysis", () => {
     expect(report.resources.judgeReportedAxisCostUsd.reportedTotalUsd).toBeCloseTo(0.011);
   });
 
+  it("marks a contradictory judge axis invalid without scoring it or erasing its receipt", () => {
+    const fixture = studyFixture();
+    const quiet = fixture.cases[0]!.triggers[0]!;
+    quiet.requiredAddressAgents = [];
+    quiet.confirmedDeliveredBursts = 0;
+    quiet.respondedTurns = 0;
+    const axis = fixture.cases[0]!.qualityJudge[0]!.outcomes[1]!;
+    axis.result.score = 1;
+    axis.result.reasonCode = "required_reply_missing";
+    axis.result.details = { direction: "too_short" };
+    axis.result.judgeUsage = { inputTokens: null, outputTokens: null, reportedCostUsd: null } as never;
+    for (const index of [0, 2, 3]) {
+      const other = fixture.cases[0]!.qualityJudge[0]!.outcomes[index]!;
+      other.result.status = "not_assessable";
+      other.result.score = null;
+      other.result.reasonCode = "no_visible_reply";
+      other.result.details =
+        index === 0
+          ? { cueFit: null, textTurnRhythm: null }
+          : index === 2
+            ? { observedAudience: null, audienceFit: null }
+            : { valueMode: null };
+      other.result.judgeUsage = { inputTokens: null, outputTokens: null, reportedCostUsd: null } as never;
+    }
+    const parsed = parseScalarCanaryManifest(fixture);
+    expect(parsed.cases[0]!.qualityJudge[0]!.outcomes[1]).toEqual({
+      axis: "length_fit",
+      status: "invalid",
+      category: "semantic_conflict",
+    });
+    const report = analyzeQualityStudy(parsed);
+    expect(report.axes.length_fit!.judge).toMatchObject({ rated: 3, invalid: 1 });
+    expect(report.resources.judgeReportedAxisCostUsd).toMatchObject({ totalAxes: 16, unresolvedCostAxes: 1 });
+    expect(report.blockLevelV1.byFactor.jev!.contrasts[0]!.paired.axes.length_fit!.judgeArmBMinusA).toMatchObject({
+      pairedBlocks: 0,
+      missingBlocks: 1,
+    });
+    axis.result.reasonCode = "unknown";
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow(/Invalid scalar canary manifest/);
+  });
+
   it("keeps failed study Jev consultation as coverage but excludes its paired effect", () => {
     const fixture = studyFixture();
     fixture.cases[0]!.triggers[0]!.classifier = {
@@ -963,17 +1004,17 @@ describe("versioned quality study analysis", () => {
     result.details = { direction: "appropriate" };
     expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("completed");
     quiet.requiredAddressAgents = ["codex-sol"];
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     quiet.requiredAddressAgents = [];
     quiet.confirmedDeliveredBursts = 1;
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     quiet.confirmedDeliveredBursts = 0;
     result.details = { direction: "too_long" };
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     result.details = { direction: "appropriate" };
     result.reasonCode = "observable_exchange";
     fixture.cases[0]!.qualityJudge[0]!.outcomes[0]!.result.reasonCode = "silence_fit";
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[0]!.status).toBe("invalid");
   });
 
   it("counts deterministic no-call axes separately from missing reported judge cost", () => {

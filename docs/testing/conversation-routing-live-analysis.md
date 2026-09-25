@@ -155,9 +155,12 @@ reported cost, judge reported cost, OpenCode-observed total tokens, and first
 visible latency each have their own paired denominator. A missing value or
 unrated axis reduces only its corresponding denominator. There is no pooled
 quality or resource effect across different factors.
-Each axis has its own rated, not-applicable, not-assessable, missing, and failed
-denominators. Human-versus-judge agreement reports status agreement across
-joint reviews and exact/within-one score agreement only for jointly rated
+Each axis has its own rated, not-applicable, not-assessable, missing, failed,
+and semantically invalid denominators. A structurally valid judge receipt that
+contradicts the observed turn remains counted as invalid, but its score and cost
+are excluded from valid-score and complete-cost coverage. Unknown schema values
+still reject the manifest. Human-versus-judge agreement reports status
+agreement across joint reviews and exact/within-one score agreement only for jointly rated
 axes. Arm B minus arm A differences use matching plan, source, model settings,
 roster order, factor profiles, and trigger ordinal. Known resolved Jev model
 mismatches or missing resolved identity in both-consulted pairs exclude those

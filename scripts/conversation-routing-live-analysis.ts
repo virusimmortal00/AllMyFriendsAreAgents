@@ -134,11 +134,15 @@ export interface ScalarCanaryManifest {
     preflightMode: PreflightMode;
     triggers: ScalarTrigger[];
     judge: JudgeScalarResult[];
-    qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
+    qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: ParsedQualityAxisOutcome[] }>;
     study: StudyCaseMetadataV1 | null;
     availabilityCheck: AvailabilityCheck | null;
   }>;
 }
+
+type ParsedQualityAxisOutcome =
+  | QualityAxisOutcome
+  | { axis: QualityAxis; status: "invalid"; category: "semantic_conflict" };
 
 function parseAvailabilityCheck(input: unknown): AvailabilityCheck {
   const row = object(input, [
@@ -337,7 +341,7 @@ function parseQualityOutcome(
   judgeModel: string,
   visibleBursts: number,
   requiredTargets: number,
-): QualityAxisOutcome {
+): ParsedQualityAxisOutcome {
   const row = object(value, ["axis", "status", "result", "category"]);
   if (row.axis !== axis) throw new Error("Invalid scalar canary manifest.");
   if (row.status === "failed") {
@@ -420,7 +424,7 @@ function parseQualityOutcome(
     result.status === "rated" &&
     result.reasonCode === "silence_fit" &&
     (details.direction === "too_short" || details.direction === "appropriate");
-  if (
+  const semanticConflict =
     result.status === "rated"
       ? !requiredMissing &&
         !optionalSilence &&
@@ -431,9 +435,7 @@ function parseQualityOutcome(
         (result.status === "not_applicable" && result.reasonCode !== "no_applicable_obligation") ||
         (result.status === "not_assessable" &&
           !["no_visible_reply", "insufficient_context"].includes(String(result.reasonCode))) ||
-        (visibleBursts > 0 && result.reasonCode === "no_visible_reply")
-  )
-    throw new Error("Invalid scalar canary manifest.");
+        (visibleBursts > 0 && result.reasonCode === "no_visible_reply");
   const usage = object(result.judgeUsage, ["inputTokens", "outputTokens", "reportedCostUsd"]);
   if (Object.keys(usage).length !== 3) throw new Error("Invalid scalar canary manifest.");
   nullableInteger(usage.inputTokens, 1_000_000);
@@ -444,6 +446,9 @@ function parseQualityOutcome(
     (usage.inputTokens !== null || usage.outputTokens !== null || usage.reportedCostUsd !== null)
   )
     throw new Error("Invalid scalar canary manifest.");
+  // A structurally valid receipt can still contradict the observed turn. Keep its
+  // axis denominator, but never treat its score or cost as a valid observation.
+  if (semanticConflict) return { axis, status: "invalid", category: "semantic_conflict" };
   return {
     axis,
     status: "completed",
@@ -1090,6 +1095,7 @@ export function analyzeQualityStudy(
     ).length,
     missing: items.filter((item) => !outcome(item, axis)).length,
     failed: items.filter((item) => outcome(item, axis)?.status === "failed").length,
+    invalid: items.filter((item) => outcome(item, axis)?.status === "invalid").length,
     meanRatedScore: mean(
       items.map((item) => scoreOf(item, axis)).filter((value): value is 1 | 2 | 3 | 4 | 5 => value !== null),
     ),
