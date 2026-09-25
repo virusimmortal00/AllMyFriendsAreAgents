@@ -10,6 +10,7 @@ import {
   parseLiveCanaryOptions,
   projectCaseFailedEvent,
   projectFailedCaseEvidence,
+  projectPairCompleteProgress,
   stopProcessGroup,
 } from "./conversation-routing-live-canary.js";
 import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
@@ -28,6 +29,177 @@ const base = [
 const execute = promisify(execFile);
 
 describe("routing canary selection", () => {
+  it("selects six bounded whole-pair batches from the 72-case plan", async () => {
+    const study = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-large-v1.json", "utf8")),
+    );
+    const shared = [
+      "--study-plan",
+      "/fixture/large-study.json",
+      "--allow-large-study",
+      "--allow-wide-matrix",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v2",
+      "--max-cases",
+      "72",
+      "--max-judge-calls",
+      "144",
+      "--max-generations",
+      "24",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "10800000",
+      "--pairs-per-batch",
+      "6",
+      "--dry-run",
+    ];
+    const batches = Array.from({ length: 6 }, (_, index) =>
+      parseLiveCanaryOptions([...shared, "--batch-index", String(index)], { OPENROUTER_API_KEY: "" }, study),
+    );
+    expect(batches.every(({ cases }) => cases.length === 12)).toBe(true);
+    expect(batches.every(({ studyBatch }) => studyBatch?.batchCount === 6 && studyBatch.pairCount === 6)).toBe(true);
+    expect(new Set(batches.flatMap(({ cases }) => cases.map(({ study: meta }) => meta?.caseId))).size).toBe(72);
+    for (const batch of batches) {
+      const exactJudgeCalls = batch.cases.reduce(
+        (sum, scenario) => sum + 4 * (1 + (scenario.scriptedFollowups?.length ?? 0)),
+        0,
+      );
+      expect(batch.maxJudgeCalls).toBe(exactJudgeCalls);
+      expect(batch.maxJudgeCalls).toBeLessThanOrEqual(144);
+      expect(batch.planningAllowanceMs).toBeLessThanOrEqual(batch.totalTimeoutMs);
+      expect(batch.studyBatch?.pairIds).toEqual([...new Set(batch.cases.map(({ study: meta }) => meta?.pairId))]);
+      expect(
+        batch.cases.every(
+          ({ agentCount, scriptedFollowups }) =>
+            agentCount * (1 + (scriptedFollowups?.length ?? 0)) <= batch.maxGenerations,
+        ),
+      ).toBe(true);
+    }
+    const rerun = parseLiveCanaryOptions([...shared, "--batch-index", "0"], { OPENROUTER_API_KEY: "" }, study);
+    expect(rerun.cases.map(({ study: meta }) => meta?.caseId)).toEqual(
+      batches[0]?.cases.map(({ study: meta }) => meta?.caseId),
+    );
+    const withoutLarge = shared.filter((part) => part !== "--allow-large-study");
+    expect(() => parseLiveCanaryOptions([...withoutLarge, "--batch-index", "0"], {}, study)).toThrow(
+      "Maximum cases is out of range",
+    );
+    const withoutBatch = shared.filter(
+      (part, index) => part !== "--pairs-per-batch" && shared[index - 1] !== "--pairs-per-batch",
+    );
+    expect(() => parseLiveCanaryOptions(withoutBatch, {}, study)).toThrow("explicit whole-pair batch");
+    expect(() => parseLiveCanaryOptions([...shared, "--batch-index", "6"], {}, study)).toThrow("batch index");
+    const tooFewJudges = [...shared];
+    tooFewJudges[tooFewJudges.indexOf("--max-judge-calls") + 1] = "4";
+    expect(() => parseLiveCanaryOptions([...tooFewJudges, "--batch-index", "0"], {}, study)).toThrow("judge-call cap");
+  });
+
+  it("publishes batch progress only after both distinct arms complete", () => {
+    const a = { study: { pairId: "garden-pair-r1", arm: "a" as const } };
+    const b = { study: { pairId: "garden-pair-r1", arm: "b" as const } };
+    const nextA = { study: { pairId: "garden-pair-r2", arm: "a" as const } };
+    const nextB = { study: { pairId: "garden-pair-r2", arm: "b" as const } };
+    expect(projectPairCompleteProgress([])).toBeNull();
+    expect(projectPairCompleteProgress([a])).toBeNull();
+    expect(projectPairCompleteProgress([a, b])).toMatchObject({
+      event: "pair-complete",
+      pairId: "garden-pair-r1",
+      completedPairs: 1,
+      cases: [a, b],
+    });
+    expect(projectPairCompleteProgress([a, b, nextA])).toBeNull();
+    expect(projectPairCompleteProgress([a, b, nextA, nextB])).toMatchObject({
+      pairId: "garden-pair-r2",
+      completedPairs: 2,
+      cases: [nextA, nextB],
+    });
+    expect(() => projectPairCompleteProgress([a, { study: { pairId: "other", arm: "b" } }])).toThrow();
+    expect(() => projectPairCompleteProgress([a, a])).toThrow();
+  });
+
+  it("dry-runs an expanded batch without a credential or live executable", async () => {
+    const { stdout } = await execute(
+      "pnpm",
+      [
+        "exec",
+        "tsx",
+        "scripts/conversation-routing-live-canary.ts",
+        "--dry-run",
+        "--study-plan",
+        path.resolve("docs/testing/conversation-routing-study-large-v1.json"),
+        "--allow-large-study",
+        "--allow-wide-matrix",
+        "--pairs-per-batch",
+        "6",
+        "--batch-index",
+        "5",
+        "--model",
+        "openrouter/anthropic/claude-haiku-4.5",
+        "--jev-model",
+        "typesafe/jev-1.13",
+        "--judge-model",
+        "openrouter/google/gemini-3.8-flash",
+        "--judge-rubric",
+        "v2",
+        "--max-cases",
+        "72",
+        "--max-judge-calls",
+        "144",
+        "--max-generations",
+        "24",
+        "--timeout-ms",
+        "120000",
+        "--total-timeout-ms",
+        "10800000",
+      ],
+      { env: { ...process.env, AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false", OPENROUTER_API_KEY: "" } },
+    );
+    const printed = JSON.parse(stdout) as Record<string, unknown>;
+    expect(printed).toMatchObject({
+      kind: "conversation-routing-study-dry-run",
+      studyBatch: { batchIndex: 5, batchCount: 6, pairCount: 6, planCaseCount: 72, planPairCount: 36 },
+      maximumScheduledJudgeCalls: 72,
+      watchdogCoversPlanningAllowance: true,
+    });
+    expect(printed.cases as unknown[]).toHaveLength(12);
+    expect(stdout).not.toContain("OPENROUTER_API_KEY");
+    expect(stdout).not.toContain("Avery:");
+  });
+
+  it("rejects an invalid expanded plan before credential or executable access", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-invalid-study-"));
+    const file = path.join(root, "invalid.json");
+    try {
+      await writeFile(file, JSON.stringify({ schemaVersion: 1, planId: "invalid" }));
+      await expect(
+        execute(
+          "pnpm",
+          [
+            "exec",
+            "tsx",
+            "scripts/conversation-routing-live-canary.ts",
+            "--study-plan",
+            file,
+            "--model",
+            "openrouter/anthropic/claude-haiku-4.5",
+            "--opencode",
+            "/missing/opencode",
+            "--secret-launcher",
+            "/missing/bws-run",
+          ],
+          { env: { ...process.env, AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false", OPENROUTER_API_KEY: "" } },
+        ),
+      ).rejects.toMatchObject({ stdout: "" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("accepts only the pinned Jev release or its valid dated snapshot family", () => {
     expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13")).toBe(true);
     expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13-20260917")).toBe(true);

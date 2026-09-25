@@ -39,6 +39,7 @@ import {
 } from "./conversation-routing-live-scenarios.js";
 import {
   expandStudyPlan,
+  MAX_STUDY_CASES,
   parseStudyPlan,
   STUDY_AGENT_BASE_PROMPTS,
   type StudyPlanV1,
@@ -52,6 +53,7 @@ const KEY = /^[A-Za-z0-9._-]{10,300}$/;
 const MODEL = /^openrouter\/[a-z0-9][a-z0-9._/-]{1,150}$/i;
 const MAX_PILOT_CASES = 12;
 const MAX_WIDE_CASES = 36;
+const MAX_BATCH_PAIRS = 6;
 const SOURCE_FILES = [
   "scripts/conversation-routing-live-canary.ts",
   "scripts/conversation-routing-live-evidence.ts",
@@ -101,10 +103,22 @@ interface CanaryOptions {
   requireVisible: boolean;
   dryRun: boolean;
   studyPlan?: StudyPlanV1;
+  studyBatch?: StudyBatchMetadataV1;
   jevModel?: string;
   judgeRubric: "v1" | "v2";
   maxJudgeCalls: number;
   planningAllowanceMs: number;
+}
+
+export interface StudyBatchMetadataV1 {
+  schemaVersion: 1;
+  planCaseCount: number;
+  planPairCount: number;
+  batchIndex: number;
+  batchCount: number;
+  pairsPerBatch: number;
+  pairCount: number;
+  pairIds: string[];
 }
 
 function positiveInteger(raw: string | undefined, label: string, maximum: number, fallback: number) {
@@ -163,7 +177,13 @@ export function parseLiveCanaryOptions(
 ): CanaryOptions {
   const values = new Map<string, string[]>();
   const flags = new Set<string>();
-  const valueless = new Set(["--pilot", "--allow-wide-matrix", "--require-visible", "--dry-run"]);
+  const valueless = new Set([
+    "--pilot",
+    "--allow-wide-matrix",
+    "--allow-large-study",
+    "--require-visible",
+    "--dry-run",
+  ]);
   const valued = new Set([
     "--case",
     "--model",
@@ -179,6 +199,8 @@ export function parseLiveCanaryOptions(
     "--jev-model",
     "--judge-rubric",
     "--max-judge-calls",
+    "--batch-index",
+    "--pairs-per-batch",
   ]);
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -198,21 +220,64 @@ export function parseLiveCanaryOptions(
   if (selectedInputs !== 1 || Boolean(studyPlan) !== values.has("--study-plan"))
     throw new Error("Choose one pilot, case list, or validated study plan.");
   const allowWideMatrix = flags.has("--allow-wide-matrix");
-  const cases = studyPlan
+  const allowLargeStudy = flags.has("--allow-large-study");
+  if (allowLargeStudy && !studyPlan) throw new Error("Large-study opt-in requires a validated study plan.");
+  const allCases = studyPlan
     ? expandStudyPlan(studyPlan)
     : flags.has("--pilot")
       ? pilotScenarios()
       : (values.get("--case") ?? []).map(customScenario);
-  if (!allowWideMatrix && cases.some(({ agentCount }) => agentCount > 3))
+  if (!allowWideMatrix && allCases.some(({ agentCount }) => agentCount > 3))
     throw new Error("Four-agent cases require --allow-wide-matrix.");
-  const upperLimit = allowWideMatrix ? MAX_WIDE_CASES : MAX_PILOT_CASES;
+  const batchIndexRaw = values.get("--batch-index")?.[0];
+  const pairsPerBatchRaw = values.get("--pairs-per-batch")?.[0];
+  if (Boolean(batchIndexRaw) !== Boolean(pairsPerBatchRaw) || (batchIndexRaw && !studyPlan))
+    throw new Error("Batch index and pairs per batch require one validated study plan.");
+  if (studyPlan && allCases.length > MAX_PILOT_CASES && !batchIndexRaw)
+    throw new Error("Expanded studies require an explicit whole-pair batch selection.");
+  let studyBatch: StudyBatchMetadataV1 | undefined;
+  let cases = allCases;
+  if (studyPlan && batchIndexRaw && pairsPerBatchRaw) {
+    const pairsPerBatch = positiveInteger(pairsPerBatchRaw, "Pairs per batch", MAX_BATCH_PAIRS, MAX_BATCH_PAIRS);
+    const planPairCount = studyPlan.blocks.length;
+    const batchCount = Math.ceil(planPairCount / pairsPerBatch);
+    const batchIndex = Number(batchIndexRaw);
+    if (!Number.isSafeInteger(batchIndex) || batchIndex < 0 || batchIndex >= batchCount)
+      throw new Error("Study batch index is out of range.");
+    const firstPair = batchIndex * pairsPerBatch;
+    cases = allCases.slice(firstPair * 2, Math.min(planPairCount, firstPair + pairsPerBatch) * 2);
+    const pairIds = [...new Set(cases.map(({ study }) => study?.pairId))];
+    const adjacentPairs = Array.from({ length: cases.length / 2 }, (_, pair) => {
+      const first = cases[pair * 2]?.study;
+      const second = cases[pair * 2 + 1]?.study;
+      return Boolean(first?.pairId && first.pairId === second?.pairId && first.arm !== second.arm);
+    });
+    if (
+      cases.length === 0 ||
+      cases.length !== pairIds.length * 2 ||
+      pairIds.some((pairId) => !pairId) ||
+      adjacentPairs.some((matched) => !matched)
+    )
+      throw new Error("Study batch is not composed of complete pairs.");
+    studyBatch = {
+      schemaVersion: 1,
+      planCaseCount: allCases.length,
+      planPairCount,
+      batchIndex,
+      batchCount,
+      pairsPerBatch,
+      pairCount: pairIds.length,
+      pairIds: pairIds as string[],
+    };
+  }
+  const upperLimit = allowLargeStudy ? MAX_STUDY_CASES : allowWideMatrix ? MAX_WIDE_CASES : MAX_PILOT_CASES;
   const maxCases = positiveInteger(
     values.get("--max-cases")?.[0],
     "Maximum cases",
     upperLimit,
     studyPlan?.maxCases ?? MAX_PILOT_CASES,
   );
-  if (studyPlan && (studyPlan.maxCases > upperLimit || maxCases > studyPlan.maxCases))
+  if (studyPlan && (studyPlan.maxCases > upperLimit || maxCases > studyPlan.maxCases || allCases.length > maxCases))
     throw new Error("Study plan exceeds its explicit case cap.");
   if (cases.length > maxCases) throw new Error("Selected cases exceed the case limit.");
   if (new Set(cases.map(({ scenarioId, variant }) => `${scenarioId}:${variant}`)).size !== cases.length)
@@ -283,6 +348,7 @@ export function parseLiveCanaryOptions(
     requireVisible: flags.has("--require-visible"),
     dryRun,
     ...(studyPlan ? { studyPlan } : {}),
+    ...(studyBatch ? { studyBatch } : {}),
     ...(jevModel ? { jevModel } : {}),
     judgeRubric: judgeRubric as "v1" | "v2",
     maxJudgeCalls,
@@ -385,6 +451,18 @@ interface CaseResult {
   qualityJudge?: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
   privateReviewRetained: boolean;
   study?: NonNullable<LiveScenario["study"]>;
+}
+
+/** A batch exposes progress only once both arms of one matched pair have completed. */
+export function projectPairCompleteProgress<T extends { study?: { pairId: string; arm: "a" | "b" } }>(
+  completedCases: readonly T[],
+) {
+  if (completedCases.length === 0 || completedCases.length % 2 !== 0) return null;
+  const cases = completedCases.slice(-2);
+  const pairId = cases[0]?.study?.pairId;
+  if (!pairId || cases[1]?.study?.pairId !== pairId || cases[0]?.study?.arm === cases[1]?.study?.arm)
+    throw new Error("Completed batch cases did not form a matched pair.");
+  return { event: "pair-complete" as const, pairId, cases, completedPairs: completedCases.length / 2 };
 }
 
 type FailureStage =
@@ -939,6 +1017,7 @@ async function main() {
         planId: plan.planId,
         planSha256: studyPlanDigest(plan),
         orderSeed: plan.orderSeed,
+        ...(options.studyBatch ? { studyBatch: options.studyBatch } : {}),
         sourceCommit,
         sourceDirty,
         sourceSha256,
@@ -1017,7 +1096,12 @@ async function main() {
         );
         throw new Error("Isolated live case did not complete.");
       }
-      console.log(JSON.stringify({ event: "case-complete", case: results.at(-1), completedCases: results.length }));
+      if (options.studyBatch) {
+        const progress = projectPairCompleteProgress(results);
+        if (progress) console.log(JSON.stringify(progress));
+      } else {
+        console.log(JSON.stringify({ event: "case-complete", case: results.at(-1), completedCases: results.length }));
+      }
     }
     if ((await sourceDigest()) !== sourceSha256) throw new Error("Canary source changed during the live run.");
     if (
@@ -1080,6 +1164,7 @@ async function main() {
             },
           }
         : {}),
+      ...(options.studyBatch ? { studyBatch: options.studyBatch } : {}),
       openCodeVersion: cliVersion,
       actorModel: options.model,
       judgeModel: options.judgeModel ?? null,
