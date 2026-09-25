@@ -85,7 +85,14 @@ function fixture() {
       runId,
       turnId: "turn_12345678",
       generationId,
-      usage: { inputTokens: 2, outputTokens: 29 },
+      usage: {
+        inputTokens: 2,
+        outputTokens: 29,
+        reasoningTokens: 0,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 0,
+        totalTokens: 131,
+      },
       costUsd: 0.009,
     },
   ];
@@ -142,8 +149,13 @@ describe("live routing scalar extraction", () => {
       generationCompletions: 1,
       reportedInputTokens: 2,
       reportedOutputTokens: 29,
+      reportedReasoningTokens: 0,
+      reportedCacheReadTokens: 100,
+      reportedCacheWriteTokens: 0,
+      reportedTotalTokens: 131,
       reportedCostUsd: 0.009,
       usageCoverage: "reported",
+      totalTokenCoverage: "reported",
     });
     expect(JSON.stringify(result)).not.toContain("private-output");
   });
@@ -168,11 +180,38 @@ describe("live routing scalar extraction", () => {
       event: "provider.exchange.observed",
       runId: "run_12345678",
       generationId: "gen_12345678",
-      usage: { inputTokens: 2, outputTokens: 29 },
+      usage: { inputTokens: 2, outputTokens: 29, totalTokens: 131 },
       costUsd: 0.009,
     });
     input.records.push({ event: "generation.started", runId: "run_12345678", generationId: "gen_failed" });
-    expect(collectLiveScenarioEvidence(base).usageCoverage).toBe("partial");
+    expect(collectLiveScenarioEvidence(base)).toMatchObject({
+      usageCoverage: "partial",
+      totalTokenCoverage: "partial",
+      reportedTotalTokens: null,
+    });
+  });
+
+  it("does not infer a provider total from uncached input and output or invalidate reported cost", () => {
+    const input = fixture();
+    const provider = input.records.find((record) => record.event === "provider.exchange.observed")!;
+    provider.usage = { inputTokens: 2, outputTokens: 29 };
+    const result = collectLiveScenarioEvidence({
+      scenarioId: "direct-2-low-enforce",
+      variant: "jev-on",
+      preflightMode: "enforce",
+      records: input.records,
+      preflightDecisions: input.preflight,
+      triggerMessageId: input.triggerMessageId,
+    });
+    expect(result).toMatchObject({
+      usageCoverage: "reported",
+      reportedCostUsd: 0.009,
+      totalTokenCoverage: "missing",
+      reportedTotalTokens: null,
+      reportedCacheReadTokens: null,
+      reportedCacheWriteTokens: null,
+      reportedReasoningTokens: null,
+    });
   });
 
   it("rejects ambiguous or missing terminal and run sequence evidence", () => {

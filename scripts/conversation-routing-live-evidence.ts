@@ -74,8 +74,13 @@ export interface LiveScenarioResult {
   generationFailures: number;
   reportedInputTokens: number | null;
   reportedOutputTokens: number | null;
+  reportedReasoningTokens: number | null;
+  reportedCacheReadTokens: number | null;
+  reportedCacheWriteTokens: number | null;
+  reportedTotalTokens: number | null;
   reportedCostUsd: number | null;
   usageCoverage: "reported" | "partial" | "missing";
+  totalTokenCoverage: "reported" | "partial" | "missing";
 }
 
 function object(value: unknown): RecordValue | null {
@@ -279,21 +284,31 @@ export function collectLiveScenarioEvidence(input: {
     if (matches.length > 1) throw new Error("Provider usage evidence is ambiguous.");
     const observed = matches[0];
     const values = object(observed?.usage);
+    const cache = object(values?.cache);
     return {
       input: count(values?.inputTokens) ?? count(values?.input),
       output: count(values?.outputTokens) ?? count(values?.output),
+      reasoning: count(values?.reasoningTokens) ?? count(values?.reasoning),
+      cacheRead: count(values?.cacheReadTokens) ?? count(cache?.read),
+      cacheWrite: count(values?.cacheWriteTokens) ?? count(cache?.write),
+      total: count(values?.totalTokens) ?? count(values?.total),
       cost: nonnegative(observed?.costUsd),
     };
   });
+  const allGenerationsCompleted =
+    usage.length > 0 && starts.length === completions.length && retries.length === 0 && failures.length === 0;
   const completeUsage =
-    usage.length > 0 &&
-    starts.length === completions.length &&
-    retries.length === 0 &&
-    failures.length === 0 &&
+    allGenerationsCompleted &&
     usage.every(({ input, output, cost }) => input !== null && output !== null && cost !== null);
   const anyUsage = usage.some(({ input, output, cost }) => input !== null || output !== null || cost !== null);
   const reported = (key: "input" | "output" | "cost") =>
     completeUsage ? usage.reduce((sum, entry) => sum + (entry[key] ?? 0), 0) : null;
+  const completeTotal = allGenerationsCompleted && usage.every(({ total }) => total !== null);
+  const anyTotal = usage.some(({ total }) => total !== null);
+  const reportedBreakdown = (key: "reasoning" | "cacheRead" | "cacheWrite" | "total") =>
+    allGenerationsCompleted && usage.every((entry) => entry[key] !== null)
+      ? usage.reduce((sum, entry) => sum + (entry[key] ?? 0), 0)
+      : null;
   const firstVisible = stage("first-visible");
   if (firstVisible.length > 1) throw new Error("First-visible timing evidence is ambiguous.");
   return {
@@ -317,7 +332,12 @@ export function collectLiveScenarioEvidence(input: {
     generationFailures: failures.length,
     reportedInputTokens: reported("input"),
     reportedOutputTokens: reported("output"),
+    reportedReasoningTokens: reportedBreakdown("reasoning"),
+    reportedCacheReadTokens: reportedBreakdown("cacheRead"),
+    reportedCacheWriteTokens: reportedBreakdown("cacheWrite"),
+    reportedTotalTokens: reportedBreakdown("total"),
     reportedCostUsd: reported("cost"),
     usageCoverage: completeUsage ? "reported" : anyUsage ? "partial" : "missing",
+    totalTokenCoverage: completeTotal ? "reported" : anyTotal ? "partial" : "missing",
   };
 }

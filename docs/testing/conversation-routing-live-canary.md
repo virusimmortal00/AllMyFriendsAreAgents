@@ -76,6 +76,8 @@ shim drops unrelated secret-launcher values such as `BWS_ACCESS_TOKEN`. The wrap
 the workstation's login home solely for `bws-run`/Keychain access, while real
 OpenCode receives the isolated home. Jev reads the launch-time key through the
 server's credential resolver. No developer OpenCode auth file is read or copied.
+The server's per-process `OPENCODE_CONFIG_CONTENT` read-only room-agent policy
+also passes through unchanged; the wrapper does not log or persist its value.
 The server runs on loopback, with one agent/room/global generation
 slot. It does not import the provider-blocking test isolation shim. The canary
 checks roster model availability before posting, terminates the server process
@@ -94,6 +96,13 @@ across base and rotated streams. Missing or partial usage remains unknown, not
 zero. The judge's usage is separate from actor/Jev measurements. No transcript,
 provider output, credential, local path, or private rating note is printed in
 the scalar manifest.
+Actor uncached input, output, reasoning, cache read/write, and total tokens are
+separate provider-reported fields. A total is never inferred from input and
+output; `totalTokenCoverage` tracks complete, partial, or missing reported
+totals independently of cost-bearing `usageCoverage`. For durable scalar
+evidence, redirect stdout to a new mode-`0600` JSONL file inside a private
+mode-`0700` directory; failed cases print closed scalar records but no final
+manifest.
 
 Matched cases hold fictional prompt, roster, energy, mode, and actor model
 constant while toggling Jev. The model may still produce different replies,

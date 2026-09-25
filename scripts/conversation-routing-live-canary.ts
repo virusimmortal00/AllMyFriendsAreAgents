@@ -16,6 +16,8 @@ import {
   readRoutingEvents,
 } from "./conversation-routing-live-evidence.js";
 import {
+  JudgeFailure,
+  type JudgeFailureCategory,
   type JudgeScalarResult,
   judgeConversationCase,
   parsePrivateJudgeCase,
@@ -283,6 +285,7 @@ class CaseFailure extends Error {
     readonly stage: FailureStage,
     readonly category: FailureCategory,
     readonly triggers: readonly LiveScenarioResult[] = [],
+    readonly judgeCategory: JudgeFailureCategory | null = null,
   ) {
     super("Isolated live case failed.");
   }
@@ -318,8 +321,33 @@ export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScena
     generationFailures: result.generationFailures,
     reportedInputTokens: result.reportedInputTokens,
     reportedOutputTokens: result.reportedOutputTokens,
+    reportedReasoningTokens: result.reportedReasoningTokens,
+    reportedCacheReadTokens: result.reportedCacheReadTokens,
+    reportedCacheWriteTokens: result.reportedCacheWriteTokens,
+    reportedTotalTokens: result.reportedTotalTokens,
     reportedCostUsd: result.reportedCostUsd,
     usageCoverage: result.usageCoverage,
+    totalTokenCoverage: result.totalTokenCoverage,
+  };
+}
+export function projectCaseFailedEvent(input: {
+  scenarioId: string;
+  variant: "jev-on" | "jev-off";
+  stage: FailureStage;
+  category: FailureCategory;
+  completedCases: number;
+  triggers: readonly LiveScenarioResult[];
+  judgeCategory: JudgeFailureCategory | null;
+}) {
+  return {
+    event: "case-failed" as const,
+    scenarioId: input.scenarioId,
+    variant: input.variant,
+    stage: input.stage,
+    category: input.category,
+    completedCases: input.completedCases,
+    observedTriggers: input.triggers.map(projectFailedCaseEvidence),
+    ...(input.judgeCategory ? { judgeCategory: input.judgeCategory } : {}),
   };
 }
 function failureCategory(error: unknown): FailureCategory {
@@ -649,7 +677,14 @@ async function runCase(
       privateReviewRetained: Boolean(privateDirectory),
     };
   } catch (error) {
-    throw error instanceof CaseFailure ? error : new CaseFailure(stage, failureCategory(error), triggerResults);
+    throw error instanceof CaseFailure
+      ? error
+      : new CaseFailure(
+          stage,
+          failureCategory(error),
+          triggerResults,
+          error instanceof JudgeFailure ? error.category : null,
+        );
   } finally {
     await stopProcessGroup(child);
     await rm(root, { recursive: true, force: true });
@@ -709,15 +744,17 @@ async function main() {
       } catch (error) {
         const failure = error instanceof CaseFailure ? error : new CaseFailure("cleanup", "internal");
         console.log(
-          JSON.stringify({
-            event: "case-failed",
-            scenarioId: scenario.scenarioId,
-            variant: scenario.variant,
-            stage: failure.stage,
-            category: failure.category,
-            completedCases: results.length,
-            observedTriggers: failure.triggers.map(projectFailedCaseEvidence),
-          }),
+          JSON.stringify(
+            projectCaseFailedEvent({
+              scenarioId: scenario.scenarioId,
+              variant: scenario.variant,
+              stage: failure.stage,
+              category: failure.category,
+              completedCases: results.length,
+              triggers: failure.triggers,
+              judgeCategory: failure.judgeCategory,
+            }),
+          ),
         );
         throw new Error("Isolated live case did not complete.");
       }

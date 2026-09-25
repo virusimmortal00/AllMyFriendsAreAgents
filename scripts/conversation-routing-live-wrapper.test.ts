@@ -13,6 +13,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-wrapper-test-"));
     const marker = path.join(root, "observed.json");
+    const roomConfig = '{"agent":{"room":{"permission":{"edit":"deny"}}}}';
     const fakeOpenCode = path.join(root, "opencode-fixture.cjs");
     const fakeLauncher = path.join(root, "secret-launcher-fixture");
     try {
@@ -21,7 +22,7 @@ it.skipIf(process.platform === "win32")(
         fakeOpenCode,
         `#!${process.execPath}\nconst {writeFileSync}=require('node:fs');\n` +
           `writeFileSync(${JSON.stringify(marker)},JSON.stringify({argv:process.argv.slice(2),hasKey:process.env.OPENROUTER_API_KEY==='fixture-provider-key',` +
-          `hasOtherSecret:'BWS_ACCESS_TOKEN' in process.env,home:process.env.HOME,config:process.env.XDG_CONFIG_HOME}));\n` +
+          `hasOtherSecret:'BWS_ACCESS_TOKEN' in process.env || 'UNRELATED_SECRET' in process.env,roomConfig:process.env.OPENCODE_CONFIG_CONTENT,home:process.env.HOME,config:process.env.XDG_CONFIG_HOME}));\n` +
           `process.stdout.write('1.18.25\\n');\n`,
         { mode: 0o700 },
       );
@@ -54,7 +55,9 @@ it.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: path.join(root, "xdg-config"),
           XDG_CACHE_HOME: path.join(root, "cache"),
           XDG_STATE_HOME: path.join(root, "state"),
+          OPENCODE_CONFIG_CONTENT: roomConfig,
           BWS_ACCESS_TOKEN: "upstream-secret-must-not-pass",
+          UNRELATED_SECRET: "unrelated-secret-must-not-pass",
         },
       });
       expect(result.stdout.trim()).toBe("1.18.25");
@@ -62,6 +65,7 @@ it.skipIf(process.platform === "win32")(
         argv: args,
         hasKey: true,
         hasOtherSecret: false,
+        roomConfig,
         home: root,
         config: path.join(root, "xdg-config"),
       });
@@ -69,6 +73,7 @@ it.skipIf(process.platform === "win32")(
       expect(files).toContain("{env:OPENROUTER_API_KEY}");
       expect(files).not.toContain("fixture-provider-key");
       expect(files).not.toContain("fixture-other-secret");
+      expect(files).not.toContain(roomConfig);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

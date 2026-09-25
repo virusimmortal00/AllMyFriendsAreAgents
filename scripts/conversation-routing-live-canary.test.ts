@@ -6,10 +6,12 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   parseLiveCanaryOptions,
+  projectCaseFailedEvent,
   projectFailedCaseEvidence,
   stopProcessGroup,
 } from "./conversation-routing-live-canary.js";
 import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
+import { JudgeFailure } from "./conversation-routing-live-judge.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
 
 const base = [
@@ -52,8 +54,13 @@ describe("routing canary selection", () => {
       generationFailures: 0,
       reportedInputTokens: 2,
       reportedOutputTokens: 20,
+      reportedReasoningTokens: 0,
+      reportedCacheReadTokens: 18,
+      reportedCacheWriteTokens: 0,
+      reportedTotalTokens: 40,
       reportedCostUsd: 0.01,
       usageCoverage: "reported",
+      totalTokenCoverage: "reported",
       rawText: "private fictional response",
       credential: "do-not-copy",
     } satisfies LiveScenarioResult & { rawText: string; credential: string };
@@ -63,8 +70,25 @@ describe("routing canary selection", () => {
       classifier: { outcome: "completed" },
       yieldedTurns: 1,
       confirmedDeliveredBursts: 0,
+      reportedTotalTokens: 40,
+      totalTokenCoverage: "reported",
     });
     expect(JSON.stringify(projected)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
+    const failed = projectCaseFailedEvent({
+      scenarioId: collected.scenarioId,
+      variant: collected.variant,
+      stage: "judge",
+      category: "internal",
+      completedCases: 0,
+      triggers: [collected],
+      judgeCategory: new JudgeFailure("judgment-schema").category,
+    });
+    expect(failed).toMatchObject({
+      event: "case-failed",
+      judgeCategory: "judgment-schema",
+      observedTriggers: [projected],
+    });
+    expect(JSON.stringify(failed)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
   });
   it("makes six matched Jev-on/off pairs in twelve isolated cases", () => {
     const scenarios = pilotScenarios();
