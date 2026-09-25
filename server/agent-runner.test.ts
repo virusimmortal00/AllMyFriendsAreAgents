@@ -376,6 +376,15 @@ describe("room prompt context", () => {
     ],
   } satisfies RoomState;
 
+  it.each([false, true])("instructs direct answers to specified casual creative requests in the %s output lane", async (structured) => {
+    const instruction = "Everyone, please each suggest one name for the library cat.";
+    const { prompt } = await __testing.buildPromptBundle("codex-sol", state, instruction, false, "read-only", undefined, structured);
+    expect(prompt).toContain("give the requested number of concrete ideas or phrases directly");
+    expect(prompt).toContain("do not replace the answer with a context check or preference question");
+    expect(prompt).toContain("only when missing information makes a useful or safe answer impossible");
+    expect(prompt).toContain(`YOUR TURN\n${instruction}`);
+  });
+
   it("keeps ordinary chat casual and scoped to the latest topic", async () => {
     const prompt = await __testing.buildPrompt("codex-sol", state, "Join if useful.", false, "read-only");
 
