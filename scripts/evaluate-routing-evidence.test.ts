@@ -8,7 +8,7 @@ import {
 describe("bounded routing evidence", () => {
   it("keeps the fictional direct-address fixture corpus free of target misses and false requirements", () => {
     expect(evaluateFixtureRouting()).toMatchObject({
-      baseline: { missedAddressSignals: 12, falseAddressSignals: 9 },
+      baseline: { missedAddressSignals: 15, falseAddressSignals: 9 },
       candidate: { missedAddressSignals: 0, falseAddressSignals: 0 },
     });
   });

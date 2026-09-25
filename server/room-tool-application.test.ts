@@ -143,7 +143,7 @@ describe("full application room-tool smoke", () => {
     expect(await replay(cancelled, app.base)).toEqual([404, 404]);
     await app.delivered("next"); await app.stop();
     app = await f.start(); expect(await replay(next, app.base)).toEqual([404, 404]);
-    await app.task("restart"); const restarted = await f.report("restart"); usable(restarted, true);
+    await app.task("restart"); const restarted = await f.report("restart"); usable(restarted, false);
     expect(await replay(next, app.base)).toEqual([404, 404]);
     await app.delivered("restart"); expect(await replay(restarted, app.base)).toEqual([404, 404]);
     await app.stop();

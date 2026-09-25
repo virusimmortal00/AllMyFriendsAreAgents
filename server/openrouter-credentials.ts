@@ -15,8 +15,13 @@ export function openCodeAuthFilePath(env: NodeJS.ProcessEnv = process.env) {
   return path.join(dataHome, "opencode", "auth.json");
 }
 
-/** Reads the OpenRouter credential OpenCode stores after either an API-key paste or its OAuth flow. */
+/**
+ * Prefer a launch-time OpenRouter credential when one is valid, then fall back to OpenCode's
+ * stored credential. An invalid environment value never prevents the existing file lookup.
+ */
 export async function readOpenRouterApiKey(env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  const environmentKey = env.OPENROUTER_API_KEY;
+  if (typeof environmentKey === "string" && KEY_PATTERN.test(environmentKey)) return environmentKey;
   let handle;
   try {
     handle = await open(openCodeAuthFilePath(env), constants.O_RDONLY | constants.O_NOFOLLOW);

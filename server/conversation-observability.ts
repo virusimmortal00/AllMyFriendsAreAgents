@@ -46,7 +46,7 @@ export class ConversationTriggerTrace {
 }
 
 const TRIGGER_STAGES = new Set(["queue", "consumed", "settled", "preflight-started", "preflight-completed", "classifier", "turn-preparation", "generation-active", "first-generation-active", "first-visible", "generation-completed", "terminal"]);
-const NUMBER_FIELDS = new Set(["queueElapsedMs", "queueDelayMs", "candidateCount", "selectedCount", "durationMs", "preparationDurationMs", "attemptOrdinal", "reportedInputTokens", "reportedOutputTokens", "reportedCostUsd", "providerReportedCostUsd", "queueToGenerationActiveMs", "timeToFirstVisibleMs", "attemptedTurns", "yieldedTurns", "respondedTurns"]);
+const NUMBER_FIELDS = new Set(["queueElapsedMs", "queueDelayMs", "candidateCount", "selectedCount", "durationMs", "preparationDurationMs", "attemptOrdinal", "reportedInputTokens", "reportedOutputTokens", "reportedCostUsd", "openCodeEstimatedCostUsd", "queueToGenerationActiveMs", "timeToFirstVisibleMs", "attemptedTurns", "yieldedTurns", "respondedTurns"]);
 const TERMINAL_REASONS: Record<ConversationTerminalReason, true> = {
   cancelled: true,
   "no-visible-output": true,

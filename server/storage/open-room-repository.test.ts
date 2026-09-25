@@ -40,7 +40,7 @@ describe("room repository factory", () => {
     expect(repository.snapshot().settings.conversationEnergy).toBe("party");
   });
 
-  it("preserves same-epoch sessions across restarts and classifies a new commit as stale", async () => {
+  it("persists session metadata but only reuses a read-only session known to this server process", async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), "amfaa-epoch-restart-"));
     temporaryDirectories.push(base);
     const projectRoot = path.join(base, "project");
@@ -61,7 +61,11 @@ describe("room repository factory", () => {
     const sameEpochSession = restarted.snapshot().sessions["codex-sol"]!;
     expect(restarted.snapshot().deployment?.epoch).toBe(firstEpoch);
     expect(sameEpochSession.codeEpoch).toBe(firstEpoch);
-    expect(agentRunnerTesting.openCodeSessionDecision("codex-sol", restarted.snapshot().roster!.entries.find(({ agentId }) => agentId === "codex-sol")!, sameEpochSession, "read-only", restarted.snapshot().deployment)).toMatchObject({ kind: "reuse" });
+    const participant = restarted.snapshot().roster!.entries.find(({ agentId }) => agentId === "codex-sol")!;
+    expect(agentRunnerTesting.openCodeSessionDecision("codex-sol", participant, sameEpochSession, "read-only", restarted.snapshot().deployment)).toEqual({ kind: "invalidate", reason: "read-only room agent policy changed" });
+    // A session created by this process remains resumable after repository reopen.
+    agentRunnerTesting.rememberRoomSession(sameEpochSession.id);
+    expect(agentRunnerTesting.openCodeSessionDecision("codex-sol", participant, sameEpochSession, "read-only", restarted.snapshot().deployment)).toMatchObject({ kind: "reuse" });
 
     await writeFile(sourcePath, "second\n", "utf8");
     await execFileAsync("git", ["-C", projectRoot, "add", "source.txt"]);

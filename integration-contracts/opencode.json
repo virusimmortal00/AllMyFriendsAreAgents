@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 56,
-    "reviewedOn": "2026-09-23",
-    "result": "Refresh trigger: room conversation routing and trigger telemetry now record bounded queue, classifier, generation, and terminal facts, while room-turn parsing distinguishes direct follow-ups from references and human handoffs. Inspected all nine structured-sdk-server upstream paths at v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f). Confirmed source behavior: server listen and authentication, session prompt cancellation and StructuredOutput JSON schema, SDK v2 session endpoints, json_schema output format, and AssistantMessage.structured remain as recorded. The new decisions, timing, and parsing are application-owned interpretations of existing results; no OpenCode transport, version, credential, schema, or cancellation contract changed. The integration-contract checker passed all 315 tests in 19 focused suites.",
+    "revision": 58,
+    "reviewedOn": "2026-09-25",
+    "result": "Read-only room turns now select a process-scoped primary agent instead of OpenCode's built-in plan agent. Inspected all 18 originally mapped paths for structured-sdk-server, cli-jsonl, and permissions-and-tools at v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), plus agent/agent.ts, permission/index.ts, session/reminders.ts, and session/session.ts. Confirmed: plan adds a synthetic planning reminder; a later build turn with plan history adds a switch reminder; inline config loads after project agent configuration; global inline permissions precede per-agent permissions; CLI and SDK prompts select the supplied agent. The processor writes Session.getUsage into step_finish: OpenCode normalizes token fields and generally calculates cost from model pricing, so complete step fields are labeled OpenCode-observed and cost is labeled estimated, not provider billing. A stock 1.18.25 provider-free binary recognized an inline-configured primary agent, including after a synthetic project override. The process-scoped name and deny-by-default policy are application safeguards; the assumption that an unknown runtime configuration cannot predict a random process name is an inference. Read-only sessions from earlier processes are invalidated to prevent plan-history reuse. The downstream head's config diff does not alter agent load order, and session/session.ts is byte-identical to upstream. The application room prompt now directs sufficiently specified low-stakes creative turns to give the requested concrete answer before any clarification, while retaining safety and genuinely blocking-ambiguity exceptions; this changes no OpenCode transport, schema, permission, or provider behavior. The prior pinned v1.18.25 source inspection remains applicable; the application owns this prompt wording. The integration-contract checker passed 320 tests in 19 focused suites.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",
@@ -59,6 +59,10 @@
       "packages/opencode/src/tool/registry.ts",
       "packages/opencode/src/provider/transform.ts",
       "packages/opencode/src/session/llm.ts",
+      "packages/opencode/src/agent/agent.ts",
+      "packages/opencode/src/permission/index.ts",
+      "packages/opencode/src/session/reminders.ts",
+      "packages/opencode/src/session/session.ts",
       "packages/opencode/src/auth/index.ts",
       "packages/opencode/src/server/routes/instance/httpapi/handlers/control.ts",
       "packages/opencode/src/server/routes/instance/httpapi/groups/control.ts",
@@ -89,7 +93,9 @@
         "packages/sdk/js/src/v2/client.ts",
         "packages/sdk/js/src/v2/gen/sdk.gen.ts",
         "packages/sdk/js/src/v2/gen/types.gen.ts",
-        "packages/schema/src/v1/session.ts"
+        "packages/schema/src/v1/session.ts",
+        "packages/opencode/src/session/reminders.ts",
+        "packages/opencode/src/session/session.ts"
       ],
       "tests": [
         "server/agent-runner.test.ts",
@@ -114,7 +120,9 @@
         "packages/opencode/src/session/processor.ts",
         "packages/opencode/src/session/prompt.ts",
         "packages/schema/src/v1/session.ts",
-        "packages/opencode/src/provider/provider.ts"
+        "packages/opencode/src/provider/provider.ts",
+        "packages/opencode/src/session/reminders.ts",
+        "packages/opencode/src/session/session.ts"
       ],
       "tests": [
         "server/agent-runner.test.ts",
@@ -148,7 +156,9 @@
         "packages/plugin/src/tool.ts",
         "packages/opencode/src/tool/registry.ts",
         "packages/opencode/src/provider/transform.ts",
-        "packages/opencode/src/session/llm.ts"
+        "packages/opencode/src/session/llm.ts",
+        "packages/opencode/src/agent/agent.ts",
+        "packages/opencode/src/permission/index.ts"
       ],
       "tests": [
         "server/agent-runner.test.ts",

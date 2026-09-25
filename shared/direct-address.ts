@@ -13,7 +13,8 @@ export interface DirectAddressInput {
 }
 
 const REQUEST_START =
-  /^(?:your\s+turn\b|can|could|would|will|do|did|are|is|have|has|should|may|might|what|why|how|where|when|please|take|look|check|review|share|give|tell|help|weigh|respond|answer|reply|summarize|explain|show|try|handle|investigate|read|write|build|fix|analy[sz]e|compare|decide|choose|draft|run|test|update)\b/i;
+  /^(?:your\s+turn\b|can|could|would|will|do|did|are|is|have|has|should|may|might|what|why|how|where|when|please|take|look|check|review|share|give|tell|help|weigh|respond|answer|reply|summarize|explain|describe|show|try|handle|investigate|read|write|build|fix|analy[sz]e|compare|argue|decide|choose|draft|run|test|update)\b/i;
+const LEADING_GIVEN_CONTEXT = /^given\b[^.!?;\n]{1,160},\s*/i;
 const UNPUNCTUATED_REQUEST =
   /^(?:(?:can|could|would|will|should)\s+you\b|(?:what|why|how|where|when)\s+(?:do|would|should|can|could|are|is)\s+you\b|please\s+)/i;
 const SHORT_PROMPT = /^(?:thoughts|your (?:thoughts|take|view|opinion))\s*\?/i;
@@ -64,6 +65,7 @@ function directNames(input: DirectAddressInput, targetNames: readonly string[], 
       if (
         (punctuated &&
           (REQUEST_START.test(body) ||
+            (LEADING_GIVEN_CONTEXT.test(body) && REQUEST_START.test(body.replace(LEADING_GIVEN_CONTEXT, ""))) ||
             SHORT_PROMPT.test(body) ||
             (input.speaker === "human" && HUMAN_SHORT_PROMPT.test(body)))) ||
         (!punctuated && UNPUNCTUATED_REQUEST.test(body))

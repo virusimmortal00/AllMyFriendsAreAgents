@@ -1026,7 +1026,7 @@ async function performTurnUnchecked({ agent, instruction, includeDiff = false, v
     generationId: result.generationId,
     attemptOrdinal: result.attemptOrdinal,
     durationMs: result.durationMs,
-    ...(result.costUsd === undefined ? {} : { providerReportedCostUsd: result.costUsd }),
+    ...(result.costUsd === undefined ? {} : { openCodeEstimatedCostUsd: result.costUsd }),
   });
   const providerRecovered = providerId ? await providerHealth.recordSuccess(providerId) : false;
   if (!agentStillEnabled()) {

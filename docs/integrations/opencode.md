@@ -72,6 +72,16 @@ session tracking for permission replies. Because room execution supplies a
 deny-by-default inline permission map and does not use `--auto`, that change does
 not broaden the room lane's authority.
 
+Ordinary read-only room turns use a process-scoped primary OpenCode agent with
+an explicit deny-by-default permission map. OpenCode's built-in `plan` agent
+injects a planning reminder into user turns, which conflicts with a direct room
+reply. The dedicated agent avoids that reminder while preserving only the
+existing read/search and governed room tools. The server supplies it through
+`OPENCODE_CONFIG_CONTENT` after project agent configuration and rejects malformed
+or colliding inline configuration. It does not resume read-only sessions from
+earlier server processes, so a prior `plan` session cannot inject a plan-to-build
+transition reminder. The current process may resume its own room-agent sessions.
+
 The repository pins `@opencode-ai/plugin` to the audited version and type-checks
 `server/agent-tools/` as part of the normal build. This ensures that custom tools
 cannot silently drift outside the quality gate.
@@ -140,6 +150,16 @@ required `StructuredOutput` tool, but the audited `run --format json` path does
 not request that format: its `json` flag controls event serialization only.
 The room therefore retains this parser for stock-runtime and writable turns;
 schema-constrained output uses the separate SDK/server lane described below.
+
+For CLI `step_finish` telemetry, the existing normalized usage totals remain
+compatible with spend accounting. The journal marks `openCodeUsageProvenance` as
+`step-fields-v1` and records separate `openCodeObserved*Tokens` aggregates only
+when every step explicitly supplies that field. An absent observed field means
+reporting was incomplete, not that OpenCode reported zero. OpenCode normalizes
+token values and generally calculates `step_finish.cost` from model pricing;
+`openCodeEstimatedCostUsd` names that observed estimate only when every step
+supplies it. Neither field family proves provider billing. The structured SDK
+token shape has no `total` field, so it cannot report an observed total.
 
 Source anchors at the audited commit:
 

@@ -1,0 +1,113 @@
+# Analyze an isolated conversation-routing canary
+
+The [live routing canary](conversation-routing-live-canary.md) prints one final
+scalar JSON manifest after its case progress records. Save that final JSON value
+without adding private room bundles or provider output. The analysis command is
+provider-free: it reads that manifest and optional private human ratings, then
+prints only bounded aggregate fields and a deterministic review queue.
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
+  --manifest /absolute/path/to/scalar-manifest.json \
+  --seed pilot-1 --spot-checks 4
+```
+
+For a pilot run as several isolated invocations, repeat `--manifest` once per
+completed final manifest. The command combines their cases, rejects duplicate
+scenario/variant pairs or run IDs, and requires the same source commit, source
+digest, OpenCode version, and actor model. Cases paired under one scenario ID
+must also agree on participant count, energy, and preflight mode. Different scenario-catalog digests
+are retained as a list because each invocation may select different cases.
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
+  --manifest /absolute/path/to/jev-on.json \
+  --manifest /absolute/path/to/jev-off.json \
+  --seed pilot-1 --spot-checks 4
+```
+
+Use the `scenarioId` and `runId` in each queue entry to locate the corresponding
+private bundle retained by the canary. The queue favors low or unassessable
+judge results and disagreement with supplied human scores, while reserving one
+seeded sample when at least two checks are requested and an otherwise ordinary
+case exists. This is a review-selection aid, not a quality verdict.
+If no judge results are present, the queue is empty; review the template rows
+directly instead.
+
+Generate an **unrated** template from the same manifest:
+
+```sh
+umask 077
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
+  --manifest /absolute/path/to/scalar-manifest.json --template \
+  > /absolute/private/directory/human-ratings.json
+```
+
+The template has `schemaVersion: 1` and one `{ "scenarioId": "...",
+"runId": "..." }` row per completed trigger. Edit only cases actually reviewed.
+For each metric, either omit it (not yet rated), set
+`{ "status": "not_assessable" }` when the visible content cannot support a
+judgment, or set `{ "status": "not_applicable" }` when the scenario has no such
+obligation. Rated fields are:
+
+| Field | Rated shape | Review question |
+| --- | --- | --- |
+| `directReply` | `{ "status":"rated", "expectedTargets":1, "missedTargets":0, "humanCorrection":false }` | Did each clearly addressed agent provide a useful reply, and did the human have to correct a miss? Use `not_applicable` without a direct target. |
+| `naturalness` | `{ "status":"rated", "score":4 }` | Did the exchange read like responsive group chat? Score 1 (poor) through 5 (strong). |
+| `distinctValue` | `{ "status":"rated", "assessedReplies":2, "valuableReplies":1 }` | How many visible agent replies added distinct useful substance? |
+| `replyWaste` | `{ "status":"rated", "assessedReplies":2, "unnecessaryReplies":1, "duplicateReplies":0 }` | How many visible replies were unnecessary or repeated another reply? The two counts may overlap. |
+| `handoff` | `{ "status":"rated", "correct":true }` | When a person needed to decide or supply input, did the room leave that floor with them? |
+| `closure` | `{ "status":"rated", "correct":true }` | Did the room stop after resolution and avoid premature or redundant continuation? |
+
+Each rated reply-count metric needs at least one assessed visible reply. A
+private `privateNote` of at most 1,000 characters may help the reviewer record
+their reasoning; the parser drops it before analysis. Do not paste prompts,
+model output, links, or credentials into any other field. Keep the rating file
+and retained bundles outside the repository in a private directory, then remove
+them when review is finished. The scalar report never includes a note or room
+text.
+
+To include human judgments:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
+  --manifest /absolute/path/to/scalar-manifest.json \
+  --ratings /absolute/private/directory/human-ratings.json \
+  --seed pilot-1 --spot-checks 4
+```
+
+The report labels automated judge findings `judgeOnly` and human findings
+`humanRated`, with separate rated, missing, not-applicable, and not-assessable
+denominators. `humanReviewCoverage` counts unsubmitted runs as missing for each
+metric, while `humanRated` summarizes only submitted ratings. It matches Jev-on
+and Jev-off runs only when the fictional `scenarioId` and settings match.
+
+The actor's OpenCode step-finish cost is a **local estimate**, not a provider
+billing record. Its token fields are OpenCode-observed normalized usage, not
+independently provider-reported usage. Jev's `reportedCostUsd` comes from its
+provider response when present. The report labels their sum
+`actorEstimatedPlusJevReportedCostUsd`; it is mixed-provenance cost, not actual
+room spending. The token comparison labels its derived sum
+`openCodeObservedTotalPlusJevPromptCompletionTokens`. Actor uncached input is
+shown separately and is never called total input. Jev-off has a structural zero
+classifier cost because it did not consult Jev. Judge spending appears
+separately and is never included in room-turn cost.
+
+Paired mixed-cost and token comparisons require explicit OpenCode step-field
+provenance and complete field coverage on **both** runs. Older scalar manifests
+may contain normalized fallback zeros that look reported; they are labeled
+`legacy-unverified`, excluded from those comparisons, and shown only as
+diagnostic amounts. `judgeOnly.naturalnessAndMixedCost` and
+`humanRated.naturalnessAndMixedCost` use only quality-rated pairs with complete
+mixed-cost coverage. Their `naturalnessAndObservedTokens` counterparts use only
+quality-rated pairs with complete OpenCode observed totals and Jev
+prompt/completion counts. Each comparison reports its own denominator. A
+missing judge or human rating is never a favorable score. These small
+stochastic pairs show observations and review priorities, not causal savings or
+what an uninvoked agent would have said.
+
+The analysis command rejects unknown manifest fields and oversized input. It
+does not invoke the room server, OpenCode, Jev, or the judge model. An incomplete
+or failed canary's progress records are not a substitute for its final manifest;
+record their failure categories separately rather than inventing a completed
+run for analysis.

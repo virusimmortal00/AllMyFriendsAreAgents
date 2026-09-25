@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { currentLogContext } from "./structured-logger.js";
-import { runAgent } from "./agent-runner.js";
+import { __testing, runAgent } from "./agent-runner.js";
 import type { CommandRuntime } from "./command-runtime.js";
 import type { DiagnosticQueryResult } from "./diagnostics-query.js";
 import type { ModelDiscoveryService } from "./model-discovery.js";
@@ -59,6 +59,7 @@ describe("room tool generation-attempt lifetime", () => {
       ...(mode === "configuration" ? { configurationFingerprint: "older-model" } : {}),
       ...(mode === "permission" ? { permission: "writable" as const } : {}),
     };
+    if (mode === "reuse" || mode === "missing-session") __testing.rememberRoomSession(api.stored.id);
     let invocations = 0;
     const result = await api.run(async () => {
       invocations++;
