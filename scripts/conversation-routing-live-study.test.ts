@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
 import {
@@ -37,7 +38,26 @@ function plan(
 }
 
 describe("closed live study plan", () => {
-  it("expands two matched blocks with stable seeded AB/BA order and bounded arcs", () => {
+  it("validates the versioned 72-case matrix with balanced orders within each factor", async () => {
+    const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-large-v1.json", "utf8"));
+    const parsed = parseStudyPlan(raw);
+    const cases = expandStudyPlan(parsed);
+    expect(cases).toHaveLength(72);
+    expect(parsed.blocks).toHaveLength(36);
+    expect(new Set(cases.map(({ study }) => study?.pairId)).size).toBe(36);
+    for (const factor of ["jev", "gate", "agent-prompt"] as const) {
+      const pairs = cases.filter(({ study }) => study?.factor === factor && study.arm === "a");
+      expect(pairs).toHaveLength(12);
+      expect(pairs.filter(({ study }) => study?.order === "ab")).toHaveLength(6);
+      expect(pairs.filter(({ study }) => study?.order === "ba")).toHaveLength(6);
+    }
+    expect(new Set(cases.map(({ agentCount }) => agentCount))).toEqual(new Set([1, 2, 3, 4]));
+    expect(new Set(cases.map(({ energy }) => energy))).toEqual(new Set(["low", "balanced", "lively", "party"]));
+    expect(new Set(cases.map(({ dynamic }) => dynamic)).size).toBe(7);
+    expect(new Set(cases.map(({ study }) => study?.arcProfileId))).toContain("agent-exchange-v2");
+    expect(cases.some(({ scriptedFollowups }) => scriptedFollowups?.length === 2)).toBe(true);
+  });
+  it("expands two matched blocks with stable seeded order and bounded arcs", () => {
     const parsed = parseStudyPlan(plan());
     const first = expandStudyPlan(parsed);
     expect(expandStudyPlan(parsed)).toEqual(first);
@@ -52,8 +72,10 @@ describe("closed live study plan", () => {
       expect(scenario.scenarioId.length).toBeLessThanOrEqual(100);
     }
     expect(
-      [...pairs.values()].map(([firstArm, secondArm]) => `${firstArm!.study!.arm}${secondArm!.study!.arm}`).sort(),
-    ).toEqual(["ab", "ba"]);
+      [...pairs.values()].every(
+        ([firstArm, secondArm]) => new Set([firstArm!.study!.arm, secondArm!.study!.arm]).size === 2,
+      ),
+    ).toBe(true);
     const casual = first.find(({ dynamic }) => dynamic === "casual")!;
     expect(casual.scriptedFollowups).toHaveLength(1);
     expect(casual.scriptedFollowups?.[0]?.text).not.toMatch(/^Avery:/);
@@ -104,5 +126,23 @@ describe("closed live study plan", () => {
     ]);
     gate.blocks[0]!.arms.a.jevProfileId = "current-v1";
     expect(() => parseStudyPlan({ ...gate, maxCases: 2 })).toThrow();
+  });
+
+  it("uses a versioned exchange arc that asks for independent tradeoffs", () => {
+    const fixture = plan([
+      {
+        blockId: "exchange",
+        replicateId: "r2",
+        dynamic: "multi-address",
+        arcProfileId: "agent-exchange-v2",
+        rosterOrder: ["codex-sol", "claude-sonnet"],
+        energy: "balanced",
+        arms: { a: current, b: social },
+      },
+    ]);
+    const cases = expandStudyPlan(parseStudyPlan({ ...fixture, maxCases: 2 }));
+    expect(cases[0]?.scriptedFollowups?.[0]?.text).toContain("each give your own tradeoff");
+    expect(cases[0]?.scriptedFollowups?.[0]?.text).not.toContain("difference between your ideas");
+    expect(cases[0]?.scriptedFollowups?.[0]?.expectedDirectAgents).toEqual(["codex-sol", "claude-sonnet"]);
   });
 });

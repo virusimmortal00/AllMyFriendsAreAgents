@@ -1,0 +1,869 @@
+{
+  "schemaVersion": 1,
+  "planId": "garden2-v1",
+  "orderSeed": 20260925,
+  "maxCases": 72,
+  "blocks": [
+    {
+      "blockId": "direct1low",
+      "replicateId": "q1",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "direct1low",
+      "replicateId": "q2",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "direct4pty",
+      "replicateId": "q1",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "party",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi2bal",
+      "replicateId": "q1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi4liv",
+      "replicateId": "q1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "bcast2low",
+      "replicateId": "q1",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "bcast4pty",
+      "replicateId": "q1",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "party",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual3bal",
+      "replicateId": "q1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff2low",
+      "replicateId": "q1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff4bal",
+      "replicateId": "q1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "dispute3liv",
+      "replicateId": "q1",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "quoted4low",
+      "replicateId": "q1",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual3bal",
+      "replicateId": "g1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual3bal",
+      "replicateId": "g2",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual4liv",
+      "replicateId": "g1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "quoted2low",
+      "replicateId": "g1",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "quoted3bal",
+      "replicateId": "g1",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "quoted4pty",
+      "replicateId": "g1",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "party",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff3low",
+      "replicateId": "g1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff4bal",
+      "replicateId": "g1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi3bal",
+      "replicateId": "g1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi4liv",
+      "replicateId": "g1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "dispute3liv",
+      "replicateId": "g1",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "dispute4pty",
+      "replicateId": "g1",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "party",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1"
+        }
+      }
+    },
+    {
+      "blockId": "direct1low",
+      "replicateId": "p1",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "direct1low",
+      "replicateId": "p2",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "direct4pty",
+      "replicateId": "p1",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "party",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi2bal",
+      "replicateId": "p1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "multi4liv",
+      "replicateId": "p1",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus",
+        "cursor-grok"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "bcast2low",
+      "replicateId": "p1",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual1bal",
+      "replicateId": "p1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "casual3liv",
+      "replicateId": "p1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "rosterOrder": [
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff2low",
+      "replicateId": "p1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "handoff4bal",
+      "replicateId": "p1",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "dispute3liv",
+      "replicateId": "p1",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "rosterOrder": [
+        "codex-sol",
+        "claude-sonnet",
+        "claude-opus"
+      ],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    },
+    {
+      "blockId": "quoted4low",
+      "replicateId": "p1",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "rosterOrder": [
+        "cursor-grok",
+        "claude-opus",
+        "claude-sonnet",
+        "codex-sol"
+      ],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1"
+        }
+      }
+    }
+  ]
+}

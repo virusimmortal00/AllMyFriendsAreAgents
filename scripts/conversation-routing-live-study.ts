@@ -23,6 +23,7 @@ export const STUDY_ARC_PROFILES = [
   "single-v1",
   "casual-thread-v1",
   "agent-exchange-v1",
+  "agent-exchange-v2",
   "handoff-choice-v1",
   "dispute-resolution-v1",
 ] as const;
@@ -32,6 +33,8 @@ export type GateProfileId = (typeof STUDY_GATE_PROFILES)[number];
 export type AgentPromptProfileId = (typeof STUDY_AGENT_PROMPT_PROFILES)[number];
 export type ArcProfileId = (typeof STUDY_ARC_PROFILES)[number];
 export type StudyFactor = "jev" | "gate" | "agent-prompt";
+export const MAX_STUDY_CASES = 144;
+export const MAX_STUDY_BLOCKS = MAX_STUDY_CASES / 2;
 
 /** Closed, fixture-only room customization; no caller-supplied instruction text. */
 export const STUDY_AGENT_BASE_PROMPTS: Record<AgentPromptProfileId, string> = {
@@ -128,10 +131,10 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
     Number(top.orderSeed) > 0xffffffff ||
     !Number.isSafeInteger(top.maxCases) ||
     Number(top.maxCases) < 2 ||
-    Number(top.maxCases) > 36 ||
+    Number(top.maxCases) > MAX_STUDY_CASES ||
     !Array.isArray(top.blocks) ||
     top.blocks.length < 1 ||
-    top.blocks.length > 18 ||
+    top.blocks.length > MAX_STUDY_BLOCKS ||
     top.blocks.length * 2 > Number(top.maxCases)
   )
     throw new Error("Invalid closed study plan.");
@@ -159,7 +162,8 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
       throw new Error("Invalid closed study plan.");
     if (
       (row.arcProfileId === "casual-thread-v1" && row.dynamic !== "casual") ||
-      (row.arcProfileId === "agent-exchange-v1" && row.dynamic !== "multi-address") ||
+      ((row.arcProfileId === "agent-exchange-v1" || row.arcProfileId === "agent-exchange-v2") &&
+        row.dynamic !== "multi-address") ||
       (row.arcProfileId === "handoff-choice-v1" && row.dynamic !== "handoff") ||
       (row.arcProfileId === "dispute-resolution-v1" && (row.dynamic !== "disagreement" || row.rosterOrder.length < 3))
     )
@@ -213,10 +217,16 @@ export function expandStudyPlan(plan: StudyPlanV1): LiveScenario[] {
     const selected = Math.floor(random() * (index + 1));
     [blocks[index], blocks[selected]] = [blocks[selected]!, blocks[index]!];
   }
-  const firstOrder: "ab" | "ba" = random() < 0.5 ? "ab" : "ba";
-  return blocks.flatMap((block, index) => {
-    const order: "ab" | "ba" = index % 2 === 0 ? firstOrder : firstOrder === "ab" ? "ba" : "ab";
+  const firstOrder: Record<StudyFactor, "ab" | "ba"> = {
+    jev: random() < 0.5 ? "ab" : "ba",
+    gate: random() < 0.5 ? "ab" : "ba",
+    "agent-prompt": random() < 0.5 ? "ab" : "ba",
+  };
+  const factorCounts: Record<StudyFactor, number> = { jev: 0, gate: 0, "agent-prompt": 0 };
+  return blocks.flatMap((block) => {
     const factor = factorOf(block.arms.a, block.arms.b);
+    const factorIndex = factorCounts[factor]++;
+    const order: "ab" | "ba" = factorIndex % 2 === 0 ? firstOrder[factor] : firstOrder[factor] === "ab" ? "ba" : "ab";
     return [...order].map((arm) => {
       const selected = block.arms[arm as "a" | "b"];
       const base = buildLiveScenario({
@@ -282,6 +292,13 @@ function studyFollowups(arc: ArcProfileId, suffix: string): NonNullable<LiveScen
       {
         scenarioId: `agent-exchange${suffix}`,
         text: "Sol and Nova, respond to any useful difference between your ideas for the fictional path. Keep it brief.",
+        expectedDirectAgents: ["codex-sol", "claude-sonnet"],
+      },
+    ],
+    "agent-exchange-v2": [
+      {
+        scenarioId: `agent-exchange-own-tradeoff${suffix}`,
+        text: "Sol and Nova, each give your own tradeoff between durability and cost for the fictional path material. Answer independently of any earlier reply and keep it brief.",
         expectedDirectAgents: ["codex-sol", "claude-sonnet"],
       },
     ],
