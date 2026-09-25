@@ -49,6 +49,8 @@ export interface PreflightEvidence {
  */
 export interface PreflightClassificationSnapshot {
   model: string;
+  /** Present only when the Decisions response reported a validated model identifier. */
+  providerResolvedModelId?: string;
   /** Probability that the trigger directly addresses each roster agent. */
   agents: Partial<Record<AgentId, number>>;
   /** Probability that the trigger invites every participant to respond. */
@@ -65,6 +67,8 @@ export interface PreflightClassificationSnapshot {
 /** Durable routing-audit projection of one classification consult. */
 export interface PreflightClassificationAudit {
   model: string;
+  /** The provider's reported model, never the configured alias fallback. */
+  providerResolvedModelId?: string;
   latencyMs: number;
   inputTokens: number;
   outputTokens: number;

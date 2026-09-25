@@ -82,6 +82,8 @@ function normalizeClassification(value: unknown): PreflightClassificationAudit |
   }) : [];
   return {
     model: candidate.model,
+    ...(typeof candidate.providerResolvedModelId === "string" && /^(?=.{3,160}$)~?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/.test(candidate.providerResolvedModelId)
+      ? { providerResolvedModelId: candidate.providerResolvedModelId } : {}),
     latencyMs,
     inputTokens,
     outputTokens,
