@@ -4,6 +4,7 @@ import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
 import { emptyRoomAgentRoster } from "../shared/roster.js";
+import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { requiredAt, requiredValue } from "./test-invariants.js";
 
 function roomState(messages: RoomMessage[]): RoomState {
@@ -49,7 +50,20 @@ describe("agent turn parsing", () => {
       mentionedAgents: ["claude-sonnet"],
       visibleMessageCount: 1,
       continuationWorthy: true,
+      humanHandoff: false,
+      materialDisagreement: false,
     });
+  });
+
+  it("routes direct follow-ups while keeping references and named human handoffs distinct", () => {
+    const context = {
+      agents: [{ agentId: "codex-sol" as const, name: "Sol" }, { agentId: "claude-sonnet" as const, name: "Claude" }],
+      humanNames: ["Casey"],
+    };
+    const parse = (text: string) => parseAgentTurn("codex-sol", text, undefined, 3, ["codex-sol", "claude-sonnet"], "default-burst-cap", context);
+    expect(parse("Claude already answered.")).toMatchObject({ mentionedAgents: [], humanHandoff: false });
+    expect(parse("Claude — your turn.")).toMatchObject({ mentionedAgents: ["claude-sonnet"], humanHandoff: false });
+    expect(parse("Casey, can you decide? Claude already answered.")).toMatchObject({ mentionedAgents: [], humanHandoff: true });
   });
 
   it("keeps the declared conversation state private while returning it to the orchestrator", () => {
@@ -112,6 +126,8 @@ describe("agent turn parsing", () => {
       mentionedAgents: [],
       visibleMessageCount: 1,
       continuationWorthy: false,
+      humanHandoff: false,
+      materialDisagreement: false,
       styleUpdate: {
         fontFamily: "Comic Sans MS",
         fontSize: 22,
@@ -229,6 +245,16 @@ describe("agent conversations", () => {
     );
 
     expect(seenAgents).toEqual(["codex-sol", "claude-sonnet", "codex-sol"]);
+  });
+
+  it("preserves canonical initial turns but stops legacy follow-ups at a human handoff", async () => {
+    const turns = candidatesForAllAgents().slice(0, 2);
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "blocked", mentionedAgents: ["claude-sonnet"] })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, replyCandidates: ["codex-sol"] });
+    const result = await runAgentConversation(turns, 4, performTurn, 1);
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["codex-sol", "claude-sonnet"]);
+    expect(result.summary.reason).toBe("blocked-input");
   });
 
   it("starts initial agents concurrently and schedules reactions from completion order", async () => {
@@ -419,6 +445,101 @@ describe("room message policy", () => {
 describe("conversation energy", () => {
   const candidates = candidatesForAllAgents();
 
+  it.each([true, false])("preserves plain-name multi-address ownership through gate and scheduler with classification %s", async (withClassification) => {
+    const trigger: RoomMessage = { id: "multi-address", speaker: "you", text: "Claude and Grok, can you compare your answers?", timestamp: "2026-09-23T12:00:00Z", kind: "chat" };
+    const room = roomState([trigger]);
+    const input = {
+      trigger, room, rankedAgents: AGENT_IDS, health: {}, routing: {}, energy: "low" as const, wholeRoomInvitation: false,
+    };
+    const decision = decidePreflight(withClassification
+      ? { ...input, classification: { agents: { "claude-sonnet": 0.01, "cursor-grok": 0.01 }, wholeRoom: 0 } }
+      : input);
+    const routed = routePreflightTurns(candidates, "enforce", decision, "decision-multi-address");
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    await runEnergyConversation(routed, "low", performTurn, () => 1);
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(["claude-sonnet", "cursor-grok"]);
+    expect(performTurn.mock.calls.every(([turn]) => turn.preflight?.required === true)).toBe(true);
+  });
+
+  it.each(["low", "balanced", "lively", "party"] as const)("considers every required target at %s energy despite missed optional draws", async (energy) => {
+    const targets = AGENT_IDS.slice(-3);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1, conversationState: "settled" });
+
+    const result = await runEnergyConversation(turns, energy, performTurn, () => 1, { concurrencyLimit: 2, stopOnSettledResponse: true });
+
+    expect(performTurn.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+    expect(result.summary.counts.attemptedTurns).toBeGreaterThanOrEqual(targets.length);
+    expect(result.summary.policy.hardAttemptCeiling).toBeGreaterThanOrEqual(targets.length);
+  });
+
+  it("reserves a visible-message opening for required targets even when the first agent fills its burst", async () => {
+    const targets = AGENT_IDS.slice(0, 4);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(turns, "low", performTurn, () => 1);
+
+    expect(performTurn.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+    expect(performTurn.mock.calls.slice(0, targets.length).every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
+    expect(result.summary.policy.hardMessageCeiling).toBeGreaterThanOrEqual(targets.length);
+  });
+
+  it("caps attempted turns separately from visible messages and responding turns", async () => {
+    const performTurn = vi.fn(async (turn: ConversationTurn) => performTurn.mock.calls.length <= AGENT_IDS.length + 1
+      ? { visibleMessageCount: 1, mentionedAgents: AGENT_IDS.filter((agent) => agent !== turn.agent) }
+      : { visibleMessageCount: 0 });
+
+    const result = await runEnergyConversation(candidates, "party", performTurn, () => 0, { inviteAll: true });
+
+    expect(result.summary.reason).toBe("attempt-ceiling");
+    expect(result.summary.policy.attemptCeilingReached).toBe(true);
+    expect(result.summary.counts.attemptedTurns).toBe(result.summary.policy.hardAttemptCeiling);
+    expect(result.summary.policy.responseTurns).toBeLessThan(result.summary.policy.hardTurnCeiling!);
+    expect(result.summary.policy.visibleMessages).toBeLessThan(result.summary.policy.hardMessageCeiling!);
+  });
+
+  it("continues required openings after a yield and respects cancellation", async () => {
+    const targets = AGENT_IDS.slice(0, 3);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const yielded = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+    await runEnergyConversation(turns, "low", yielded, () => 1, { concurrencyLimit: 2 });
+    expect(yielded.mock.calls.slice(0, targets.length).map(([turn]) => turn.agent)).toEqual(targets);
+
+    const cancelled = vi.fn().mockResolvedValue({ cancelled: true });
+    const result = await runEnergyConversation(turns, "low", cancelled, () => 1);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(result.summary.reason).toBe("cancelled");
+  });
+
+  it.each([
+    ["low", 0],
+    ["balanced", 1],
+    ["lively", 3],
+  ] as const)("admits at most the configured optional seats at %s energy after required yields", async (energy, optionalSeats) => {
+    const targets = AGENT_IDS.slice(0, 2);
+    const turns = candidates.map((turn) => ({
+      ...turn,
+      preflight: { decisionId: "required-routing", shadowSuppressed: false, required: targets.some((agent) => agent === turn.agent) },
+    }));
+    const performTurn = vi.fn().mockResolvedValue({ visibleMessageCount: 0 });
+
+    await runEnergyConversation(turns, energy, performTurn, () => 0, { concurrencyLimit: 3 });
+
+    expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS.slice(0, targets.length + optionalSeats));
+  });
+
   function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (error: unknown) => void;
@@ -504,6 +625,60 @@ describe("conversation energy", () => {
     expect(performTurn.mock.calls.at(-1)?.[0].instruction).toContain("one final conversational-floor turn");
   });
 
+  it.each(["not_addressed", "another_agent_owns_this"] as const)("does not retry the same fallback after an ownership yield: %s", async (reason) => {
+    const turn = requiredAt(candidates, 0, "fallback");
+    const performTurn = vi.fn().mockResolvedValue({
+      visibleMessageCount: 0,
+      interpretation: parseAgentTurn(turn.agent, `TURN_DISPOSITION: {"action":"yield","reason":"${reason}"}`).diagnostics,
+    });
+    const result = await runEnergyConversation([turn], "low", performTurn, () => 1, { conversationalFloor: true });
+    expect(performTurn).toHaveBeenCalledTimes(1);
+    expect(result.summary.reason).toBe("no-visible-output");
+  });
+
+  it("avoids synthesis for a casual OPEN after two distinct replies", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: false })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: false });
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    expect(performTurn).toHaveBeenCalledTimes(2);
+    expect(result.summary.reason).toBe("no-material-disagreement");
+  });
+
+  it.each([
+    ["open-then-settled", "open", "settled", 2],
+    ["settled-then-open", "settled", "open", 3],
+  ] as const)("uses the latest concurrent visible state: %s", async (_label, firstState, secondState, calls) => {
+    const first = deferred<TurnResult>();
+    const second = deferred<TurnResult>();
+    const performTurn = vi.fn((turn: ConversationTurn) => {
+      if (performTurn.mock.calls.length === 1) return first.promise;
+      if (performTurn.mock.calls.length === 2) return second.promise;
+      return Promise.resolve({ visibleMessageCount: 0 });
+    });
+    const run = runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    await vi.waitFor(() => expect(performTurn).toHaveBeenCalledTimes(2));
+    first.resolve({ visibleMessageCount: 1, conversationState: firstState, materialDisagreement: true });
+    await vi.waitFor(() => expect(first.promise).resolves.toBeDefined());
+    second.resolve({ visibleMessageCount: 1, conversationState: secondState, materialDisagreement: true });
+    const result = await run;
+    expect(performTurn).toHaveBeenCalledTimes(calls);
+    expect(result.summary.reason).toBe(calls === 2 ? "no-explicit-unresolved-state" : "synthesis-no-response");
+  });
+
+  it("latches a human handoff while later required openings finish", async () => {
+    const turns = candidates.slice(0, 3).map((turn) => ({
+      ...turn, preflight: { decisionId: "required", shadowSuppressed: false, required: true },
+    }));
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "blocked" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" });
+    const result = await runEnergyConversation(turns, "low", performTurn, () => 0, { concurrencyLimit: 2 });
+    expect(performTurn).toHaveBeenCalledTimes(3);
+    expect(result.summary.reason).toBe("blocked-input");
+  });
+
   it.each([
     "Please implement the cursor migration and run the tests.",
     "Thanks, that's all for now.",
@@ -581,7 +756,7 @@ describe("conversation energy", () => {
 
   it("explains when an open point receives no second participant", async () => {
     const performTurn = vi.fn()
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
       .mockResolvedValue({ visibleMessageCount: 0 });
 
     const result = await runEnergyConversation(candidates, "low", performTurn, () => 1);
@@ -600,10 +775,10 @@ describe("conversation energy", () => {
 
   it("keeps synthesis, objections, and reconciliation ordered after concurrent openings", async () => {
     const performTurn = vi.fn()
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "settled" });
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
@@ -620,13 +795,38 @@ describe("conversation energy", () => {
 
   it("reports when synthesis is blocked on human input", async () => {
     const performTurn = vi.fn()
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
-      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
       .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "blocked" });
 
     const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0);
 
     expect(result).toEqual({ settled: false, pauseReason: "The agents need human input to resolve the remaining decision.", summary: expect.any(Object) });
+  });
+
+  it.each(["objection", "reconciliation"] as const)("preserves cancellation during %s", async (phase) => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce(phase === "objection"
+        ? { cancelled: true }
+        : { visibleMessageCount: 1, conversationState: "open" })
+      .mockResolvedValueOnce({ cancelled: true });
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    expect(result.summary.reason).toBe("cancelled");
+    expect(result.settled).toBe(false);
+    expect(performTurn).toHaveBeenCalledTimes(phase === "objection" ? 4 : 5);
+  });
+
+  it("hands off immediately when synthesis names a human despite declaring OPEN", async () => {
+    const performTurn = vi.fn()
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", materialDisagreement: true })
+      .mockResolvedValueOnce({ visibleMessageCount: 1, conversationState: "open", humanHandoff: true });
+    const result = await runEnergyConversation(candidates, "balanced", performTurn, () => 0, { concurrencyLimit: 2 });
+    expect(performTurn).toHaveBeenCalledTimes(3);
+    expect(result.summary.reason).toBe("blocked-input");
   });
 
   it("offers every agent one concise turn when the human invites the whole room", async () => {
@@ -636,6 +836,19 @@ describe("conversation energy", () => {
 
     expect(performTurn.mock.calls.map(([turn]) => turn.agent)).toEqual(AGENT_IDS);
     expect(performTurn.mock.calls.every(([turn]) => turn.visibleMessageLimit === 1)).toBe(true);
+  });
+
+  it.each([
+    ["blocked state", { visibleMessageCount: 1, conversationState: "blocked" as const }],
+    ["named human request", { visibleMessageCount: 1, conversationState: "open" as const, humanHandoff: true }],
+  ])("leaves a sequential optional whole-room round with the human after %s", async (_label, firstResult) => {
+    const performTurn = vi.fn().mockResolvedValueOnce(firstResult).mockResolvedValue({ visibleMessageCount: 1 });
+
+    const result = await runEnergyConversation(candidates, "low", performTurn, () => 1, { inviteAll: true, concurrencyLimit: 1 });
+
+    expect(performTurn).toHaveBeenCalledTimes(1);
+    expect(result.summary.reason).toBe("blocked-input");
+    expect(result.settled).toBe(false);
   });
 
   it("bounds whole-room invitations by the configured concurrency limit", async () => {

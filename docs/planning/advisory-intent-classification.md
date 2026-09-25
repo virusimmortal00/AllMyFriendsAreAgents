@@ -6,7 +6,7 @@ owner: unclaimed
 reviewers: []
 depends_on: [energy-aware-preflight-invocation-gating]
 reported_by: virusimmortal00
-updated: 2026-09-18
+updated: 2026-09-23
 ---
 
 # Outcome
@@ -16,7 +16,7 @@ human message is actually directed at them. A dedicated intent classifier
 (TypeSafe AI's System One model Jev, routed through the room's existing
 OpenRouter connection via `https://openrouter.ai/api/alpha/decisions`, model
 alias `~typesafe/jev-latest`) advises the existing deterministic pre-flight
-gate so that clearly irrelevant invocations never reach prompt construction,
+gate before prompt construction,
 while deterministic signals (mentions, structured targets, explicit
 invitations) always remain authoritative. The classifier is enabled by
 default; administrators disable it per-room in Server Administration → Room behavior → Agent Routing, and a
@@ -39,13 +39,11 @@ model call.
   by default) adds an unmentioned agent as a required participant with the
   `classified_addressed` reason; a canonical mention or structured target always
   outranks it.
-- [x] A low classified address probability (`classifiedIrrelevantThreshold`,
-  0.15 by default) removes an agent from ambient and fallback candidacy and
-  reports `classified_irrelevant`; an agent the classifier did not score is
-  treated as unclassified, never as irrelevant.
-- [x] The gate still selects exactly one fallback responder when every healthy
-  agent is classified irrelevant, so a classifier verdict alone never produces
-  a room with zero responders.
+- [x] A low classified address probability does not remove ambient or fallback
+  candidacy. `classified_irrelevant` remains readable in historical audit
+  records but is no longer emitted for new decisions.
+- [x] The gate selects one healthy fallback responder when no required or
+  optional participant was selected.
 - [x] A high classified whole-room probability (`classifiedWholeRoomThreshold`,
   0.7 by default) selects every healthy agent exactly like an explicit
   invitation.
@@ -104,6 +102,16 @@ or seven days, sub-5% false-suppression rate) was removed by owner decision on
 2026-09-18 in favor of immediate enforce-by-default. Shadow mode remains
 available for any room that wants measurement without suppression.
 
+As part of [#232](https://github.com/virusimmortal00/AllMyFriendsAreAgents/issues/232),
+clear conversational addresses using unique room roster names now make each
+healthy named agent required even if the classifier returns a low probability
+or is unavailable. Canonical mentions remain authoritative. A low address
+probability now only means the classifier did not add a required target; it
+does not veto spontaneous participation. The fictional regression corpus in
+`shared/direct-address-fixtures.ts` covers direct, multiple, quoted,
+referential, product/model, and ambiguous-name cases. It is not a measure of
+real-room response quality.
+
 Verified against the live OpenRouter Decisions API on 2026-09-18: a direct
 `~typesafe/jev-latest` consult returned Noul probabilities, the resolved model
 `typesafe/jev-1.13-20260917`, OpenRouter-reported cost, and ~0.4s latency.
@@ -123,9 +131,10 @@ interface PreflightClassificationSignal {
 ```
 
 The classifier returns typed probabilities, not prose, so the gate maps them
-onto three deterministic thresholds rather than parsing text. Multi-addressing
+onto required-address and whole-room thresholds. Multi-addressing
 ("A and B, what do you think?") is representable because per-agent
-probabilities are independent; a single-choice router could not express it.
+probabilities are independent; the conservative roster-name check covers
+clear prose addresses even when those probabilities are low.
 
 # Rollout evidence
 
@@ -146,9 +155,10 @@ its next invocation.
 # Next action
 
 Watch the classification evidence after merge: false-suppression tallies,
-counterfactual savings, and classifier cost/latency. Tune the
-0.75/0.15/0.7 thresholds or revert a room to `shadow`/`off` if the data
-warrants.
+counterfactual savings, and classifier cost/latency. Review annotated
+direct-address misses and ambient contributions alongside cost before tuning
+the 0.75 required-address and 0.7 whole-room thresholds. Rooms can revert to
+`shadow` or `off` when observed quality warrants it.
 
 
 # Evidence
@@ -174,5 +184,5 @@ warrants.
 - Should the classifier also score follow-up turns (issue #147's
   referential-vs-direct address problem), or stay limited to initial
   human-message fan-out until #147 lands its fixture corpus?
-- Are the 0.75/0.15/0.7 thresholds right for this room's tone? They are gate
-  configuration, not model behavior; the shadow soak should tune them.
+- Are the 0.75 and 0.7 thresholds right for this room's tone? They are gate
+  configuration, not model behavior; annotated room evidence should guide them.

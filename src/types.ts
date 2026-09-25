@@ -9,6 +9,7 @@ import type { ImprovementStatusContract } from "../shared/improvement-status";
 import type { MessageMention } from "../shared/mentions";
 import type { RoomAgentRoster } from "../shared/roster";
 import type { PreflightEvidence } from "../shared/preflight";
+import type { ConversationActivity } from "../shared/conversation-activity";
 import type { OpenCodeRuntimeStatus } from "../shared/opencode-runtime";
 
 export type { AgentId, SpeakerId } from "../shared/participants";
@@ -95,6 +96,7 @@ export interface RoomState {
   status: "idle" | "working" | "error";
   activeAgent?: AgentId;
   activeGenerations?: Record<string, AgentId>;
+  conversationActivity?: ConversationActivity;
   error?: string;
   availability?: Partial<Record<ActiveAgentId, boolean>>;
   implementationCapabilities?: Partial<Record<ActiveAgentId, ImplementationCapability>>;

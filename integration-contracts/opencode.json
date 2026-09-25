@@ -36,9 +36,9 @@
     ]
   },
   "review": {
-    "revision": 55,
-    "reviewedOn": "2026-09-20",
-    "result": "Refresh trigger: the final strict-tooling layer adds repository script coverage, native release and canary typing, visual fixture validation, required strict project coverage, API route-contract hardening, and pull-request review-size enforcement on top of the reviewed test layer. At upstream v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f), re-checked the recorded server, SDK, permission, custom-tool, provider-transform, and session contracts for the affected structured-sdk-server and permissions-and-tools surfaces. Confirmed: the layer changes application-owned validation and build coverage without changing OpenCode arguments, transports, credentials, permissions, tool schemas, provider transforms, or upstream session semantics. All 291 tests in the 19-suite focused integration-contract gate pass.",
+    "revision": 56,
+    "reviewedOn": "2026-09-23",
+    "result": "Refresh trigger: room conversation routing and trigger telemetry now record bounded queue, classifier, generation, and terminal facts, while room-turn parsing distinguishes direct follow-ups from references and human handoffs. Inspected all nine structured-sdk-server upstream paths at v1.18.25 (cb7d8b2f5e44876ef98b661dc10590c915af3a9f). Confirmed source behavior: server listen and authentication, session prompt cancellation and StructuredOutput JSON schema, SDK v2 session endpoints, json_schema output format, and AssistantMessage.structured remain as recorded. The new decisions, timing, and parsing are application-owned interpretations of existing results; no OpenCode transport, version, credential, schema, or cancellation contract changed. The integration-contract checker passed all 315 tests in 19 focused suites.",
     "paths": [
       "packages/opencode/src/cli/cmd/serve.ts",
       "packages/opencode/src/cli/cmd/models.ts",

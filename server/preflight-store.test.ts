@@ -19,6 +19,21 @@ async function store() {
 }
 
 describe("pre-flight routing persistence and evidence", () => {
+  it("retains historical low-score suppression reasons across reopen", async () => {
+    const first = await store();
+    await first.recordDecision({
+      triggerMessageId: "legacy-low-score", mode: "shadow", energy: "balanced",
+      decision: {
+        qualifyingForStarvation: true,
+        decisions: [{ agent: "claude-sonnet", outcome: "suppress", reason: "classified_irrelevant" }],
+      },
+    });
+    const reopened = await PreflightStore.open(path.dirname(first.path));
+    expect((await reopened.rawDecisions())[0]?.agents[0]).toMatchObject({
+      agent: "claude-sonnet", outcome: "suppress", reason: "classified_irrelevant",
+    });
+  });
+
   it("persists starvation counters without fabricating generation identifiers", async () => {
     const first = await store();
     const record = await first.recordDecision({

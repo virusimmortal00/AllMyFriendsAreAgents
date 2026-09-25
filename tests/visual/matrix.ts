@@ -31,6 +31,10 @@ export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
   id: key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), view: VIEWS[key],
   shots: SCROLLING_VIEWS.includes(key) ? ["top", "bottom"] : ["top"],
 })),
+  { id: "room-chat-queued", view: VIEWS.roomChat, shots: ["top"] },
+  { id: "room-chat-deciding", view: VIEWS.roomChat, shots: ["top"] },
+  { id: "compact-room-chat-queued", view: VIEWS.compactRoomChat, shots: ["top"] },
+  { id: "compact-room-chat-deciding", view: VIEWS.compactRoomChat, shots: ["top"] },
   { id: "room-agent-behavior-shared-behavior", view: VIEWS.roomAgentBehavior, shots: ["top", "bottom"] },
   { id: "server-administration-sign-in", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
   { id: "server-administration-unclaimed", view: VIEWS.serverAdministration, shots: ["top", "bottom"] },
@@ -41,7 +45,9 @@ export const APP_SCENARIOS = [...APP_VIEW_KEYS.map((key) => ({
 ];
 export const VISUAL_SCENARIOS = [...ROSTER_SCENARIOS, ...APP_SCENARIOS];
 export function scenarioApplies(scenario: { id: string }, viewport: { width: number }) {
-  return scenario.id !== "compact-room-chat" || viewport.width <= 720;
+  if (scenario.id.startsWith("compact-room-chat")) return viewport.width <= 720;
+  if (scenario.id.startsWith("room-chat-") && scenario.id !== "room-chat") return viewport.width > 720;
+  return true;
 }
 
 export function expectedVisualKeys() {

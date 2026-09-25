@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AGENT_BEHAVIOR_RULES } from "../shared/agent-behavior";
 import { friendlyModelName } from "../shared/model-presentation";
 import type { DiscoveredModel, ModelReference } from "../shared/model-discovery";
@@ -19,7 +20,7 @@ interface RoomPropertiesDialogProps extends RoomSettingsInput {
   onClose: () => void;
 }
 
-export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange, onSavingChange }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void }) {
+export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange, onSavingChange, actionsHost = null, readOnly = false }: { active: boolean; onClose: () => void; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void; actionsHost?: HTMLElement | null; readOnly?: boolean }) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const [saved, setSaved] = useState<RoomConfiguration>();
@@ -37,8 +38,10 @@ export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange
   const [modelError, setModelError] = useState("");
   const [defaultBasePrompt, setDefaultBasePrompt] = useState("");
   const [choosingModel, setChoosingModel] = useState(false);
-  useEffect(() => {
-    if (active && choosingModel && modelsLoaded) pickerRef.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
+  useLayoutEffect(() => {
+    if (!active || !choosingModel || !modelsLoaded) return;
+    pickerRef.current?.scrollIntoView?.({ block: "start", behavior: "instant" });
+    pickerRef.current?.querySelector<HTMLInputElement>(".model-picker__toolbar input")?.scrollIntoView?.({ block: "nearest", behavior: "instant" });
   }, [active, choosingModel, modelsLoaded]);
   const [retryCount, setRetryCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -127,6 +130,11 @@ export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange
     setChoosingModel(false);
     modelTriggerRef.current?.focus();
   };
+  const actions = <div className="room-settings-actions">
+    {!loading && saved ? <button type="button" className="classic-button" data-default-button disabled={readOnly || saving || !summarizerPromptText.trim()} onClick={() => void save(true)}>{saving ? "Saving…" : "OK"}</button> : null}
+    <button type="button" className="classic-button" disabled={saving} onClick={onClose}>Cancel</button>
+    {!loading && saved ? <button type="button" className="classic-button" disabled={readOnly || !dirty || saving || !summarizerPromptText.trim()} onClick={() => void save(false)}>Apply</button> : null}
+  </div>;
   return <section className="room-configuration-panel" aria-label="Room behavior" hidden={!active}>
     <div className="room-properties-page-content">
       {loading ? <p role="status">Loading agent behavior…</p> : null}
@@ -170,11 +178,7 @@ export function RoomConfigurationPanel({ active, onClose, onSaved, onDirtyChange
         </section>
       </> : null}
     </div>
-    {!loading && saved ? <div className="room-settings-actions">
-        <button type="button" className="classic-button" data-default-button disabled={saving || !summarizerPromptText.trim()} onClick={() => void save(true)}>{saving ? "Saving…" : "OK"}</button>
-        <button type="button" className="classic-button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button type="button" className="classic-button" disabled={!dirty || saving || !summarizerPromptText.trim()} onClick={() => void save(false)}>Apply</button>
-      </div> : null}
+    {actionsHost ? createPortal(actions, actionsHost) : actions}
   </section>;
 }
 

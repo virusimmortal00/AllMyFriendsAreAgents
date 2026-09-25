@@ -5,7 +5,7 @@ import { savePendingSend } from "../../src/client-persistence";
 import { createImprovement } from "../../shared/improvement-domain";
 import { workshopView } from "../../shared/workshop";
 import type { WorkshopResponse } from "../../src/types";
-import { appFixtureResponse, fixtureHuman, fixtureRoom, fixtureTime } from "./app-fixtures";
+import { appFixtureResponse, fixtureHuman, fixtureRoom, fixtureRoomForScenario, fixtureTime } from "./app-fixtures";
 import { requiredVisualFixture } from "./fixtures";
 import type { ProtectedWorkView } from "../../shared/protected-work";
 
@@ -18,7 +18,7 @@ if (appScenario === "pending-send-recovery") savePendingSend(localStorage, fixtu
 class FixtureEventSource extends EventTarget {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
-  private timer = window.setTimeout(() => this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ kind: "snapshot", reason: "initial", continuity: "fresh", streamId: "visual-stream", version: 0, state: { ...fixtureRoom, ...(appScenario === "connection-notices" ? { error: "The last room action could not finish. Your conversation and draft are preserved." } : {}) } }) })), 0);
+  private timer = window.setTimeout(() => this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ kind: "snapshot", reason: "initial", continuity: "fresh", streamId: "visual-stream", version: 0, state: { ...fixtureRoomForScenario(appScenario), ...(appScenario === "connection-notices" ? { error: "The last room action could not finish. Your conversation and draft are preserved." } : {}) } }) })), 0);
   private heartbeat = window.setInterval(() => this.dispatchEvent(new Event("heartbeat")), 2_000);
   close() { window.clearTimeout(this.timer); window.clearInterval(this.heartbeat); }
 }

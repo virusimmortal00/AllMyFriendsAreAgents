@@ -1689,17 +1689,17 @@ seven-question review, not these historical labels, as verification evidence.
 | WORK-09 | P/T/L/D: Pass; review detail uses full workspace. | P/T/L/D: Back to list, gated actions, and workspace close are visible. | P/T/L/D: Pass; five-step classic review status. | P: five steps stack; T/L/D: five equal columns. | P/T/L/D: Gate spacing is informational and intentional. | P/T/L/D: Detail body owns scroll and actions stay reachable. | T/L: Applied full-width fix; P/D: retained step layouts. |
 | WORK-10 | P/T/L/D: Pass; bounded query controls receive full workspace. | P/T/L/D: Exact selector, query action, and Window/close return are clear. | P/T/L/D: Pass; compact owner-tool styling inside shared chrome. | P: controls wrap into two rows; T: controls usually fit one row; L/D: compact row. P/T/L/D: commands and fields use the shared pointer-capability density rather than viewport-specific overrides. | P/T/L/D: Pre-query empty area communicates that nothing loads implicitly. | P/T/L/D: Body owns results; page never scrolls. | P/T/L/D: Added the exact selector without introducing feature-local control heights or expanding the shared header. |
 | WORK-11 | P/T/L/D: Pass; results/detail use the full workspace canvas. | P/T/L/D: Result selection, whole-trace action, and workspace close/Chat return are clear. | P/T/L/D: Pass; inset result buttons, trace summary, and diagnostic detail. | P: result and detail stack; T/L/D: result and detail are adjacent when the diagnostics container permits. P/T/L/D: the summary uses two columns in a narrow result pane and four only when that pane itself is at least 500px wide. | P/T/L/D: The centered 1100px content bound protects readability without reserving a missing pane. | P/T/L/D: Results/detail scroll inside the workspace body; preformatted content scrolls locally. | P/T/L/D: Preserved the shared container-query split and density system while layering in a result-pane-aware trace summary and action. |
-| WORK-12 | P/T/L/D: Pending; top-level window up to 1040×760 over the inactive chat window; phones fill the screen. | P/T/L/D: Server menu commands open it at a page; the page list switches pages; title-bar close, Close, and Escape return focus to the opener. | P/T/L/D: Pending; one blue title strip, inset page list and content wells, sunken status line, raised Close. | P: page list wraps above content; T/L/D: 184px page list beside content. | P/T/L/D: Pages end where their content ends; no centered narrow column. | P/T/L/D: Content pane is the only vertical scroll owner; status and Close stay fixed. | P/T/L/D: Pending first independent image review. |
+| WORK-12 | P/T/L/D: Pending; top-level window up to 1040×760 over the inactive chat window; phones fill the screen. | P/T/L/D: Server menu commands open it at a page; the page list switches pages; title-bar close, page footer, and Escape return focus to the opener. | P/T/L/D: Pending; one blue title strip, inset page list and content wells, sunken status line, raised footer actions. | P: page list wraps above content; T/L/D: 184px page list beside content. | P/T/L/D: Pages end where their content ends; no centered narrow column. | P/T/L/D: Page content scrolls within bounded panes; status and dialog footer stay fixed. | P/T/L/D: Pending renewed independent image review. |
 | WORK-13 | P/T/L/D: Pending; a labeled group box on the Integrations page below GitHub, sized to its property rows. | P/T/L/D: Reached from Server Administration > Integrations; the window close control returns to Chat. | P/T/L/D: Pending; groove group box, inset value well, raised Refresh button; no brand card. | P/T/L/D: Balance row and Checked/Refresh row stay compact. | P/T/L/D: No stretched body; the group ends after its rows. | P/T/L/D: Scrolls with the Integrations page content pane. | P/T/L/D: Pending first independent image review of the relocated section. |
 | WORK-14 | P/T/L/D: Pending; Details list fills the content pane width beside the page list. | P/T/L/D: Server Administration > Rooms & repositories; status links open Integrations; window close returns to Chat. | P/T/L/D: Pending; raised sortable column headers over an inset white table. | P: page list wraps above the table; T/L/D: fixed page list beside the table. | P/T/L/D: Table ends after its rows; the status line reports counts. | P/T/L/D: Content pane owns vertical scroll; the table scrolls horizontally only when columns cannot fit. | P/T/L/D: Pending first independent image review. |
-| WORK-15 | P/T/L/D: Pending; prompt, summarizer, and routing controls fill the Server Administration content pane. | P/T/L/D: Server Administration > Room behavior; signed-out members see an inert preview, and only an administrator can change settings. | P/T/L/D: Pending; grooved group boxes, classic inputs, and persistent action buttons. | P: page list wraps above content; T/L/D: fixed page list beside the editor. | P/T/L/D: Editor height follows real content without a gray moat. | P/T/L/D: Content pane owns vertical scroll; action buttons remain reachable. | P/T/L/D: Pending first independent image review. |
+| WORK-15 | P/T/L/D: Pending; prompt, summarizer, and routing controls fill the Server Administration content pane. | P/T/L/D: Server Administration > Room behavior; signed-out members see an inert preview, and only an administrator can change settings. | P/T/L/D: Pending; grooved group boxes, classic inputs, and persistent action buttons. | P: page list wraps above content; T/L/D: fixed page list beside the editor. | P/T/L/D: Editor height follows real content without a gray moat. | P/T/L/D: Room behavior editor owns native vertical scroll; OK, Cancel, and Apply share the dialog footer. | P/T/L/D: Renewed independent image review pending after the footer correction. |
 
 ### Room and participant dialog audit
 
 | ID | Screen use | Navigation | Retro style | Proportion | Empty area | Scroll and actions | Outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | ROOM-01 | P: viewport-bounded property sheet; T/L/D: compact 680px property sheet. | P/T/L/D: General settings plus OK, Cancel, Apply, close. | P/T/L/D: Server Administration-style page heading and named grooved sections. | P: sections stack; T/L/D: dense controls in one column. | P/T/L/D: Each section ends at its real content; no gray moat. | P: content owns scroll and action strip is persistent; T/L/D: the general page fits at the standard desktop height. | P/T/L/D: Member-editable identity and conversation details are separated from a read-only repository status with an administrator-only settings link. |
-| ROOM-03 | P/T/L/D: Pass; picker expands within Summarizer group, not beyond dialog. | P/T/L/D: Choose/Hide, filters, model result, and tab/close remain available. | P/T/L/D: Pass; inset results and raised selection controls. | P: one-column filters/results; T/L/D: richer grid. | P/T/L/D: Catalog empty/loading/error states occupy only their content region. | P/T/L/D: Picker and property content have bounded scroll ownership. | P/T/L/D: Models now load only on demand with 15s timeout and retry. |
+| ROOM-03 | P/T/L/D: Picker expands within Summarizer group, not beyond dialog; renewed image review pending. | P/T/L/D: Choose/Hide, filters, model result, and tab/close remain available. | P/T/L/D: Inset results and raised selection controls. | P: At the minimum-phone breakpoint, five page tabs form two 44px rows; compact copy and a single inset list frame expose one complete model row with search and filters, with list width at least 75% of the viewport. T/L/D: Retain normal picker density. | P/T/L/D: Catalog empty/loading/error states occupy only their content region. | P/T/L/D: Room behavior editor owns native vertical scroll; Back stays pinned within the picker and returns focus to Choose model. | P/T/L/D: Models load only on demand with 15s timeout and retry; independent review of the revised minimum-phone layout is pending. |
 | ROOM-04 | P: 362×465 centered; T/L/D: compact 640px sign-in window. | P/T/L/D: Sign in and Cancel/close are obvious; disabled state explains readiness. | P/T/L/D: Pass; grooved authentication group and classic inputs. | P/T: touch-height fields; L/D: compact fields. | P/T/L/D: Removed full-roster-sized blank canvas. | P/T/L/D: Content-sized at checkpoints; body can scroll if localization grows. | P/T/L/D: Added authentication presentation and removed meaningless Save roster action. |
 | ROOM-05 | P: centered, near-full viewport with 7px margins; T/L/D: centered list/detail split constrained by available backdrop space. | P: rows open detail with persistent Your agents return; T/L/D: persistent rail; Cancel/Save remain outside scrolling content. | P/T/L/D: Inset list, raised buttons, square chrome and native scrolling retained. | P: rows keep their intrinsic content height; T/L: rail header reflows within its own width; D: capped 330px rail. | P/T/L/D: Populated and intentionally empty roster states are both declared in the capture matrix; the empty state gives a three-step first-agent path and a model-choice action. | P/T/L/D: List top/bottom captured for populated rosters; the empty state keeps model selection and persistent actions reachable. | P/T/L/D: Added explicit empty-roster evidence coverage; current image-bound review required, not historical approval. |
 | ROOM-06 | P: detail fills single-pane space; T/L/D: flexible detail beside a 240–330px rail. | P: Your agents stays outside the scroller even at the bottom; T/L/D: rail remains available; all sizes retain close and Cancel/Save. | P/T/L/D: Native checkbox glyphs, adjacent labels, grooved groups and inset model summary; no custom scrolling implementation. | P/T: compact checkbox glyph inside larger label target; P: model action stacks; T: identity/header reflows by pane width; L/D: broader composition. | P/T/L/D: Settings groups use content-driven spacing; command labels no longer detach across wide fields. | P/T/L/D: Detail top/bottom captured; full Delete configuration group reachable; keyboard toggling, alias focus and draft discard exercised. | P/T/L/D: Fixed checkbox sizing and header collapse, added narrow model reflow and persistent scroll cue; current image-bound review required. |
@@ -1871,3 +1871,62 @@ digest `eee5a31e12dbc6fef1c31a72a0b2b3c5929379fd7da4fd1f1344c6c754ef457c`:
 
 Physical-device behavior, native browser chrome, software keyboards, and text
 enlargement remain outside this browser-matrix evidence.
+
+## Room preparation status — 2026-09-23
+
+`CHAT-01` and `CHAT-02` now show room-level queued and deciding states in the
+existing status bar before an agent generation starts. The queued label says
+“Waiting to respond…” and the deciding label says “Preparing responses…”.
+An active generation still uses the agent typing label. A terminal or fresh
+reconnect snapshot clears preparation state. No participant is shown as typing
+before generation is active.
+
+The fictional browser capture covers idle baseline plus queued and deciding
+states in Chromium and WebKit at Phone, Short phone, Minimum phone, Tablet,
+Short laptop, and Desktop where each registered chat view applies. The source
+uses the existing status bar and changes no chat layout hierarchy. Capture and
+independent-review identifiers will be recorded after the current full-matrix
+run and account-backed review. Until then, visual verdicts for this change
+remain **Pending**. Physical-device behavior, native browser chrome, software
+keyboards, text enlargement, and deployed-room timing remain unverified.
+
+## Room properties, behavior picker, and administration recovery — 2026-09-24
+
+`ROOM-01` General now uses the same compact 12px property-sheet typography as
+the administrator behavior controls. A full-matrix capture exposed its previous
+16px inherited font, which contradicted the existing geometry assertion and
+shared property-sheet style. The test for the shared behavior rules disclosure
+also now verifies its actual initial closed state before Enter opens and closes
+it; the earlier assertion expected the reverse state.
+
+`ROOM-03` uses a bounded editor inside Server Administration as its vertical
+scroll owner so the Back action remains visible while browsing the summarizer catalog.
+The focused Chromium and WebKit Short phone browser cases reached the picker top
+and bottom, verified Back visibility, and checked focus return to Choose model.
+The administration recovery browser case passed in Chromium and WebKit Tablet:
+Room Properties exposes only member-editable fields, signed-out Room behavior is
+an inert preview, and a signed-in owner can apply one settings update. The modal
+menu-focus assertion and sign-out preview check remain in that flow.
+
+The first complete Chromium/WebKit capture produced 786/786 images, but an
+independent review of 48 images flagged the Room behavior Phone top and bottom:
+an unstyled fieldset added a redundant frame, and its OK, Cancel, and Apply
+buttons scrolled away above a separate Close footer. Review stopped with those
+verdicts preserved. The revised layout removes that frame and places the form
+actions in one persistent dialog footer. A subsequent complete 786-image capture
+passed browser checks, and a four-image independent review passed both revised
+Phone Room behavior images. Its Minimum-phone summarizer picker top and bottom
+failed screen use, proportion, empty area, scrolling/actions, and outcome: the
+three-row page list and nested picker framing left too little room for search and
+results together. Those verdicts remain intact. The picker now uses two 44px
+page-list rows at the minimum-phone breakpoint (up to 360×600), retains its heading, Back, search, status, and
+footer, and moves redundant count/table-heading text to accessible-only styling.
+Focused Chromium and WebKit Minimum-phone browser checks show search, filters,
+and one complete model row in the initial editor viewport, with multiple rows at
+the bottom. The redundant picker groove was removed only in that mode. The
+results retain one meaningful inset border and occupy at least 75% of its width.
+Tablet browser recovery checks cover signed-out preview and footer
+exit; Minimum-phone checks cover picker layout, Back, focus return, and keyboard
+behavior. A new full capture and independent seven-question review are
+**Pending**. Physical-device scrolling and software-keyboard behavior remain
+unverified.

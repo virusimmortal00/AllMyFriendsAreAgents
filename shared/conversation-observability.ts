@@ -100,10 +100,10 @@ export interface GenerationDeliverySummary {
 }
 export type ConversationPhase = "opening" | "follow-up" | "conversation-floor" | "synthesis" | "objection" | "reconciliation";
 export type ConversationTerminalReason = "cancelled" | "no-visible-output" | "broadcast-settled-response"
-  | "conversation-floor-completed" | "no-explicit-unresolved-state" | "open-without-second-responder"
+  | "conversation-floor-completed" | "no-explicit-unresolved-state" | "no-material-disagreement" | "open-without-second-responder"
   | "safety-ceiling" | "synthesis-no-response" | "synthesis-settled" | "blocked-input"
   | "no-material-objection" | "reconciliation-no-response" | "reconciliation-settled"
-  | "unresolved-reconciliation" | "queue-exhausted" | "follow-up-limit" | "run-failed";
+  | "unresolved-reconciliation" | "queue-exhausted" | "follow-up-limit" | "attempt-ceiling" | "run-failed";
 
 /** Additive observation: engine policy counters are not proof of persisted delivery. */
 export interface ConversationRunSummary {
@@ -121,8 +121,8 @@ export interface ConversationRunSummary {
   };
   policy: {
     responseTurns: number; visibleMessages: number; energySpent: number;
-    hardTurnCeiling: number | null; hardMessageCeiling: number | null;
-    turnCeilingReached: boolean; messageCeilingReached: boolean;
+    hardTurnCeiling: number | null; hardMessageCeiling: number | null; hardAttemptCeiling: number | null;
+    turnCeilingReached: boolean; messageCeilingReached: boolean; attemptCeilingReached: boolean;
     followUps: number | null; maxFollowUps: number | null; followUpLimitReached: boolean;
   };
   pending: { candidates: number; mentions: number; activeTurns: number; disposition: "none" | "not-scheduled" | "abandoned" };
@@ -131,8 +131,8 @@ export interface ConversationRunSummary {
 export type ConversationSelection = "initial-candidate" | "legacy-name-match" | "ambient-continuation" | "fresh-candidate" | "conversation-floor" | "synthesis" | "objection" | "reconciliation";
 export type ConversationDecisionReason = "eligible" | "target-active" | "target-queued" | "target-already-responded"
   | "pair-cap-reached" | "secondary-chance-missed" | "soft-budget-exhausted" | "participant-limit"
-  | "no-fresh-candidate" | "source-already-used" | "no-continuation-cue" | "hard-message-ceiling" | "hard-turn-ceiling"
-  | "follow-up-allowance-exhausted" | "deferred-replaced" | "run-cancelled" | "run-failed" | "run-ended" | "candidate-not-completed";
+  | "no-fresh-candidate" | "source-already-used" | "no-continuation-cue" | "hard-message-ceiling" | "hard-turn-ceiling" | "hard-attempt-ceiling"
+  | "follow-up-allowance-exhausted" | "deferred-replaced" | "human-handoff" | "run-cancelled" | "run-failed" | "run-ended" | "candidate-not-completed";
 export type ConversationTurnReason = "participant-protected" | "agent-disabled" | "agent-health-unavailable" | "generation-capacity-unavailable"
   | "provider-health-unavailable" | "provider-failed" | "generation-failed" | "preparation-failed" | "turn-failed"
   | "cancelled" | "delivered" | "yielded" | "malformed-disposition" | "no-visible-output" | DeliveryReason;
@@ -161,7 +161,7 @@ export interface ConversationConfiguration {
   energy: string | null; policyRevision: 1;
   candidateIds: string[]; candidateCount: number;
   concurrencyLimit: number; participantLimit: number;
-  hardMessageCeiling: number | null; hardTurnCeiling: number | null; softMessageBudget: number | null;
+  hardMessageCeiling: number | null; hardTurnCeiling: number | null; hardAttemptCeiling: number | null; softMessageBudget: number | null;
   secondaryChance: number | null; maxFollowUps: number | null;
   inviteAll: boolean; stopOnSettledResponse: boolean; conversationalFloor: boolean;
 }

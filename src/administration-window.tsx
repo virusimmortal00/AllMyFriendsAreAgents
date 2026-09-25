@@ -43,6 +43,7 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
   const [roomsSummary, setRoomsSummary] = useState("");
   const [roomBehaviorDirty, setRoomBehaviorDirty] = useState(false);
   const [roomBehaviorSaving, setRoomBehaviorSaving] = useState(false);
+  const [roomBehaviorActionsHost, setRoomBehaviorActionsHost] = useState<HTMLDivElement | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<AdministrationPage | "close" | null>(null);
   const requestPage = useCallback((nextPage: AdministrationPage) => {
     if (roomBehaviorSaving || nextPage === page) return;
@@ -79,14 +80,14 @@ export function AdministrationWindow({ page, destination, refreshKey, active = t
         <header className="page-header"><h2>Room behavior</h2><p>Administrator-managed prompts, summarization, and agent routing for this room.</p></header>
         {preview ? <p id="administration-preview-note" className="administration-preview__note"><span aria-hidden="true">🔒</span> Preview only. Sign in on <strong>Owner login</strong> to use this page.</p> : null}
         <fieldset className={preview ? "administration-preview" : ""} disabled={preview} {...(preview ? { "aria-describedby": "administration-preview-note" } : {})}>
-          <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} onSavingChange={setRoomBehaviorSaving} />
+          <RoomConfigurationPanel active onClose={requestClose} onSaved={onClose} onDirtyChange={setRoomBehaviorDirty} onSavingChange={setRoomBehaviorSaving} actionsHost={roomBehaviorActionsHost} readOnly={preview} />
         </fieldset>
       </section>
       : <Diagnostics />;
 
   return <>
     <DialogFrame title="Server Administration" closeLabel="Close server administration" closeDisabled={roomBehaviorSaving} active={active} className="administration-dialog" backdropClassName="administration-backdrop" bodyClassName="administration-dialog-body" returnFocusTo={returnFocusTo} view={VIEWS.serverAdministration} onClose={requestClose}
-      actions={<button type="button" className="classic-button" disabled={roomBehaviorSaving} onClick={requestClose}>Close</button>}>
+      actions={current.key === "RoomBehavior" ? <div ref={setRoomBehaviorActionsHost} className="room-behavior-dialog-actions" /> : <button type="button" className="classic-button" disabled={roomBehaviorSaving} onClick={requestClose}>Close</button>}>
       <ExplorerLayout label="Administration pages" pages={ADMINISTRATION_PAGES} selected={current.key} onSelect={requestPage} status={current.key === "Rooms" && roomsSummary && !preview ? `${signInState} · ${roomsSummary}` : signInState}>
       {current.key === "Login" ? <ServerAdministration destination={destination} onContinue={onContinue} />
         : preview && current.key !== "RoomBehavior" ? <fieldset className="administration-preview" disabled aria-describedby="administration-preview-note">

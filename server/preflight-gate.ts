@@ -1,10 +1,13 @@
-import type { ConversationEnergy } from "../shared/conversation-energy.js";
+import { CONVERSATION_OPTIONAL_SEATS, type ConversationEnergy } from "../shared/conversation-energy.js";
 import type { PreflightMode } from "../shared/preflight.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import type { AgentHealth } from "./agent-health.js";
+import { directAddressTargets } from "../shared/direct-address.js";
+import { normalizeRoomAgentRoster } from "../shared/roster.js";
 
 export const PREFLIGHT_REASONS = [
   "required_mention",
+  "required_plain_address",
   "explicit_broadcast",
   "structured_task_context",
   "classified_addressed",
@@ -12,6 +15,7 @@ export const PREFLIGHT_REASONS = [
   "ambient_selection",
   "fallback",
   "anti_starvation_probe",
+  // Retained for historical decision records; new low address scores do not suppress ambient candidates.
   "classified_irrelevant",
   "no_routing_signal",
   "unavailable",
@@ -47,8 +51,6 @@ export interface PreflightConfig {
   starvationThreshold: number;
   /** Minimum classified address probability that makes an agent a required participant. */
   classifiedAddressThreshold: number;
-  /** Maximum classified address probability below which an agent loses ambient and fallback candidacy. */
-  classifiedIrrelevantThreshold: number;
   /** Minimum classified whole-room probability that selects every healthy agent. */
   classifiedWholeRoomThreshold: number;
 }
@@ -57,7 +59,6 @@ export const DEFAULT_PREFLIGHT_CONFIG: Readonly<PreflightConfig> = {
   recentMessageWindow: 8,
   starvationThreshold: 25,
   classifiedAddressThreshold: 0.75,
-  classifiedIrrelevantThreshold: 0.15,
   classifiedWholeRoomThreshold: 0.7,
 };
 
@@ -81,8 +82,12 @@ export interface PreflightDecision {
 
 export interface PreflightRoutableTurn {
   agent: AgentId;
-  preflight?: { decisionId: string; shadowSuppressed: boolean };
+  preflight?: { decisionId: string; shadowSuppressed: boolean; required?: boolean };
 }
+
+const REQUIRED_REASONS = new Set<PreflightReason>([
+  "required_mention", "required_plain_address", "structured_task_context", "classified_addressed", "explicit_broadcast",
+]);
 
 /** Applies an already-recorded decision without ever inventing a generation ID. */
 export function routePreflightTurns<T extends PreflightRoutableTurn>(
@@ -102,16 +107,9 @@ export function routePreflightTurns<T extends PreflightRoutableTurn>(
   }
   return turns.filter(({ agent }) => byAgent.get(agent)?.outcome === "invoke").map((turn) => ({
     ...turn,
-    preflight: { decisionId, shadowSuppressed: false },
+    preflight: { decisionId, shadowSuppressed: false, required: REQUIRED_REASONS.has(byAgent.get(turn.agent)?.reason ?? "no_routing_signal") },
   }));
 }
-
-const AMBIENT_SEATS: Record<ConversationEnergy, number | "all"> = {
-  low: 0,
-  balanced: 1,
-  lively: 3,
-  party: "all",
-};
 
 function recentParticipants(room: RoomState, trigger: RoomMessage, window: number) {
   const triggerIndex = room.messages.findIndex(({ id }) => id === trigger.id);
@@ -131,24 +129,27 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
   const mentioned = new Set((input.trigger.mentions || [])
     .filter((mention) => mention.targetKind === "agent" && enabled.has(mention.targetId as AgentId))
     .map((mention) => mention.targetId as AgentId));
+  const roster = normalizeRoomAgentRoster(input.room.roster);
+  const plainAddressed = new Set(directAddressTargets({
+    text: input.trigger.text,
+    agents: roster.entries.map(({ agentId, conversationalName }) => ({ agentId, name: conversationalName ?? agentId })),
+    ...(input.room.humans ? { humanNames: input.room.humans.map(({ name }) => name) } : {}),
+    speaker: "human",
+  }).filter((agent) => enabled.has(agent)));
   // Continuation metadata currently identifies the canonical task/assignment but
   // does not carry an agent identity. The caller may add a trusted assignee once
   // that projection is available; prose is never used to infer one here.
   const structuredTargets = new Set((input.structuredTargets || []).filter((agent) => enabled.has(agent)));
   // The classifier is advisory: a high probability adds a required participant,
-  // a low probability removes ambient and fallback candidacy, and an absent
-  // probability changes nothing. Deterministic signals always outrank it.
+  // and an absent or low probability changes nothing. Deterministic signals
+  // always outrank it.
   const classifiedAddressed = new Set(input.rankedAgents.filter((agent) => {
     const probability = input.classification?.agents[agent];
     return probability !== undefined && probability >= config.classifiedAddressThreshold;
   }));
-  const classifiedIrrelevant = new Set(input.rankedAgents.filter((agent) => {
-    const probability = input.classification?.agents[agent];
-    return probability !== undefined && probability <= config.classifiedIrrelevantThreshold;
-  }));
   const wholeRoomInvitation = input.wholeRoomInvitation
     || (input.classification?.wholeRoom ?? 0) >= config.classifiedWholeRoomThreshold;
-  const required = new Set<AgentId>([...mentioned, ...structuredTargets, ...classifiedAddressed]);
+  const required = new Set<AgentId>([...mentioned, ...plainAddressed, ...structuredTargets, ...classifiedAddressed]);
   const qualifyingForStarvation = required.size === 0 && !wholeRoomInvitation && !input.trigger.continuationRequest;
 
   const selected = new Map<AgentId, PreflightReason>();
@@ -159,6 +160,7 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
       if (!required.has(agent) || unavailable.has(agent)) continue;
       selected.set(agent, mentioned.has(agent)
         ? "required_mention"
+        : plainAddressed.has(agent) ? "required_plain_address"
         : structuredTargets.has(agent) ? "structured_task_context" : "classified_addressed");
     }
 
@@ -169,7 +171,7 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
       : [];
     const probe = starved[0];
     const rankedIndex = new Map(ambient.map((agent, index) => [agent, index]));
-    const boostedAmbient = ambient.filter((agent) => agent !== probe && !classifiedIrrelevant.has(agent)).sort((left, right) => {
+    const boostedAmbient = ambient.filter((agent) => agent !== probe).sort((left, right) => {
       const score = (agent: AgentId) => (input.routing[agent]?.consecutiveQualifyingSuppressions || 0) + (recent.has(agent) ? 8 : 0);
       return score(right) - score(left) || (rankedIndex.get(left) || 0) - (rankedIndex.get(right) || 0);
     });
@@ -177,7 +179,7 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
       ...(probe ? [probe] : []),
       ...boostedAmbient,
     ];
-    const seatLimit = AMBIENT_SEATS[input.energy];
+    const seatLimit = CONVERSATION_OPTIONAL_SEATS[input.energy];
     const ambientSelection = seatLimit === "all" ? orderedAmbient : orderedAmbient.slice(0, seatLimit);
     for (const agent of ambientSelection) {
       selected.set(agent, probe === agent
@@ -186,7 +188,7 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
     }
 
     if (selected.size === 0) {
-      const fallback = healthy.find((agent) => !classifiedIrrelevant.has(agent)) ?? healthy[0];
+      const fallback = healthy[0];
       if (fallback) selected.set(fallback, "fallback");
     }
   }
@@ -198,7 +200,7 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
       const reason = selected.get(agent);
       return reason
         ? { agent, outcome: "invoke", reason }
-        : { agent, outcome: "suppress", reason: classifiedIrrelevant.has(agent) ? "classified_irrelevant" : "no_routing_signal" };
+        : { agent, outcome: "suppress", reason: "no_routing_signal" };
     }),
   };
 }

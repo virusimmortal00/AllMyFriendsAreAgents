@@ -69,6 +69,20 @@ describe("structured room turns", () => {
     });
   });
 
+  it("shares conservative direct-address, alias, and human-handoff behavior with text turns", () => {
+    const context = {
+      agents: [{ agentId: "codex-sol" as const, name: "Sol" }, { agentId: "claude-sonnet" as const, name: "Claude" }],
+      humanNames: ["Casey"],
+    };
+    const parse = (message: string) => interpretStructuredRoomTurn("codex-sol", {
+      schemaVersion: 1, action: "speak", messages: [message], conversationState: "open",
+    }, undefined, 3, ["codex-sol", "claude-sonnet"], "default-burst-cap", context);
+    expect(parse("Claude — your turn.")).toMatchObject({ mentionedAgents: ["claude-sonnet"], humanHandoff: false });
+    expect(parse("Claude already answered.")).toMatchObject({ mentionedAgents: [], humanHandoff: false });
+    expect(parse("Casey, decide whether Sol should proceed.")).toMatchObject({ mentionedAgents: [], humanHandoff: true });
+    expect(parse("I disagree about the migration order.")).toMatchObject({ materialDisagreement: true });
+  });
+
   it("publishes a closed provider-compatible object schema", () => {
     expect(STRUCTURED_ROOM_TURN_JSON_SCHEMA.type).toBe("object");
     expect(STRUCTURED_ROOM_TURN_JSON_SCHEMA).not.toHaveProperty("oneOf");

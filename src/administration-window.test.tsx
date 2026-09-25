@@ -61,7 +61,7 @@ describe("AdministrationWindow", () => {
     expect(onSelectPage).toHaveBeenCalledWith("Diagnostics");
   });
 
-  it("uses the same discard confirmation for both window close controls", async () => {
+  it("uses the same discard confirmation for title-bar close and footer Cancel", async () => {
     currentSession = signedInSession();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(roomConfiguration())));
     const onClose = vi.fn();
@@ -75,7 +75,7 @@ describe("AdministrationWindow", () => {
     await user.click(within(screen.getByRole("alertdialog", { name: "Discard room behavior changes?" })).getByRole("button", { name: "Cancel" }));
     expect((prompt as HTMLTextAreaElement).value).toBe("Keep this draft");
 
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(within(screen.getByRole("alertdialog", { name: "Discard room behavior changes?" })).getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -95,5 +95,27 @@ describe("AdministrationWindow", () => {
 
     expect((screen.getByLabelText("Additional room prompt", { selector: "textarea" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
     expect(screen.getByText(/Preview only/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "OK" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps footer Cancel available while Room behavior loads or shows an error", async () => {
+    currentSession = signedInSession();
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => undefined)));
+    const props = { page: "RoomBehavior" as const, destination: null, refreshKey: 0, onSelectPage: vi.fn(), onContinue: vi.fn(), onClose };
+    const loading = render(<AdministrationWindow {...props} />);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    loading.unmount();
+
+    onClose.mockClear();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline")));
+    render(<AdministrationWindow {...props} />);
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
