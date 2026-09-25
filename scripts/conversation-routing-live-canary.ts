@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +23,11 @@ import {
   parsePrivateJudgeCase,
 } from "./conversation-routing-live-judge.js";
 import {
+  judgeConversationQualityAxes,
+  parsePrivateQualityCase,
+  type QualityAxisOutcome,
+} from "./conversation-routing-live-judge-v2.js";
+import {
   buildLiveScenario,
   FIXTURE_AGENTS,
   type LiveScenario,
@@ -32,6 +37,13 @@ import {
   ROUTING_MODES,
   type RoutingDynamic,
 } from "./conversation-routing-live-scenarios.js";
+import {
+  expandStudyPlan,
+  parseStudyPlan,
+  STUDY_AGENT_BASE_PROMPTS,
+  type StudyPlanV1,
+  studyPlanDigest,
+} from "./conversation-routing-live-study.js";
 import { createLiveOpenCodeWrapper } from "./conversation-routing-live-wrapper.js";
 
 const execute = promisify(execFile);
@@ -44,9 +56,24 @@ const SOURCE_FILES = [
   "scripts/conversation-routing-live-canary.ts",
   "scripts/conversation-routing-live-evidence.ts",
   "scripts/conversation-routing-live-scenarios.ts",
+  "scripts/conversation-routing-live-study.ts",
   "scripts/conversation-routing-live-wrapper.ts",
   "scripts/conversation-routing-live-judge.ts",
+  "scripts/conversation-routing-live-judge-v2.ts",
   "scripts/conversation-routing-live-annotations.ts",
+  "server/agent-runner.ts",
+  "server/agent-behavior.ts",
+  "server/conversation.ts",
+  "server/room-configuration.ts",
+  "server/preflight-gate.ts",
+  "server/intent-classifier.ts",
+  "server/jev-experiment-profiles.ts",
+  "server/index.ts",
+  "server/structured-room-turn.ts",
+  "shared/agent-behavior.ts",
+  "shared/conversation-energy.ts",
+  "shared/direct-address.ts",
+  "shared/preflight.ts",
 ] as const;
 
 async function sourceDigest() {
@@ -72,6 +99,12 @@ interface CanaryOptions {
   totalTimeoutMs: number;
   allowWideMatrix: boolean;
   requireVisible: boolean;
+  dryRun: boolean;
+  studyPlan?: StudyPlanV1;
+  jevModel?: string;
+  judgeRubric: "v1" | "v2";
+  maxJudgeCalls: number;
+  planningAllowanceMs: number;
 }
 
 function positiveInteger(raw: string | undefined, label: string, maximum: number, fallback: number) {
@@ -79,6 +112,10 @@ function positiveInteger(raw: string | undefined, label: string, maximum: number
   const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) throw new Error(`${label} is out of range.`);
   return parsed;
+}
+
+function scenarioTriggerCount(scenario: LiveScenario) {
+  return 1 + (scenario.scriptedFollowups?.length ?? (scenario.followup ? 1 : 0));
 }
 
 function customScenario(raw: string): LiveScenario {
@@ -106,10 +143,14 @@ function customScenario(raw: string): LiveScenario {
 }
 
 /** Parsing is provider-free and gives the paid runner a closed, auditable case list. */
-export function parseLiveCanaryOptions(argv: readonly string[], env: NodeJS.ProcessEnv): CanaryOptions {
+export function parseLiveCanaryOptions(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  studyPlan?: StudyPlanV1,
+): CanaryOptions {
   const values = new Map<string, string[]>();
   const flags = new Set<string>();
-  const valueless = new Set(["--pilot", "--allow-wide-matrix", "--require-visible"]);
+  const valueless = new Set(["--pilot", "--allow-wide-matrix", "--require-visible", "--dry-run"]);
   const valued = new Set([
     "--case",
     "--model",
@@ -121,6 +162,10 @@ export function parseLiveCanaryOptions(argv: readonly string[], env: NodeJS.Proc
     "--max-generations",
     "--timeout-ms",
     "--total-timeout-ms",
+    "--study-plan",
+    "--jev-model",
+    "--judge-rubric",
+    "--max-judge-calls",
   ]);
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -135,26 +180,70 @@ export function parseLiveCanaryOptions(argv: readonly string[], env: NodeJS.Proc
   }
   for (const [key, entries] of values)
     if (key !== "--case" && entries.length !== 1) throw new Error("Duplicate canary option.");
-  if (flags.has("--pilot") === values.has("--case"))
-    throw new Error("Choose either --pilot or one or more --case values.");
+  const selectedInputs =
+    Number(flags.has("--pilot")) + Number(values.has("--case")) + Number(values.has("--study-plan"));
+  if (selectedInputs !== 1 || Boolean(studyPlan) !== values.has("--study-plan"))
+    throw new Error("Choose one pilot, case list, or validated study plan.");
   const allowWideMatrix = flags.has("--allow-wide-matrix");
-  const cases = flags.has("--pilot") ? pilotScenarios() : (values.get("--case") ?? []).map(customScenario);
+  const cases = studyPlan
+    ? expandStudyPlan(studyPlan)
+    : flags.has("--pilot")
+      ? pilotScenarios()
+      : (values.get("--case") ?? []).map(customScenario);
   if (!allowWideMatrix && cases.some(({ agentCount }) => agentCount > 3))
     throw new Error("Four-agent cases require --allow-wide-matrix.");
   const upperLimit = allowWideMatrix ? MAX_WIDE_CASES : MAX_PILOT_CASES;
-  const maxCases = positiveInteger(values.get("--max-cases")?.[0], "Maximum cases", upperLimit, MAX_PILOT_CASES);
+  const maxCases = positiveInteger(
+    values.get("--max-cases")?.[0],
+    "Maximum cases",
+    upperLimit,
+    studyPlan?.maxCases ?? MAX_PILOT_CASES,
+  );
+  if (studyPlan && (studyPlan.maxCases > upperLimit || maxCases > studyPlan.maxCases))
+    throw new Error("Study plan exceeds its explicit case cap.");
   if (cases.length > maxCases) throw new Error("Selected cases exceed the case limit.");
   if (new Set(cases.map(({ scenarioId, variant }) => `${scenarioId}:${variant}`)).size !== cases.length)
     throw new Error("Duplicate scenario variants are not allowed.");
   const model = values.get("--model")?.[0] ?? env.AMFAA_ROUTING_ROOM_MODEL ?? "";
   const command = values.get("--opencode")?.[0] ?? env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND ?? "";
   const secretLauncher = values.get("--secret-launcher")?.[0] ?? env.AMFAA_ROUTING_SECRET_LAUNCHER ?? "";
-  if (!MODEL.test(model) || model.endsWith("/auto") || !path.isAbsolute(command))
+  const dryRun = flags.has("--dry-run");
+  const jevModel = values.get("--jev-model")?.[0];
+  if (studyPlan && (!jevModel || !MODEL.test(`openrouter/${jevModel}`) || /(?:^|\/)(?:auto|latest)$/.test(jevModel)))
+    throw new Error("Study plans require a concrete pinned Jev model ID.");
+  if (!MODEL.test(model) || model.endsWith("/auto") || (!dryRun && !path.isAbsolute(command)))
     throw new Error("A concrete OpenRouter model and absolute audited OpenCode command are required.");
-  if (!path.isAbsolute(secretLauncher)) throw new Error("An absolute secret launcher is required.");
+  if (!dryRun && !path.isAbsolute(secretLauncher)) throw new Error("An absolute secret launcher is required.");
+  if (dryRun && !studyPlan) throw new Error("Dry-run requires a validated study plan.");
   const judgeModel = values.get("--judge-model")?.[0];
   if (judgeModel && (!MODEL.test(judgeModel) || judgeModel.endsWith("/auto") || judgeModel === model))
     throw new Error("Judge model must be a different pinned OpenRouter model.");
+  const judgeRubric = values.get("--judge-rubric")?.[0] ?? "v1";
+  if (!["v1", "v2"].includes(judgeRubric) || (judgeRubric === "v2" && !judgeModel))
+    throw new Error("Quality rubric v2 requires a distinct pinned judge model.");
+  const maxJudgeCalls = cases.reduce(
+    (sum, scenario) => sum + (judgeModel ? (judgeRubric === "v2" ? 4 : 1) * scenarioTriggerCount(scenario) : 0),
+    0,
+  );
+  const explicitJudgeCap = values.get("--max-judge-calls")?.[0];
+  if (studyPlan && judgeModel && !explicitJudgeCap) throw new Error("Live study requires an explicit judge-call cap.");
+  if (explicitJudgeCap && positiveInteger(explicitJudgeCap, "Maximum judge calls", 144, maxJudgeCalls) < maxJudgeCalls)
+    throw new Error("Selected study exceeds the judge-call cap.");
+  if (maxJudgeCalls > 144) throw new Error("Selected study exceeds the judge-call ceiling.");
+  const timeoutMs = positiveInteger(values.get("--timeout-ms")?.[0], "Scenario timeout", 180_000, 120_000);
+  const totalTimeoutMs = positiveInteger(
+    values.get("--total-timeout-ms")?.[0],
+    "Total timeout",
+    studyPlan ? 10_800_000 : 3_600_000,
+    2_400_000,
+  );
+  const planningAllowanceMs =
+    cases.reduce((sum, scenario) => sum + 40_000 + scenarioTriggerCount(scenario) * (timeoutMs + 5_000), 0) +
+    maxJudgeCalls * 30_000;
+  if (studyPlan && !values.has("--total-timeout-ms"))
+    throw new Error("Live study requires an explicit total watchdog.");
+  if (studyPlan && !flags.has("--dry-run") && totalTimeoutMs < planningAllowanceMs)
+    throw new Error("Total watchdog is shorter than the study planning allowance.");
   const privateReviewDirectory = values.get("--retain-private-review")?.[0];
   if (privateReviewDirectory && !path.isAbsolute(privateReviewDirectory))
     throw new Error("Private review directory must be absolute.");
@@ -167,10 +256,16 @@ export function parseLiveCanaryOptions(argv: readonly string[], env: NodeJS.Proc
     ...(privateReviewDirectory ? { privateReviewDirectory } : {}),
     maxCases,
     maxGenerations: positiveInteger(values.get("--max-generations")?.[0], "Maximum generations", 12, 8),
-    timeoutMs: positiveInteger(values.get("--timeout-ms")?.[0], "Scenario timeout", 180_000, 120_000),
-    totalTimeoutMs: positiveInteger(values.get("--total-timeout-ms")?.[0], "Total timeout", 3_600_000, 2_400_000),
+    timeoutMs,
+    totalTimeoutMs,
     allowWideMatrix,
     requireVisible: flags.has("--require-visible"),
+    dryRun,
+    ...(studyPlan ? { studyPlan } : {}),
+    ...(jevModel ? { jevModel } : {}),
+    judgeRubric: judgeRubric as "v1" | "v2",
+    maxJudgeCalls,
+    planningAllowanceMs,
   };
 }
 
@@ -266,7 +361,9 @@ interface CaseResult {
   preflightMode: string;
   triggers: LiveScenarioResult[];
   judge: JudgeScalarResult[];
+  qualityJudge?: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
   privateReviewRetained: boolean;
+  study?: NonNullable<LiveScenario["study"]>;
 }
 
 type FailureStage =
@@ -279,7 +376,14 @@ type FailureStage =
   | "delivery"
   | "judge"
   | "cleanup";
-type FailureCategory = "timeout" | "unavailable" | "limit" | "missing-proof" | "fixture-changed" | "internal";
+type FailureCategory =
+  | "timeout"
+  | "unavailable"
+  | "limit"
+  | "missing-proof"
+  | "model-mismatch"
+  | "fixture-changed"
+  | "internal";
 class CaseFailure extends Error {
   constructor(
     readonly stage: FailureStage,
@@ -305,6 +409,7 @@ export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScena
     classifier: {
       outcome: result.classifier.outcome,
       reason: result.classifier.reason,
+      resolvedModelId: result.classifier.resolvedModelId,
       durationMs: result.classifier.durationMs,
       reportedInputTokens: result.classifier.reportedInputTokens,
       reportedOutputTokens: result.classifier.reportedOutputTokens,
@@ -339,6 +444,7 @@ export function projectCaseFailedEvent(input: {
   completedCases: number;
   triggers: readonly LiveScenarioResult[];
   judgeCategory: JudgeFailureCategory | null;
+  study?: NonNullable<LiveScenario["study"]>;
 }) {
   return {
     event: "case-failed" as const,
@@ -349,6 +455,7 @@ export function projectCaseFailedEvent(input: {
     completedCases: input.completedCases,
     observedTriggers: input.triggers.map(projectFailedCaseEvidence),
     ...(input.judgeCategory ? { judgeCategory: input.judgeCategory } : {}),
+    ...(input.study ? { study: input.study } : {}),
   };
 }
 function failureCategory(error: unknown): FailureCategory {
@@ -364,11 +471,12 @@ function failureCategory(error: unknown): FailureCategory {
   )
     return "missing-proof";
   if (message === "Disposable fixture project changed.") return "fixture-changed";
+  if (message === "Jev provider-resolved model differs from the pinned study model.") return "model-mismatch";
   return "internal";
 }
 
 function privateKind(dynamic: LiveScenario["dynamic"], followup: boolean) {
-  if (followup) return "resolved" as const;
+  if (followup && dynamic === "disagreement") return "resolved" as const;
   if (dynamic === "multi-address" || dynamic === "direct") return "direct" as const;
   if (dynamic === "quoted-name") return "casual" as const;
   return dynamic;
@@ -382,8 +490,36 @@ async function writePrivateReview(
   expectedDirectAgents: readonly string[],
   messages: unknown[],
   followup: boolean,
+  qualityV2 = false,
 ) {
-  const payload = parsePrivateJudgeCase({
+  const payload = buildPrivateReviewPayload(
+    scenario,
+    result,
+    prompt,
+    expectedDirectAgents,
+    messages,
+    followup,
+    qualityV2,
+  );
+  const file = path.join(
+    directory,
+    `${scenario.scenarioId}-${scenario.variant}-${followup ? "resolution" : "opening"}-${result.runId}.json`,
+  );
+  await writeFile(file, `${JSON.stringify(payload)}\n`, { mode: 0o600, flag: "wx" });
+  await chmod(file, 0o600);
+  return payload;
+}
+
+export function buildPrivateReviewPayload(
+  scenario: LiveScenario,
+  result: LiveScenarioResult,
+  prompt: string,
+  expectedDirectAgents: readonly string[],
+  messages: unknown[],
+  followup: boolean,
+  qualityV2: boolean,
+) {
+  const v1 = parsePrivateJudgeCase({
     schemaVersion: 1,
     scenarioId: result.scenarioId,
     runId: result.runId,
@@ -400,12 +536,21 @@ async function writePrivateReview(
       return [];
     }),
   });
-  const file = path.join(
-    directory,
-    `${scenario.scenarioId}-${scenario.variant}-${followup ? "resolution" : "opening"}-${result.runId}.json`,
-  );
-  await writeFile(file, `${JSON.stringify(payload)}\n`, { mode: 0o600, flag: "wx" });
-  await chmod(file, 0o600);
+  const payload = qualityV2
+    ? parsePrivateQualityCase({
+        ...v1,
+        schemaVersion: 2,
+        qualityContext: {
+          originalHumanAlias: "Avery",
+          roster: (
+            scenario.rosterOrder ?? FIXTURE_AGENTS.slice(0, scenario.agentCount).map(({ agentId }) => agentId)
+          ).map((agentId) => ({
+            agentId,
+            conversationalName: FIXTURE_AGENTS.find((agent) => agent.agentId === agentId)!.name,
+          })),
+        },
+      })
+    : v1;
   return payload;
 }
 
@@ -462,10 +607,14 @@ async function runCase(
         preflightMode: scenario.preflightMode,
         intentClassifierEnabled: scenario.classifierEnabled,
         summarizerModel: null,
+        ...(scenario.study ? { basePromptText: STUDY_AGENT_BASE_PROMPTS[scenario.study.agentPromptProfileId] } : {}),
       },
       "fixture-owner",
     );
-    const roster = FIXTURE_AGENTS.slice(0, scenario.agentCount).map(({ agentId, name }) => ({
+    const selectedAgents = scenario.rosterOrder
+      ? scenario.rosterOrder.map((agentId) => FIXTURE_AGENTS.find((entry) => entry.agentId === agentId)!)
+      : FIXTURE_AGENTS.slice(0, scenario.agentCount);
+    const roster = selectedAgents.map(({ agentId, name }) => ({
       agentId,
       conversationalName: name,
       providerId: "openrouter",
@@ -505,6 +654,16 @@ async function runCase(
         ALL_MY_FRIENDS_ARE_AGENTS_ROOM_CONCURRENCY: "1",
         ALL_MY_FRIENDS_ARE_AGENTS_GLOBAL_CONCURRENCY: "1",
         ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED: scenario.classifierEnabled ? "false" : "true",
+        ...(options.jevModel ? { ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL: options.jevModel } : {}),
+        ...(scenario.study
+          ? {
+              AMFAA_ROUTING_STUDY_ISOLATED: "true",
+              ...(scenario.study.jevProfileId === "off-v1"
+                ? {}
+                : { AMFAA_ROUTING_JEV_PROFILE: scenario.study.jevProfileId }),
+              AMFAA_ROUTING_GATE_PROFILE: scenario.study.gateProfileId,
+            }
+          : {}),
       },
     });
     await until(
@@ -533,6 +692,7 @@ async function runCase(
     if (roster.some(({ agentId }) => availability?.[agentId]?.available !== true))
       throw new Error("Selected OpenCode participant is unavailable.");
     const judgments: JudgeScalarResult[] = [];
+    const qualityJudgments: NonNullable<CaseResult["qualityJudge"]> = [];
     const prompts = [
       {
         scenarioId: scenario.scenarioId,
@@ -550,6 +710,12 @@ async function runCase(
             },
           ]
         : []),
+      ...(scenario.scriptedFollowups?.map((followup) => ({
+        scenarioId: followup.scenarioId,
+        text: followup.text,
+        expected: followup.expectedDirectAgents,
+        followup: true,
+      })) ?? []),
     ];
     for (const prompt of prompts) {
       abort.throwIfAborted();
@@ -615,13 +781,20 @@ async function runCase(
         records: latestRecords.length >= records.length ? latestRecords : records,
         preflightDecisions: await preflight.rawDecisions(200),
       });
+      triggerResults.push(result);
       stage = "classifier";
       if (scenario.classifierEnabled && result.classifier.outcome !== "completed")
         throw new Error("Jev completion proof is missing.");
+      if (
+        scenario.study &&
+        scenario.classifierEnabled &&
+        result.classifier.resolvedModelId !== null &&
+        result.classifier.resolvedModelId !== options.jevModel
+      )
+        throw new Error("Jev provider-resolved model differs from the pinned study model.");
       if (result.attemptedTurns > options.maxGenerations || result.generationStarts > options.maxGenerations)
         throw new Error("Observed turn cap exceeded.");
       stage = "delivery";
-      triggerResults.push(result);
       if (options.requireVisible && (result.confirmedDeliveredBursts < 1 || result.firstVisibleMs === null))
         throw new Error("Visible delivery proof is missing.");
       const snapshot = await requestJson(base, "/api/state", cookie);
@@ -644,17 +817,26 @@ async function runCase(
           prompt.expected,
           messages,
           prompt.followup,
+          options.judgeRubric === "v2",
         );
         if (options.judgeModel) {
-          judgments.push(
-            await judgeConversationCase(privateCase, {
-              model: options.judgeModel.slice("openrouter/".length),
-              actorModel: options.model,
-              apiKey: credential,
-              signal: abort,
-              timeoutMs: 30_000,
-            }),
-          );
+          const judgeOptions = {
+            model: options.judgeModel.slice("openrouter/".length),
+            actorModel: options.model,
+            apiKey: credential,
+            signal: abort,
+            timeoutMs: 30_000,
+          };
+          if (options.judgeRubric === "v2") {
+            if (!result.runId) throw new Error("Quality judge requires a correlated run ID.");
+            qualityJudgments.push({
+              scenarioId: result.scenarioId,
+              runId: result.runId,
+              outcomes: await judgeConversationQualityAxes(privateCase, judgeOptions),
+            });
+          } else {
+            judgments.push(await judgeConversationCase(parsePrivateJudgeCase(privateCase), judgeOptions));
+          }
         }
       }
     }
@@ -675,7 +857,9 @@ async function runCase(
       preflightMode: scenario.preflightMode,
       triggers: triggerResults,
       judge: judgments,
+      ...(options.judgeRubric === "v2" ? { qualityJudge: qualityJudgments } : {}),
       privateReviewRetained: Boolean(privateDirectory),
+      ...(scenario.study ? { study: scenario.study } : {}),
     };
   } catch (error) {
     throw error instanceof CaseFailure
@@ -692,8 +876,71 @@ async function runCase(
   }
 }
 
+async function loadStudyPlan(argv: readonly string[]): Promise<StudyPlanV1 | undefined> {
+  const positions = argv.flatMap((arg, index) => (arg === "--study-plan" ? [index] : []));
+  if (!positions.length) return undefined;
+  if (positions.length !== 1 || !argv[positions[0]! + 1] || !path.isAbsolute(argv[positions[0]! + 1]!))
+    throw new Error("Study plan path must be a single absolute path.");
+  const file = argv[positions[0]! + 1]!;
+  const info = await stat(file);
+  if (!info.isFile() || info.size > 65_536) throw new Error("Study plan exceeds its bounded input size.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    throw new Error("Study plan is not valid JSON.");
+  }
+  return parseStudyPlan(parsed);
+}
+
 async function main() {
-  const options = parseLiveCanaryOptions(process.argv.slice(2), process.env);
+  const argv = process.argv.slice(2);
+  const options = parseLiveCanaryOptions(argv, process.env, await loadStudyPlan(argv));
+  const sourceSha256 = await sourceDigest();
+  const sourceCommit = (
+    await execute("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, timeout: 10_000 })
+  ).stdout.trim();
+  const sourceDirty = Boolean(
+    (
+      await execute("git", ["status", "--porcelain", "--untracked-files=all"], {
+        cwd: repositoryRoot,
+        timeout: 10_000,
+      })
+    ).stdout.trim(),
+  );
+  if (options.dryRun) {
+    const plan = options.studyPlan!;
+    console.log(
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "conversation-routing-study-dry-run",
+        planId: plan.planId,
+        planSha256: studyPlanDigest(plan),
+        orderSeed: plan.orderSeed,
+        sourceCommit,
+        sourceDirty,
+        sourceSha256,
+        actorModel: options.model,
+        jevModel: options.jevModel,
+        maxCases: options.maxCases,
+        maxGenerationsPerCase: options.maxGenerations,
+        scenarioTimeoutMs: options.timeoutMs,
+        totalTimeoutMs: options.totalTimeoutMs,
+        maximumScheduledJudgeCalls: options.maxJudgeCalls,
+        judgeRubric: options.judgeRubric,
+        planningAllowanceMs: options.planningAllowanceMs,
+        watchdogCoversPlanningAllowance: options.totalTimeoutMs >= options.planningAllowanceMs,
+        cases: options.cases.map((scenario) => ({
+          scenarioId: scenario.scenarioId,
+          variant: scenario.variant,
+          triggerCount: 1 + (scenario.scriptedFollowups?.length ?? 0),
+          study: scenario.study,
+        })),
+      }),
+    );
+    return;
+  }
+  if (options.studyPlan && sourceDirty) throw new Error("Live study requires a clean source tree.");
   if (process.env.AMFAA_CANARY_ALLOW_REAL_PROVIDER !== "true")
     throw new Error("Explicit paid-provider opt-in is required.");
   const credential = process.env.OPENROUTER_API_KEY;
@@ -706,18 +953,6 @@ async function main() {
   ).stdout.trim();
   if (!/^(?:1\.18\.25|1\.18\.25-amfaa\.2)$/.test(cliVersion))
     throw new Error("OpenCode binary is outside the audited versions.");
-  const sourceSha256 = await sourceDigest();
-  const sourceCommit = (
-    await execute("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, timeout: 10_000 })
-  ).stdout.trim();
-  const sourceDirty = Boolean(
-    (
-      await execute("git", ["status", "--porcelain", "--untracked-files=all", "--", ...SOURCE_FILES], {
-        cwd: repositoryRoot,
-        timeout: 10_000,
-      })
-    ).stdout.trim(),
-  );
   const privateDirectory = options.privateReviewDirectory;
   if (privateDirectory) {
     const absolute = path.resolve(privateDirectory);
@@ -754,6 +989,7 @@ async function main() {
               completedCases: results.length,
               triggers: failure.triggers,
               judgeCategory: failure.judgeCategory,
+              ...(scenario.study ? { study: scenario.study } : {}),
             }),
           ),
         );
@@ -762,6 +998,22 @@ async function main() {
       console.log(JSON.stringify({ event: "case-complete", case: results.at(-1), completedCases: results.length }));
     }
     if ((await sourceDigest()) !== sourceSha256) throw new Error("Canary source changed during the live run.");
+    if (
+      options.studyPlan &&
+      (await execute("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, timeout: 10_000 })).stdout.trim() !==
+        sourceCommit
+    )
+      throw new Error("Canary source commit changed during the live study.");
+    if (
+      options.studyPlan &&
+      (
+        await execute("git", ["status", "--porcelain", "--untracked-files=all"], {
+          cwd: repositoryRoot,
+          timeout: 10_000,
+        })
+      ).stdout.trim()
+    )
+      throw new Error("Canary source tree changed during the live study.");
     const manifest = {
       schemaVersion: 1,
       kind: "conversation-routing-live-canary",
@@ -771,10 +1023,41 @@ async function main() {
       scenarioCatalogSha256: createHash("sha256")
         .update(
           JSON.stringify(
-            options.cases.map(({ scenarioId, variant, text, followup }) => ({ scenarioId, variant, text, followup })),
+            options.cases.map(
+              ({
+                scenarioId,
+                variant,
+                text,
+                expectedDirectAgents,
+                followup,
+                scriptedFollowups,
+                rosterOrder,
+                study,
+              }) => ({
+                scenarioId,
+                variant,
+                text,
+                expectedDirectAgents,
+                followup,
+                scriptedFollowups,
+                rosterOrder,
+                study,
+              }),
+            ),
           ),
         )
         .digest("hex"),
+      ...(options.studyPlan
+        ? {
+            studyPlan: {
+              schemaVersion: 1,
+              planId: options.studyPlan.planId,
+              planSha256: studyPlanDigest(options.studyPlan),
+              orderSeed: options.studyPlan.orderSeed,
+              jevModel: options.jevModel,
+            },
+          }
+        : {}),
       openCodeVersion: cliVersion,
       actorModel: options.model,
       judgeModel: options.judgeModel ?? null,
@@ -783,6 +1066,9 @@ async function main() {
       maxGenerationsPerCase: options.maxGenerations,
       scenarioTimeoutMs: options.timeoutMs,
       totalTimeoutMs: options.totalTimeoutMs,
+      maximumScheduledJudgeCalls: options.maxJudgeCalls,
+      judgeRubric: options.judgeRubric,
+      planningAllowanceMs: options.planningAllowanceMs,
       cases: results,
     };
     console.log(JSON.stringify(manifest));

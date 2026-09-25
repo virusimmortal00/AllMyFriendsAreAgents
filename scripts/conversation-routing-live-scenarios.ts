@@ -1,6 +1,7 @@
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { PreflightMode } from "../shared/preflight.js";
+import type { StudyCaseMetadataV1 } from "./conversation-routing-live-study.js";
 
 export type RoutingDynamic =
   | "direct"
@@ -23,6 +24,10 @@ export interface LiveScenario {
   /** Fixture judgment about explicit address syntax, not a prediction of replies. */
   expectedDirectAgents: ActiveAgentId[];
   followup?: { text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string };
+  /** Study plans may use two or three scripted human messages instead of the legacy follow-up. */
+  scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
+  rosterOrder?: ActiveAgentId[];
+  study?: StudyCaseMetadataV1;
 }
 
 export const FIXTURE_AGENTS = [
