@@ -4,6 +4,7 @@ import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import type { AgentHealth } from "./agent-health.js";
 import { directAddressTargets } from "../shared/direct-address.js";
 import { normalizeRoomAgentRoster } from "../shared/roster.js";
+import { jevGateProfile, type JevGateProfileId } from "./jev-experiment-profiles.js";
 
 export const PREFLIGHT_REASONS = [
   "required_mention",
@@ -31,6 +32,8 @@ export type PreflightReason = (typeof PREFLIGHT_REASONS)[number];
 export interface PreflightClassificationSignal {
   agents: Partial<Record<AgentId, number>>;
   wholeRoom: number;
+  /** Distinct Jev question about optional contribution, not direct address. */
+  optionalWorth?: Partial<Record<AgentId, number>>;
 }
 
 
@@ -72,6 +75,7 @@ export interface PreflightInput {
   wholeRoomInvitation: boolean;
   structuredTargets?: readonly AgentId[];
   classification?: PreflightClassificationSignal;
+  gateProfileId?: JevGateProfileId;
   config?: Partial<PreflightConfig>;
 }
 
@@ -165,7 +169,13 @@ export function decidePreflight(input: PreflightInput): PreflightDecision {
     }
 
     const recent = recentParticipants(input.room, input.trigger, Math.max(0, config.recentMessageWindow));
-    const ambient = healthy.filter((agent) => !required.has(agent));
+    const optionalWorthThreshold = jevGateProfile(input.gateProfileId ?? "current-v1").optionalWorthThreshold;
+    const ambient = healthy.filter((agent) => {
+      if (required.has(agent)) return false;
+      if (optionalWorthThreshold === null) return true;
+      const score = input.classification?.optionalWorth?.[agent];
+      return score === undefined || score >= optionalWorthThreshold;
+    });
     const starved = qualifyingForStarvation
       ? ambient.filter((agent) => (input.routing[agent]?.consecutiveQualifyingSuppressions || 0) >= config.starvationThreshold)
       : [];

@@ -53,6 +53,8 @@ export interface PreflightClassificationSnapshot {
   agents: Partial<Record<AgentId, number>>;
   /** Probability that the trigger invites every participant to respond. */
   wholeRoom: number;
+  /** Classifier prediction of distinct optional value; never a judgment of actual reply quality. */
+  optionalWorth?: Partial<Record<AgentId, number>>;
   /** Classifier's primary addressee choice, when it ranked one above the rest. */
   primaryAddressee?: string;
   usage: { inputTokens: number; outputTokens: number };
@@ -69,6 +71,8 @@ export interface PreflightClassificationAudit {
   costUsd: number;
   wholeRoomProbability: number;
   addressProbabilities: Partial<Record<AgentId, number>>;
+  /** Optional classifier predictions, absent in earlier records and question profiles. */
+  optionalWorthProbabilities?: Partial<Record<AgentId, number>>;
   /** Deterministic decision computed without classification, for attribution. */
   baseline: Array<{ agent: AgentId; outcome: "invoke" | "suppress" | "unavailable"; reason: string }>;
 }

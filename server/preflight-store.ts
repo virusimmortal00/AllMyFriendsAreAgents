@@ -64,6 +64,13 @@ function normalizeClassification(value: unknown): PreflightClassificationAudit |
       if (isAgentId(agent) && Number.isFinite(value) && value >= 0 && value <= 1) addressProbabilities[agent] = value;
     }
   }
+  const optionalWorthProbabilities: Partial<Record<AgentId, number>> = {};
+  if (candidate.optionalWorthProbabilities && typeof candidate.optionalWorthProbabilities === "object") {
+    for (const [agent, probability] of Object.entries(candidate.optionalWorthProbabilities)) {
+      if (isAgentId(agent) && typeof probability === "number" && Number.isFinite(probability) && probability >= 0 && probability <= 1)
+        optionalWorthProbabilities[agent] = probability;
+    }
+  }
   const baseline = Array.isArray(candidate.baseline) ? candidate.baseline.slice(0, 200).flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const decision = entry as { agent?: unknown; outcome?: unknown; reason?: unknown };
@@ -81,6 +88,7 @@ function normalizeClassification(value: unknown): PreflightClassificationAudit |
     costUsd,
     wholeRoomProbability,
     addressProbabilities,
+    ...(candidate.optionalWorthProbabilities ? { optionalWorthProbabilities } : {}),
     baseline,
   };
 }
