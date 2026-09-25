@@ -195,6 +195,20 @@ indices, whole A/B pairs, unique pair and run IDs, and matching plan, source,
 runtime, model, limits, and profile-digest provenance. It rejects partial,
 overlapping, or drifted sets before reporting a study result.
 
+New final cases may carry `availabilityCheck`, a closed scalar record of the
+initial and final OpenCode discovery status, selected unavailable-reason enums,
+and whether one forced catalog refresh was attempted and recovered readiness.
+The parser rejects unknown statuses, duplicate or unsorted reason arrays,
+contradictory refresh/recovery flags, and extra fields. Older manifests remain
+valid with that record absent. A completed case must have no final unavailable
+reasons; unresolved checks belong only in failed-case progress.
+`availability.overall` and
+`availability.byFactorAndArm` count recorded, legacy-missing, initially
+unavailable, refreshed, recovered, and finally unavailable **completed cases**.
+An interrupted case appears only in private progress, not in a final paired
+manifest; these counts never infer its outcome or turn it into a completed pair.
+No catalog text, diagnostic string, or credential enters the analysis report.
+
 ```sh
 umask 077
 pnpm exec tsx scripts/conversation-routing-live-analysis.ts \

@@ -23,6 +23,32 @@ const MAX_TRIGGERS = 108;
 const MAX_STUDY_PAIRS = 72;
 const MAX_MERGED_CASES = MAX_STUDY_PAIRS * 2;
 const MAX_MERGED_TRIGGERS = MAX_MERGED_CASES * 3;
+const DISCOVERY_STATUSES = [
+  "available",
+  "cli_missing",
+  "authentication_required",
+  "configuration_required",
+  "discovery_unsupported",
+  "runtime_incompatible",
+  "error",
+] as const;
+const AVAILABILITY_REASONS = [
+  "runtime_unavailable",
+  "model_removed",
+  "provider_removed",
+  "variant_removed",
+  "reasoning_effort_removed",
+  "variant_conflict",
+  "selection_unpinnable",
+] as const;
+type AvailabilityCheck = {
+  initialDiscoveryStatus: (typeof DISCOVERY_STATUSES)[number];
+  initialUnavailableReasons: (typeof AVAILABILITY_REASONS)[number][];
+  refreshAttempted: boolean;
+  finalDiscoveryStatus: (typeof DISCOVERY_STATUSES)[number];
+  finalUnavailableReasons: (typeof AVAILABILITY_REASONS)[number][];
+  recovered: boolean;
+};
 const JUDGE_FAILURES = [
   "timeout",
   "cancelled",
@@ -110,7 +136,47 @@ export interface ScalarCanaryManifest {
     judge: JudgeScalarResult[];
     qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
     study: StudyCaseMetadataV1 | null;
+    availabilityCheck: AvailabilityCheck | null;
   }>;
+}
+
+function parseAvailabilityCheck(input: unknown): AvailabilityCheck {
+  const row = object(input, [
+    "initialDiscoveryStatus",
+    "initialUnavailableReasons",
+    "refreshAttempted",
+    "finalDiscoveryStatus",
+    "finalUnavailableReasons",
+    "recovered",
+  ]);
+  const reasons = (value: unknown) =>
+    Array.isArray(value) &&
+    value.length <= AVAILABILITY_REASONS.length &&
+    value.every((reason) => AVAILABILITY_REASONS.includes(reason)) &&
+    JSON.stringify(value) === JSON.stringify([...new Set(value)].sort());
+  if (
+    Object.keys(row).length !== 6 ||
+    !DISCOVERY_STATUSES.includes(row.initialDiscoveryStatus as AvailabilityCheck["initialDiscoveryStatus"]) ||
+    !DISCOVERY_STATUSES.includes(row.finalDiscoveryStatus as AvailabilityCheck["finalDiscoveryStatus"]) ||
+    !["available", "discovery_unsupported"].includes(String(row.finalDiscoveryStatus)) ||
+    !reasons(row.initialUnavailableReasons) ||
+    !reasons(row.finalUnavailableReasons) ||
+    (row.finalUnavailableReasons as unknown[]).length !== 0 ||
+    typeof row.refreshAttempted !== "boolean" ||
+    typeof row.recovered !== "boolean" ||
+    (row.refreshAttempted &&
+      (row.initialDiscoveryStatus !== "error" ||
+        JSON.stringify(row.initialUnavailableReasons) !== '["runtime_unavailable"]')) ||
+    (!row.refreshAttempted &&
+      (row.initialDiscoveryStatus !== row.finalDiscoveryStatus ||
+        JSON.stringify(row.initialUnavailableReasons) !== JSON.stringify(row.finalUnavailableReasons))) ||
+    row.recovered !==
+      (row.refreshAttempted &&
+        row.finalDiscoveryStatus === "available" &&
+        (row.finalUnavailableReasons as unknown[]).length === 0)
+  )
+    throw new Error("Invalid scalar canary availability check.");
+  return row as AvailabilityCheck;
 }
 
 function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -504,6 +570,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       "qualityJudge",
       "study",
       "privateReviewRetained",
+      "availabilityCheck",
     ]);
     if (
       row.schemaVersion !== 1 ||
@@ -523,6 +590,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     )
       throw new Error("Invalid scalar canary manifest.");
     const study = row.study === undefined ? null : parseStudy(row.study);
+    const availabilityCheck =
+      row.availabilityCheck === undefined ? null : parseAvailabilityCheck(row.availabilityCheck);
     if (
       (studyPlan === null) !== (study === null) ||
       (study &&
@@ -791,6 +860,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       judge,
       qualityJudge,
       study,
+      availabilityCheck,
     };
   });
   if (new Set(cases.map((row) => `${row.scenarioId}\u0000${row.variant}`)).size !== cases.length)
@@ -1500,6 +1570,30 @@ export function analyzeQualityStudy(
       return [factor, { requestedBlocks, structurallyMatchedBlocks: factorBlocks.length, contrasts }];
     }),
   );
+  const availabilityCoverage = (rows: typeof manifest.cases) => {
+    const observed = rows.flatMap((row) => (row.availabilityCheck ? [row.availabilityCheck] : []));
+    return {
+      completedCases: rows.length,
+      checksRecorded: observed.length,
+      legacyMissingChecks: rows.length - observed.length,
+      initiallyUnavailable: observed.filter((check) => check.initialUnavailableReasons.length > 0).length,
+      refreshAttempted: observed.filter((check) => check.refreshAttempted).length,
+      recovered: observed.filter((check) => check.recovered).length,
+      finallyUnavailable: observed.filter((check) => check.finalUnavailableReasons.length > 0).length,
+      initialDiscoveryStatuses: Object.fromEntries(
+        DISCOVERY_STATUSES.map((status) => [
+          status,
+          observed.filter((check) => check.initialDiscoveryStatus === status).length,
+        ]),
+      ),
+      finalDiscoveryStatuses: Object.fromEntries(
+        DISCOVERY_STATUSES.map((status) => [
+          status,
+          observed.filter((check) => check.finalDiscoveryStatus === status).length,
+        ]),
+      ),
+    };
+  };
   const blockWarnings = byStratum.flatMap((stratum) =>
     stratum.paired.routingEligibleBlocks < 5
       ? [
@@ -1542,6 +1636,21 @@ export function analyzeQualityStudy(
       judgeModelRequested: manifest.judgeModel,
     },
     plan: { id: manifest.studyPlan.planId, digest: manifest.studyPlan.planSha256 },
+    availability: {
+      overall: availabilityCoverage(manifest.cases),
+      byFactorAndArm: Object.fromEntries(
+        (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+          (["a", "b"] as const).map((arm) => [
+            `${factor}:${arm}`,
+            availabilityCoverage(
+              manifest.cases.filter((row) => row.study!.factor === factor && row.study!.arm === arm),
+            ),
+          ]),
+        ),
+      ),
+      limitation:
+        "Only completed final-manifest cases are counted; failed case-progress events remain separate and are never imputed as completed study pairs.",
+    },
     denominators: {
       cases: manifest.cases.length,
       blocks: new Set(manifest.cases.map((row) => `${row.study!.blockId}\u0000${row.study!.replicateId}`)).size,

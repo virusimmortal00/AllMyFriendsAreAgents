@@ -503,6 +503,80 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("preserves legacy studies and counts closed availability recovery only on completed cases", () => {
+    const legacy = analyzeQualityStudy(parseScalarCanaryManifest(studyFixture()));
+    expect(legacy.availability.overall).toMatchObject({
+      completedCases: 2,
+      checksRecorded: 0,
+      legacyMissingChecks: 2,
+      refreshAttempted: 0,
+    });
+    const fixture = studyFixture();
+    Object.assign(fixture.cases[0]!, {
+      availabilityCheck: {
+        initialDiscoveryStatus: "error",
+        initialUnavailableReasons: ["runtime_unavailable"],
+        refreshAttempted: true,
+        finalDiscoveryStatus: "available",
+        finalUnavailableReasons: [],
+        recovered: true,
+      },
+    });
+    Object.assign(fixture.cases[1]!, {
+      availabilityCheck: {
+        initialDiscoveryStatus: "available",
+        initialUnavailableReasons: [],
+        refreshAttempted: false,
+        finalDiscoveryStatus: "available",
+        finalUnavailableReasons: [],
+        recovered: false,
+      },
+    });
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(report.availability.overall).toMatchObject({
+      completedCases: 2,
+      checksRecorded: 2,
+      legacyMissingChecks: 0,
+      initiallyUnavailable: 1,
+      refreshAttempted: 1,
+      recovered: 1,
+      finallyUnavailable: 0,
+      initialDiscoveryStatuses: { error: 1, available: 1 },
+    });
+    expect(report.availability.byFactorAndArm["jev:a"]).toMatchObject({ recovered: 1, checksRecorded: 1 });
+    expect(report.availability.byFactorAndArm["jev:b"]).toMatchObject({ recovered: 0, checksRecorded: 1 });
+  });
+
+  it("rejects malformed or contradictory case-level availability evidence", () => {
+    const fixture = studyFixture();
+    const valid = {
+      initialDiscoveryStatus: "error",
+      initialUnavailableReasons: ["runtime_unavailable"],
+      refreshAttempted: true,
+      finalDiscoveryStatus: "available",
+      finalUnavailableReasons: [],
+      recovered: true,
+    };
+    Object.assign(fixture.cases[0]!, { availabilityCheck: valid });
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.availabilityCheck).toMatchObject(valid);
+    for (const invalid of [
+      { ...valid, initialDiscoveryStatus: "mystery" },
+      { ...valid, finalDiscoveryStatus: "mystery" },
+      { ...valid, finalDiscoveryStatus: "error", recovered: false },
+      { ...valid, initialUnavailableReasons: ["runtime_unavailable", "runtime_unavailable"] },
+      { ...valid, finalUnavailableReasons: ["variant_removed", "model_removed"] },
+      { ...valid, finalUnavailableReasons: ["model_removed"], recovered: false },
+      { ...valid, initialUnavailableReasons: ["provider_removed"] },
+      { ...valid, finalUnavailableReasons: ["secret-text"] },
+      { ...valid, recovered: false },
+      { ...valid, refreshAttempted: false },
+      { ...valid, refreshAttempted: false, recovered: false },
+      { ...valid, rawDiagnostic: "never accepted" },
+    ]) {
+      Object.assign(fixture.cases[0]!, { availabilityCheck: invalid });
+      expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    }
+  });
   it("weights correlated trigger turns once per room pair and keeps missing human coverage", () => {
     const fixture = studyFixture();
     const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
