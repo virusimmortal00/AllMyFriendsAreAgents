@@ -39,38 +39,41 @@ describe("routing canary selection", () => {
   it("accepts the checked-in twelve-case study under explicit live time and judge-call caps", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8"));
     const study = parseStudyPlan(raw);
-    const options = parseLiveCanaryOptions(
-      [
-        "--study-plan",
-        "/fixture/study.json",
-        "--model",
-        "openrouter/anthropic/claude-haiku-4.5",
-        "--jev-model",
-        "typesafe/jev-1.13",
-        "--judge-model",
-        "openrouter/google/gemini-3.8-flash",
-        "--judge-rubric",
-        "v2",
-        "--opencode",
-        "/fixture/opencode",
-        "--secret-launcher",
-        "/fixture/bws-run",
-        "--max-cases",
-        "12",
-        "--max-judge-calls",
-        "104",
-        "--timeout-ms",
-        "120000",
-        "--total-timeout-ms",
-        "7200000",
-      ],
-      {},
-      study,
-    );
+    const args = [
+      "--study-plan",
+      "/fixture/study.json",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v2",
+      "--opencode",
+      "/fixture/opencode",
+      "--secret-launcher",
+      "/fixture/bws-run",
+      "--max-cases",
+      "12",
+      "--max-judge-calls",
+      "104",
+      "--max-generations",
+      "18",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "7200000",
+    ];
+    const options = parseLiveCanaryOptions(args, {}, study);
     expect(options.cases).toHaveLength(12);
+    expect(options.maxGenerations).toBe(18);
     expect(options.maxJudgeCalls).toBe(104);
     expect(options.planningAllowanceMs).toBe(6_850_000);
     expect(options.totalTimeoutMs).toBeGreaterThan(options.planningAllowanceMs);
+    const tooLow = [...args];
+    tooLow[tooLow.indexOf("--max-generations") + 1] = "8";
+    expect(() => parseLiveCanaryOptions(tooLow, {}, study)).toThrow("roster-by-trigger planning minimum");
   });
   it("keeps v2 audience context private and excludes study policy from judge input", () => {
     const scenario = {

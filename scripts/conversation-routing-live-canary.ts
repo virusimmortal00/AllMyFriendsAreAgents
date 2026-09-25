@@ -244,6 +244,14 @@ export function parseLiveCanaryOptions(
     throw new Error("Selected study exceeds the judge-call cap.");
   if (maxJudgeCalls > 144) throw new Error("Selected study exceeds the judge-call ceiling.");
   const timeoutMs = positiveInteger(values.get("--timeout-ms")?.[0], "Scenario timeout", 180_000, 120_000);
+  const maxGenerations = positiveInteger(
+    values.get("--max-generations")?.[0],
+    "Maximum generations",
+    studyPlan ? 24 : 12,
+    8,
+  );
+  if (studyPlan && cases.some((scenario) => scenario.agentCount * scenarioTriggerCount(scenario) > maxGenerations))
+    throw new Error("Study generation-start cap is below its roster-by-trigger planning minimum.");
   const totalTimeoutMs = positiveInteger(
     values.get("--total-timeout-ms")?.[0],
     "Total timeout",
@@ -268,7 +276,7 @@ export function parseLiveCanaryOptions(
     ...(judgeModel ? { judgeModel } : {}),
     ...(privateReviewDirectory ? { privateReviewDirectory } : {}),
     maxCases,
-    maxGenerations: positiveInteger(values.get("--max-generations")?.[0], "Maximum generations", 12, 8),
+    maxGenerations,
     timeoutMs,
     totalTimeoutMs,
     allowWideMatrix,

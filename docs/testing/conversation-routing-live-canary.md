@@ -141,7 +141,7 @@ pnpm exec tsx scripts/conversation-routing-live-canary.ts \
   --model openrouter/anthropic/claude-haiku-4.5 \
   --jev-model typesafe/jev-1.13 \
   --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v2 \
-  --max-cases 12 --max-judge-calls 104 --max-generations 8 \
+  --max-cases 12 --max-judge-calls 104 --max-generations 18 \
   --timeout-ms 120000 --total-timeout-ms 7200000
 ```
 
@@ -149,8 +149,9 @@ The dry-run prints only closed identifiers, case order, source/plan digests,
 and watchdog allowances. The example's 104 possible judge calls and two-hour
 total watchdog are review limits for a candidate plan, not authorization to
 spend them. Plans with more triggers can exhaust the explicit judge-call cap
-before every case is scheduled; the dry-run rejects such a plan. Its seed shuffles block order and balances AB/BA arm
-order; it does **not** seed OpenCode, the model, or product scheduling, whose
+before every case is scheduled; the dry-run rejects such a plan. Its seed
+shuffles block order and balances AB/BA arm order; it does **not** seed
+OpenCode, the model, or product scheduling, whose
 rank and follow-up draws depend on fresh server message IDs. A fresh room is
 used for every arm. Repeated blocks need distinct replicate IDs. The private
 prompt profile is one of the checked-in fixture values in
@@ -167,9 +168,17 @@ digest of its full selected base prompt; the two arms otherwise use the same
 fictional fixture and requested actor model. Actor response identity is not
 independently proven by the room manifest.
 
+Study preflight requires the generation-start watchdog to cover at least one
+turn per roster agent per scripted human trigger. The example's three-agent,
+three-trigger arc therefore requires at least nine starts; its selected cap of
+18 leaves bounded headroom for optional or synthesis turns. This is a planning
+minimum, not a promise that the model will use exactly that many starts or a
+strict provider-call admission limit. The legacy pilot retains its original
+12-start CLI ceiling.
+
 The legacy pilot still requires Jev completion proof in every Jev-on case. A
-study case instead retains a failed, skipped, or unconsulted classifier outcome when
-the same trigger has a correlated terminal deterministic fallback and persisted
+study case instead retains a failed, skipped, or unconsulted classifier outcome
+when the same trigger has a correlated terminal deterministic fallback and persisted
 routing decision. Its classifier outcome and missing usage remain explicit in
 the scalar report; such a case is not a completed-Jev treatment observation.
 
