@@ -118,6 +118,19 @@ function scenarioTriggerCount(scenario: LiveScenario) {
   return 1 + (scenario.scriptedFollowups?.length ?? (scenario.followup ? 1 : 0));
 }
 
+/** OpenRouter may resolve a pinned Jev release to its dated snapshot. */
+export function matchesPinnedJevResolution(requested: string, resolved: string): boolean {
+  if (resolved === requested) return true;
+  if (!resolved.startsWith(`${requested}-`)) return false;
+  const date = resolved.slice(requested.length + 1);
+  if (!/^\d{8}$/.test(date)) return false;
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(4, 6));
+  const day = Number(date.slice(6, 8));
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() + 1 === month && parsed.getUTCDate() === day;
+}
+
 function customScenario(raw: string): LiveScenario {
   const parts = raw.split(":");
   if (parts.length !== 5) throw new Error("Custom case must be dynamic:agents:energy:mode:jev-on|jev-off.");
@@ -790,7 +803,7 @@ async function runCase(
         scenario.study &&
         scenario.classifierEnabled &&
         result.classifier.resolvedModelId !== null &&
-        result.classifier.resolvedModelId !== options.jevModel
+        !matchesPinnedJevResolution(options.jevModel ?? "", result.classifier.resolvedModelId)
       )
         throw new Error("Jev provider-resolved model differs from the pinned study model.");
       if (result.attemptedTurns > options.maxGenerations || result.generationStarts > options.maxGenerations)

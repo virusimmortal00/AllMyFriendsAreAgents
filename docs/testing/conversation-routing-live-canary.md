@@ -179,7 +179,12 @@ the repository, and the documented `AMFAA_CANARY_ALLOW_REAL_PROVIDER=true
 bws-run` prefix. A live study also requires a clean source tree. The runner
 records the requested Jev model and the provider-resolved model only when the
 provider response explicitly reports one; absent resolution is null, not an
-assumed match. It fingerprints the prompt, routing, policy, and fixture inputs
+assumed match. The reported ID may be the requested release or a valid dated
+snapshot of that exact release, as in
+[OpenRouter's Jev response example](https://openrouter.ai/blog/insights/what-is-jev/).
+Unrelated model IDs fail the case. Pair analysis requires the exact resolved
+snapshot to match across consulted arms and excludes pairs with unknown
+resolution. The runner fingerprints the prompt, routing, policy, and fixture inputs
 as well as the study plan and rejects a changed fingerprint before completion.
 The independent v2 judge makes four bounded calls per trigger for social
 cadence, length fit, address radius, and contribution value. Its private v2

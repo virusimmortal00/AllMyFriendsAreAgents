@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   buildPrivateReviewPayload,
+  matchesPinnedJevResolution,
   parseLiveCanaryOptions,
   projectCaseFailedEvent,
   projectFailedCaseEvidence,
@@ -27,6 +28,14 @@ const base = [
 const execute = promisify(execFile);
 
 describe("routing canary selection", () => {
+  it("accepts only the pinned Jev release or its valid dated snapshot family", () => {
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13")).toBe(true);
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13-20260917")).toBe(true);
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.14-20260917")).toBe(false);
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "other/jev-1.13-20260917")).toBe(false);
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13-20260230")).toBe(false);
+    expect(matchesPinnedJevResolution("typesafe/jev-1.13", "typesafe/jev-1.13-20260917-extra")).toBe(false);
+  });
   it("accepts the checked-in twelve-case study under explicit live time and judge-call caps", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8"));
     const study = parseStudyPlan(raw);
