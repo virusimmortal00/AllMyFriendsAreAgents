@@ -53,6 +53,8 @@ describe("private live conversation judge", () => {
       expect(request.provider.require_parameters).toBe(true);
       expect(request.response_format.type).toBe("json_schema");
       expect(request.response_format.json_schema.strict).toBe(true);
+      expect(request.max_tokens).toBe(1_024);
+      expect(request.max_completion_tokens).toBeUndefined();
       expect(request.response_format.json_schema.schema.properties.directMisses.maximum).toBe(1);
       expect(request.response_format.json_schema.schema.properties.unnecessaryReplies.maximum).toBe(1);
       expect(JSON.stringify(request)).not.toContain("routingPolicy");
@@ -132,7 +134,7 @@ describe("private live conversation judge", () => {
     const categories = [
       [Response.json({ error: "private key" }, { status: 401 }), "http-auth"],
       [Response.json({ error: "private key" }, { status: 429 }), "http-rate-limit"],
-      [new Response("not-json"), "response-json"],
+      [new Response("not-json"), "response-envelope-json"],
       [new Response("x".repeat(32_769)), "response-too-large"],
       [Response.json({ choices: [] }), "response-shape"],
     ] as const;
@@ -147,6 +149,19 @@ describe("private live conversation judge", () => {
           JSON.stringify({ category: (error as JudgeFailure).category, message: (error as Error).message }),
         ).not.toContain("private key");
       }
+    }
+    for (const [content, finishReason, category] of [
+      ["{private incomplete", "stop", "response-content-json"],
+      ["{private incomplete", "length", "completion-truncated"],
+      [JSON.stringify(judgment), "length", "completion-truncated"],
+    ] as const) {
+      await expect(
+        judgeConversationCase(broadcast, {
+          ...options,
+          fetchImpl: (async () =>
+            Response.json({ choices: [{ finish_reason: finishReason, message: { content } }] })) as typeof fetch,
+        }),
+      ).rejects.toMatchObject({ category });
     }
   });
 

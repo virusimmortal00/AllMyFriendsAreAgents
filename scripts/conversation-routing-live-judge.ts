@@ -44,8 +44,10 @@ export type JudgeFailureCategory =
   | "http-server"
   | "http-other"
   | "response-too-large"
-  | "response-json"
+  | "response-envelope-json"
+  | "response-content-json"
   | "response-shape"
+  | "completion-truncated"
   | "judgment-schema";
 
 /** Closed failure metadata; never retain the provider's message, body, or error cause. */
@@ -227,7 +229,7 @@ async function boundedResponseJson(response: Response): Promise<Record<string, u
   try {
     parsed = JSON.parse(body);
   } catch {
-    throw new JudgeFailure("response-json");
+    throw new JudgeFailure("response-envelope-json");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new JudgeFailure("response-shape");
   return parsed as Record<string, unknown>;
@@ -283,7 +285,8 @@ export async function judgeConversationCase(
       body: JSON.stringify({
         model: options.model,
         stream: false,
-        max_tokens: 350,
+        // This pinned model advertises max_tokens; leave room for reasoning and JSON output.
+        max_tokens: 1_024,
         temperature: 0,
         provider: { require_parameters: true },
         response_format: {
@@ -313,14 +316,18 @@ export async function judgeConversationCase(
   if (!response.ok) throw new JudgeFailure(httpCategory(response.status));
   const body = await boundedResponseJson(response);
   const choices = body.choices;
-  const choice = Array.isArray(choices) ? (choices[0] as { message?: { content?: unknown } } | undefined) : undefined;
+  const choice = Array.isArray(choices)
+    ? (choices[0] as { finish_reason?: unknown; message?: { content?: unknown } } | undefined)
+    : undefined;
+  if (choice?.finish_reason === "length" || choice?.finish_reason === "max_tokens")
+    throw new JudgeFailure("completion-truncated");
   if (typeof choice?.message?.content !== "string" || choice.message.content.length > 8_192)
     throw new JudgeFailure("response-shape");
   let judgmentValue: unknown;
   try {
     judgmentValue = JSON.parse(choice.message.content);
   } catch {
-    throw new JudgeFailure("response-json");
+    throw new JudgeFailure("response-content-json");
   }
   let judgment: ReturnType<typeof parseJudgment>;
   try {
