@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeConversationCanary,
+  mergeScalarCanaryManifests,
   parseScalarCanaryManifest,
   privateRatingTemplate,
 } from "./conversation-routing-live-analysis.js";
@@ -61,6 +62,11 @@ const trigger = (variant: "jev-on" | "jev-off", changes: Record<string, unknown>
   generationFailures: 0,
   reportedInputTokens: 100,
   reportedOutputTokens: 50,
+  reportedReasoningTokens: 5,
+  reportedCacheReadTokens: 20,
+  reportedCacheWriteTokens: 0,
+  reportedTotalTokens: 175,
+  totalTokenCoverage: "reported",
   reportedCostUsd: variant === "jev-on" ? 0.02 : 0.03,
   usageCoverage: "reported",
   ...changes,
@@ -125,23 +131,40 @@ describe("provider-free conversation canary analysis", () => {
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 2 },
       actorPlusJevCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
     });
+    expect(report.judgeOnly.naturalnessAndReportedTokens).toEqual({
+      pairedRuns: 1,
+      naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 2 },
+      actorTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
+    });
     expect(report.humanRated?.paired.naturalness).toEqual({ pairedRuns: 1, candidateMinusBaselineMean: 3 });
     expect(report.humanRated?.naturalnessAndReportedCost).toEqual({
       pairedRuns: 1,
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 3 },
       actorPlusJevCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
     });
+    expect(report.humanRated?.naturalnessAndReportedTokens).toEqual({
+      pairedRuns: 1,
+      naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 3 },
+      actorTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
+    });
     expect(report.humanRated?.directReply).toEqual({ expectedTargets: 2, missedTargets: 1, humanCorrections: 1 });
     expect(report.humanReviewCoverage).toMatchObject({ submittedRuns: 2, unsubmittedRuns: 0 });
     expect(report.pairedActorPlusJev.reportedCostUsd.pairedRuns).toBe(1);
     expect(report.pairedActorPlusJev.reportedCostUsd.candidateMinusBaselineMean).toBeCloseTo(-0.009);
-    expect(report.pairedActorPlusJev.inputTokens).toEqual({ pairedRuns: 1, candidateMinusBaselineMean: 10 });
+    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+      pairedRuns: 1,
+      candidateMinusBaselineMean: 10,
+    });
     expect(report.variants["jev-on"]?.jevCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.001 });
-    expect(report.variants["jev-on"]?.actorPlusJevInputTokens).toEqual({ reportedRuns: 1, missingRuns: 0, total: 110 });
+    expect(report.variants["jev-on"]?.actorTotalPlusJevPromptCompletionTokens).toEqual({
+      reportedRuns: 1,
+      missingRuns: 0,
+      total: 185,
+    });
     expect(report.variants["jev-on"]?.judgeCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.002 });
     expect(report.spotChecks).toHaveLength(2);
     expect(JSON.stringify(report)).not.toContain("Private reply text");
-    expect(JSON.stringify(report)).not.toContain("prompt");
+    expect(JSON.stringify(report)).not.toContain('"prompt":');
   });
 
   it("preserves missing denominators and never treats partial actor/Jev usage as zero", () => {
@@ -178,7 +201,10 @@ describe("provider-free conversation canary analysis", () => {
       metrics: { naturalness: { ratedRuns: 0, missingRuns: 2 } },
     });
     expect(report.pairedActorPlusJev.reportedCostUsd).toEqual({ pairedRuns: 0, candidateMinusBaselineMean: null });
-    expect(report.pairedActorPlusJev.inputTokens).toEqual({ pairedRuns: 0, candidateMinusBaselineMean: null });
+    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+      pairedRuns: 1,
+      candidateMinusBaselineMean: 10,
+    });
     expect(report.judgeOnly.naturalnessAndReportedCost.pairedRuns).toBe(0);
   });
 
@@ -248,4 +274,91 @@ describe("provider-free conversation canary analysis", () => {
       },
     });
   });
+
+  it("merges separate compatible final manifests and rejects incompatible or duplicate cases", () => {
+    const fixture = manifest();
+    const on = parseScalarCanaryManifest({
+      ...fixture,
+      cases: [fixture.cases[0]],
+      scenarioCatalogSha256: "c".repeat(64),
+    });
+    const off = parseScalarCanaryManifest({
+      ...fixture,
+      cases: [fixture.cases[1]],
+      scenarioCatalogSha256: "d".repeat(64),
+    });
+    const combined = mergeScalarCanaryManifests([on, off]);
+    expect(combined.scenarioCatalogSha256s).toEqual(["c".repeat(64), "d".repeat(64)]);
+    expect(analyzeConversationCanary(combined).matchedPairs).toBe(1);
+    expect(() => mergeScalarCanaryManifests([on, on])).toThrow();
+    expect(() => mergeScalarCanaryManifests([on, { ...off, sourceSha256: "e".repeat(64) }])).toThrow();
+    expect(() => mergeScalarCanaryManifests([on, { ...off, actorModel: "openrouter/other/model" }])).toThrow();
+    expect(() => mergeScalarCanaryManifests([on, { ...off, judgeModel: "openrouter/other/judge" }])).toThrow();
+    expect(() =>
+      mergeScalarCanaryManifests([
+        { ...on, judgeModel: null, cases: [{ ...on.cases[0]!, judge: [] }] },
+        off,
+        { ...off, cases: [], judgeModel: "openrouter/other/judge" },
+      ]),
+    ).toThrow();
+    expect(() => mergeScalarCanaryManifests([on, { ...off, openCodeVersion: "1.18.26" }])).toThrow();
+    expect(() =>
+      mergeScalarCanaryManifests([on, { ...off, cases: [{ ...off.cases[0]!, energy: "party" }] }]),
+    ).toThrow();
+  });
+
+  it("keeps older manifests cost-comparable but leaves total-token comparison missing", () => {
+    const fixture = manifest();
+    const oldFields = [
+      "reportedReasoningTokens",
+      "reportedCacheReadTokens",
+      "reportedCacheWriteTokens",
+      "reportedTotalTokens",
+      "totalTokenCoverage",
+    ];
+    const cases = fixture.cases.map((row) => {
+      const oldTrigger: Record<string, unknown> = { ...row.triggers[0] };
+      for (const field of oldFields) delete oldTrigger[field];
+      return { ...row, triggers: [oldTrigger] };
+    });
+    const report = analyzeConversationCanary(parseScalarCanaryManifest({ ...fixture, cases }));
+    expect(report.pairedActorPlusJev.reportedCostUsd.pairedRuns).toBe(1);
+    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+      pairedRuns: 0,
+      candidateMinusBaselineMean: null,
+    });
+    expect(report.variants["jev-on"]?.actorUncachedInputTokens.total).toBe(100);
+    expect(report.variants["jev-on"]?.actorReportedTotalTokens).toEqual({
+      reportedRuns: 0,
+      missingRuns: 1,
+      total: null,
+    });
+  });
+
+  it("accepts repeated --manifest paths through the provider-free CLI", () => {
+    const directory = mkdtempSync(join(tmpdir(), "conversation-canary-analysis-"));
+    try {
+      const fixture = manifest();
+      const onPath = join(directory, "on.json");
+      const offPath = join(directory, "off.json");
+      writeFileSync(onPath, JSON.stringify({ ...fixture, cases: [fixture.cases[0]] }));
+      writeFileSync(offPath, JSON.stringify({ ...fixture, cases: [fixture.cases[1]] }));
+      const output = execFileSync(
+        "pnpm",
+        ["exec", "tsx", "scripts/conversation-routing-live-analysis.ts", "--manifest", onPath, "--manifest", offPath],
+        { encoding: "utf8" },
+      );
+      const report = JSON.parse(output);
+      expect(report.matchedPairs).toBe(1);
+      expect(report.runs).toBe(2);
+      expect(JSON.stringify(report)).not.toContain("fictional room question");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";

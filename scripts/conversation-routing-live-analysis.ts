@@ -17,6 +17,8 @@ const MAX_TRIGGERS = 72;
 const HUMAN_METRICS = ["directReply", "naturalness", "distinctValue", "replyWaste", "handoff", "closure"] as const;
 
 type Variant = "jev-on" | "jev-off";
+type Energy = "low" | "balanced" | "lively" | "party";
+type PreflightMode = "off" | "shadow" | "enforce";
 interface ScalarTrigger {
   scenarioId: string;
   runId: string;
@@ -24,6 +26,11 @@ interface ScalarTrigger {
   actor: {
     inputTokens: number | null;
     outputTokens: number | null;
+    reasoningTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    totalTokens: number | null;
+    totalTokenCoverage: "reported" | "partial" | "missing";
     costUsd: number | null;
     coverage: "reported" | "partial" | "missing";
   };
@@ -35,8 +42,7 @@ interface ScalarTrigger {
   };
   firstVisibleMs: number | null;
   combined: {
-    inputTokens: number | null;
-    outputTokens: number | null;
+    actorTotalPlusJevPromptCompletionTokens: number | null;
     costUsd: number | null;
     coverage: "reported" | "partial" | "missing";
   };
@@ -45,10 +51,19 @@ export interface ScalarCanaryManifest {
   sourceCommit: string;
   sourceDirty: boolean;
   sourceSha256: string;
-  scenarioCatalogSha256: string;
+  scenarioCatalogSha256s: string[];
+  openCodeVersion: string;
   actorModel: string;
   judgeModel: string | null;
-  cases: Array<{ scenarioId: string; variant: Variant; triggers: ScalarTrigger[]; judge: JudgeScalarResult[] }>;
+  cases: Array<{
+    scenarioId: string;
+    variant: Variant;
+    agentCount: number;
+    energy: Energy;
+    preflightMode: PreflightMode;
+    triggers: ScalarTrigger[];
+    judge: JudgeScalarResult[];
+  }>;
 }
 
 function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -78,6 +93,9 @@ function nullableInteger(value: unknown, max: number): number | null {
   const parsed = integer(value, max);
   if (parsed === null) throw new Error("Invalid scalar canary manifest.");
   return parsed;
+}
+function optionalInteger(value: unknown, max: number): number | null {
+  return value === undefined ? null : nullableInteger(value, max);
 }
 function variant(value: unknown): value is Variant {
   return value === "jev-on" || value === "jev-off";
@@ -246,6 +264,11 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         "generationFailures",
         "reportedInputTokens",
         "reportedOutputTokens",
+        "reportedReasoningTokens",
+        "reportedCacheReadTokens",
+        "reportedCacheWriteTokens",
+        "reportedTotalTokens",
+        "totalTokenCoverage",
         "reportedCostUsd",
         "usageCoverage",
       ]);
@@ -253,6 +276,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         trigger.schemaVersion !== 1 ||
         !id(trigger.scenarioId) ||
         trigger.variant !== row.variant ||
+        trigger.preflightMode !== row.preflightMode ||
         !id(trigger.runId) ||
         !["reported", "partial", "missing"].includes(String(trigger.usageCoverage)) ||
         !Array.isArray(trigger.requiredAddressAgents) ||
@@ -287,9 +311,23 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       const actor = {
         inputTokens: nullableInteger(trigger.reportedInputTokens, 1_000_000_000),
         outputTokens: nullableInteger(trigger.reportedOutputTokens, 1_000_000_000),
+        reasoningTokens: optionalInteger(trigger.reportedReasoningTokens, 1_000_000_000),
+        cacheReadTokens: optionalInteger(trigger.reportedCacheReadTokens, 1_000_000_000),
+        cacheWriteTokens: optionalInteger(trigger.reportedCacheWriteTokens, 1_000_000_000),
+        totalTokens: optionalInteger(trigger.reportedTotalTokens, 1_000_000_000),
+        totalTokenCoverage:
+          trigger.totalTokenCoverage === undefined
+            ? ("missing" as const)
+            : (trigger.totalTokenCoverage as ScalarTrigger["actor"]["totalTokenCoverage"]),
         costUsd: nullableNumber(trigger.reportedCostUsd, 1_000),
         coverage: trigger.usageCoverage as ScalarTrigger["actor"]["coverage"],
       };
+      if (
+        !["reported", "partial", "missing"].includes(actor.totalTokenCoverage) ||
+        (actor.totalTokenCoverage === "reported" && actor.totalTokens === null) ||
+        (actor.totalTokenCoverage !== "reported" && actor.totalTokens !== null)
+      )
+        throw new Error("Invalid scalar canary manifest.");
       const jev = {
         outcome: classifier.outcome as ScalarTrigger["jev"]["outcome"],
         inputTokens: nullableInteger(classifier.reportedInputTokens, 1_000_000),
@@ -315,6 +353,10 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         actor.outputTokens !== null &&
         actor.costUsd !== null &&
         jevComplete;
+      const totalTokensComplete =
+        actor.totalTokenCoverage === "reported" &&
+        actor.totalTokens !== null &&
+        (noJev || (jev.inputTokens !== null && jev.outputTokens !== null));
       const anyReported =
         actor.inputTokens !== null ||
         actor.outputTokens !== null ||
@@ -330,8 +372,9 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         jev,
         firstVisibleMs: nullableInteger(trigger.firstVisibleMs, 3_600_000),
         combined: {
-          inputTokens: complete ? actor.inputTokens! + (noJev ? 0 : jev.inputTokens!) : null,
-          outputTokens: complete ? actor.outputTokens! + (noJev ? 0 : jev.outputTokens!) : null,
+          actorTotalPlusJevPromptCompletionTokens: totalTokensComplete
+            ? actor.totalTokens! + (noJev ? 0 : jev.inputTokens! + jev.outputTokens!)
+            : null,
           costUsd: complete ? actor.costUsd! + (noJev ? 0 : jev.costUsd!) : null,
           coverage: complete ? "reported" : anyReported ? "partial" : "missing",
         },
@@ -352,7 +395,15 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     });
     if (new Set(judge.map((entry) => `${entry.scenarioId}\u0000${entry.runId}`)).size !== judge.length)
       throw new Error("Invalid scalar canary manifest.");
-    return { scenarioId: row.scenarioId as string, variant: row.variant as Variant, triggers, judge };
+    return {
+      scenarioId: row.scenarioId as string,
+      variant: row.variant as Variant,
+      agentCount: row.agentCount as number,
+      energy: row.energy as Energy,
+      preflightMode: row.preflightMode as PreflightMode,
+      triggers,
+      judge,
+    };
   });
   if (new Set(cases.map((row) => `${row.scenarioId}\u0000${row.variant}`)).size !== cases.length)
     throw new Error("Invalid scalar canary manifest.");
@@ -366,9 +417,48 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     sourceCommit: top.sourceCommit,
     sourceDirty: top.sourceDirty,
     sourceSha256: top.sourceSha256,
-    scenarioCatalogSha256: top.scenarioCatalogSha256,
+    scenarioCatalogSha256s: [top.scenarioCatalogSha256],
+    openCodeVersion: top.openCodeVersion,
     actorModel: top.actorModel,
     judgeModel: top.judgeModel,
+    cases,
+  };
+}
+
+/** Merge independent completed canary invocations without equating different source builds. */
+export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManifest[]): ScalarCanaryManifest {
+  if (!manifests.length || manifests.length > MAX_CASES) throw new Error("Invalid scalar canary manifest set.");
+  const first = manifests[0]!;
+  const cases = manifests.flatMap((manifest) => manifest.cases);
+  const settings = new Map<string, string>();
+  for (const row of cases) {
+    const value = JSON.stringify([row.agentCount, row.energy, row.preflightMode]);
+    const prior = settings.get(row.scenarioId);
+    if (prior !== undefined && prior !== value) throw new Error("Incompatible scalar canary settings.");
+    settings.set(row.scenarioId, value);
+  }
+  if (
+    cases.length > MAX_CASES ||
+    cases.flatMap((row) => row.triggers).length > MAX_TRIGGERS ||
+    manifests.some(
+      (manifest) =>
+        manifest.sourceCommit !== first.sourceCommit ||
+        manifest.sourceDirty !== first.sourceDirty ||
+        manifest.sourceSha256 !== first.sourceSha256 ||
+        manifest.openCodeVersion !== first.openCodeVersion ||
+        manifest.actorModel !== first.actorModel,
+    ) ||
+    new Set(manifests.map((manifest) => manifest.judgeModel).filter((value) => value !== null)).size > 1 ||
+    new Set(cases.map((row) => `${row.scenarioId}\u0000${row.variant}`)).size !== cases.length ||
+    new Set(cases.flatMap((row) => row.triggers.map((trigger) => trigger.runId))).size !==
+      cases.flatMap((row) => row.triggers).length
+  )
+    throw new Error("Incompatible or duplicate scalar canary manifests.");
+  const judgeModel = manifests.find((manifest) => manifest.judgeModel !== null)?.judgeModel ?? null;
+  return {
+    ...first,
+    scenarioCatalogSha256s: [...new Set(manifests.flatMap((manifest) => manifest.scenarioCatalogSha256s))].sort(),
+    judgeModel,
     cases,
   };
 }
@@ -413,8 +503,19 @@ export function analyzeConversationCanary(
           runs: rows.length,
           jevCompleted: rows.filter((row) => row.jev.outcome === "completed").length,
           actorCostUsd: aggregate(rows.map((row) => (row.actor.coverage === "reported" ? row.actor.costUsd : null))),
-          actorPlusJevInputTokens: aggregate(rows.map((row) => row.combined.inputTokens)),
-          actorPlusJevOutputTokens: aggregate(rows.map((row) => row.combined.outputTokens)),
+          actorUncachedInputTokens: aggregate(
+            rows.map((row) => (row.actor.coverage === "reported" ? row.actor.inputTokens : null)),
+          ),
+          actorOutputTokens: aggregate(
+            rows.map((row) => (row.actor.coverage === "reported" ? row.actor.outputTokens : null)),
+          ),
+          actorReasoningTokens: aggregate(rows.map((row) => row.actor.reasoningTokens)),
+          actorCacheReadTokens: aggregate(rows.map((row) => row.actor.cacheReadTokens)),
+          actorCacheWriteTokens: aggregate(rows.map((row) => row.actor.cacheWriteTokens)),
+          actorReportedTotalTokens: aggregate(rows.map((row) => row.actor.totalTokens)),
+          actorTotalPlusJevPromptCompletionTokens: aggregate(
+            rows.map((row) => row.combined.actorTotalPlusJevPromptCompletionTokens),
+          ),
           jevCostUsd: aggregate(
             rows.map((row) =>
               row.variant === "jev-off" ? 0 : row.jev.outcome === "completed" ? row.jev.costUsd : null,
@@ -479,20 +580,26 @@ export function analyzeConversationCanary(
   };
   const judges = new Map(judgments.map((row) => [`${row.scenarioId}\u0000${row.runId}`, row]));
   const humanRatings = new Map(ratings.map((row) => [`${row.scenarioId}\u0000${row.runId}`, row]));
-  const actorJevInput: number[] = [],
-    actorJevOutput: number[] = [],
+  const actorJevReportedTotal: number[] = [],
     judgeNaturalness: number[] = [];
   const jointJudgeNaturalness: number[] = [],
     jointActorJevCost: number[] = [];
+  const jointJudgeNaturalnessTokens: number[] = [],
+    jointActorJevTokensForJudge: number[] = [];
   const jointHumanNaturalness: number[] = [],
     jointHumanActorJevCost: number[] = [];
+  const jointHumanNaturalnessTokens: number[] = [],
+    jointActorJevTokensForHuman: number[] = [];
   for (const pair of pairs) {
     const a = triggers.find((row) => row.scenarioId === pair.scenarioId && row.runId === pair.baselineRunId)!;
     const b = triggers.find((row) => row.scenarioId === pair.scenarioId && row.runId === pair.candidateRunId)!;
-    if (a.combined.inputTokens !== null && b.combined.inputTokens !== null)
-      actorJevInput.push(b.combined.inputTokens - a.combined.inputTokens);
-    if (a.combined.outputTokens !== null && b.combined.outputTokens !== null)
-      actorJevOutput.push(b.combined.outputTokens - a.combined.outputTokens);
+    if (
+      a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
+      b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+    )
+      actorJevReportedTotal.push(
+        b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+      );
     const jA = judges.get(`${pair.scenarioId}\u0000${pair.baselineRunId}`);
     const jB = judges.get(`${pair.scenarioId}\u0000${pair.candidateRunId}`);
     if (jA?.status === "rated" && jB?.status === "rated") {
@@ -502,17 +609,33 @@ export function analyzeConversationCanary(
         jointJudgeNaturalness.push(naturalnessDelta);
         jointActorJevCost.push(b.combined.costUsd - a.combined.costUsd);
       }
+      if (
+        a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
+        b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+      ) {
+        jointJudgeNaturalnessTokens.push(naturalnessDelta);
+        jointActorJevTokensForJudge.push(
+          b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+        );
+      }
     }
     const hA = humanRatings.get(`${pair.scenarioId}\u0000${pair.baselineRunId}`)?.naturalness;
     const hB = humanRatings.get(`${pair.scenarioId}\u0000${pair.candidateRunId}`)?.naturalness;
-    if (
-      hA?.status === "rated" &&
-      hB?.status === "rated" &&
-      a.combined.costUsd !== null &&
-      b.combined.costUsd !== null
-    ) {
-      jointHumanNaturalness.push(hB.score - hA.score);
-      jointHumanActorJevCost.push(b.combined.costUsd - a.combined.costUsd);
+    if (hA?.status === "rated" && hB?.status === "rated") {
+      const naturalnessDelta = hB.score - hA.score;
+      if (a.combined.costUsd !== null && b.combined.costUsd !== null) {
+        jointHumanNaturalness.push(naturalnessDelta);
+        jointHumanActorJevCost.push(b.combined.costUsd - a.combined.costUsd);
+      }
+      if (
+        a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
+        b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+      ) {
+        jointHumanNaturalnessTokens.push(naturalnessDelta);
+        jointActorJevTokensForHuman.push(
+          b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+        );
+      }
     }
   }
   const costAndLatency = summarizeConversationRatings([], observations, pairs).paired;
@@ -532,7 +655,8 @@ export function analyzeConversationCanary(
       commit: manifest.sourceCommit,
       dirty: manifest.sourceDirty,
       digest: manifest.sourceSha256,
-      scenarioCatalogDigest: manifest.scenarioCatalogSha256,
+      openCodeVersion: manifest.openCodeVersion,
+      scenarioCatalogDigests: manifest.scenarioCatalogSha256s,
     },
     runs: triggers.length,
     matchedPairs: pairs.length,
@@ -546,6 +670,11 @@ export function analyzeConversationCanary(
         naturalness: delta(jointJudgeNaturalness),
         actorPlusJevCostUsd: delta(jointActorJevCost),
       },
+      naturalnessAndReportedTokens: {
+        pairedRuns: jointJudgeNaturalnessTokens.length,
+        naturalness: delta(jointJudgeNaturalnessTokens),
+        actorTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForJudge),
+      },
     },
     humanRated: human
       ? {
@@ -555,18 +684,22 @@ export function analyzeConversationCanary(
             naturalness: delta(jointHumanNaturalness),
             actorPlusJevCostUsd: delta(jointHumanActorJevCost),
           },
+          naturalnessAndReportedTokens: {
+            pairedRuns: jointHumanNaturalnessTokens.length,
+            naturalness: delta(jointHumanNaturalnessTokens),
+            actorTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForHuman),
+          },
         }
       : null,
     humanReviewCoverage,
     pairedActorPlusJev: {
       reportedCostUsd: costAndLatency.reportedCostUsd,
-      inputTokens: delta(actorJevInput),
-      outputTokens: delta(actorJevOutput),
+      actorTotalPlusJevPromptCompletionTokens: delta(actorJevReportedTotal),
       firstVisibleMs: costAndLatency.firstVisibleMs,
     },
     spotChecks,
     limitations:
-      "Judge scores are model judgments; human ratings have separate denominators. Cost/token comparisons require complete actor and Jev reports on both matched runs. Judge cost is separate. Uninvoked replies and missing usage are unknown; small matched cases do not prove causality.",
+      "Judge scores are model judgments; human ratings have separate denominators. Cost comparisons require complete actor and Jev cost reports on both matched runs. Total-token comparisons require provider-reported actor totals plus complete Jev prompt/completion counts; the combined sum is derived. Judge cost is separate. Uninvoked replies and missing usage are unknown; small matched cases do not prove causality.",
   };
 }
 
@@ -587,6 +720,7 @@ async function readBounded(path: string) {
 async function main() {
   const args = process.argv.slice(2);
   const values = new Map<string, string>();
+  const manifestPaths: string[] = [];
   let template = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -595,13 +729,20 @@ async function main() {
       template = true;
       continue;
     }
-    if (!["--manifest", "--ratings", "--seed", "--spot-checks"].includes(arg) || !args[i + 1] || values.has(arg))
+    if (!["--manifest", "--ratings", "--seed", "--spot-checks"].includes(arg) || !args[i + 1])
       throw new Error("Invalid analysis invocation.");
+    if (arg === "--manifest") {
+      if (manifestPaths.length >= MAX_CASES) throw new Error("Invalid analysis invocation.");
+      manifestPaths.push(args[++i]!);
+      continue;
+    }
+    if (values.has(arg)) throw new Error("Invalid analysis invocation.");
     values.set(arg, args[++i]!);
   }
-  const manifestPath = values.get("--manifest");
-  if (!manifestPath || (template && values.has("--ratings"))) throw new Error("Invalid analysis invocation.");
-  const manifest = parseScalarCanaryManifest(await readBounded(manifestPath));
+  if (!manifestPaths.length || (template && values.has("--ratings"))) throw new Error("Invalid analysis invocation.");
+  const manifests: ScalarCanaryManifest[] = [];
+  for (const path of manifestPaths) manifests.push(parseScalarCanaryManifest(await readBounded(path)));
+  const manifest = mergeScalarCanaryManifests(manifests);
   const ratings = values.has("--ratings")
     ? parsePrivateConversationRatings(await readBounded(values.get("--ratings")!))
     : [];
