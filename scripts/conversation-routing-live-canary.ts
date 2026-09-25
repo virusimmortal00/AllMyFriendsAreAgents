@@ -220,6 +220,8 @@ export function parseLiveCanaryOptions(
     Number(flags.has("--pilot")) + Number(values.has("--case")) + Number(values.has("--study-plan"));
   if (selectedInputs !== 1 || Boolean(studyPlan) !== values.has("--study-plan"))
     throw new Error("Choose one pilot, case list, or validated study plan.");
+  if (studyPlan && flags.has("--require-visible"))
+    throw new Error("Study plans must retain quiet outcomes; --require-visible is not allowed.");
   const allowWideMatrix = flags.has("--allow-wide-matrix");
   const allowLargeStudy = flags.has("--allow-large-study");
   if (allowLargeStudy && !studyPlan) throw new Error("Large-study opt-in requires a validated study plan.");

@@ -167,7 +167,9 @@ before every case is scheduled; the dry-run rejects such a plan. Its seed
 shuffles block order and balances AB/BA arm order; it does **not** seed
 OpenCode, the model, or product scheduling, whose
 rank and follow-up draws depend on fresh server message IDs. A fresh room is
-used for every arm. Repeated blocks need distinct replicate IDs. The private
+used for every arm. Study plans reject `--require-visible` so optional quiet
+outcomes remain in the matched sample. Repeated blocks need distinct replicate
+IDs. The private
 prompt profile is one of the checked-in fixture values in
 `scripts/conversation-routing-live-study.ts`; the plan accepts no free-text
 prompt. The Jev `lean-v1` profile omits an unused question. The experimental

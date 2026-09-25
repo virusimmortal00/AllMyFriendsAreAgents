@@ -372,6 +372,9 @@ describe("routing canary selection", () => {
     expect(options.maxJudgeCalls).toBe(104);
     expect(options.planningAllowanceMs).toBe(6_850_000);
     expect(options.totalTimeoutMs).toBeGreaterThan(options.planningAllowanceMs);
+    expect(() => parseLiveCanaryOptions([...args, "--require-visible"], {}, study)).toThrow(
+      "Study plans must retain quiet outcomes",
+    );
     const tooLow = [...args];
     tooLow[tooLow.indexOf("--max-generations") + 1] = "8";
     expect(() => parseLiveCanaryOptions(tooLow, {}, study)).toThrow("roster-by-trigger planning minimum");
