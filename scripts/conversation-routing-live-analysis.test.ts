@@ -659,4 +659,32 @@ describe("versioned quality study analysis", () => {
     expect(Object.hasOwn(report.resources, "pairedArmBMinusA")).toBe(false);
     expect(report.byFactor.jev!.paired.resourcesArmBMinusA.actorEstimatedCostUsd.pairedRuns).toBe(2);
   });
+
+  it("accepts rated optional silence only for length fit with no delivered reply", () => {
+    const fixture = studyFixture();
+    const quiet = fixture.cases[0]!.triggers[0]!;
+    quiet.requiredAddressAgents = [];
+    quiet.confirmedDeliveredBursts = 0;
+    quiet.respondedTurns = 0;
+    quiet.yieldedTurns = 1;
+    const judgments = fixture.cases[0]!.qualityJudge[0]!.outcomes;
+    for (const index of [0, 2, 3]) judgments[index] = qualityOutcome(axes[index]!, "study-example-a", "run-a", null);
+    const result = fixture.cases[0]!.qualityJudge[0]!.outcomes[1]!.result;
+    result.reasonCode = "silence_fit";
+    result.score = 5;
+    result.details = { direction: "appropriate" };
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("completed");
+    quiet.requiredAddressAgents = ["codex-sol"];
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    quiet.requiredAddressAgents = [];
+    quiet.confirmedDeliveredBursts = 1;
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    quiet.confirmedDeliveredBursts = 0;
+    result.details = { direction: "too_long" };
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    result.details = { direction: "appropriate" };
+    result.reasonCode = "observable_exchange";
+    fixture.cases[0]!.qualityJudge[0]!.outcomes[0]!.result.reasonCode = "silence_fit";
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+  });
 });

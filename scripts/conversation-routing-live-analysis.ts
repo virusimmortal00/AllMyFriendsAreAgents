@@ -292,6 +292,7 @@ function parseQualityOutcome(
     ![
       "observable_exchange",
       "required_reply_missing",
+      "silence_fit",
       "no_applicable_obligation",
       "no_visible_reply",
       "insufficient_context",
@@ -327,9 +328,17 @@ function parseQualityOutcome(
     result.score === 1 &&
     result.reasonCode === "required_reply_missing" &&
     details.direction === "too_short";
+  const optionalSilence =
+    axis === "length_fit" &&
+    visibleBursts === 0 &&
+    requiredTargets === 0 &&
+    result.status === "rated" &&
+    result.reasonCode === "silence_fit" &&
+    (details.direction === "too_short" || details.direction === "appropriate");
   if (
     result.status === "rated"
       ? !requiredMissing &&
+        !optionalSilence &&
         (result.reasonCode !== "observable_exchange" ||
           visibleBursts === 0 ||
           Object.values(details).some((value) => value === null))

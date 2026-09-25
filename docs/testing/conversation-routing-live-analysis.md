@@ -134,6 +134,10 @@ number of agent-to-agent turns; contribution value can be useful knowledge or
 fitting entertainment. A required direct reply with no visible answer is a
 too-short length failure. Quiet casual cases may be not assessable. Without a
 reference, neither judge nor human rating verifies factual truth.
+For an optional latest prompt with no agent reply, the length judge may rate
+the silence with reason `silence_fit` and direction `too_short` or
+`appropriate`; the parser rejects that reason for required replies, visible
+replies, and the other three axes.
 
 | Axis | Score 1 | Score 3 | Score 5 |
 | --- | --- | --- | --- |
