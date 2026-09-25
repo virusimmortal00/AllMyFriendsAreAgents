@@ -639,8 +639,51 @@ class CaseFailure extends Error {
   }
 }
 
+const ATTRIBUTION_TRIGGER_CATEGORIES = new Set([
+  "visible-delivered",
+  "gate-suppressed",
+  "routing-unavailable",
+  "generation-failed",
+  "completed-yielded",
+  "completed-no-delivery",
+  "mixed-or-unresolved",
+]);
+const ATTRIBUTION_GENERATION_CATEGORIES = new Set([
+  "delivered",
+  "yielded",
+  "undelivered",
+  "completed-no-delivery-evidence",
+  "failed",
+  "cancelled",
+  "incomplete",
+]);
+
+function projectNoVisibleAttribution(value: LiveScenarioResult["noVisibleAttributionV1"]) {
+  if (
+    !value ||
+    value.schemaVersion !== 1 ||
+    !ATTRIBUTION_TRIGGER_CATEGORIES.has(value.category) ||
+    !Array.isArray(value.generations) ||
+    value.generations.length > 100 ||
+    value.generations.some(
+      (entry, index) =>
+        !entry ||
+        typeof entry !== "object" ||
+        entry.ordinal !== index + 1 ||
+        !ATTRIBUTION_GENERATION_CATEGORIES.has(entry.category),
+    )
+  )
+    return undefined;
+  return {
+    schemaVersion: 1 as const,
+    category: value.category,
+    generations: value.generations.map(({ ordinal, category }) => ({ ordinal, category })),
+  };
+}
+
 /** Preserve only the collector's closed scalar fields when a case stops after routing. */
 export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScenarioResult {
+  const noVisibleAttributionV1 = projectNoVisibleAttribution(result.noVisibleAttributionV1);
   return {
     schemaVersion: result.schemaVersion,
     openCodeUsageProvenance: result.openCodeUsageProvenance,
@@ -669,6 +712,7 @@ export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScena
     generationStarts: result.generationStarts,
     generationCompletions: result.generationCompletions,
     generationFailures: result.generationFailures,
+    ...(noVisibleAttributionV1 ? { noVisibleAttributionV1 } : {}),
     openCodeObservedInputTokens: result.openCodeObservedInputTokens,
     openCodeObservedOutputTokens: result.openCodeObservedOutputTokens,
     openCodeObservedReasoningTokens: result.openCodeObservedReasoningTokens,

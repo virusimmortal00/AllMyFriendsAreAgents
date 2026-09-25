@@ -127,6 +127,34 @@ function fixture() {
   return { triggerMessageId, records, preflight };
 }
 
+function silentFixture() {
+  const input = fixture();
+  input.records = input.records.filter(
+    (record) => record.stage !== "first-visible" && record.event !== "generation.delivery",
+  );
+  const run = input.records.find((record) => record.event === "conversation.run.completed")!;
+  run.reason = "no-visible-output";
+  run.summary = {
+    counts: { attemptedTurns: 1, respondedTurns: 0, yieldedTurns: 0, confirmedDeliveredBursts: 0 },
+  };
+  input.records.find((record) => record.stage === "terminal")!.reason = "no-visible-output";
+  const turn = input.records.find((record) => record.event === "conversation.turn.finished")!;
+  turn.outcome = "no-response";
+  turn.reason = "no-visible-output";
+  return input;
+}
+
+function collectFixture(input: ReturnType<typeof fixture>) {
+  return collectLiveScenarioEvidence({
+    scenarioId: "direct-2-low-enforce",
+    variant: "jev-on",
+    preflightMode: "enforce",
+    records: input.records,
+    preflightDecisions: input.preflight,
+    triggerMessageId: input.triggerMessageId,
+  });
+}
+
 describe("live routing scalar extraction", () => {
   it("retains a correlated study Jev fallback but keeps the legacy completion proof strict", () => {
     for (const outcome of ["failed", "skipped", null] as const) {
@@ -209,6 +237,132 @@ describe("live routing scalar extraction", () => {
       openCodeTotalCoverage: "reported",
     });
     expect(JSON.stringify(result)).not.toContain("private-output");
+    expect(result.noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "visible-delivered",
+      generations: [{ ordinal: 1, category: "delivered" }],
+    });
+  });
+
+  it("distinguishes all-suppressed routing from unavailable routing before generation", () => {
+    for (const outcome of ["suppress", "unavailable"] as const) {
+      const input = silentFixture();
+      input.records = input.records.filter(
+        (record) =>
+          ![
+            "generation.started",
+            "generation.completed",
+            "provider.exchange.observed",
+            "conversation.turn.finished",
+          ].includes(String(record.event)) && record.stage !== "generation-completed",
+      );
+      const completed = input.records.find((record) => record.event === "conversation.run.completed")!;
+      completed.runEventSequence = 2;
+      completed.attemptedEventCount = 2;
+      completed.summary = {
+        counts: { attemptedTurns: 0, respondedTurns: 0, yieldedTurns: 0, confirmedDeliveredBursts: 0 },
+      };
+      input.preflight[0]!.agents = input.preflight[0]!.agents.map((agent) => ({
+        ...agent,
+        outcome,
+        reason: outcome === "suppress" ? "no_routing_signal" : "unavailable",
+      }));
+      expect(collectFixture(input).noVisibleAttributionV1).toEqual({
+        schemaVersion: 1,
+        category: outcome === "suppress" ? "gate-suppressed" : "routing-unavailable",
+        generations: [],
+      });
+      input.preflight[0]!.mode = "shadow";
+      expect(
+        collectLiveScenarioEvidence({
+          scenarioId: "direct-2-low-enforce",
+          variant: "jev-on",
+          preflightMode: "shadow",
+          records: input.records,
+          preflightDecisions: input.preflight,
+          triggerMessageId: input.triggerMessageId,
+        }).noVisibleAttributionV1?.category,
+      ).toBe("mixed-or-unresolved");
+    }
+  });
+
+  it("attributes a failed generation without copying its raw error", () => {
+    const input = silentFixture();
+    input.records = input.records.filter(
+      (record) =>
+        record.event !== "generation.completed" &&
+        record.event !== "provider.exchange.observed" &&
+        record.stage !== "generation-completed",
+    );
+    input.records.push({
+      event: "generation.failed",
+      runId: "run_12345678",
+      generationId: "gen_12345678",
+      error: "private provider failure detail",
+    });
+    const turn = input.records.find((record) => record.event === "conversation.turn.finished")!;
+    turn.outcome = "failed";
+    turn.reason = "generation-failed";
+    const result = collectFixture(input);
+    expect(result.noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "generation-failed",
+      generations: [{ ordinal: 1, category: "failed" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("private provider failure detail");
+  });
+
+  it("counts only an explicit interpreted yield as deliberate", () => {
+    const input = silentFixture();
+    const turn = input.records.find((record) => record.event === "conversation.turn.finished")!;
+    turn.outcome = "yielded";
+    turn.reason = "yielded";
+    turn.interpretation = { dispositionAction: "yield", yieldReason: "already_covered" };
+    (
+      input.records.find((record) => record.event === "conversation.run.completed")!.summary as {
+        counts: { yieldedTurns: number };
+      }
+    ).counts.yieldedTurns = 1;
+    expect(collectFixture(input).noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "completed-yielded",
+      generations: [{ ordinal: 1, category: "yielded" }],
+    });
+    turn.interpretation = { suppressionReason: "legacy-no-response" };
+    expect(collectFixture(input).noVisibleAttributionV1?.category).toBe("completed-no-delivery");
+  });
+
+  it("keeps a completed turn without yield or delivery ambiguous, including a failed delivery", () => {
+    const input = silentFixture();
+    expect(collectFixture(input).noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "completed-no-delivery",
+      generations: [{ ordinal: 1, category: "completed-no-delivery-evidence" }],
+    });
+    input.records.find((record) => record.event === "conversation.turn.finished")!.delivery = {
+      outcome: "failed",
+      reason: "post-interpretation-failed",
+      confirmedDeliveredBurstCount: 0,
+      confirmedUndeliveredBurstCount: 1,
+      unconfirmedBurstCount: 0,
+    };
+    expect(collectFixture(input).noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "completed-no-delivery",
+      generations: [{ ordinal: 1, category: "undelivered" }],
+    });
+  });
+
+  it("retains unresolved status for an unfinished generation", () => {
+    const input = silentFixture();
+    input.records = input.records.filter(
+      (record) => record.event !== "generation.completed" && record.stage !== "generation-completed",
+    );
+    expect(collectFixture(input).noVisibleAttributionV1).toEqual({
+      schemaVersion: 1,
+      category: "mixed-or-unresolved",
+      generations: [{ ordinal: 1, category: "incomplete" }],
+    });
   });
 
   it("keeps missing and incomplete usage unknown, including a started generation without completion", () => {
