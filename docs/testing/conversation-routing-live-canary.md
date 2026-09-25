@@ -233,7 +233,12 @@ The independent v2 judge makes four bounded calls per trigger for social
 cadence, length fit, address radius, and contribution value. Its private v2
 bundle adds the fictional human alias and roster names for audience grading;
 the public scalar report contains only closed axis outcomes and separate judge
-usage. The case cap, generation-start cap, per-trigger room watchdog, explicit
+usage. Before storing each completed axis, the canary compares its closed
+reason and score to authoritative routing obligations and confirmed delivery.
+A contradictory result becomes a failed `judgment-schema` axis with no score or
+usage in the scalar manifest. This check does not reinterpret older manifests;
+the analysis tool keeps their invalid receipts as missing observations.
+The case cap, generation-start cap, per-trigger room watchdog, explicit
 judge-call cap, and total watchdog limit exposure, but OpenCode may use several
 internal provider steps per generation, so these are not strict token or USD
 caps. The dry-run shows a conservative planning allowance and whether the

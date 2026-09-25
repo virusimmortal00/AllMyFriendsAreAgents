@@ -800,6 +800,38 @@ async function writePrivateReview(
   return payload;
 }
 
+/** Reject a judge's structurally valid score when it contradicts the server's closed delivery/routing counts. */
+export function validateQualityJudgeObservation(
+  outcomes: readonly QualityAxisOutcome[],
+  visibleBursts: number,
+  requiredTargets: number,
+): QualityAxisOutcome[] {
+  return outcomes.map((outcome): QualityAxisOutcome => {
+    if (outcome.status !== "completed") return outcome;
+    const result = outcome.result;
+    const requiredMissing =
+      result.axis === "length_fit" &&
+      visibleBursts === 0 &&
+      requiredTargets > 0 &&
+      result.status === "rated" &&
+      result.score === 1 &&
+      result.reasonCode === "required_reply_missing" &&
+      result.details.direction === "too_short";
+    const optionalSilence =
+      result.axis === "length_fit" &&
+      visibleBursts === 0 &&
+      requiredTargets === 0 &&
+      result.status === "rated" &&
+      result.reasonCode === "silence_fit" &&
+      (result.details.direction === "too_short" || result.details.direction === "appropriate");
+    const semanticConflict =
+      result.status === "rated"
+        ? !requiredMissing && !optionalSilence && (result.reasonCode !== "observable_exchange" || visibleBursts === 0)
+        : visibleBursts > 0 && result.reasonCode === "no_visible_reply";
+    return semanticConflict ? { axis: outcome.axis, status: "failed", category: "judgment-schema" } : outcome;
+  });
+}
+
 export function buildPrivateReviewPayload(
   scenario: LiveScenario,
   result: LiveScenarioResult,
@@ -1124,7 +1156,11 @@ async function runCase(
             qualityJudgments.push({
               scenarioId: result.scenarioId,
               runId: result.runId,
-              outcomes: await judgeConversationQualityAxes(privateCase, judgeOptions),
+              outcomes: validateQualityJudgeObservation(
+                await judgeConversationQualityAxes(privateCase, judgeOptions),
+                result.confirmedDeliveredBursts,
+                result.requiredAddressAgents.length,
+              ),
             });
           } else {
             judgments.push(await judgeConversationCase(parsePrivateJudgeCase(privateCase), judgeOptions));

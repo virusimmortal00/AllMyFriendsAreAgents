@@ -16,9 +16,11 @@ import {
   projectFailedCaseEvidence,
   projectPairCompleteProgress,
   stopProcessGroup,
+  validateQualityJudgeObservation,
 } from "./conversation-routing-live-canary.js";
 import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
 import { JudgeFailure } from "./conversation-routing-live-judge.js";
+import type { QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
 import { parseStudyPlan } from "./conversation-routing-live-study.js";
 
@@ -32,6 +34,50 @@ const base = [
 ];
 const execute = promisify(execFile);
 const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
+
+const lengthOutcome = (
+  reasonCode: "required_reply_missing" | "silence_fit" | "observable_exchange",
+): QualityAxisOutcome => ({
+  axis: "length_fit",
+  status: "completed",
+  result: {
+    schemaVersion: 2,
+    rubricVersion: "room-quality-v2",
+    scenarioId: "fixture",
+    runId: "run-fixture",
+    judgeModel: "google/pinned-judge",
+    resolvedJudgeModel: null,
+    axis: "length_fit",
+    status: "rated",
+    score: reasonCode === "required_reply_missing" ? 1 : 3,
+    reasonCode,
+    details: { direction: reasonCode === "required_reply_missing" ? "too_short" : "appropriate" },
+    judgeUsage: { inputTokens: null, outputTokens: null, reportedCostUsd: null },
+  },
+});
+
+describe("quality judge acquisition semantics", () => {
+  it("downgrades a missing-reply obligation contradicted by authoritative routing", () => {
+    expect(validateQualityJudgeObservation([lengthOutcome("required_reply_missing")], 0, 0)).toEqual([
+      { axis: "length_fit", status: "failed", category: "judgment-schema" },
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("required_reply_missing")], 0, 1)).toEqual([
+      lengthOutcome("required_reply_missing"),
+    ]);
+  });
+
+  it("keeps valid optional silence and visible replies but rejects a reply claim without delivery", () => {
+    expect(validateQualityJudgeObservation([lengthOutcome("silence_fit")], 0, 0)).toEqual([
+      lengthOutcome("silence_fit"),
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("observable_exchange")], 1, 0)).toEqual([
+      lengthOutcome("observable_exchange"),
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("observable_exchange")], 0, 0)).toEqual([
+      { axis: "length_fit", status: "failed", category: "judgment-schema" },
+    ]);
+  });
+});
 
 async function withAvailabilityServer(
   input: {
