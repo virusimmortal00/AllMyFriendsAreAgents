@@ -70,6 +70,29 @@ const HUMAN_METRICS = ["directReply", "naturalness", "distinctValue", "replyWast
 type Variant = "jev-on" | "jev-off";
 type Energy = "low" | "balanced" | "lively" | "party";
 type PreflightMode = "off" | "shadow" | "enforce";
+const ATTRIBUTION_CATEGORIES = [
+  "visible-delivered",
+  "gate-suppressed",
+  "routing-unavailable",
+  "generation-failed",
+  "completed-yielded",
+  "completed-no-delivery",
+  "mixed-or-unresolved",
+] as const;
+const GENERATION_CATEGORIES = [
+  "delivered",
+  "yielded",
+  "undelivered",
+  "completed-no-delivery-evidence",
+  "failed",
+  "cancelled",
+  "incomplete",
+] as const;
+type NoVisibleAttribution = {
+  schemaVersion: 1;
+  category: (typeof ATTRIBUTION_CATEGORIES)[number];
+  generations: Array<{ ordinal: number; category: (typeof GENERATION_CATEGORIES)[number] }>;
+};
 interface ScalarTrigger {
   scenarioId: string;
   runId: string;
@@ -99,6 +122,7 @@ interface ScalarTrigger {
   yieldedTurns: number;
   confirmedDeliveredBursts: number;
   requiredTargetCount: number;
+  noVisibleAttributionV1: NoVisibleAttribution | null;
   combined: {
     openCodeObservedTotalPlusJevPromptCompletionTokens: number | null;
     costUsd: number | null;
@@ -188,6 +212,67 @@ function object(value: unknown, keys: readonly string[]): Record<string, unknown
   const row = value as Record<string, unknown>;
   if (Object.keys(row).some((key) => !keys.includes(key))) throw new Error("Invalid scalar canary manifest.");
   return row;
+}
+function parseNoVisibleAttribution(input: unknown, trigger: Record<string, unknown>): NoVisibleAttribution {
+  const row = object(input, ["schemaVersion", "category", "generations"]);
+  const starts = integer(trigger.generationStarts, 100);
+  if (
+    Object.keys(row).length !== 3 ||
+    row.schemaVersion !== 1 ||
+    !ATTRIBUTION_CATEGORIES.includes(row.category as NoVisibleAttribution["category"]) ||
+    !Array.isArray(row.generations) ||
+    starts === null ||
+    row.generations.length !== starts
+  )
+    throw new Error("Invalid scalar no-visible attribution.");
+  const generations = row.generations.map((entry: unknown, index: number) => {
+    const generation = object(entry, ["ordinal", "category"]);
+    if (
+      Object.keys(generation).length !== 2 ||
+      generation.ordinal !== index + 1 ||
+      !GENERATION_CATEGORIES.includes(generation.category as NoVisibleAttribution["generations"][number]["category"])
+    )
+      throw new Error("Invalid scalar no-visible attribution.");
+    return generation as NoVisibleAttribution["generations"][number];
+  });
+  const routing = trigger.routing as Array<{ outcome: string }>;
+  const delivered = integer(trigger.confirmedDeliveredBursts, 100);
+  const completions = integer(trigger.generationCompletions, 100);
+  const failures = integer(trigger.generationFailures, 100);
+  if (delivered === null || completions === null || failures === null)
+    throw new Error("Invalid scalar no-visible attribution.");
+  const kinds = generations.map((generation) => generation.category);
+  if (
+    kinds.filter((kind) => ["delivered", "yielded", "undelivered", "completed-no-delivery-evidence"].includes(kind))
+      .length > completions ||
+    kinds.filter((kind) => kind === "failed").length > failures
+  )
+    throw new Error("Contradictory scalar no-visible attribution.");
+  let expected: NoVisibleAttribution["category"] = "mixed-or-unresolved";
+  if (delivered > 0) expected = "visible-delivered";
+  else if (
+    trigger.preflightMode === "enforce" &&
+    starts === 0 &&
+    routing.length > 0 &&
+    routing.every((item) => item.outcome === "suppress")
+  )
+    expected = "gate-suppressed";
+  else if (
+    trigger.preflightMode === "enforce" &&
+    starts === 0 &&
+    routing.some((item) => item.outcome === "unavailable") &&
+    routing.every((item) => item.outcome !== "invoke")
+  )
+    expected = "routing-unavailable";
+  else if (kinds.length > 0 && kinds.every((kind) => kind === "failed")) expected = "generation-failed";
+  else if (kinds.length > 0 && kinds.every((kind) => kind === "yielded")) expected = "completed-yielded";
+  else if (
+    kinds.length > 0 &&
+    kinds.every((kind) => kind === "undelivered" || kind === "completed-no-delivery-evidence")
+  )
+    expected = "completed-no-delivery";
+  if (row.category !== expected) throw new Error("Contradictory scalar no-visible attribution.");
+  return { schemaVersion: 1, category: expected, generations };
 }
 function id(value: unknown): value is string {
   return typeof value === "string" && ID.test(value);
@@ -649,6 +734,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         "openCodeEstimatedCostUsd",
         "openCodeUsageCoverage",
         "openCodeTotalCoverage",
+        "noVisibleAttributionV1",
       ]);
       const current = trigger.openCodeUsageProvenance === "step-fields-v1";
       if (
@@ -677,6 +763,10 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         )
           throw new Error("Invalid scalar canary manifest.");
       }
+      const noVisibleAttributionV1 =
+        trigger.noVisibleAttributionV1 === undefined
+          ? null
+          : parseNoVisibleAttribution(trigger.noVisibleAttributionV1, trigger);
       const classifier = object(trigger.classifier, [
         "outcome",
         "reason",
@@ -801,6 +891,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
             throw new Error("Invalid scalar canary manifest.");
           })(),
         requiredTargetCount: trigger.requiredAddressAgents.length,
+        noVisibleAttributionV1,
         combined: {
           openCodeObservedTotalPlusJevPromptCompletionTokens: totalTokensComplete
             ? actor.totalTokens! + (noJev ? 0 : jev.inputTokens! + jev.outputTokens!)
@@ -1614,6 +1705,38 @@ export function analyzeQualityStudy(
       ),
     };
   };
+  const attributionCoverage = (rows: typeof all) => {
+    const recorded = rows.flatMap(({ trigger }) => (trigger.noVisibleAttributionV1 ? [trigger] : []));
+    return {
+      observedTriggers: rows.length,
+      recordedTriggers: recorded.length,
+      legacyMissingTriggers: rows.length - recorded.length,
+      categories: Object.fromEntries(
+        ATTRIBUTION_CATEGORIES.map((category) => [
+          category,
+          recorded.filter((trigger) => trigger.noVisibleAttributionV1?.category === category).length,
+        ]),
+      ),
+      generationCategories: Object.fromEntries(
+        GENERATION_CATEGORIES.map((category) => [
+          category,
+          recorded.reduce(
+            (sum, trigger) =>
+              sum +
+              trigger.noVisibleAttributionV1!.generations.filter((generation) => generation.category === category)
+                .length,
+            0,
+          ),
+        ]),
+      ),
+      requiredNoVisible: recorded.filter(
+        (trigger) => trigger.requiredTargetCount > 0 && trigger.confirmedDeliveredBursts === 0,
+      ).length,
+      optionalNoVisible: recorded.filter(
+        (trigger) => trigger.requiredTargetCount === 0 && trigger.confirmedDeliveredBursts === 0,
+      ).length,
+    };
+  };
   const blockWarnings = byStratum.flatMap((stratum) =>
     stratum.paired.routingEligibleBlocks < 5
       ? [
@@ -1670,6 +1793,24 @@ export function analyzeQualityStudy(
       ),
       limitation:
         "Only completed final-manifest cases are counted; failed case-progress events remain separate and are never imputed as completed study pairs.",
+    },
+    noVisibleAttributionV1: {
+      schemaVersion: 1 as const,
+      overall: attributionCoverage(all),
+      required: attributionCoverage(all.filter(({ trigger }) => trigger.requiredTargetCount > 0)),
+      optional: attributionCoverage(all.filter(({ trigger }) => trigger.requiredTargetCount === 0)),
+      byFactorAndArm: Object.fromEntries(
+        (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+          (["a", "b"] as const).map((arm) => [
+            `${factor}:${arm}`,
+            attributionCoverage(
+              all.filter(({ caseRow }) => caseRow.study!.factor === factor && caseRow.study!.arm === arm),
+            ),
+          ]),
+        ),
+      ),
+      limitation:
+        "Recorded categories describe persisted routing and generation evidence; completed-no-delivery and mixed cases do not establish why no reply appeared. Missing legacy evidence is not imputed.",
     },
     denominators: {
       cases: manifest.cases.length,
