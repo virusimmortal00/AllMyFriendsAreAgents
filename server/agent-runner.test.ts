@@ -19,13 +19,13 @@ const execFileAsync = promisify(execFile);
 describe("OpenCode runtime contract", () => {
   it("builds resumable OpenCode invocations", () => {
     expect(__testing.opencodeArgs("read-only", "/tmp/project")).toEqual([
-      "run", "--format", "json", "--dir", "/tmp/project", "--agent", "plan",
+      "run", "--format", "json", "--dir", "/tmp/project", "--agent", __testing.roomAgentName,
     ]);
     expect(__testing.opencodeArgs("writable", "/tmp/worktree", "ses_123")).toEqual([
       "run", "--format", "json", "--dir", "/tmp/worktree", "--agent", "build", "--auto", "--session", "ses_123",
     ]);
     expect(__testing.opencodeArgs("read-only", "/tmp/project", "ses_456", "anthropic/claude-sonnet", "high")).toEqual([
-      "run", "--format", "json", "--dir", "/tmp/project", "--agent", "plan", "--model", "anthropic/claude-sonnet", "--variant", "high", "--session", "ses_456",
+      "run", "--format", "json", "--dir", "/tmp/project", "--agent", __testing.roomAgentName, "--model", "anthropic/claude-sonnet", "--variant", "high", "--session", "ses_456",
     ]);
   });
 
@@ -149,6 +149,22 @@ describe("OpenCode runtime contract", () => {
       finishReason: "stop",
       errors: [{ name: "APIError", message: "[redacted] failed", statusCode: 429, retryable: true }],
     });
+    expect(parsed.usage).toMatchObject({ openCodeUsageProvenance: "step-fields-v1", openCodeObservedInputTokens: 17, openCodeObservedOutputTokens: 8, openCodeObservedReasoningTokens: 2, openCodeObservedCacheReadTokens: 6, openCodeObservedCacheWriteTokens: 1 });
+    expect(parsed.usage).not.toHaveProperty("openCodeObservedTotalTokens");
+    expect(parsed.openCodeEstimatedCostUsd).toBeCloseTo(0.03);
+  });
+
+  it("does not present missing provider usage or cost as reported zero", () => {
+    const complete = __testing.parseOpenCodeOutput(JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0, tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } }));
+    expect(complete.usage).toMatchObject({ openCodeObservedTotalTokens: 0, openCodeObservedCacheReadTokens: 0 });
+    expect(complete.openCodeEstimatedCostUsd).toBe(0);
+    const partial = __testing.parseOpenCodeOutput([
+      JSON.stringify({ type: "step_finish", part: { type: "step-finish", cost: 0.01, tokens: { total: 3, input: 2, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } }),
+      JSON.stringify({ type: "step_finish", part: { type: "step-finish", tokens: { input: 4, output: 2 } } }),
+    ].join("\n"));
+    expect(partial.usage).toMatchObject({ totalTokens: 9, openCodeObservedInputTokens: 6, openCodeObservedOutputTokens: 3 });
+    for (const field of ["openCodeObservedTotalTokens", "openCodeObservedReasoningTokens", "openCodeObservedCacheReadTokens", "openCodeObservedCacheWriteTokens"]) expect(partial.usage).not.toHaveProperty(field);
+    expect(partial).not.toHaveProperty("openCodeEstimatedCostUsd");
   });
 
   it("reduces provider response bodies to allowlisted classification codes", () => {
@@ -189,9 +205,18 @@ describe("OpenCode runtime contract", () => {
       OPENCODE_CONFIG: "/tmp/config",
       OPENCODE_PERMISSION: JSON.stringify({
         "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-        webfetch: "allow", websearch: "allow", lsp: "allow", StructuredOutput: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
+        webfetch: "allow", websearch: "allow", lsp: "allow", edit: "deny", write: "deny", apply_patch: "deny", bash: "deny", task: "deny", StructuredOutput: "allow", room_history: "allow", room_command: "deny", room_diagnostics: "deny",
       }),
     });
+    const room = __testing.opencodeEnvironment(environment, "read-only");
+    const inline = JSON.parse(room.OPENCODE_CONFIG_CONTENT!);
+    expect(inline.agent[__testing.roomAgentName]).toMatchObject({ mode: "primary", permission: JSON.parse(room.OPENCODE_PERMISSION!) });
+    expect(__testing.roomAgentName).not.toBe("plan");
+    expect(__testing.roomAgentName).not.toBe("build");
+    expect(inline.agent[__testing.roomAgentName].permission).toMatchObject({ "*": "deny", edit: "deny", bash: "deny", task: "deny" });
+    expect(__testing.opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: { example: { models: {} } } }) }, "read-only").OPENCODE_CONFIG_CONTENT).toContain('"provider"');
+    expect(() => __testing.opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: "{broken" }, "read-only")).toThrow("valid OpenCode inline configuration");
+    expect(() => __testing.opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: JSON.stringify({ agent: { [__testing.roomAgentName]: { permission: { edit: "allow" } } } }) }, "read-only")).toThrow("collision");
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
   });
 
@@ -213,7 +238,11 @@ describe("OpenCode runtime contract", () => {
     const changed = { ...matching, id: "old-epoch", codeEpoch: `deployment-v1:${"c".repeat(64)}` };
     const legacy = { id: "legacy", permission: "read-only" as const, configurationFingerprint: fingerprint };
 
+    expect(__testing.openCodeSessionDecision(participant.agentId, participant, matching, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "read-only room agent policy changed" });
+    __testing.rememberRoomSession(matching.id);
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, matching, "read-only", deployment)).toMatchObject({ kind: "reuse", session: matching, reason: expect.stringContaining("deployment code epoch match") });
+    __testing.rememberRoomSession(changed.id);
+    __testing.rememberRoomSession(legacy.id);
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, changed, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "deployment code epoch changed" });
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, legacy, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "persisted session predates deployment epoch binding" });
     expect(__testing.openCodeSessionDecision(participant.agentId, participant, { ...matching, id: "legacy-writer", permission: "writable" }, "read-only", deployment)).toEqual({ kind: "invalidate", reason: "permission changed from writable to read-only" });
@@ -261,7 +290,8 @@ describe("OpenCode runtime contract", () => {
 
     expect(result).toMatchObject({ sessionId: "ses_structured", text: "A typed answer.", structuredTurn: { action: "speak" }, costUsd: 0.0037 });
     const invocation = requiredAt(structuredTransport.run.mock.calls,0,"structured transport call")[0];
-    expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: "plan" });
+    expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: __testing.roomAgentName });
+    expect(JSON.parse(invocation.environment.OPENCODE_CONFIG_CONTENT).agent[__testing.roomAgentName].permission).toMatchObject({ "*": "deny", edit: "deny", bash: "deny", StructuredOutput: "allow" });
     expect(Object.hasOwn(invocation, "variant")).toBe(false);
     expect(Object.hasOwn(invocation, "sessionId")).toBe(false);
     expect(Object.hasOwn(invocation, "signal")).toBe(false);
@@ -641,22 +671,28 @@ if (process.argv.includes("--session")) {
 }
 const scopedKeys = ${JSON.stringify(scopedKeys)};
 const blockedKeys = ${JSON.stringify(blockedKeys)};
+const selected = process.argv[process.argv.indexOf("--agent") + 1];
+const inline = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || "{}");
+const policy = inline.agent?.[selected]?.permission;
 writeFileSync(process.env.AMFAA_TEST_CAPTURE_PATH, JSON.stringify({
   scoped: Object.fromEntries(scopedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
   blocked: Object.fromEntries(blockedKeys.map((key) => [key, Object.hasOwn(process.env, key)])),
   commands: JSON.parse(process.env.AMFAA_ROOM_COMMANDS || "[]"),
   freshBinding: process.env.AMFAA_ROOM_COMMAND_TOKEN === "command-fresh-placeholder" && process.env.AMFAA_ROOM_DIAGNOSTICS_TOKEN === "diagnostics-fresh-placeholder",
+  roomAgentSelected: selected?.startsWith("amfaa-room-") && selected !== "plan" && !process.argv.includes("--auto"),
+  roomAgentDeniedWrites: policy?.["*"] === "deny" && policy?.edit === "deny" && policy?.bash === "deny" && policy?.task === "deny",
 }));
 process.stderr.write(process.env.AMFAA_ROOM_HISTORY_TOKEN + " " + process.env.AMFAA_ROOM_DIAGNOSTICS_URL + "\\n");
 process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok " + process.env.AMFAA_ROOM_COMMAND_TOKEN } }) + "\\n");
 `, { mode: 0o755 });
       const childScript = `
-const { runAgent } = await import("./server/agent-runner.ts");
+const { runAgent, __testing } = await import("./server/agent-runner.ts");
 const { withConversationRun, withConversationTurn } = await import("./server/conversation-context.ts");
 const { currentLogContext, withLogContext } = await import("./server/structured-logger.ts");
 const { DEFAULT_PARTICIPANT_STYLES } = await import("./shared/chat-style.ts");
 const participant = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
 const epoch = "deployment-v1:" + "a".repeat(64);
+__testing.rememberRoomSession("ses_stale");
 const state = {
   messages: [], sessions: { "codex-sol": { id: "ses_stale", permission: "read-only", configurationFingerprint: JSON.stringify({ providerId: "openai", modelId: "gpt-5.6-sol" }), codeEpoch: epoch } }, status: "idle",
   roster: { schemaVersion: 3, revision: 1, entries: [participant] },
@@ -737,6 +773,8 @@ process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessi
         blocked: Object.fromEntries(blockedKeys.map((key) => [key, false])),
         commands: ["help", "gh"],
         freshBinding: true,
+        roomAgentSelected: true,
+        roomAgentDeniedWrites: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });

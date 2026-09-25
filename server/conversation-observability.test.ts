@@ -70,6 +70,8 @@ describe("conversation job observability", () => {
     });
     expect(record).toEqual({ eventVersion: 1, source: "room-message", queuedTriggerMessageId: "message-a", triggerMessageId: "message-a", jobId: "job-a", stage: "classifier", elapsedMs: 0, outcome: "failed", failureCategory: "schema", durationMs: 250 });
     expect(conversationTriggerStageRecord(trace, "terminal", { reason: "no-material-disagreement" })?.reason).toBe("no-material-disagreement");
+    expect(conversationTriggerStageRecord(trace, "generation-completed", { openCodeEstimatedCostUsd: 0.004, providerReportedCostUsd: 9 })).toMatchObject({ openCodeEstimatedCostUsd: 0.004 });
+    expect(conversationTriggerStageRecord(trace, "generation-completed", { openCodeEstimatedCostUsd: 0.004, providerReportedCostUsd: 9 })).not.toHaveProperty("providerReportedCostUsd");
     expect(conversationTriggerStageRecord(trace, "PRIVATE ROOM TEXT", { outcome: "failed" })).toBeUndefined();
     await logging.log("generations", "info", "conversation.trigger.stage", record, { visibility: "operator" });
     await logging.flush();

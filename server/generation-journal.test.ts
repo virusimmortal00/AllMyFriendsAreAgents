@@ -67,8 +67,8 @@ describe("GenerationJournal", () => {
     try {
       await journal.append({
         type: "generation.completed", generationId: "one", agent: "codex-sol", durationMs: 10, providerId: "openrouter",
-        providerUsage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 120 },
-        providerCostUsd: 0.002,
+        providerUsage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 120, openCodeObservedTotalTokens: 120 },
+        providerCostUsd: 0.002, openCodeEstimatedCostUsd: 0.002,
       });
       await journal.append({
         type: "generation.completed", generationId: "two", agent: "claude-sonnet", durationMs: 10, providerId: "openrouter",
@@ -89,6 +89,11 @@ describe("GenerationJournal", () => {
       expect(snapshot.room).toMatchObject({ generations: 2, costUsd: 0.003, inputTokens: 150, outputTokens: 30 });
       expect(snapshot.agents["codex-sol"]).toMatchObject({ generations: 1, costUsd: 0.002, inputTokens: 100 });
       expect(snapshot.agents["claude-sonnet"]).toMatchObject({ generations: 1, costUsd: 0.001, inputTokens: 50 });
+      await journal.logging.flush();
+      const providerFiles = (await readdir(path.dirname(journal.path))).filter((name) => name.startsWith("openrouter-provider.") && name.endsWith(".jsonl"));
+      const providerRecords = (await Promise.all(providerFiles.map((name) => readFile(path.join(path.dirname(journal.path), name), "utf8")))).join("").trim().split("\n").map((line) => JSON.parse(line));
+      expect(providerRecords.find((record) => record.generationId === "one")).toMatchObject({ openCodeEstimatedCostUsd: 0.002, usage: { openCodeObservedTotalTokens: 120 } });
+      expect(providerRecords.find((record) => record.generationId === "two")).not.toHaveProperty("openCodeEstimatedCostUsd");
     } finally { await spend.flush(); await journal.logging.close(); }
   });
 });

@@ -28,6 +28,28 @@ const REVIEW_RUN_TIMEOUT_MS = 5 * 60_000;
 const WRITABLE_RUN_TIMEOUT_MS = 10 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 10_000;
 const TERMINATION_GRACE_MS = 1_500;
+// A process-scoped name prevents persisted plan-mode sessions and project agent
+// overrides from being mistaken for this application's read-only room agent.
+const READ_ONLY_ROOM_AGENT = `amfaa-room-${randomUUID()}`;
+const ROOM_SESSION_LIMIT = 1_000;
+const roomSessions = new Set<string>();
+
+function roomPermission(roomCommandAvailable: boolean, roomDiagnosticsAvailable: boolean) {
+  return {
+    "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
+    webfetch: "allow", websearch: "allow", lsp: "allow",
+    edit: "deny", write: "deny", apply_patch: "deny", bash: "deny", task: "deny",
+    StructuredOutput: "allow", room_history: "allow",
+    room_command: roomCommandAvailable ? "allow" : "deny",
+    room_diagnostics: roomDiagnosticsAvailable ? "allow" : "deny",
+  } as const;
+}
+
+function rememberRoomSession(sessionId: string) {
+  roomSessions.delete(sessionId);
+  roomSessions.add(sessionId);
+  if (roomSessions.size > ROOM_SESSION_LIMIT) roomSessions.delete(roomSessions.values().next().value!);
+}
 
 interface RunResult {
   text: string;
@@ -597,7 +619,7 @@ function opencodeArgs(permission: "read-only" | "writable", projectPath: string,
     "--dir",
     projectPath,
     "--agent",
-    permission === "writable" ? "build" : "plan",
+    permission === "writable" ? "build" : READ_ONLY_ROOM_AGENT,
     ...(model ? ["--model", model] : []),
     ...(variant ? ["--variant", variant] : []),
     ...(permission === "writable" ? ["--auto"] : []),
@@ -615,6 +637,19 @@ function parseOpenCodeOutput(stdout: string) {
   let steps = 0;
   let cost = 0;
   let finishReason = "";
+  type ObservedField = "openCodeObservedInputTokens" | "openCodeObservedOutputTokens" | "openCodeObservedReasoningTokens" | "openCodeObservedCacheReadTokens" | "openCodeObservedCacheWriteTokens" | "openCodeObservedTotalTokens" | "openCodeEstimatedCostUsd";
+  const observed = {} as Record<ObservedField, number>;
+  const incomplete = new Set<ObservedField>();
+  const recordObserved = (field: ObservedField, value: unknown, integer = true) => {
+    if (incomplete.has(field)) return;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || (integer && !Number.isSafeInteger(value))) {
+      incomplete.add(field);
+      return;
+    }
+    const sum = (observed[field] || 0) + value;
+    if (!Number.isFinite(sum) || (integer && !Number.isSafeInteger(sum))) incomplete.add(field);
+    else observed[field] = sum;
+  };
   const usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
   const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
   for (const line of stdout.split("\n")) {
@@ -663,8 +698,15 @@ function parseOpenCodeOutput(stdout: string) {
       if (event.type === "step_finish" && event.part?.type === "step-finish") {
         steps += 1;
         cost += number(event.part.cost);
+        recordObserved("openCodeEstimatedCostUsd", event.part.cost, false);
         finishReason = typeof event.part.reason === "string" ? event.part.reason.slice(0, 80) : finishReason;
         const tokens = event.part.tokens;
+        recordObserved("openCodeObservedInputTokens", tokens?.input);
+        recordObserved("openCodeObservedOutputTokens", tokens?.output);
+        recordObserved("openCodeObservedReasoningTokens", tokens?.reasoning);
+        recordObserved("openCodeObservedCacheReadTokens", tokens?.cache?.read);
+        recordObserved("openCodeObservedCacheWriteTokens", tokens?.cache?.write);
+        recordObserved("openCodeObservedTotalTokens", tokens?.total);
         const input = number(tokens?.input);
         const output = number(tokens?.output);
         const reasoning = number(tokens?.reasoning);
@@ -682,8 +724,14 @@ function parseOpenCodeOutput(stdout: string) {
   return {
     sessionId,
     text: text.filter((part) => part.length > 0).join("\n\n"),
-    usage,
+    usage: {
+      ...usage,
+      ...(steps > 0 ? { openCodeUsageProvenance: "step-fields-v1", ...Object.fromEntries((Object.keys(observed) as ObservedField[])
+        .filter((field) => field !== "openCodeEstimatedCostUsd" && !incomplete.has(field))
+        .map((field) => [field, observed[field]])) } : {}),
+    },
     cost,
+    ...(steps > 0 && !incomplete.has("openCodeEstimatedCostUsd") ? { openCodeEstimatedCostUsd: observed.openCodeEstimatedCostUsd } : {}),
     toolCalls: toolCalls.size,
     toolFailures: failedToolCalls.size,
     steps,
@@ -696,6 +744,7 @@ function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>)
   return {
     providerUsage: parsed.usage,
     providerCostUsd: parsed.cost,
+    ...(parsed.openCodeEstimatedCostUsd !== undefined ? { openCodeEstimatedCostUsd: parsed.openCodeEstimatedCostUsd } : {}),
     toolCalls: parsed.toolCalls,
     toolFailures: parsed.toolFailures,
     providerSteps: parsed.steps,
@@ -705,22 +754,47 @@ function openCodeJournalMetadata(parsed: ReturnType<typeof parseOpenCodeOutput>)
 }
 
 function opencodeEnvironment(environment: NodeJS.ProcessEnv, permission: "read-only" | "writable", roomCommandAvailable = false, roomDiagnosticsAvailable = false) {
-  return permission === "read-only" ? {
+  if (permission === "writable") return environment;
+  let config: Record<string, unknown> = {};
+  if (environment.OPENCODE_CONFIG_CONTENT) {
+    try {
+      const parsed: unknown = JSON.parse(environment.OPENCODE_CONFIG_CONTENT);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      config = parsed as Record<string, unknown>;
+    } catch {
+      throw new Error("Read-only room execution requires valid OpenCode inline configuration.");
+    }
+  }
+  const agents = config.agent;
+  if (agents !== undefined && (!agents || typeof agents !== "object" || Array.isArray(agents))) {
+    throw new Error("Read-only room execution requires valid OpenCode agent configuration.");
+  }
+  const configuredAgents = (agents || {}) as Record<string, unknown>;
+  if (Object.hasOwn(configuredAgents, READ_ONLY_ROOM_AGENT)) {
+    throw new Error("Read-only room agent configuration collision.");
+  }
+  const permissionRules = roomPermission(roomCommandAvailable, roomDiagnosticsAvailable);
+  return {
     ...environment,
-    OPENCODE_PERMISSION: JSON.stringify({
-      "*": "deny", read: "allow", glob: "allow", grep: "allow", list: "allow",
-      webfetch: "allow", websearch: "allow", lsp: "allow",
-      StructuredOutput: "allow",
-      room_history: "allow",
-      room_command: roomCommandAvailable ? "allow" : "deny",
-      room_diagnostics: roomDiagnosticsAvailable ? "allow" : "deny",
+    OPENCODE_PERMISSION: JSON.stringify(permissionRules),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...config,
+      agent: {
+        ...configuredAgents,
+        [READ_ONLY_ROOM_AGENT]: {
+          mode: "primary",
+          description: "Respond naturally in a room using read-only tools.",
+          permission: permissionRules,
+        },
+      },
     }),
-  } : environment;
+  };
 }
 
 function openCodeSessionDecision(agent: AgentId, participant: RoomAgentRosterEntry, storedSession: RoomState["sessions"][AgentId], permission: "read-only" | "writable", deployment?: DeploymentProvenance) {
   if (!storedSession) return { kind: "fresh" as const, reason: "no persisted provider session" };
   if (storedSession.permission !== permission) return { kind: "invalidate" as const, reason: `permission changed from ${storedSession.permission} to ${permission}` };
+  if (permission === "read-only" && !roomSessions.has(storedSession.id)) return { kind: "invalidate" as const, reason: "read-only room agent policy changed" };
   const legacyCompatibleSession = !storedSession.configurationFingerprint
     && historicalAgentProvider(agent) === "opencode"
     && (participant.configurationRevision || 1) === 1;
@@ -893,7 +967,7 @@ export async function runAgent(
             providerId,
             modelId: profile.modelId,
             ...(participant.variant ? { variant: participant.variant } : {}),
-            agent: "plan",
+            agent: READ_ONLY_ROOM_AGENT,
             prompt,
             system: "Participate under the supplied room contract and return only the requested structured room-turn result.",
             ...(sessionId ? { sessionId } : {}),
@@ -920,10 +994,11 @@ export async function runAgent(
         await append({
           type: "generation.completed", generationId, agent, durationMs, sessionId: structuredResult.sessionId,
           structuredResponse: structuredResult.structured, responseCharacters: text.length,
-          ...(participant.providerId ? { providerId: participant.providerId } : {}), providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost,
+          ...(participant.providerId ? { providerId: participant.providerId } : {}), providerUsage: structuredResult.tokens, providerCostUsd: structuredResult.cost, openCodeEstimatedCostUsd: structuredResult.cost,
           finish: structuredResult.finish, transport: "sdk-server",
         });
         await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, transport: "sdk-server" });
+        rememberRoomSession(structuredResult.sessionId);
         return {
           sessionId: structuredResult.sessionId,
           text,
@@ -1000,6 +1075,7 @@ export async function runAgent(
         cliStdout: result.stdout, cliStderr: result.stderr,
       });
       await logOperationSafely(activeContext?.operationLog, "info", "agent.generation.completed", { generationId, attemptOrdinal, agentId: agent, durationMs, permission, toolCalls: parsed.toolCalls, toolFailures: parsed.toolFailures });
+      if (permission === "read-only") rememberRoomSession(sessionId);
       return {
         sessionId,
         text: parsed.text,
@@ -1075,4 +1151,4 @@ export async function cliAvailability(command: string | undefined, agents: reado
   return Object.fromEntries(agents.map((agent) => [agent, opencode])) as Partial<Record<ActiveAgentId, boolean>>;
 }
 
-export const __testing = { buildPrompt, buildPromptBundle, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, scopedAgentToolOutputRedactionValues, agentChildProcessEnvironment, redactExactOutputValues, scopedAgentToolReadiness, logScopedAgentToolReadiness, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, runTimeout, opencodeArgs, runProcess };
+export const __testing = { buildPrompt, buildPromptBundle, currentDiff, parseOpenCodeOutput, resolvePermission, resolveExecutionProjectPath, isMissingOpenCodeSessionError, agentProcessEnvironment, scopedAgentToolEnvironment, scopedAgentToolOutputRedactionValues, agentChildProcessEnvironment, redactExactOutputValues, scopedAgentToolReadiness, logScopedAgentToolReadiness, opencodeEnvironment, resumableOpenCodeSession, openCodeSessionDecision, rememberRoomSession, roomAgentName: READ_ONLY_ROOM_AGENT, runTimeout, opencodeArgs, runProcess };

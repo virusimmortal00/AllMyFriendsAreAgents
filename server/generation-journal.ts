@@ -41,7 +41,7 @@ export class GenerationJournal {
     try {
       const evidence = { ...conversationLogFields(), ...conversationLogFields(event) };
       const {
-        cliStdout, cliStderr, providerErrors, providerUsage, providerCostUsd,
+        cliStdout, cliStderr, providerErrors, providerUsage, providerCostUsd, openCodeEstimatedCostUsd,
         routing, rateLimit, cooldown, toolOutcomes, toolCalls, toolFailures, error,
         ...generation
       } = event;
@@ -66,9 +66,9 @@ export class GenerationJournal {
           : event.type === "generation.cancelled" ? "info" : event.stderrSeverity || "info";
         this.logging.log("opencode-harness", severity, "opencode.stderr", { ...evidence, output: cliStderr, generationEvent: event.type }, context);
       }
-      if (providerErrors !== undefined || providerUsage !== undefined || providerCostUsd !== undefined || routing !== undefined || rateLimit !== undefined || cooldown !== undefined || error !== undefined || event.type === "generation.failed") {
+      if (providerErrors !== undefined || providerUsage !== undefined || providerCostUsd !== undefined || openCodeEstimatedCostUsd !== undefined || routing !== undefined || rateLimit !== undefined || cooldown !== undefined || error !== undefined || event.type === "generation.failed") {
         this.logging.log("openrouter-provider", providerErrors !== undefined || event.type === "generation.failed" ? "error" : "info", providerErrors !== undefined || event.type === "generation.failed" ? "provider.exchange.failed" : "provider.exchange.observed", {
-          ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd,
+          ...evidence, errors: providerErrors, usage: providerUsage, costUsd: providerCostUsd, openCodeEstimatedCostUsd,
           routing, rateLimit, cooldown, error,
         }, context);
         if (event.providerId === "openrouter") this.spend?.record(event.agent, providerUsage, providerCostUsd, { generationId: event.generationId });
