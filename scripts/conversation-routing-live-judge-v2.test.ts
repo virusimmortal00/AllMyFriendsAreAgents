@@ -87,7 +87,8 @@ describe("versioned private conversation-quality graders", () => {
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const request = JSON.parse(String(init.body));
       expect(request.model).toBe(options.model);
-      expect(request.max_tokens).toBe(1_024);
+      expect(request.max_tokens).toBe(4_096);
+      expect(request.reasoning).toBeUndefined();
       expect(request.provider.require_parameters).toBe(true);
       expect(request.response_format.json_schema.strict).toBe(true);
       expect(request.response_format.json_schema.name).toBe(`room_${axis}_v2`);
@@ -121,7 +122,7 @@ describe("versioned private conversation-quality graders", () => {
     expect(JSON.stringify(result)).not.toContain(privateCase.messages[1].text);
   });
 
-  it("rates a missing required direct reply as too short and leaves ambiguous quiet cases unassessable", async () => {
+  it("rates a missing required direct reply as too short and lets the model assess optional silence", async () => {
     const fetchImpl = vi.fn();
     const noReply = { ...privateCase, messages: privateCase.messages.slice(0, 1) };
     const length = await judgeConversationQualityAxis(noReply, { ...options, axis: "length_fit", fetchImpl });
@@ -137,12 +138,134 @@ describe("versioned private conversation-quality graders", () => {
       expect(result).toMatchObject({ status: "not_assessable", score: null, reasonCode: "no_visible_reply" });
     }
     const casual = { ...noReply, scenarioKind: "casual", expectedDirectAgents: [] };
-    expect(await judgeConversationQualityAxis(casual, { ...options, axis: "length_fit", fetchImpl })).toMatchObject({
+    const ambiguous = await judgeConversationQualityAxis(casual, {
+      ...options,
+      axis: "length_fit",
+      fetchImpl: (async () =>
+        response({
+          status: "not_assessable",
+          score: null,
+          reasonCode: "insufficient_context",
+          details: { direction: null },
+        })) as typeof fetch,
+    });
+    expect(ambiguous).toMatchObject({
       status: "not_assessable",
       score: null,
+      reasonCode: "insufficient_context",
+    });
+    const quiet = await judgeConversationQualityAxis(casual, {
+      ...options,
+      axis: "length_fit",
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        const request = JSON.parse(String(init.body));
+        expect(request.messages[0].content).toContain("reasonCode silence_fit");
+        expect(request.messages[0].content).toContain("5 if silence clearly avoids needless repetition");
+        return response({
+          status: "rated",
+          score: 5,
+          reasonCode: "silence_fit",
+          details: { direction: "appropriate" },
+        });
+      }) as typeof fetch,
+    });
+    expect(quiet).toMatchObject({ status: "rated", score: 5, reasonCode: "silence_fit" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("treats earlier agent replies as context, not as a reply to the latest human trigger", async () => {
+    const followup = {
+      ...privateCase,
+      scenarioKind: "casual",
+      expectedDirectAgents: [],
+      messages: [
+        ...privateCase.messages,
+        { speaker: "avery", kind: "human", text: "Thanks, the fictional choice is made." },
+      ],
+    };
+    const fetchImpl = vi.fn(async () =>
+      response({
+        status: "rated",
+        score: 5,
+        reasonCode: "silence_fit",
+        details: { direction: "appropriate" },
+      }),
+    );
+    expect(await judgeConversationQualityAxis(followup, { ...options, axis: "length_fit", fetchImpl })).toMatchObject({
+      status: "rated",
+      score: 5,
+      reasonCode: "silence_fit",
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(
+      await judgeConversationQualityAxis(followup, { ...options, axis: "social_cadence", fetchImpl }),
+    ).toMatchObject({
+      status: "not_assessable",
       reasonCode: "no_visible_reply",
     });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const requiredFollowup = { ...followup, scenarioKind: "direct", expectedDirectAgents: ["agent-a"] };
+    expect(
+      await judgeConversationQualityAxis(requiredFollowup, { ...options, axis: "length_fit", fetchImpl }),
+    ).toMatchObject({
+      status: "rated",
+      score: 1,
+      reasonCode: "required_reply_missing",
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat agent-only context as a reply to an absent human trigger", async () => {
+    const fetchImpl = vi.fn();
+    const noHuman = {
+      ...privateCase,
+      scenarioKind: "casual",
+      expectedDirectAgents: [],
+      messages: privateCase.messages.slice(1),
+    };
+    expect(await judgeConversationQualityAxis(noHuman, { ...options, axis: "length_fit", fetchImpl })).toMatchObject({
+      status: "not_assessable",
+      score: null,
+      reasonCode: "insufficient_context",
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("requests low, hidden thinking only for the audited Gemini 3 judge family", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      expect(request.reasoning).toEqual({ effort: "low", exclude: true });
+      expect(request.max_tokens).toBe(4_096);
+      return response(judgments.length_fit);
+    });
+    await judgeConversationQualityAxis(privateCase, {
+      ...options,
+      model: "google/gemini-3.8-flash",
+      axis: "length_fit",
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when a quiet turn is labeled as a visible reply or as too long", async () => {
+    const quietCase = {
+      ...privateCase,
+      scenarioKind: "casual",
+      expectedDirectAgents: [],
+      messages: privateCase.messages.slice(0, 1),
+    };
+    for (const judgment of [
+      { status: "rated", score: 5, reasonCode: "observable_exchange", details: { direction: "appropriate" } },
+      { status: "rated", score: 5, reasonCode: "silence_fit", details: { direction: "too_long" } },
+    ]) {
+      await expect(
+        judgeConversationQualityAxis(quietCase, {
+          ...options,
+          axis: "length_fit",
+          fetchImpl: (async () => response(judgment)) as typeof fetch,
+        }),
+      ).rejects.toMatchObject({ category: "judgment-schema" });
+    }
   });
 
   it("marks a visible v1 exchange's audience insufficient without inventing recipients", async () => {
