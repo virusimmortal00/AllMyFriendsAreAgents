@@ -5,11 +5,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   analyzeConversationCanary,
+  analyzeQualityStudy,
   mergeScalarCanaryManifests,
   parseScalarCanaryManifest,
   privateRatingTemplate,
 } from "./conversation-routing-live-analysis.js";
-import { parsePrivateConversationRatings } from "./conversation-routing-live-annotations.js";
+import {
+  parsePrivateConversationRatings,
+  parsePrivateQualityRatings,
+} from "./conversation-routing-live-annotations.js";
 
 const sha = "a".repeat(64);
 const judge = (scenarioId: string, runId: string, naturalness: number, cost: number) => ({
@@ -28,6 +32,105 @@ const judge = (scenarioId: string, runId: string, naturalness: number, cost: num
   closureCorrect: true,
   judgeUsage: { inputTokens: 40, outputTokens: 20, reportedCostUsd: cost },
 });
+
+const qualityOutcome = (axis: string, scenarioId: string, runId: string, score: number | null = 4) => ({
+  axis,
+  status: "completed",
+  result: {
+    schemaVersion: 2,
+    rubricVersion: "room-quality-v2",
+    scenarioId,
+    runId,
+    judgeModel: "google/pinned-judge",
+    resolvedJudgeModel: "google/pinned-judge",
+    axis,
+    status: score === null ? "not_assessable" : "rated",
+    score,
+    reasonCode: score === null ? "insufficient_context" : "observable_exchange",
+    details:
+      axis === "social_cadence"
+        ? { cueFit: score === null ? null : "attuned", textTurnRhythm: score === null ? null : "smooth" }
+        : axis === "length_fit"
+          ? { direction: score === null ? null : "appropriate" }
+          : axis === "address_radius"
+            ? { observedAudience: score === null ? null : "user", audienceFit: score === null ? null : "aligned" }
+            : { valueMode: score === null ? null : "knowledge" },
+    judgeUsage: { inputTokens: 10, outputTokens: 5, reportedCostUsd: 0.001 },
+  },
+});
+const axes = ["social_cadence", "length_fit", "address_radius", "contribution_value"];
+function studyFixture() {
+  const base = manifest();
+  const cases = base.cases.map((row, index) => {
+    const arm = index === 0 ? "a" : "b";
+    const scenarioId = `study-example-${arm}`;
+    const runId = `run-${arm}`;
+    const secondId = `${scenarioId}-two`;
+    const secondRun = `${runId}-two`;
+    const variant = index === 0 ? "jev-on" : "jev-off";
+    const one = {
+      ...trigger(variant, {
+        scenarioId,
+        runId,
+        classifier: { ...trigger(variant).classifier, resolvedModelId: index === 0 ? "openrouter/example/jev" : null },
+      }),
+    };
+    const two = {
+      ...trigger(variant, {
+        scenarioId: secondId,
+        runId: secondRun,
+        classifier: { ...trigger(variant).classifier, resolvedModelId: index === 0 ? "openrouter/example/jev" : null },
+      }),
+    };
+    return {
+      ...row,
+      scenarioId,
+      triggers: [one, two],
+      judge: [],
+      qualityJudge: [
+        {
+          scenarioId,
+          runId,
+          outcomes: axes.map((axis) => qualityOutcome(axis, scenarioId, runId, index === 0 ? 4 : 2)),
+        },
+        {
+          scenarioId: secondId,
+          runId: secondRun,
+          outcomes: axes.map((axis) => qualityOutcome(axis, secondId, secondRun, 3)),
+        },
+      ],
+      study: {
+        schemaVersion: 1,
+        planId: "study1",
+        planSha256: sha,
+        blockId: "block1",
+        replicateId: "rep1",
+        pairId: "pair1",
+        caseId: `case-${arm}`,
+        arm,
+        factor: "jev",
+        order: "ab",
+        arcProfileId: "agent-exchange-v1",
+        jevProfileId: index === 0 ? "current-v1" : "off-v1",
+        gateProfileId: "current-v1",
+        agentPromptProfileId: "current-v1",
+        agentPromptProfileDigest: sha,
+        jevProfileDigest: index === 0 ? "a".repeat(64) : "b".repeat(64),
+        gateProfileDigest: sha,
+        rosterOrder: ["codex-sol", "codex-luna"],
+      },
+    };
+  });
+  return {
+    ...base,
+    judgeRubric: "v2",
+    maximumScheduledJudgeCalls: 8,
+    planningAllowanceMs: 1000,
+    studyPlan: { schemaVersion: 1, planId: "study1", planSha256: sha, orderSeed: 42, jevModel: "example/jev" },
+    cases,
+  };
+}
+
 const trigger = (variant: "jev-on" | "jev-off", changes: Record<string, unknown> = {}) => ({
   schemaVersion: 1,
   scenarioId: "direct-2-low-enforce",
@@ -396,5 +499,110 @@ describe("provider-free conversation canary analysis", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("versioned quality study analysis", () => {
+  it("keeps four independent axis denominators and pairs only matching trigger ordinals", () => {
+    const parsed = parseScalarCanaryManifest(studyFixture());
+    const human = parsePrivateQualityRatings({
+      schemaVersion: 2,
+      ratings: [
+        {
+          scenarioId: "study-example-a",
+          runId: "run-a",
+          axes: { social_cadence: { status: "rated", score: 5 }, length_fit: { status: "not_assessable" } },
+        },
+        { scenarioId: "study-example-b", runId: "run-b", axes: { social_cadence: { status: "rated", score: 2 } } },
+      ],
+    });
+    const report = analyzeQualityStudy(parsed, human, { seed: "fixed", maxSpotChecks: 3 });
+    expect(report.denominators).toMatchObject({
+      cases: 2,
+      blocks: 1,
+      triggers: 4,
+      matchedCasePairs: 1,
+      matchedTriggerPairs: 2,
+    });
+    expect(report.axes.social_cadence).toMatchObject({
+      judge: { rated: 4, missing: 0, failed: 0 },
+      human: { rated: 2, missing: 2 },
+      pairedJudge: { pairedRuns: 2, candidateMinusBaselineMean: -1 },
+      pairedHuman: { pairedRuns: 1, candidateMinusBaselineMean: -3 },
+      agreement: { jointlyRated: 2, scoreExact: 1, scoreWithinOne: 2 },
+    });
+    expect(report.resources.judgeReportedCostUsd).toMatchObject({ reportedRuns: 4, total: 0.016 });
+    expect(report.spotChecks).toHaveLength(3);
+    expect(privateRatingTemplate(parsed)).toMatchObject({ schemaVersion: 2 });
+    expect(privateRatingTemplate(parsed).ratings).toHaveLength(4);
+    expect(JSON.stringify(report)).not.toContain("prompt");
+  });
+
+  it("excludes mismatched factor profiles and resolved judge model drift", () => {
+    const fixture = studyFixture();
+    const broken = structuredClone(fixture);
+    broken.cases[1]!.study.agentPromptProfileId = "social-v1";
+    expect(analyzeQualityStudy(parseScalarCanaryManifest(broken)).denominators.matchedCasePairs).toBe(0);
+    const drift = structuredClone(fixture);
+    drift.cases[1]!.qualityJudge[0]!.outcomes[0]!.result.resolvedJudgeModel = "google/other-model";
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(drift));
+    expect(report.axes.social_cadence!.pairedJudge.pairedRuns).toBe(1);
+    expect(report.axes.social_cadence!.resolvedJudgeModelMismatchPairs).toBe(1);
+  });
+
+  it("accepts a full uint32 study seed and rejects a changed prompt digest", () => {
+    const fixture = studyFixture();
+    fixture.studyPlan.orderSeed = 0xffffffff;
+    expect(parseScalarCanaryManifest(fixture).studyPlan?.orderSeed).toBe(0xffffffff);
+    fixture.cases[1]!.study.agentPromptProfileDigest = "c".repeat(64);
+    expect(analyzeQualityStudy(parseScalarCanaryManifest(fixture)).denominators.matchedCasePairs).toBe(0);
+  });
+
+  it("merges separate study arms and preserves failed, missing, and unassessable axis coverage", () => {
+    const fixture = studyFixture();
+    fixture.cases[0]!.qualityJudge[0]!.outcomes[1] = {
+      axis: "length_fit",
+      status: "failed",
+      category: "timeout",
+    } as never;
+    fixture.cases[1]!.qualityJudge = fixture.cases[1]!.qualityJudge.slice(0, 1);
+    fixture.cases[1]!.qualityJudge[0]!.outcomes[2] = qualityOutcome("address_radius", "study-example-b", "run-b", null);
+    const split = fixture.cases.map((row) => parseScalarCanaryManifest({ ...fixture, cases: [row] }));
+    const report = analyzeQualityStudy(mergeScalarCanaryManifests(split));
+    expect(report.denominators.matchedCasePairs).toBe(1);
+    expect(report.axes.length_fit!.judge).toMatchObject({ failed: 1, missing: 1, rated: 2 });
+    expect(report.axes.address_radius!.judge).toMatchObject({ notAssessable: 1, missing: 1, rated: 2 });
+    expect(report.resources.judgeReportedCostUsd.missingRuns).toBe(2);
+  });
+
+  it("keeps failed study Jev consultation as coverage but excludes its paired effect", () => {
+    const fixture = studyFixture();
+    fixture.cases[0]!.triggers[0]!.classifier = {
+      outcome: "failed",
+      reason: "timeout",
+      durationMs: 100,
+      reportedInputTokens: null,
+      reportedOutputTokens: null,
+      reportedCostUsd: null,
+      resolvedModelId: null,
+    } as never;
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(report.denominators).toMatchObject({
+      jevFailedTriggers: 1,
+      excludedTriggerPairsJevIncomplete: 1,
+      matchedTriggerPairs: 1,
+    });
+    expect(report.axes.social_cadence!.judge.rated).toBe(4);
+    fixture.cases[0]!.triggers[0]!.classifier = {
+      outcome: "not-consulted",
+      reason: null,
+      durationMs: null,
+      reportedInputTokens: null,
+      reportedOutputTokens: null,
+      reportedCostUsd: null,
+      resolvedModelId: null,
+    } as never;
+    const absent = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(absent.denominators).toMatchObject({ jevNotConsultedTriggers: 1, excludedTriggerPairsJevIncomplete: 1 });
   });
 });

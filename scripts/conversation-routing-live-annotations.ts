@@ -1,4 +1,6 @@
 /** Private judgments for a live room evaluation. This module never retains review text. */
+import { QUALITY_AXES, type QualityAxis } from "./conversation-routing-live-judge-v2.js";
+
 const MAX_RATINGS = 500;
 const MAX_PAIRS = 250;
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -15,6 +17,17 @@ export interface ConversationRating {
   replyWaste?: Rating<{ assessedReplies: number; unnecessaryReplies: number; duplicateReplies: number }>;
   handoff?: Rating<{ correct: boolean }>;
   closure?: Rating<{ correct: boolean }>;
+}
+
+export type QualityHumanAxisRating =
+  | { status: "rated"; score: 1 | 2 | 3 | 4 | 5 }
+  | { status: "not_applicable" | "not_assessable" };
+
+export interface QualityHumanRating {
+  scenarioId: string;
+  runId: string;
+  /** Empty or absent axes remain missing, never favorable scores. */
+  axes: Partial<Record<QualityAxis, QualityHumanAxisRating>>;
 }
 
 /** Only fields already projected by the live collector may cross into comparison. */
@@ -151,6 +164,44 @@ export function parsePrivateConversationRatings(input: unknown): ConversationRat
   const rows = envelope.ratings.map(parseRating);
   const keys = rows.map((row) => `${row.scenarioId}\u0000${row.runId}`);
   if (new Set(keys).size !== keys.length) throw new Error("Invalid private rating input.");
+  return rows;
+}
+
+/** Closed blinded-axis ratings; optional privateNote is discarded before export. */
+export function parsePrivateQualityRatings(input: unknown): QualityHumanRating[] {
+  const envelope = object(input, ["schemaVersion", "ratings"]);
+  if (envelope.schemaVersion !== 2 || !Array.isArray(envelope.ratings) || envelope.ratings.length > MAX_RATINGS)
+    throw new Error("Invalid private quality rating input.");
+  const rows: QualityHumanRating[] = envelope.ratings.map((value: unknown) => {
+    const row = object(value, ["scenarioId", "runId", "axes", "privateNote"]);
+    if (
+      !id(row.scenarioId) ||
+      !id(row.runId) ||
+      (row.privateNote !== undefined && (typeof row.privateNote !== "string" || row.privateNote.length > 1_000))
+    )
+      throw new Error("Invalid private quality rating input.");
+    const axes = object(row.axes, QUALITY_AXES);
+    const parsed: QualityHumanRating["axes"] = {};
+    for (const axis of QUALITY_AXES) {
+      if (!(axis in axes)) continue;
+      const rating = object(axes[axis], ["status", "score"]);
+      if (rating.status === "rated") {
+        if (Object.keys(rating).length !== 2 || !count(rating.score, 5) || rating.score < 1)
+          throw new Error("Invalid private quality rating input.");
+        parsed[axis] = { status: "rated", score: rating.score as 1 | 2 | 3 | 4 | 5 };
+      } else if (
+        (rating.status === "not_applicable" || rating.status === "not_assessable") &&
+        Object.keys(rating).length === 1
+      ) {
+        parsed[axis] = { status: rating.status };
+      } else {
+        throw new Error("Invalid private quality rating input.");
+      }
+    }
+    return { scenarioId: row.scenarioId, runId: row.runId, axes: parsed };
+  });
+  if (new Set(rows.map((row) => `${row.scenarioId}\u0000${row.runId}`)).size !== rows.length)
+    throw new Error("Invalid private quality rating input.");
   return rows;
 }
 
