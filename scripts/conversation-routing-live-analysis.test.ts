@@ -735,6 +735,50 @@ describe("versioned quality study analysis", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("accepts the expanded exchange arc across six final batches but rejects unknown arcs", () => {
+    const fixture = studyFixture();
+    const batches = Array.from({ length: 6 }, (_, index) => {
+      const cases = structuredClone(fixture.cases);
+      for (const row of cases) {
+        row.scenarioId = `batch-${index}-${row.scenarioId}`;
+        row.study.arcProfileId = "agent-exchange-v2";
+        row.study.pairId = `pair-${index}`;
+        row.study.blockId = `block-${index}`;
+        row.study.caseId = `batch-${index}-${row.study.caseId}`;
+        for (const turn of row.triggers) {
+          turn.scenarioId = `batch-${index}-${turn.scenarioId}`;
+          turn.runId = `batch-${index}-${turn.runId}`;
+        }
+        for (const judgment of row.qualityJudge) {
+          judgment.scenarioId = `batch-${index}-${judgment.scenarioId}`;
+          judgment.runId = `batch-${index}-${judgment.runId}`;
+          for (const outcome of judgment.outcomes) {
+            outcome.result.scenarioId = judgment.scenarioId;
+            outcome.result.runId = judgment.runId;
+          }
+        }
+      }
+      return {
+        ...fixture,
+        cases,
+        studyBatch: {
+          schemaVersion: 1,
+          planCaseCount: 12,
+          planPairCount: 6,
+          batchIndex: index,
+          batchCount: 6,
+          pairsPerBatch: 1,
+          pairCount: 1,
+          pairIds: [`pair-${index}`],
+        },
+      };
+    });
+    const parsed = batches.map(parseScalarCanaryManifest);
+    expect(mergeScalarCanaryManifests(parsed).cases).toHaveLength(12);
+    batches[0]!.cases[0]!.study.arcProfileId = "agent-exchange-v3";
+    expect(() => parseScalarCanaryManifest(batches[0])).toThrow(/Invalid scalar canary manifest/);
+  });
   it("keeps four independent axis denominators and pairs only matching trigger ordinals", () => {
     const parsed = parseScalarCanaryManifest(studyFixture());
     const human = parsePrivateQualityRatings({

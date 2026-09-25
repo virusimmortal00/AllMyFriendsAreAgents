@@ -308,9 +308,14 @@ function parseStudy(value: unknown): StudyCaseMetadataV1 {
     !["a", "b"].includes(String(row.arm)) ||
     !["jev", "gate", "agent-prompt"].includes(String(row.factor)) ||
     !["ab", "ba"].includes(String(row.order)) ||
-    !["single-v1", "casual-thread-v1", "agent-exchange-v1", "handoff-choice-v1", "dispute-resolution-v1"].includes(
-      String(row.arcProfileId),
-    ) ||
+    ![
+      "single-v1",
+      "casual-thread-v1",
+      "agent-exchange-v1",
+      "agent-exchange-v2",
+      "handoff-choice-v1",
+      "dispute-resolution-v1",
+    ].includes(String(row.arcProfileId)) ||
     !["off-v1", "current-v1", "lean-v1", "relevance-v1"].includes(String(row.jevProfileId)) ||
     !["current-v1", "relevance-v1"].includes(String(row.gateProfileId)) ||
     !["current-v1", "social-v1"].includes(String(row.agentPromptProfileId)) ||
