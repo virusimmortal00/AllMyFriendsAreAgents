@@ -24,6 +24,7 @@ interface ScalarTrigger {
   runId: string;
   variant: Variant;
   actor: {
+    provenance: "step-fields-v1" | "legacy-unverified";
     inputTokens: number | null;
     outputTokens: number | null;
     reasoningTokens: number | null;
@@ -42,7 +43,7 @@ interface ScalarTrigger {
   };
   firstVisibleMs: number | null;
   combined: {
-    actorTotalPlusJevPromptCompletionTokens: number | null;
+    openCodeObservedTotalPlusJevPromptCompletionTokens: number | null;
     costUsd: number | null;
     coverage: "reported" | "partial" | "missing";
   };
@@ -271,14 +272,28 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         "totalTokenCoverage",
         "reportedCostUsd",
         "usageCoverage",
+        "openCodeUsageProvenance",
+        "openCodeObservedInputTokens",
+        "openCodeObservedOutputTokens",
+        "openCodeObservedReasoningTokens",
+        "openCodeObservedCacheReadTokens",
+        "openCodeObservedCacheWriteTokens",
+        "openCodeObservedTotalTokens",
+        "openCodeEstimatedCostUsd",
+        "openCodeUsageCoverage",
+        "openCodeTotalCoverage",
       ]);
+      const current = trigger.openCodeUsageProvenance === "step-fields-v1";
       if (
         trigger.schemaVersion !== 1 ||
         !id(trigger.scenarioId) ||
         trigger.variant !== row.variant ||
         trigger.preflightMode !== row.preflightMode ||
         !id(trigger.runId) ||
-        !["reported", "partial", "missing"].includes(String(trigger.usageCoverage)) ||
+        (trigger.openCodeUsageProvenance !== undefined && !current) ||
+        !["reported", "partial", "missing"].includes(
+          String(current ? trigger.openCodeUsageCoverage : trigger.usageCoverage),
+        ) ||
         !Array.isArray(trigger.requiredAddressAgents) ||
         trigger.requiredAddressAgents.some((agent) => !id(agent)) ||
         !Array.isArray(trigger.routing) ||
@@ -309,18 +324,37 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       )
         throw new Error("Invalid scalar canary manifest.");
       const actor = {
-        inputTokens: nullableInteger(trigger.reportedInputTokens, 1_000_000_000),
-        outputTokens: nullableInteger(trigger.reportedOutputTokens, 1_000_000_000),
-        reasoningTokens: optionalInteger(trigger.reportedReasoningTokens, 1_000_000_000),
-        cacheReadTokens: optionalInteger(trigger.reportedCacheReadTokens, 1_000_000_000),
-        cacheWriteTokens: optionalInteger(trigger.reportedCacheWriteTokens, 1_000_000_000),
-        totalTokens: optionalInteger(trigger.reportedTotalTokens, 1_000_000_000),
+        provenance: current ? ("step-fields-v1" as const) : ("legacy-unverified" as const),
+        inputTokens: current
+          ? nullableInteger(trigger.openCodeObservedInputTokens, 1_000_000_000)
+          : nullableInteger(trigger.reportedInputTokens, 1_000_000_000),
+        outputTokens: current
+          ? nullableInteger(trigger.openCodeObservedOutputTokens, 1_000_000_000)
+          : nullableInteger(trigger.reportedOutputTokens, 1_000_000_000),
+        reasoningTokens: current
+          ? nullableInteger(trigger.openCodeObservedReasoningTokens, 1_000_000_000)
+          : optionalInteger(trigger.reportedReasoningTokens, 1_000_000_000),
+        cacheReadTokens: current
+          ? nullableInteger(trigger.openCodeObservedCacheReadTokens, 1_000_000_000)
+          : optionalInteger(trigger.reportedCacheReadTokens, 1_000_000_000),
+        cacheWriteTokens: current
+          ? nullableInteger(trigger.openCodeObservedCacheWriteTokens, 1_000_000_000)
+          : optionalInteger(trigger.reportedCacheWriteTokens, 1_000_000_000),
+        totalTokens: current
+          ? nullableInteger(trigger.openCodeObservedTotalTokens, 1_000_000_000)
+          : optionalInteger(trigger.reportedTotalTokens, 1_000_000_000),
         totalTokenCoverage:
-          trigger.totalTokenCoverage === undefined
+          (current ? trigger.openCodeTotalCoverage : trigger.totalTokenCoverage) === undefined
             ? ("missing" as const)
-            : (trigger.totalTokenCoverage as ScalarTrigger["actor"]["totalTokenCoverage"]),
-        costUsd: nullableNumber(trigger.reportedCostUsd, 1_000),
-        coverage: trigger.usageCoverage as ScalarTrigger["actor"]["coverage"],
+            : ((current
+                ? trigger.openCodeTotalCoverage
+                : trigger.totalTokenCoverage) as ScalarTrigger["actor"]["totalTokenCoverage"]),
+        costUsd: current
+          ? nullableNumber(trigger.openCodeEstimatedCostUsd, 1_000)
+          : nullableNumber(trigger.reportedCostUsd, 1_000),
+        coverage: (current
+          ? trigger.openCodeUsageCoverage
+          : trigger.usageCoverage) as ScalarTrigger["actor"]["coverage"],
       };
       if (
         !["reported", "partial", "missing"].includes(actor.totalTokenCoverage) ||
@@ -348,12 +382,14 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         noJev ||
         (jev.outcome === "completed" && jev.inputTokens !== null && jev.outputTokens !== null && jev.costUsd !== null);
       const complete =
+        actor.provenance === "step-fields-v1" &&
         actor.coverage === "reported" &&
         actor.inputTokens !== null &&
         actor.outputTokens !== null &&
         actor.costUsd !== null &&
         jevComplete;
       const totalTokensComplete =
+        actor.provenance === "step-fields-v1" &&
         actor.totalTokenCoverage === "reported" &&
         actor.totalTokens !== null &&
         (noJev || (jev.inputTokens !== null && jev.outputTokens !== null));
@@ -372,7 +408,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         jev,
         firstVisibleMs: nullableInteger(trigger.firstVisibleMs, 3_600_000),
         combined: {
-          actorTotalPlusJevPromptCompletionTokens: totalTokensComplete
+          openCodeObservedTotalPlusJevPromptCompletionTokens: totalTokensComplete
             ? actor.totalTokens! + (noJev ? 0 : jev.inputTokens! + jev.outputTokens!)
             : null,
           costUsd: complete ? actor.costUsd! + (noJev ? 0 : jev.costUsd!) : null,
@@ -477,6 +513,14 @@ function aggregate(values: readonly (number | null)[]) {
     total: reported.length ? reported.reduce((sum, value) => sum + value, 0) : null,
   };
 }
+function diagnosticAggregate(values: readonly (number | null)[]) {
+  const present = values.filter((value): value is number => value !== null);
+  return {
+    observedRuns: present.length,
+    missingRuns: values.length - present.length,
+    unverifiedTotal: present.length ? present.reduce((sum, value) => sum + value, 0) : null,
+  };
+}
 
 /** Deterministic scalar analysis; model judgments and human annotations remain separate. */
 export function analyzeConversationCanary(
@@ -497,26 +541,38 @@ export function analyzeConversationCanary(
         rows.some((row) => row.scenarioId === judge.scenarioId && row.runId === judge.runId),
       );
       const rated = judged.filter((judge) => judge.status === "rated");
+      const verified = (row: ScalarTrigger) => row.actor.provenance === "step-fields-v1";
+      const legacy = rows.filter((row) => !verified(row));
       return [
         variant,
         {
           runs: rows.length,
+          legacyUnverifiedRuns: legacy.length,
+          legacyDiagnosticActorCostUsd: diagnosticAggregate(legacy.map((row) => row.actor.costUsd)),
           jevCompleted: rows.filter((row) => row.jev.outcome === "completed").length,
-          actorCostUsd: aggregate(rows.map((row) => (row.actor.coverage === "reported" ? row.actor.costUsd : null))),
-          actorUncachedInputTokens: aggregate(
-            rows.map((row) => (row.actor.coverage === "reported" ? row.actor.inputTokens : null)),
+          actorEstimatedCostUsd: aggregate(
+            rows.map((row) => (verified(row) && row.actor.coverage === "reported" ? row.actor.costUsd : null)),
           ),
-          actorOutputTokens: aggregate(
-            rows.map((row) => (row.actor.coverage === "reported" ? row.actor.outputTokens : null)),
+          openCodeObservedUncachedInputTokens: aggregate(
+            rows.map((row) => (verified(row) && row.actor.coverage === "reported" ? row.actor.inputTokens : null)),
           ),
-          actorReasoningTokens: aggregate(rows.map((row) => row.actor.reasoningTokens)),
-          actorCacheReadTokens: aggregate(rows.map((row) => row.actor.cacheReadTokens)),
-          actorCacheWriteTokens: aggregate(rows.map((row) => row.actor.cacheWriteTokens)),
-          actorReportedTotalTokens: aggregate(rows.map((row) => row.actor.totalTokens)),
-          actorTotalPlusJevPromptCompletionTokens: aggregate(
-            rows.map((row) => row.combined.actorTotalPlusJevPromptCompletionTokens),
+          openCodeObservedOutputTokens: aggregate(
+            rows.map((row) => (verified(row) && row.actor.coverage === "reported" ? row.actor.outputTokens : null)),
           ),
-          jevCostUsd: aggregate(
+          openCodeObservedReasoningTokens: aggregate(
+            rows.map((row) => (verified(row) ? row.actor.reasoningTokens : null)),
+          ),
+          openCodeObservedCacheReadTokens: aggregate(
+            rows.map((row) => (verified(row) ? row.actor.cacheReadTokens : null)),
+          ),
+          openCodeObservedCacheWriteTokens: aggregate(
+            rows.map((row) => (verified(row) ? row.actor.cacheWriteTokens : null)),
+          ),
+          openCodeObservedTotalTokens: aggregate(rows.map((row) => (verified(row) ? row.actor.totalTokens : null))),
+          openCodeObservedTotalPlusJevPromptCompletionTokens: aggregate(
+            rows.map((row) => row.combined.openCodeObservedTotalPlusJevPromptCompletionTokens),
+          ),
+          jevReportedCostUsd: aggregate(
             rows.map((row) =>
               row.variant === "jev-off" ? 0 : row.jev.outcome === "completed" ? row.jev.costUsd : null,
             ),
@@ -531,14 +587,14 @@ export function analyzeConversationCanary(
               row.variant === "jev-off" ? 0 : row.jev.outcome === "completed" ? row.jev.outputTokens : null,
             ),
           ),
-          actorPlusJevCostUsd: aggregate(rows.map((row) => row.combined.costUsd)),
+          actorEstimatedPlusJevReportedCostUsd: aggregate(rows.map((row) => row.combined.costUsd)),
           judgeNaturalness: {
             ratedRuns: rated.length,
             unassessableRuns: judged.length - rated.length,
             missingRuns: rows.length - judged.length,
             meanScore: mean(rated.map((row) => row.naturalness!)),
           },
-          judgeCostUsd: aggregate(judged.map((row) => row.judgeUsage.reportedCostUsd)),
+          judgeReportedCostUsd: aggregate(judged.map((row) => row.judgeUsage.reportedCostUsd)),
         },
       ];
     }),
@@ -580,7 +636,7 @@ export function analyzeConversationCanary(
   };
   const judges = new Map(judgments.map((row) => [`${row.scenarioId}\u0000${row.runId}`, row]));
   const humanRatings = new Map(ratings.map((row) => [`${row.scenarioId}\u0000${row.runId}`, row]));
-  const actorJevReportedTotal: number[] = [],
+  const actorJevObservedTotal: number[] = [],
     judgeNaturalness: number[] = [];
   const jointJudgeNaturalness: number[] = [],
     jointActorJevCost: number[] = [];
@@ -594,11 +650,12 @@ export function analyzeConversationCanary(
     const a = triggers.find((row) => row.scenarioId === pair.scenarioId && row.runId === pair.baselineRunId)!;
     const b = triggers.find((row) => row.scenarioId === pair.scenarioId && row.runId === pair.candidateRunId)!;
     if (
-      a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
-      b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+      a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null &&
+      b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null
     )
-      actorJevReportedTotal.push(
-        b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+      actorJevObservedTotal.push(
+        b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens -
+          a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens,
       );
     const jA = judges.get(`${pair.scenarioId}\u0000${pair.baselineRunId}`);
     const jB = judges.get(`${pair.scenarioId}\u0000${pair.candidateRunId}`);
@@ -610,12 +667,13 @@ export function analyzeConversationCanary(
         jointActorJevCost.push(b.combined.costUsd - a.combined.costUsd);
       }
       if (
-        a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
-        b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+        a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null &&
+        b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null
       ) {
         jointJudgeNaturalnessTokens.push(naturalnessDelta);
         jointActorJevTokensForJudge.push(
-          b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+          b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens -
+            a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens,
         );
       }
     }
@@ -628,17 +686,27 @@ export function analyzeConversationCanary(
         jointHumanActorJevCost.push(b.combined.costUsd - a.combined.costUsd);
       }
       if (
-        a.combined.actorTotalPlusJevPromptCompletionTokens !== null &&
-        b.combined.actorTotalPlusJevPromptCompletionTokens !== null
+        a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null &&
+        b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens !== null
       ) {
         jointHumanNaturalnessTokens.push(naturalnessDelta);
         jointActorJevTokensForHuman.push(
-          b.combined.actorTotalPlusJevPromptCompletionTokens - a.combined.actorTotalPlusJevPromptCompletionTokens,
+          b.combined.openCodeObservedTotalPlusJevPromptCompletionTokens -
+            a.combined.openCodeObservedTotalPlusJevPromptCompletionTokens,
         );
       }
     }
   }
   const costAndLatency = summarizeConversationRatings([], observations, pairs).paired;
+  const humanPaired = human
+    ? {
+        requestedPairs: human.paired.requestedPairs,
+        naturalness: human.paired.naturalness,
+        actorEstimatedPlusJevReportedCostUsd: human.paired.reportedCostUsd,
+        firstVisibleMs: human.paired.firstVisibleMs,
+        naturalnessAndMixedCostPairs: human.paired.naturalnessAndReportedCostPairs,
+      }
+    : null;
   const humanNaturalness = ratings.flatMap((row) =>
     row.naturalness?.status === "rated"
       ? [{ scenarioId: row.scenarioId, runId: row.runId, score: row.naturalness.score }]
@@ -665,41 +733,44 @@ export function analyzeConversationCanary(
       judgedRuns: judgments.length,
       missingRuns: triggers.length - judgments.length,
       pairedNaturalness: delta(judgeNaturalness),
-      naturalnessAndReportedCost: {
+      naturalnessAndMixedCost: {
         pairedRuns: jointJudgeNaturalness.length,
         naturalness: delta(jointJudgeNaturalness),
-        actorPlusJevCostUsd: delta(jointActorJevCost),
+        actorEstimatedPlusJevReportedCostUsd: delta(jointActorJevCost),
       },
-      naturalnessAndReportedTokens: {
+      naturalnessAndObservedTokens: {
         pairedRuns: jointJudgeNaturalnessTokens.length,
         naturalness: delta(jointJudgeNaturalnessTokens),
-        actorTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForJudge),
+        openCodeObservedTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForJudge),
       },
     },
     humanRated: human
       ? {
           ...human,
-          naturalnessAndReportedCost: {
+          paired: humanPaired!,
+          limitation:
+            "Human ratings cover only reviewed output. Actor cost is OpenCode-estimated, Jev cost is provider-reported, and older actor usage lacks field provenance.",
+          naturalnessAndMixedCost: {
             pairedRuns: jointHumanNaturalness.length,
             naturalness: delta(jointHumanNaturalness),
-            actorPlusJevCostUsd: delta(jointHumanActorJevCost),
+            actorEstimatedPlusJevReportedCostUsd: delta(jointHumanActorJevCost),
           },
-          naturalnessAndReportedTokens: {
+          naturalnessAndObservedTokens: {
             pairedRuns: jointHumanNaturalnessTokens.length,
             naturalness: delta(jointHumanNaturalnessTokens),
-            actorTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForHuman),
+            openCodeObservedTotalPlusJevPromptCompletionTokens: delta(jointActorJevTokensForHuman),
           },
         }
       : null,
     humanReviewCoverage,
-    pairedActorPlusJev: {
-      reportedCostUsd: costAndLatency.reportedCostUsd,
-      actorTotalPlusJevPromptCompletionTokens: delta(actorJevReportedTotal),
+    pairedActorAndJev: {
+      actorEstimatedPlusJevReportedCostUsd: costAndLatency.reportedCostUsd,
+      openCodeObservedTotalPlusJevPromptCompletionTokens: delta(actorJevObservedTotal),
       firstVisibleMs: costAndLatency.firstVisibleMs,
     },
     spotChecks,
     limitations:
-      "Judge scores are model judgments; human ratings have separate denominators. Cost comparisons require complete actor and Jev cost reports on both matched runs. Total-token comparisons require provider-reported actor totals plus complete Jev prompt/completion counts; the combined sum is derived. Judge cost is separate. Uninvoked replies and missing usage are unknown; small matched cases do not prove causality.",
+      "Judge scores are model judgments; human ratings have separate denominators. Actor cost is an OpenCode estimate, while Jev and judge costs are provider-reported. Mixed cost comparisons require explicit OpenCode step-field provenance and complete Jev cost on both matched runs. Token comparisons use OpenCode-observed totals plus Jev prompt/completion counts; their sum is derived. Older actor usage is legacy-unverified diagnostic data only. Uninvoked replies and missing usage are unknown; small matched cases do not prove causality.",
   };
 }
 

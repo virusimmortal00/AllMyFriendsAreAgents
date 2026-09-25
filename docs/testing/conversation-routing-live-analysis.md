@@ -79,28 +79,32 @@ pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
 The report labels automated judge findings `judgeOnly` and human findings
 `humanRated`, with separate rated, missing, not-applicable, and not-assessable
 denominators. `humanReviewCoverage` counts unsubmitted runs as missing for each
-metric, while `humanRated` summarizes only submitted ratings. It matches Jev-on and Jev-off runs only when the fictional
-`scenarioId` is the same. Actor plus Jev cost comparisons require fully
-reported actor and classifier cost on **both** sides. Token comparison uses the
-actor's provider-reported `totalTokens` plus Jev's separately reported prompt
-and completion tokens, only when each component is complete on both sides.
-That sum is an analysis calculation, not a provider-reported combined total.
-The actor's `inputTokens` are explicitly uncached input, so they are never
-presented as total input. Older manifests lacking actor total-token evidence
-remain cost-comparable but have a missing total-token denominator. Jev-off has a
-structural zero classifier cost because it did not consult Jev. Judge spending
-appears separately and is never treated as room turn cost. A missing judge or
-human rating is not a favorable score. The `judgeOnly.naturalnessAndReportedCost`
-field uses only pairs with both rated judge naturalness and fully reported
-actor-plus-Jev cost, so its quality and cost deltas have the same denominator.
-`humanRated.naturalnessAndReportedCost` applies the same paired rule to human
-scores when they are available. The corresponding `naturalnessAndReportedTokens`
-fields require complete actor totals and Jev prompt/completion counts on those
-same quality-rated pairs.
-The separate token and cost totals retain their own reported and missing run
-counts. These small stochastic pairs show
-observations and review priorities, not causal token savings or a measurement
-of what an uninvoked agent would have said.
+metric, while `humanRated` summarizes only submitted ratings. It matches Jev-on
+and Jev-off runs only when the fictional `scenarioId` and settings match.
+
+The actor's OpenCode step-finish cost is a **local estimate**, not a provider
+billing record. Its token fields are OpenCode-observed normalized usage, not
+independently provider-reported usage. Jev's `reportedCostUsd` comes from its
+provider response when present. The report labels their sum
+`actorEstimatedPlusJevReportedCostUsd`; it is mixed-provenance cost, not actual
+room spending. The token comparison labels its derived sum
+`openCodeObservedTotalPlusJevPromptCompletionTokens`. Actor uncached input is
+shown separately and is never called total input. Jev-off has a structural zero
+classifier cost because it did not consult Jev. Judge spending appears
+separately and is never included in room-turn cost.
+
+Paired mixed-cost and token comparisons require explicit OpenCode step-field
+provenance and complete field coverage on **both** runs. Older scalar manifests
+may contain normalized fallback zeros that look reported; they are labeled
+`legacy-unverified`, excluded from those comparisons, and shown only as
+diagnostic amounts. `judgeOnly.naturalnessAndMixedCost` and
+`humanRated.naturalnessAndMixedCost` use only quality-rated pairs with complete
+mixed-cost coverage. Their `naturalnessAndObservedTokens` counterparts use only
+quality-rated pairs with complete OpenCode observed totals and Jev
+prompt/completion counts. Each comparison reports its own denominator. A
+missing judge or human rating is never a favorable score. These small
+stochastic pairs show observations and review priorities, not causal savings or
+what an uninvoked agent would have said.
 
 The analysis command rejects unknown manifest fields and oversized input. It
 does not invoke the room server, OpenCode, Jev, or the judge model. An incomplete

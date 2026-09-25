@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   analyzeConversationCanary,
@@ -60,15 +64,16 @@ const trigger = (variant: "jev-on" | "jev-off", changes: Record<string, unknown>
   generationStarts: 1,
   generationCompletions: 1,
   generationFailures: 0,
-  reportedInputTokens: 100,
-  reportedOutputTokens: 50,
-  reportedReasoningTokens: 5,
-  reportedCacheReadTokens: 20,
-  reportedCacheWriteTokens: 0,
-  reportedTotalTokens: 175,
-  totalTokenCoverage: "reported",
-  reportedCostUsd: variant === "jev-on" ? 0.02 : 0.03,
-  usageCoverage: "reported",
+  openCodeUsageProvenance: "step-fields-v1",
+  openCodeObservedInputTokens: 100,
+  openCodeObservedOutputTokens: 50,
+  openCodeObservedReasoningTokens: 5,
+  openCodeObservedCacheReadTokens: 20,
+  openCodeObservedCacheWriteTokens: 0,
+  openCodeObservedTotalTokens: 175,
+  openCodeTotalCoverage: "reported",
+  openCodeEstimatedCostUsd: variant === "jev-on" ? 0.02 : 0.03,
+  openCodeUsageCoverage: "reported",
   ...changes,
 });
 const manifest = (changes: Record<string, unknown> = {}) => ({
@@ -126,42 +131,44 @@ describe("provider-free conversation canary analysis", () => {
     const report = analyzeConversationCanary(scalar, ratings, { seed: "pilot-1", maxSpotChecks: 2 });
     expect(report.matchedPairs).toBe(1);
     expect(report.judgeOnly.pairedNaturalness).toEqual({ pairedRuns: 1, candidateMinusBaselineMean: 2 });
-    expect(report.judgeOnly.naturalnessAndReportedCost).toEqual({
+    expect(report.judgeOnly.naturalnessAndMixedCost).toEqual({
       pairedRuns: 1,
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 2 },
-      actorPlusJevCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
+      actorEstimatedPlusJevReportedCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
     });
-    expect(report.judgeOnly.naturalnessAndReportedTokens).toEqual({
+    expect(report.judgeOnly.naturalnessAndObservedTokens).toEqual({
       pairedRuns: 1,
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 2 },
-      actorTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
+      openCodeObservedTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
     });
     expect(report.humanRated?.paired.naturalness).toEqual({ pairedRuns: 1, candidateMinusBaselineMean: 3 });
-    expect(report.humanRated?.naturalnessAndReportedCost).toEqual({
+    expect(report.humanRated?.naturalnessAndMixedCost).toEqual({
       pairedRuns: 1,
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 3 },
-      actorPlusJevCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
+      actorEstimatedPlusJevReportedCostUsd: { pairedRuns: 1, candidateMinusBaselineMean: expect.closeTo(-0.009, 6) },
     });
-    expect(report.humanRated?.naturalnessAndReportedTokens).toEqual({
+    expect(report.humanRated?.naturalnessAndObservedTokens).toEqual({
       pairedRuns: 1,
       naturalness: { pairedRuns: 1, candidateMinusBaselineMean: 3 },
-      actorTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
+      openCodeObservedTotalPlusJevPromptCompletionTokens: { pairedRuns: 1, candidateMinusBaselineMean: 10 },
     });
     expect(report.humanRated?.directReply).toEqual({ expectedTargets: 2, missedTargets: 1, humanCorrections: 1 });
     expect(report.humanReviewCoverage).toMatchObject({ submittedRuns: 2, unsubmittedRuns: 0 });
-    expect(report.pairedActorPlusJev.reportedCostUsd.pairedRuns).toBe(1);
-    expect(report.pairedActorPlusJev.reportedCostUsd.candidateMinusBaselineMean).toBeCloseTo(-0.009);
-    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+    expect(report.pairedActorAndJev.actorEstimatedPlusJevReportedCostUsd.pairedRuns).toBe(1);
+    expect(report.pairedActorAndJev.actorEstimatedPlusJevReportedCostUsd.candidateMinusBaselineMean).toBeCloseTo(
+      -0.009,
+    );
+    expect(report.pairedActorAndJev.openCodeObservedTotalPlusJevPromptCompletionTokens).toEqual({
       pairedRuns: 1,
       candidateMinusBaselineMean: 10,
     });
-    expect(report.variants["jev-on"]?.jevCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.001 });
-    expect(report.variants["jev-on"]?.actorTotalPlusJevPromptCompletionTokens).toEqual({
+    expect(report.variants["jev-on"]?.jevReportedCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.001 });
+    expect(report.variants["jev-on"]?.openCodeObservedTotalPlusJevPromptCompletionTokens).toEqual({
       reportedRuns: 1,
       missingRuns: 0,
       total: 185,
     });
-    expect(report.variants["jev-on"]?.judgeCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.002 });
+    expect(report.variants["jev-on"]?.judgeReportedCostUsd).toEqual({ reportedRuns: 1, missingRuns: 0, total: 0.002 });
     expect(report.spotChecks).toHaveLength(2);
     expect(JSON.stringify(report)).not.toContain("Private reply text");
     expect(JSON.stringify(report)).not.toContain('"prompt":');
@@ -175,8 +182,8 @@ describe("provider-free conversation canary analysis", () => {
             ...row,
             triggers: [
               trigger("jev-on", {
-                usageCoverage: "partial",
-                reportedCostUsd: null,
+                openCodeUsageCoverage: "partial",
+                openCodeEstimatedCostUsd: null,
                 classifier: {
                   outcome: "completed",
                   reason: null,
@@ -192,7 +199,11 @@ describe("provider-free conversation canary analysis", () => {
         : row,
     );
     const report = analyzeConversationCanary(parseScalarCanaryManifest({ ...fixture, cases }));
-    expect(report.variants["jev-on"]?.actorPlusJevCostUsd).toEqual({ reportedRuns: 0, missingRuns: 1, total: null });
+    expect(report.variants["jev-on"]?.actorEstimatedPlusJevReportedCostUsd).toEqual({
+      reportedRuns: 0,
+      missingRuns: 1,
+      total: null,
+    });
     expect(report.judgeOnly).toMatchObject({ judgedRuns: 1, missingRuns: 1 });
     expect(report.humanRated).toBeNull();
     expect(report.humanReviewCoverage).toMatchObject({
@@ -200,12 +211,15 @@ describe("provider-free conversation canary analysis", () => {
       unsubmittedRuns: 2,
       metrics: { naturalness: { ratedRuns: 0, missingRuns: 2 } },
     });
-    expect(report.pairedActorPlusJev.reportedCostUsd).toEqual({ pairedRuns: 0, candidateMinusBaselineMean: null });
-    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+    expect(report.pairedActorAndJev.actorEstimatedPlusJevReportedCostUsd).toEqual({
+      pairedRuns: 0,
+      candidateMinusBaselineMean: null,
+    });
+    expect(report.pairedActorAndJev.openCodeObservedTotalPlusJevPromptCompletionTokens).toEqual({
       pairedRuns: 1,
       candidateMinusBaselineMean: 10,
     });
-    expect(report.judgeOnly.naturalnessAndReportedCost.pairedRuns).toBe(0);
+    expect(report.judgeOnly.naturalnessAndMixedCost.pairedRuns).toBe(0);
   });
 
   it("creates an unrated private template and rejects raw content in a scalar manifest", () => {
@@ -229,6 +243,14 @@ describe("provider-free conversation canary analysis", () => {
       parseScalarCanaryManifest({
         ...bad,
         cases: [{ ...bad.cases[0], triggers: [{ ...bad.cases[0]!.triggers[0], text: "private" }] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseScalarCanaryManifest({
+        ...bad,
+        cases: [
+          { ...bad.cases[0], triggers: [trigger("jev-on", { openCodeUsageProvenance: "claimed-provider-billing" })] },
+        ],
       }),
     ).toThrow();
   });
@@ -307,28 +329,47 @@ describe("provider-free conversation canary analysis", () => {
     ).toThrow();
   });
 
-  it("keeps older manifests cost-comparable but leaves total-token comparison missing", () => {
+  it("keeps older normalized amounts diagnostic but excludes them from cost and token comparisons", () => {
     const fixture = manifest();
-    const oldFields = [
-      "reportedReasoningTokens",
-      "reportedCacheReadTokens",
-      "reportedCacheWriteTokens",
-      "reportedTotalTokens",
-      "totalTokenCoverage",
-    ];
     const cases = fixture.cases.map((row) => {
       const oldTrigger: Record<string, unknown> = { ...row.triggers[0] };
-      for (const field of oldFields) delete oldTrigger[field];
+      for (const field of [
+        "openCodeUsageProvenance",
+        "openCodeObservedInputTokens",
+        "openCodeObservedOutputTokens",
+        "openCodeObservedReasoningTokens",
+        "openCodeObservedCacheReadTokens",
+        "openCodeObservedCacheWriteTokens",
+        "openCodeObservedTotalTokens",
+        "openCodeEstimatedCostUsd",
+        "openCodeUsageCoverage",
+        "openCodeTotalCoverage",
+      ])
+        delete oldTrigger[field];
+      oldTrigger.reportedInputTokens = 100;
+      oldTrigger.reportedOutputTokens = 50;
+      oldTrigger.reportedTotalTokens = 175;
+      oldTrigger.totalTokenCoverage = "reported";
+      oldTrigger.reportedCostUsd = row.variant === "jev-on" ? 0.02 : 0.03;
+      oldTrigger.usageCoverage = "reported";
       return { ...row, triggers: [oldTrigger] };
     });
     const report = analyzeConversationCanary(parseScalarCanaryManifest({ ...fixture, cases }));
-    expect(report.pairedActorPlusJev.reportedCostUsd.pairedRuns).toBe(1);
-    expect(report.pairedActorPlusJev.actorTotalPlusJevPromptCompletionTokens).toEqual({
+    expect(report.pairedActorAndJev.actorEstimatedPlusJevReportedCostUsd.pairedRuns).toBe(0);
+    expect(report.pairedActorAndJev.openCodeObservedTotalPlusJevPromptCompletionTokens).toEqual({
       pairedRuns: 0,
       candidateMinusBaselineMean: null,
     });
-    expect(report.variants["jev-on"]?.actorUncachedInputTokens.total).toBe(100);
-    expect(report.variants["jev-on"]?.actorReportedTotalTokens).toEqual({
+    expect(report.variants["jev-on"]?.legacyUnverifiedRuns).toBe(1);
+    expect(report.variants["jev-on"]?.legacyDiagnosticActorCostUsd).toEqual({
+      observedRuns: 1,
+      missingRuns: 0,
+      unverifiedTotal: 0.02,
+    });
+    expect(report.variants["jev-on"]?.jevReportedCostUsd.total).toBe(0.001);
+    expect(report.variants["jev-on"]?.judgeReportedCostUsd.total).toBe(0.002);
+    expect(report.variants["jev-on"]?.openCodeObservedUncachedInputTokens.total).toBeNull();
+    expect(report.variants["jev-on"]?.openCodeObservedTotalTokens).toEqual({
       reportedRuns: 0,
       missingRuns: 1,
       total: null,
@@ -357,8 +398,3 @@ describe("provider-free conversation canary analysis", () => {
     }
   });
 });
-
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
