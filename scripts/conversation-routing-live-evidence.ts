@@ -141,6 +141,8 @@ export function collectLiveScenarioEvidence(input: {
   preflightMode: "off" | "shadow" | "enforce";
   records: readonly RecordValue[];
   preflightDecisions: readonly PreflightAuditRecord[];
+  /** Study-only: retain a terminal deterministic fallback after a failed or skipped Jev consult. */
+  allowIncompleteJev?: boolean;
 }): LiveScenarioResult {
   const { scenarioId, variant, triggerMessageId, preflightMode, records } = input;
   if (!/^[a-z0-9-]{1,80}$/.test(scenarioId) || !EVIDENCE_ID.test(triggerMessageId))
@@ -243,15 +245,20 @@ export function collectLiveScenarioEvidence(input: {
   };
   if (variant === "jev-on") {
     const routed = stage("preflight-completed");
-    if (
-      classifier.outcome !== "completed" ||
-      routed.length !== 1 ||
-      routed[0]?.jobId !== jobId ||
-      routed[0]?.classifier !== "completed" ||
-      routed[0]?.outcome !== "routed" ||
-      !decision[0]?.classification
-    )
-      throw new Error("Jev completion proof is incomplete.");
+    const routedStage = routed[0];
+    const correlatedRoute = routed.length === 1 && routedStage?.jobId === jobId && routedStage.outcome === "routed";
+    const completedProof =
+      correlatedRoute &&
+      classifier.outcome === "completed" &&
+      routedStage.classifier === "completed" &&
+      Boolean(decision[0]?.classification);
+    const fallbackProof =
+      correlatedRoute &&
+      input.allowIncompleteJev === true &&
+      classifier.outcome !== "completed" &&
+      routedStage.classifier === "fallback" &&
+      !decision[0]?.classification;
+    if (!completedProof && !fallbackProof) throw new Error("Jev completion proof is incomplete.");
   }
   const generationRecords = records.filter(
     (record) => record.runId === runId && typeof record.generationId === "string",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type ObservedConversationRun,
   parsePrivateConversationRatings,
+  parsePrivateQualityRatings,
   summarizeConversationRatings,
 } from "./conversation-routing-live-annotations.js";
 
@@ -166,5 +167,54 @@ describe("private conversation ratings", () => {
       pairedRuns: 0,
       candidateMinusBaselineMean: null,
     });
+  });
+});
+
+describe("private four-axis human annotations", () => {
+  it("keeps explicit statuses and drops private notes", () => {
+    expect(
+      parsePrivateQualityRatings({
+        schemaVersion: 2,
+        ratings: [
+          {
+            scenarioId: "case-a",
+            runId: "run-a",
+            privateNote: "private transcript",
+            axes: {
+              social_cadence: { status: "rated", score: 4 },
+              length_fit: { status: "not_assessable" },
+              address_radius: { status: "not_applicable" },
+            },
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        scenarioId: "case-a",
+        runId: "run-a",
+        axes: {
+          social_cadence: { status: "rated", score: 4 },
+          length_fit: { status: "not_assessable" },
+          address_radius: { status: "not_applicable" },
+        },
+      },
+    ]);
+  });
+  it("rejects text export, unknown axes, out-of-range scores and duplicate runs", () => {
+    const row = { scenarioId: "case-a", runId: "run-a", axes: { social_cadence: { status: "rated", score: 4 } } };
+    expect(() => parsePrivateQualityRatings({ schemaVersion: 2, ratings: [{ ...row, prompt: "secret" }] })).toThrow();
+    expect(() =>
+      parsePrivateQualityRatings({
+        schemaVersion: 2,
+        ratings: [{ ...row, axes: { other: { status: "rated", score: 4 } } }],
+      }),
+    ).toThrow();
+    expect(() =>
+      parsePrivateQualityRatings({
+        schemaVersion: 2,
+        ratings: [{ ...row, axes: { social_cadence: { status: "rated", score: 0 } } }],
+      }),
+    ).toThrow();
+    expect(() => parsePrivateQualityRatings({ schemaVersion: 2, ratings: [row, row] })).toThrow();
   });
 });

@@ -89,8 +89,9 @@ The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
 generation outcomes, terminal reason, confirmed delivery count, and
-OpenCode-observed token fields and estimated actor cost when complete. Jev-on cases require an
-actual `classifier: completed` stage; a fallback fails the case. Structured
+OpenCode-observed token fields and estimated actor cost when complete. Legacy
+pilot Jev-on cases require an actual `classifier: completed` stage; a fallback
+fails the case. Structured
 records are joined by trigger, job, run, turn, generation, and attempt identity
 across base and rotated streams. Missing or partial usage remains unknown, not
 zero. Jev's API-reported token/cost fields and the judge's usage stay separate
@@ -140,7 +141,7 @@ pnpm exec tsx scripts/conversation-routing-live-canary.ts \
   --model openrouter/anthropic/claude-haiku-4.5 \
   --jev-model typesafe/jev-1.13 \
   --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v2 \
-  --max-cases 12 --max-judge-calls 104 --max-generations 8 \
+  --max-cases 12 --max-judge-calls 104 --max-generations 18 \
   --timeout-ms 120000 --total-timeout-ms 7200000
 ```
 
@@ -148,8 +149,9 @@ The dry-run prints only closed identifiers, case order, source/plan digests,
 and watchdog allowances. The example's 104 possible judge calls and two-hour
 total watchdog are review limits for a candidate plan, not authorization to
 spend them. Plans with more triggers can exhaust the explicit judge-call cap
-before every case is scheduled; the dry-run rejects such a plan. Its seed shuffles block order and balances AB/BA arm
-order; it does **not** seed OpenCode, the model, or product scheduling, whose
+before every case is scheduled; the dry-run rejects such a plan. Its seed
+shuffles block order and balances AB/BA arm order; it does **not** seed
+OpenCode, the model, or product scheduling, whose
 rank and follow-up draws depend on fresh server message IDs. A fresh room is
 used for every arm. Repeated blocks need distinct replicate IDs. The private
 prompt profile is one of the checked-in fixture values in
@@ -166,13 +168,32 @@ digest of its full selected base prompt; the two arms otherwise use the same
 fictional fixture and requested actor model. Actor response identity is not
 independently proven by the room manifest.
 
+Study preflight requires the generation-start watchdog to cover at least one
+turn per roster agent per scripted human trigger. The example's three-agent,
+three-trigger arc therefore requires at least nine starts; its selected cap of
+18 leaves bounded headroom for optional or synthesis turns. This is a planning
+minimum, not a promise that the model will use exactly that many starts or a
+strict provider-call admission limit. The legacy pilot retains its original
+12-start CLI ceiling.
+
+The legacy pilot still requires Jev completion proof in every Jev-on case. A
+study case instead retains a failed, skipped, or unconsulted classifier outcome
+when the same trigger has a correlated terminal deterministic fallback and persisted
+routing decision. Its classifier outcome and missing usage remain explicit in
+the scalar report; such a case is not a completed-Jev treatment observation.
+
 For a live study, add the audited absolute `--opencode` and
 `--secret-launcher` paths, a fresh `--retain-private-review` directory outside
 the repository, and the documented `AMFAA_CANARY_ALLOW_REAL_PROVIDER=true
 bws-run` prefix. A live study also requires a clean source tree. The runner
 records the requested Jev model and the provider-resolved model only when the
 provider response explicitly reports one; absent resolution is null, not an
-assumed match. It fingerprints the prompt, routing, policy, and fixture inputs
+assumed match. The reported ID may be the requested release or a valid dated
+snapshot of that exact release, as in
+[OpenRouter's Jev response example](https://openrouter.ai/blog/insights/what-is-jev/).
+Unrelated model IDs fail the case. Pair analysis requires the exact resolved
+snapshot to match across consulted arms and excludes pairs with unknown
+resolution. The runner fingerprints the prompt, routing, policy, and fixture inputs
 as well as the study plan and rejects a changed fingerprint before completion.
 The independent v2 judge makes four bounded calls per trigger for social
 cadence, length fit, address radius, and contribution value. Its private v2
