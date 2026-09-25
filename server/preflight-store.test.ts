@@ -188,12 +188,25 @@ describe("pre-flight classification persistence and evidence", () => {
     await first.recordDecision({
       triggerMessageId: "message-1", mode: "shadow", energy: "balanced",
       decision: { qualifyingForStarvation: true, decisions: baselineDecisions.map((entry) => ({ ...entry })) },
-      classification,
+      classification: { ...classification, optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 } },
     });
 
     const reopened = await PreflightStore.open(directory);
     const decisions = await reopened.rawDecisions();
-    expect(requiredAt(decisions,0,"reopened preflight decision").classification).toEqual(classification);
+    expect(requiredAt(decisions,0,"reopened preflight decision").classification).toEqual({
+      ...classification, optionalWorthProbabilities: { "codex-sol": 0.15, "claude-sonnet": 0.8 },
+    });
+  });
+
+  it("migrates an earlier classification record with no optional-worth predictions", async () => {
+    const first = await store();
+    await first.recordDecision({
+      triggerMessageId: "legacy-classification", mode: "shadow", energy: "balanced",
+      decision: { qualifyingForStarvation: true, decisions: baselineDecisions.map((entry) => ({ ...entry })) },
+      classification,
+    });
+    const reopened = await PreflightStore.open(path.dirname(first.path));
+    expect((await reopened.rawDecisions())[0]?.classification).toEqual(classification);
   });
 
   it("drops a malformed classification while keeping the routing decision", async () => {

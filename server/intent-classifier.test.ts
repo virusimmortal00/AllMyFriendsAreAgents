@@ -109,6 +109,40 @@ describe("intent classifier", () => {
     );
   });
 
+  it("changes only closed question shape and keeps missing optional-worth scores absent", async () => {
+    for (const profile of ["lean-v1", "relevance-v1"] as const) {
+      let body: Record<string, unknown> | undefined;
+      const classifier = new IntentClassifier({
+        questionProfileId: profile,
+        apiKey: () => "stored-openrouter-key",
+        fetchImpl: (async (_input: string, init: FetchCall["init"]) => {
+          body = JSON.parse(init.body) as Record<string, unknown>;
+          return responseFor(classifiedResponse({ answers: {
+            whole_room: { type: "noul", noul: 0.02 },
+            "codex-sol": { type: "noul", noul: 0.94 },
+            "claude-sonnet": { type: "noul", noul: 0.03 },
+            "optional_worth_codex-sol": { type: "noul", noul: 0.12 },
+          } }));
+        }) as unknown as typeof fetch,
+      });
+      const snapshot = await classifier.classify({ transcript: "Fictional room request", agents });
+      const questions = body?.questions as Record<string, unknown>;
+      expect(questions).not.toHaveProperty("primary_addressee");
+      expect(body?.state).toBe("Fictional room request");
+      if (profile === "relevance-v1") {
+        expect(questions).toHaveProperty("optional_worth_codex-sol");
+        expect(questions).toHaveProperty("optional_worth_claude-sonnet");
+        expect((questions["optional_worth_codex-sol"] as { instructions: string }).instructions).toMatch(/distinct useful idea or a fitting brief social reaction/);
+        expect((questions["optional_worth_codex-sol"] as { instructions: string }).instructions).toMatch(/repeat, recap, interrupt a clear human handoff/);
+        expect((questions["optional_worth_codex-sol"] as { instructions: string }).instructions).toMatch(/separate from whether Sol was directly addressed/);
+        expect(snapshot?.optionalWorth).toEqual({ "codex-sol": 0.12 });
+      } else {
+        expect(questions).not.toHaveProperty("optional_worth_codex-sol");
+        expect(snapshot).not.toHaveProperty("optionalWorth");
+      }
+    }
+  });
+
   it("falls back to computed cost when OpenRouter omits usage cost", async () => {
     const outcomes: IntentClassificationOutcome[] = [];
     const classifier = new IntentClassifier({

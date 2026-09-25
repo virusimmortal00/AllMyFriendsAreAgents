@@ -1,5 +1,6 @@
 import type { AgentId } from "../shared/participants.js";
 import type { PreflightClassificationAudit, PreflightClassificationSnapshot } from "../shared/preflight.js";
+import { JEV_QUESTION_TEXT, jevQuestionForName, jevQuestionProfile, type JevQuestionProfileId } from "./jev-experiment-profiles.js";
 
 /**
  * Published Jev pricing over OpenRouter: input is billed per million tokens,
@@ -48,6 +49,8 @@ export interface IntentClassifierOptions {
   /** Reads the room's existing OpenRouter credential; no separate provider key. */
   apiKey?: () => Promise<string | undefined> | string | undefined;
   model?: string;
+  /** Closed question shape; the server selects nondefault values only in an isolated test room. */
+  questionProfileId?: JevQuestionProfileId;
   endpoint?: string;
   /** Server-owned kill switch; when true the classifier never consults. */
   disabled?: boolean;
@@ -108,6 +111,7 @@ function boundedInteger(value: unknown): number {
 export class IntentClassifier {
   private readonly apiKey: IntentClassifierOptions["apiKey"];
   private readonly model: string;
+  private readonly questionProfileId: JevQuestionProfileId;
   private readonly endpoint: string;
   private readonly disabled: boolean;
   private readonly timeoutMs: number;
@@ -120,6 +124,7 @@ export class IntentClassifier {
   constructor(options: IntentClassifierOptions = {}) {
     this.apiKey = options.apiKey;
     this.model = options.model?.trim() || DEFAULT_MODEL;
+    this.questionProfileId = options.questionProfileId ?? "current-v1";
     const endpoint = new URL(options.endpoint?.trim() || DEFAULT_ENDPOINT);
     if (endpoint.protocol !== "https:") throw new Error("The intent classifier endpoint must use HTTPS.");
     this.endpoint = endpoint.toString();
@@ -172,25 +177,30 @@ export class IntentClassifier {
     if (this.disabled) return skip("disabled");
     if (this.now() < this.cooldownUntilMs) return skip("cooldown");
     if (!input.agents.length || !input.transcript.trim()) return skip("empty_input");
+    const profile = jevQuestionProfile(this.questionProfileId);
     const questions: Record<string, unknown> = {
       whole_room: {
         type: "noul",
-        instructions: "The most recent message in this conversation invites every participant to respond.",
+        instructions: JEV_QUESTION_TEXT.wholeRoom,
       },
-      primary_addressee: {
+      ...(profile.primaryChoice ? { primary_addressee: {
         type: "choice",
-        instructions: "Who is the most recent message primarily addressed to?",
+        instructions: JEV_QUESTION_TEXT.primary,
         criteria: {
-          ...Object.fromEntries(input.agents.map(({ agentId, name }) => [agentId, `The agent participant ${name}`])),
-          human: "The human who sent the most recent message is themselves the addressee",
-          none_of_the_above: "No single participant is primarily addressed",
+          ...Object.fromEntries(input.agents.map(({ agentId, name }) => [agentId, jevQuestionForName(JEV_QUESTION_TEXT.primaryAgent, name)])),
+          human: JEV_QUESTION_TEXT.primaryHuman,
+          none_of_the_above: JEV_QUESTION_TEXT.primaryNone,
         },
-      },
+      } } : {}),
     };
     for (const { agentId, name } of input.agents) {
       questions[agentId] = {
         type: "noul",
-        instructions: `The most recent message directly addresses ${name}: it asks ${name} to answer, act, or reply. A recap, attribution, correction of someone else, or aside that merely mentions ${name} without requesting a response from them does not count.`,
+        instructions: jevQuestionForName(JEV_QUESTION_TEXT.direct, name),
+      };
+      if (profile.optionalWorthQuestion) questions[`optional_worth_${agentId}`] = {
+        type: "noul",
+        instructions: jevQuestionForName(JEV_QUESTION_TEXT.optionalWorth, name),
       };
     }
 
@@ -225,6 +235,11 @@ export class IntentClassifier {
       }
       const wholeRoom = probability(parsed.answers?.whole_room?.noul);
       const primaryAddressee = parsed.answers?.primary_addressee?.choice;
+      const optionalWorth: Partial<Record<AgentId, number>> = {};
+      if (profile.optionalWorthQuestion) for (const { agentId } of input.agents) {
+        const value = probability(parsed.answers?.[`optional_worth_${agentId}`]?.noul);
+        if (value !== undefined) optionalWorth[agentId] = value;
+      }
       if (wholeRoom === undefined) throw new ClassificationFailure("schema");
       const inputTokens = boundedInteger(parsed.usage?.input_tokens);
       const reportedCost =
@@ -235,6 +250,7 @@ export class IntentClassifier {
         model: typeof parsed.model === "string" && parsed.model ? parsed.model : this.model,
         agents,
         wholeRoom,
+        ...(profile.optionalWorthQuestion ? { optionalWorth } : {}),
         ...(typeof primaryAddressee === "string" && primaryAddressee ? { primaryAddressee } : {}),
         usage: { inputTokens, outputTokens: boundedInteger(parsed.usage?.output_tokens) },
         costUsd: reportedCost ?? (inputTokens / 1_000_000) * JEV_INPUT_COST_PER_MILLION_TOKENS,
@@ -318,6 +334,7 @@ export function classificationAudit(
     costUsd: classification.costUsd,
     wholeRoomProbability: classification.wholeRoom,
     addressProbabilities: { ...classification.agents },
+    ...(classification.optionalWorth ? { optionalWorthProbabilities: { ...classification.optionalWorth } } : {}),
     baseline: baseline.map((entry) => ({ ...entry })),
   };
 }

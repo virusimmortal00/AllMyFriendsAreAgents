@@ -3,6 +3,7 @@ import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import type { MessageMention } from "../shared/mentions.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
+import { replayJevThresholds } from "./jev-profile-replay.js";
 import { requiredAt } from "./test-invariants.js";
 
 const agents = ["codex-sol", "claude-sonnet", "cursor-grok", "cursor-composer"] as const satisfies readonly AgentId[];
@@ -200,6 +201,104 @@ describe("pre-flight responder selection", () => {
 });
 
 describe("pre-flight advisory classification", () => {
+  it("uses distinct optional-worth predictions only for optional seats", () => {
+    const trigger = humanMessage({ text: "Sol, describe one sign idea." });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced",
+      wholeRoomInvitation: false, gateProfileId: "relevance-v1",
+      classification: {
+        agents: { "codex-sol": 0.01, "claude-sonnet": 0.99 }, wholeRoom: 0,
+        optionalWorth: { "codex-sol": 0.01, "claude-sonnet": 0.01, "cursor-grok": 0.8 },
+      },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
+      agent: "codex-sol", outcome: "invoke", reason: "required_plain_address",
+    });
+    // A high direct-address score makes Claude required; optional-worth cannot veto it.
+    expect(decision.decisions.find(({ agent }) => agent === "claude-sonnet")?.outcome).toBe("invoke");
+    expect(decision.decisions.find(({ agent }) => agent === "cursor-grok")?.outcome).toBe("invoke");
+    expect(decision.decisions.find(({ agent }) => agent === "cursor-composer")?.outcome).toBe("suppress");
+  });
+
+  it("does not treat a low direct-address score as low optional worth or a missing score as a veto", () => {
+    const trigger = humanMessage();
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced",
+      wholeRoomInvitation: false, gateProfileId: "relevance-v1",
+      classification: { agents: { "codex-sol": 0.01 }, wholeRoom: 0, optionalWorth: {} },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
+      agent: "codex-sol", outcome: "invoke", reason: "ambient_selection",
+    });
+  });
+
+  it("uses optional-worth predictions to choose an available optional seat", () => {
+    const trigger = humanMessage();
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced",
+      wholeRoomInvitation: false, gateProfileId: "relevance-v1",
+      classification: {
+        agents: {}, wholeRoom: 0,
+        optionalWorth: { "codex-sol": 0.01, "claude-sonnet": 0.8, "cursor-grok": 0.01, "cursor-composer": 0.01 },
+      },
+    });
+    expect(decision.decisions.filter(({ outcome }) => outcome === "invoke")).toEqual([
+      { agent: "claude-sonnet", outcome: "invoke", reason: "ambient_selection" },
+    ]);
+  });
+
+  it("keeps a fallback but may suppress an extra optional seat, without implying saved calls", () => {
+    const trigger = humanMessage();
+    const input = {
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced" as const,
+      wholeRoomInvitation: false, classification: {
+        agents: {}, wholeRoom: 0, optionalWorth: Object.fromEntries(agents.map((agent) => [agent, 0.01])),
+      },
+    };
+    const current = decidePreflight(input);
+    const relevance = decidePreflight({ ...input, gateProfileId: "relevance-v1" });
+    expect(current.decisions.filter(({ outcome }) => outcome === "invoke")).toHaveLength(1);
+    expect(relevance.decisions.filter(({ outcome }) => outcome === "invoke")).toEqual([
+      { agent: "codex-sol", outcome: "invoke", reason: "fallback" },
+    ]);
+    const requiredTrigger = humanMessage({ text: "Sol, give one sign idea." });
+    const requiredInput = { ...input, trigger: requiredTrigger, room: room(requiredTrigger) };
+    expect(decidePreflight(requiredInput).decisions.filter(({ outcome }) => outcome === "invoke")).toHaveLength(2);
+    expect(decidePreflight({ ...requiredInput, gateProfileId: "relevance-v1" }).decisions.filter(({ outcome }) => outcome === "invoke")).toEqual([
+      { agent: "codex-sol", outcome: "invoke", reason: "required_plain_address" },
+    ]);
+  });
+
+  it("reports an unavailable addressed target even with low optional worth", () => {
+    const trigger = humanMessage({ text: "Sol, please review this." });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents,
+      health: { "codex-sol": { status: "unavailable", reason: "authentication", message: "Login required", since: trigger.timestamp } },
+      routing: {}, energy: "balanced", wholeRoomInvitation: false, gateProfileId: "relevance-v1",
+      classification: { agents: { "codex-sol": 0.01 }, wholeRoom: 0, optionalWorth: { "codex-sol": 0.01 } },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({
+      agent: "codex-sol", outcome: "unavailable", reason: "unavailable",
+    });
+  });
+
+  it("replays bounded threshold grids as routing counts, not hypothetical replies", () => {
+    const trigger = humanMessage({ text: "Sol, give one idea." });
+    const input = {
+      trigger, room: room(trigger), rankedAgents: agents,
+      health: { "cursor-grok": { status: "unavailable" as const, reason: "authentication" as const, message: "Login required", since: trigger.timestamp } },
+      routing: {}, energy: "low" as const, wholeRoomInvitation: false,
+      classification: { agents: { "claude-sonnet": 0.7 }, wholeRoom: 0.1 },
+    };
+    expect(replayJevThresholds(input, [
+      { address: 0.6, wholeRoom: 0.7 }, { address: 0.75, wholeRoom: 0.7 },
+    ])).toEqual([
+      { addressThreshold: 0.6, wholeRoomThreshold: 0.7, requiredCount: 2, optionalCount: 0, unavailableCount: 1 },
+      { addressThreshold: 0.75, wholeRoomThreshold: 0.7, requiredCount: 1, optionalCount: 0, unavailableCount: 1 },
+    ]);
+    expect(() => replayJevThresholds(input, [{ address: -0.1, wholeRoom: 0.7 }])).toThrow();
+  });
+
   it("makes a confidently addressed agent a required participant without a mention", () => {
     const trigger = humanMessage({ text: "Sol, can you take a look at this?" });
     const decision = decidePreflight({

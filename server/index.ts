@@ -91,6 +91,7 @@ import { roomAgentEntry } from "../shared/roster.js";
 import { decidePreflight, routePreflightTurns } from "./preflight-gate.js";
 import { PreflightStore } from "./preflight-store.js";
 import { IntentClassifier, classificationAudit } from "./intent-classifier.js";
+import { selectJevExperimentProfiles } from "./jev-experiment-profiles.js";
 import { classificationTranscriptThrough } from "./transcript.js";
 import { normalizeRoomConfiguration } from "./room-configuration.js";
 import { ConsultationRunner } from "./consultation-service.js";
@@ -230,10 +231,12 @@ function observeTriggerLifecycle(telemetry: ConversationTriggerTrace, event: Con
 const agentProcesses = new AgentProcessSupervisor();
 const agentHealth = await AgentHealthRegistry.open(storageConfiguration.dataDirectory);
 const preflightStore = await PreflightStore.open(storageConfiguration.dataDirectory);
+const jevExperimentProfiles = selectJevExperimentProfiles(process.env);
 const intentClassifierModel = process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_MODEL;
 const intentClassifierEndpoint = process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_ENDPOINT;
 const intentClassifier = new IntentClassifier({
   apiKey: readOpenRouterApiKey,
+  questionProfileId: jevExperimentProfiles.questionProfileId,
   ...(intentClassifierModel === undefined ? {} : { model: intentClassifierModel }),
   ...(intentClassifierEndpoint === undefined ? {} : { endpoint: intentClassifierEndpoint }),
   disabled: process.env.ALL_MY_FRIENDS_ARE_AGENTS_INTENT_CLASSIFIER_DISABLED === "true",
@@ -611,11 +614,12 @@ async function preflightTurns(state: ReturnType<typeof roomSnapshot>) {
     health: agentHealth.snapshot(),
     routing: await preflightStore.routingState(),
     energy: state.settings.conversationEnergy,
+    gateProfileId: jevExperimentProfiles.gateProfileId,
     wholeRoomInvitation: latestHumanBroadcastPolicy(state).inviteAll,
     structuredTargets: continuationTargets,
   };
   const decision = decidePreflight(classification
-    ? { ...gateInput, classification: { agents: classification.agents, wholeRoom: classification.wholeRoom } }
+    ? { ...gateInput, classification: { agents: classification.agents, wholeRoom: classification.wholeRoom, ...(classification.optionalWorth ? { optionalWorth: classification.optionalWorth } : {}) } }
     : gateInput);
   // The baseline decision, computed without classification, is recorded so
   // routing evidence can attribute suppression and invocation changes to the
