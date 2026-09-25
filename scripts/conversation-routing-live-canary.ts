@@ -282,9 +282,45 @@ class CaseFailure extends Error {
   constructor(
     readonly stage: FailureStage,
     readonly category: FailureCategory,
+    readonly triggers: readonly LiveScenarioResult[] = [],
   ) {
     super("Isolated live case failed.");
   }
+}
+
+/** Preserve only the collector's closed scalar fields when a case stops after routing. */
+export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScenarioResult {
+  return {
+    schemaVersion: result.schemaVersion,
+    scenarioId: result.scenarioId,
+    variant: result.variant,
+    runId: result.runId,
+    preflightMode: result.preflightMode,
+    requiredAddressAgents: result.requiredAddressAgents,
+    routing: result.routing.map(({ agentId, outcome, reason }) => ({ agentId, outcome, reason })),
+    classifier: {
+      outcome: result.classifier.outcome,
+      reason: result.classifier.reason,
+      durationMs: result.classifier.durationMs,
+      reportedInputTokens: result.classifier.reportedInputTokens,
+      reportedOutputTokens: result.classifier.reportedOutputTokens,
+      reportedCostUsd: result.classifier.reportedCostUsd,
+    },
+    queueDelayMs: result.queueDelayMs,
+    firstVisibleMs: result.firstVisibleMs,
+    terminalReason: result.terminalReason,
+    attemptedTurns: result.attemptedTurns,
+    respondedTurns: result.respondedTurns,
+    yieldedTurns: result.yieldedTurns,
+    confirmedDeliveredBursts: result.confirmedDeliveredBursts,
+    generationStarts: result.generationStarts,
+    generationCompletions: result.generationCompletions,
+    generationFailures: result.generationFailures,
+    reportedInputTokens: result.reportedInputTokens,
+    reportedOutputTokens: result.reportedOutputTokens,
+    reportedCostUsd: result.reportedCostUsd,
+    usageCoverage: result.usageCoverage,
+  };
 }
 function failureCategory(error: unknown): FailureCategory {
   const message = error instanceof Error ? error.message : "";
@@ -358,6 +394,7 @@ async function runCase(
   const xdgData = path.join(root, "xdg-data");
   let child: ChildProcess | undefined;
   let stage: FailureStage = "fixture";
+  const triggerResults: LiveScenarioResult[] = [];
   try {
     await mkdir(project, { mode: 0o700 });
     const { wrapperPath } = await createLiveOpenCodeWrapper({
@@ -466,7 +503,6 @@ async function runCase(
       | undefined;
     if (roster.some(({ agentId }) => availability?.[agentId]?.available !== true))
       throw new Error("Selected OpenCode participant is unavailable.");
-    const triggerResults: LiveScenarioResult[] = [];
     const judgments: JudgeScalarResult[] = [];
     const prompts = [
       {
@@ -556,9 +592,9 @@ async function runCase(
       if (result.attemptedTurns > options.maxGenerations || result.generationStarts > options.maxGenerations)
         throw new Error("Observed turn cap exceeded.");
       stage = "delivery";
+      triggerResults.push(result);
       if (options.requireVisible && (result.confirmedDeliveredBursts < 1 || result.firstVisibleMs === null))
         throw new Error("Visible delivery proof is missing.");
-      triggerResults.push(result);
       const snapshot = await requestJson(base, "/api/state", cookie);
       const messages = snapshot.json.messages;
       if (snapshot.status !== 200 || !Array.isArray(messages)) throw new Error("Isolated room delivery check failed.");
@@ -613,7 +649,7 @@ async function runCase(
       privateReviewRetained: Boolean(privateDirectory),
     };
   } catch (error) {
-    throw error instanceof CaseFailure ? error : new CaseFailure(stage, failureCategory(error));
+    throw error instanceof CaseFailure ? error : new CaseFailure(stage, failureCategory(error), triggerResults);
   } finally {
     await stopProcessGroup(child);
     await rm(root, { recursive: true, force: true });
@@ -680,6 +716,7 @@ async function main() {
             stage: failure.stage,
             category: failure.category,
             completedCases: results.length,
+            observedTriggers: failure.triggers.map(projectFailedCaseEvidence),
           }),
         );
         throw new Error("Isolated live case did not complete.");

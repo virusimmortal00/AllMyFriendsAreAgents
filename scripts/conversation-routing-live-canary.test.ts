@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { parseLiveCanaryOptions, stopProcessGroup } from "./conversation-routing-live-canary.js";
+import {
+  parseLiveCanaryOptions,
+  projectFailedCaseEvidence,
+  stopProcessGroup,
+} from "./conversation-routing-live-canary.js";
+import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
 
 const base = [
@@ -18,6 +23,49 @@ const base = [
 const execute = promisify(execFile);
 
 describe("routing canary selection", () => {
+  it("retains closed scalar evidence on a visible-delivery failure without copying private fields", () => {
+    const collected = {
+      schemaVersion: 1,
+      scenarioId: "direct-1-low-enforce",
+      variant: "jev-on",
+      runId: "run_fixture",
+      preflightMode: "enforce",
+      requiredAddressAgents: ["codex-sol"],
+      routing: [{ agentId: "codex-sol", outcome: "invoke", reason: "required_plain_address" }],
+      classifier: {
+        outcome: "completed",
+        reason: null,
+        durationMs: 73,
+        reportedInputTokens: null,
+        reportedOutputTokens: null,
+        reportedCostUsd: null,
+      },
+      queueDelayMs: 12,
+      firstVisibleMs: null,
+      terminalReason: "no-visible-output",
+      attemptedTurns: 1,
+      respondedTurns: 0,
+      yieldedTurns: 1,
+      confirmedDeliveredBursts: 0,
+      generationStarts: 1,
+      generationCompletions: 1,
+      generationFailures: 0,
+      reportedInputTokens: 2,
+      reportedOutputTokens: 20,
+      reportedCostUsd: 0.01,
+      usageCoverage: "reported",
+      rawText: "private fictional response",
+      credential: "do-not-copy",
+    } satisfies LiveScenarioResult & { rawText: string; credential: string };
+    const projected = projectFailedCaseEvidence(collected);
+    expect(projected).toMatchObject({
+      terminalReason: "no-visible-output",
+      classifier: { outcome: "completed" },
+      yieldedTurns: 1,
+      confirmedDeliveredBursts: 0,
+    });
+    expect(JSON.stringify(projected)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
+  });
   it("makes six matched Jev-on/off pairs in twelve isolated cases", () => {
     const scenarios = pilotScenarios();
     expect(scenarios).toHaveLength(12);
