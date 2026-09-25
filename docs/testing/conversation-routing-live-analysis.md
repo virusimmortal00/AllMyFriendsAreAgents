@@ -184,3 +184,53 @@ Use the same seed and independently review queued private bundles before
 interpreting apparent score differences. Inspect disagreement by axis and
 record the number of reviewed and unreviewed cases; a missing human judgment
 is never counted as agreement or a favorable rating.
+
+## Repeated paired studies and private batch merge
+
+The first expanded study may run as 72 cases in six completed, 12-case batches;
+the parser also accepts future plans up to 144 cases in 12-case batches. Pass
+every **final** batch manifest to one analysis invocation. A progress record or
+an interrupted batch is not a final manifest. The merger requires all batch
+indices, whole A/B pairs, unique pair and run IDs, and matching plan, source,
+runtime, model, limits, and profile-digest provenance. It rejects partial,
+overlapping, or drifted sets before reporting a study result.
+
+```sh
+umask 077
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
+  --manifest /absolute/private/batch-0.json \
+  --manifest /absolute/private/batch-1.json \
+  --manifest /absolute/private/batch-2.json \
+  --manifest /absolute/private/batch-3.json \
+  --manifest /absolute/private/batch-4.json \
+  --manifest /absolute/private/batch-5.json \
+  > /absolute/private/study-analysis.json
+```
+
+Use those same final `--manifest` paths with the private review selector. It
+performs the same strict parse and complete-batch merge in memory; no synthetic
+canary manifest or raw merged file is created. Keep the analysis output outside
+the repository.
+
+The additive `blockLevelV1` readout treats one matched room pair as one unit.
+It averages correlated trigger-axis differences within that pair, then reports
+equal-weight block differences by factor, exact profile contrast, and stratum
+(conversation dynamic, agent count, energy, and arc). Descriptive distributions
+include candidate, eligible, paired, and missing block counts, mean, median,
+quartiles, range, and sign counts. No p-value, pooled winner, or causal claim is
+provided. Cells with fewer than five eligible blocks and non-overlapping cells
+are flagged; a missing cell is not a zero effect. Each axis and objective metric
+has its own paired denominator. Human scores never stand in for missing judge
+scores, nor the reverse. A human block difference requires ratings for **every**
+matching trigger in both arms; a selectively sampled review therefore leaves
+many human block differences missing. The trigger-level human-versus-judge
+calibration remains separate and keeps its own denominators.
+
+Objective readouts include attempted, responded, yielded, and delivered counts;
+prompts with no visible reply are split by whether a deterministic required
+target existed. These are prompt-level counts, not proof that each required
+individual replied. A quiet optional turn may be appropriate, but its absence
+is an observation rather than a quality score. Actor cost is explicitly an
+OpenCode estimate, Jev and judge cost are API-reported when available, and
+OpenCode token counts are step-observed. Cost categories remain separate;
+unknown usage or a missing visible reply never becomes a fabricated zero.

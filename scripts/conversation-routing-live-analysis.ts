@@ -20,6 +20,9 @@ const RESOLVED_MODEL = /^(?=.{3,160}$)~?[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/;
 const MAX_FILE_BYTES = 512_000;
 const MAX_CASES = 36;
 const MAX_TRIGGERS = 108;
+const MAX_STUDY_PAIRS = 72;
+const MAX_MERGED_CASES = MAX_STUDY_PAIRS * 2;
+const MAX_MERGED_TRIGGERS = MAX_MERGED_CASES * 3;
 const JUDGE_FAILURES = [
   "timeout",
   "cancelled",
@@ -86,6 +89,17 @@ export interface ScalarCanaryManifest {
   judgeModel: string | null;
   judgeRubric: "v1" | "v2";
   studyPlan: { schemaVersion: 1; planId: string; planSha256: string; orderSeed: number; jevModel: string } | null;
+  studyBatch: {
+    schemaVersion: 1;
+    planCaseCount: number;
+    planPairCount: number;
+    batchIndex: number;
+    batchCount: number;
+    pairsPerBatch: number;
+    pairCount: number;
+    pairIds: string[];
+  } | null;
+  runLimits: { maxGenerationsPerCase: number; scenarioTimeoutMs: number };
   cases: Array<{
     scenarioId: string;
     variant: Variant;
@@ -382,6 +396,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     "maximumScheduledJudgeCalls",
     "planningAllowanceMs",
     "studyPlan",
+    "studyBatch",
     "concurrency",
     "maxCases",
     "maxGenerationsPerCase",
@@ -408,7 +423,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     (top.maximumScheduledJudgeCalls !== undefined && integer(top.maximumScheduledJudgeCalls, 500) === null) ||
     (top.planningAllowanceMs !== undefined && integer(top.planningAllowanceMs, 86_400_000) === null) ||
     top.concurrency !== 1 ||
-    integer(top.maxCases, MAX_CASES) === null ||
+    integer(top.maxCases, top.studyBatch === undefined ? MAX_CASES : MAX_MERGED_CASES) === null ||
     top.maxCases === 0 ||
     integer(top.maxGenerationsPerCase, 100) === null ||
     top.maxGenerationsPerCase === 0 ||
@@ -419,7 +434,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     !Array.isArray(top.cases) ||
     top.cases.length === 0 ||
     top.cases.length > (top.maxCases as number) ||
-    top.cases.length > MAX_CASES
+    top.cases.length > (top.studyBatch === undefined ? MAX_CASES : 12)
   )
     throw new Error("Invalid scalar canary manifest.");
   let studyPlan: ScalarCanaryManifest["studyPlan"] = null;
@@ -436,6 +451,45 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     )
       throw new Error("Invalid scalar canary manifest.");
     studyPlan = plan as unknown as NonNullable<ScalarCanaryManifest["studyPlan"]>;
+  }
+  let studyBatch: ScalarCanaryManifest["studyBatch"] = null;
+  if (top.studyBatch !== undefined) {
+    const batch = object(top.studyBatch, [
+      "schemaVersion",
+      "planCaseCount",
+      "planPairCount",
+      "batchIndex",
+      "batchCount",
+      "pairsPerBatch",
+      "pairCount",
+      "pairIds",
+    ]);
+    const planPairCount = integer(batch.planPairCount, MAX_STUDY_PAIRS);
+    const pairsPerBatch = integer(batch.pairsPerBatch, 6);
+    const batchCount = integer(batch.batchCount, MAX_STUDY_PAIRS);
+    const pairCount = integer(batch.pairCount, 6);
+    if (
+      !studyPlan ||
+      top.sourceDirty !== false ||
+      batch.schemaVersion !== 1 ||
+      planPairCount === null ||
+      planPairCount < 1 ||
+      batch.planCaseCount !== 2 * planPairCount ||
+      pairsPerBatch === null ||
+      pairsPerBatch < 1 ||
+      batchCount !== Math.ceil(planPairCount / pairsPerBatch) ||
+      integer(batch.batchIndex, batchCount - 1) === null ||
+      pairCount === null ||
+      pairCount < 1 ||
+      pairCount !== Math.min(pairsPerBatch, planPairCount - Number(batch.batchIndex) * pairsPerBatch) ||
+      !Array.isArray(batch.pairIds) ||
+      batch.pairIds.length !== pairCount ||
+      batch.pairIds.some((pairId) => !id(pairId)) ||
+      new Set(batch.pairIds).size !== pairCount ||
+      top.cases.length !== pairCount * 2
+    )
+      throw new Error("Invalid scalar canary study batch.");
+    studyBatch = batch as unknown as NonNullable<ScalarCanaryManifest["studyBatch"]>;
   }
   const cases = top.cases.map((entry: unknown) => {
     const row = object(entry, [
@@ -741,6 +795,18 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   });
   if (new Set(cases.map((row) => `${row.scenarioId}\u0000${row.variant}`)).size !== cases.length)
     throw new Error("Invalid scalar canary manifest.");
+  if (studyBatch) {
+    const orderedPairIds = [...new Set(cases.map((row) => row.study?.pairId))];
+    if (
+      orderedPairIds.length !== studyBatch.pairCount ||
+      orderedPairIds.some((pairId, index) => pairId !== studyBatch.pairIds[index]) ||
+      studyBatch.pairIds.some((pairId) => {
+        const rows = cases.filter((row) => row.study?.pairId === pairId);
+        return rows.length !== 2 || new Set(rows.map((row) => row.study?.arm)).size !== 2;
+      })
+    )
+      throw new Error("Invalid scalar canary study batch.");
+  }
   const allRuns = cases.flatMap((row) => row.triggers);
   if (
     allRuns.length > MAX_TRIGGERS ||
@@ -757,15 +823,44 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     judgeModel: top.judgeModel,
     judgeRubric: (top.judgeRubric ?? "v1") as "v1" | "v2",
     studyPlan,
+    studyBatch,
+    runLimits: {
+      maxGenerationsPerCase: top.maxGenerationsPerCase as number,
+      scenarioTimeoutMs: top.scenarioTimeoutMs as number,
+    },
     cases,
   };
 }
 
 /** Merge independent completed canary invocations without equating different source builds. */
 export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManifest[]): ScalarCanaryManifest {
-  if (!manifests.length || manifests.length > MAX_CASES) throw new Error("Invalid scalar canary manifest set.");
+  if (!manifests.length || manifests.length > MAX_STUDY_PAIRS) throw new Error("Invalid scalar canary manifest set.");
   const first = manifests[0]!;
   const cases = manifests.flatMap((manifest) => manifest.cases);
+  const batched = first.studyBatch !== null;
+  if (batched) {
+    const batches = manifests.map((manifest) => manifest.studyBatch);
+    const expected = first.studyBatch!;
+    if (
+      batches.some(
+        (batch) =>
+          !batch ||
+          batch.planCaseCount !== expected.planCaseCount ||
+          batch.planPairCount !== expected.planPairCount ||
+          batch.batchCount !== expected.batchCount ||
+          batch.pairsPerBatch !== expected.pairsPerBatch,
+      ) ||
+      batches.length !== expected.batchCount ||
+      new Set(batches.map((batch) => batch?.batchIndex)).size !== expected.batchCount ||
+      batches.some((batch) => batch === null || batch.batchIndex < 0 || batch.batchIndex >= expected.batchCount) ||
+      cases.length !== expected.planCaseCount ||
+      new Set(batches.flatMap((batch) => batch?.pairIds ?? [])).size !== expected.planPairCount ||
+      batches.flatMap((batch) => batch?.pairIds ?? []).length !== expected.planPairCount
+    )
+      throw new Error("Incomplete or overlapping scalar canary study batches.");
+  } else if (manifests.some((manifest) => manifest.studyBatch !== null)) {
+    throw new Error("Cannot mix batched and unbatched scalar canary studies.");
+  }
   const settings = new Map<string, string>();
   for (const row of cases) {
     const value = JSON.stringify([row.agentCount, row.energy, row.preflightMode]);
@@ -774,8 +869,8 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
     settings.set(row.scenarioId, value);
   }
   if (
-    cases.length > MAX_CASES ||
-    cases.flatMap((row) => row.triggers).length > MAX_TRIGGERS ||
+    cases.length > (batched ? MAX_MERGED_CASES : MAX_CASES) ||
+    cases.flatMap((row) => row.triggers).length > (batched ? MAX_MERGED_TRIGGERS : MAX_TRIGGERS) ||
     manifests.some(
       (manifest) =>
         manifest.sourceCommit !== first.sourceCommit ||
@@ -783,8 +878,10 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
         manifest.sourceSha256 !== first.sourceSha256 ||
         manifest.openCodeVersion !== first.openCodeVersion ||
         manifest.actorModel !== first.actorModel ||
+        manifest.judgeModel !== first.judgeModel ||
         manifest.judgeRubric !== first.judgeRubric ||
-        JSON.stringify(manifest.studyPlan) !== JSON.stringify(first.studyPlan),
+        JSON.stringify(manifest.studyPlan) !== JSON.stringify(first.studyPlan) ||
+        JSON.stringify(manifest.runLimits) !== JSON.stringify(first.runLimits),
     ) ||
     new Set(manifests.map((manifest) => manifest.judgeModel).filter((value) => value !== null)).size > 1 ||
     new Set(cases.map((row) => `${row.scenarioId}\u0000${row.variant}`)).size !== cases.length ||
@@ -793,10 +890,26 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
   )
     throw new Error("Incompatible or duplicate scalar canary manifests.");
   const judgeModel = manifests.find((manifest) => manifest.judgeModel !== null)?.judgeModel ?? null;
+  const profileDigests = new Map<string, string>();
+  for (const row of cases) {
+    if (!row.study) continue;
+    const profiles: [string, string, string][] = [
+      ["jev", row.study.jevProfileId, row.study.jevProfileDigest],
+      ["gate", row.study.gateProfileId, row.study.gateProfileDigest],
+      ["agent-prompt", row.study.agentPromptProfileId, row.study.agentPromptProfileDigest],
+    ];
+    for (const [kind, profileId, digest] of profiles) {
+      const key = `${kind}:${profileId}`;
+      const prior = profileDigests.get(key);
+      if (prior !== undefined && prior !== digest) throw new Error("Incompatible scalar canary profile digest.");
+      profileDigests.set(key, digest);
+    }
+  }
   return {
     ...first,
     scenarioCatalogSha256s: [...new Set(manifests.flatMap((manifest) => manifest.scenarioCatalogSha256s))].sort(),
     judgeModel,
+    studyBatch: batched ? first.studyBatch : null,
     cases,
   };
 }
@@ -824,6 +937,32 @@ function diagnosticAggregate(values: readonly (number | null)[]) {
   };
 }
 
+/** Descriptive spread only: every value represents one isolated matched room pair. */
+function blockDistribution(values: readonly number[], candidateBlocks: number) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const percentile = (fraction: number) => {
+    if (!sorted.length) return null;
+    const position = (sorted.length - 1) * fraction;
+    const lower = Math.floor(position);
+    const weight = position - lower;
+    return sorted[lower]! + (sorted[Math.ceil(position)]! - sorted[lower]!) * weight;
+  };
+  return {
+    candidateBlocks,
+    pairedBlocks: sorted.length,
+    missingBlocks: candidateBlocks - sorted.length,
+    mean: mean(sorted),
+    minimum: sorted[0] ?? null,
+    firstQuartile: percentile(0.25),
+    median: percentile(0.5),
+    thirdQuartile: percentile(0.75),
+    maximum: sorted.at(-1) ?? null,
+    bHigher: sorted.filter((value) => value > 0).length,
+    equal: sorted.filter((value) => value === 0).length,
+    bLower: sorted.filter((value) => value < 0).length,
+  };
+}
+
 /** Study observations preserve axis and coverage denominators; A/B is a paired observation, not a causal estimate. */
 export function analyzeQualityStudy(
   manifest: ScalarCanaryManifest,
@@ -832,6 +971,8 @@ export function analyzeQualityStudy(
 ) {
   if (manifest.judgeRubric !== "v2" || !manifest.studyPlan || manifest.cases.some((row) => !row.study))
     throw new Error("A versioned study manifest is required.");
+  if (manifest.studyBatch && manifest.cases.length !== manifest.studyBatch.planCaseCount)
+    throw new Error("A complete set of final study batches is required.");
   const parsedRatings = parsePrivateQualityRatings({ schemaVersion: 2, ratings });
   const all = manifest.cases.flatMap((caseRow) =>
     caseRow.triggers.map((trigger, ordinal) => ({
@@ -1138,6 +1279,257 @@ export function analyzeQualityStudy(
       firstVisibleMs: pairedMetric(selectedPairs, (item) => item.trigger.firstVisibleMs),
     },
   });
+  type StudyCase = (typeof manifest.cases)[number];
+  type StudyPair = (typeof pairs)[number];
+  const profile = (row: StudyCase) => ({
+    jevProfileId: row.study!.jevProfileId,
+    jevProfileDigest: row.study!.jevProfileDigest,
+    gateProfileId: row.study!.gateProfileId,
+    gateProfileDigest: row.study!.gateProfileDigest,
+    agentPromptProfileId: row.study!.agentPromptProfileId,
+    agentPromptProfileDigest: row.study!.agentPromptProfileDigest,
+  });
+  const dynamicFor = (row: StudyCase) => {
+    const prefix = /^(direct|multi-address|broadcast|casual|handoff|disagreement|quoted-name)-/.exec(
+      row.scenarioId,
+    )?.[1];
+    if (prefix) return prefix;
+    return (
+      (
+        {
+          "agent-exchange-v1": "multi-address",
+          "agent-exchange-v2": "multi-address",
+          "casual-thread-v1": "casual",
+          "handoff-choice-v1": "handoff",
+          "dispute-resolution-v1": "disagreement",
+        } as Record<string, string>
+      )[row.study!.arcProfileId] ?? "unknown"
+    );
+  };
+  const structurallyMatchedBlocks = [...group.entries()].flatMap(([pairId, rows]) => {
+    const a = rows.find((row) => row.study!.arm === "a");
+    const b = rows.find((row) => row.study!.arm === "b");
+    if (!a || !b || rows.length !== 2 || !compatible(a, b)) return [];
+    const triggerPairs = pairs
+      .filter((pair) => pair.pairId === pairId)
+      .sort((left, right) => left.a.ordinal - right.a.ordinal);
+    const armA = profile(a);
+    const armB = profile(b);
+    const contrastId = createHash("sha256")
+      .update(JSON.stringify([armA, armB]))
+      .digest("hex")
+      .slice(0, 16);
+    const dynamic = dynamicFor(a);
+    const stratumId = `${dynamic}:${a.agentCount}:${a.energy}:${a.study!.arcProfileId}`;
+    return [
+      {
+        pairId,
+        factor: a.study!.factor,
+        contrastId,
+        armA,
+        armB,
+        dynamic,
+        stratumId,
+        arcProfileId: a.study!.arcProfileId,
+        agentCount: a.agentCount,
+        energy: a.energy,
+        triggerPairs,
+        triggerCount: a.triggers.length,
+        routingEligible: triggerPairs.length === a.triggers.length,
+      },
+    ];
+  });
+  type Block = (typeof structurallyMatchedBlocks)[number];
+  const blockDelta = (block: Block, get: (item: StudyPair["a"]) => number | null, reduce: "sum" | "mean" = "sum") => {
+    if (!block.routingEligible) return null;
+    const first = block.triggerPairs.map(({ a }) => get(a));
+    const second = block.triggerPairs.map(({ b }) => get(b));
+    if (first.some((value) => value === null) || second.some((value) => value === null)) return null;
+    const aTotal = first.reduce<number>((sum, value) => sum + value!, 0);
+    const bTotal = second.reduce<number>((sum, value) => sum + value!, 0);
+    return (bTotal - aTotal) / (reduce === "mean" ? block.triggerCount : 1);
+  };
+  const judgeBlockDelta = (block: Block, axis: QualityAxis) => {
+    if (!block.routingEligible) return null;
+    const models = new Set<string>();
+    const deltas: number[] = [];
+    for (const { a, b } of block.triggerPairs) {
+      const first = outcome(a, axis);
+      const second = outcome(b, axis);
+      if (
+        first?.status !== "completed" ||
+        second?.status !== "completed" ||
+        first.result.status !== "rated" ||
+        second.result.status !== "rated" ||
+        !first.result.resolvedJudgeModel ||
+        first.result.resolvedJudgeModel !== second.result.resolvedJudgeModel
+      )
+        return null;
+      models.add(first.result.resolvedJudgeModel);
+      deltas.push(second.result.score! - first.result.score!);
+    }
+    return models.size === 1 ? mean(deltas) : null;
+  };
+  const humanBlockDelta = (block: Block, axis: QualityAxis) => {
+    if (!block.routingEligible) return null;
+    const deltas: number[] = [];
+    for (const { a, b } of block.triggerPairs) {
+      const first = human.get(key(a.trigger.scenarioId, a.trigger.runId))?.axes[axis];
+      const second = human.get(key(b.trigger.scenarioId, b.trigger.runId))?.axes[axis];
+      if (first?.status !== "rated" || second?.status !== "rated") return null;
+      deltas.push(second.score - first.score);
+    }
+    return mean(deltas);
+  };
+  const judgeCostForBlock = (item: StudyPair["a"]) => {
+    if (!item.judgment) return null;
+    let total = 0;
+    for (const entry of item.judgment.outcomes) {
+      if (entry.status !== "completed") return null;
+      const cost = entry.result.judgeUsage.reportedCostUsd;
+      if (cost === null && !["required_reply_missing", "no_visible_reply"].includes(entry.result.reasonCode))
+        return null;
+      total += cost ?? 0;
+    }
+    return total;
+  };
+  const blockMetric = (blocks: readonly Block[], get: (block: Block) => number | null) =>
+    blockDistribution(
+      blocks.flatMap((block) => {
+        const value = get(block);
+        return value === null ? [] : [value];
+      }),
+      blocks.length,
+    );
+  const blockReadout = (blocks: readonly Block[]) => ({
+    candidateBlocks: blocks.length,
+    routingEligibleBlocks: blocks.filter((block) => block.routingEligible).length,
+    axes: Object.fromEntries(
+      QUALITY_AXES.map((axis) => [
+        axis,
+        {
+          judgeArmBMinusA: blockMetric(blocks, (block) => judgeBlockDelta(block, axis)),
+          humanArmBMinusA: blockMetric(blocks, (block) => humanBlockDelta(block, axis)),
+        },
+      ]),
+    ),
+    objectiveArmBMinusA: {
+      attemptedTurns: blockMetric(blocks, (block) => blockDelta(block, (item) => item.trigger.attemptedTurns)),
+      respondedTurns: blockMetric(blocks, (block) => blockDelta(block, (item) => item.trigger.respondedTurns)),
+      yieldedTurns: blockMetric(blocks, (block) => blockDelta(block, (item) => item.trigger.yieldedTurns)),
+      deliveredBursts: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) => item.trigger.confirmedDeliveredBursts),
+      ),
+      requiredPromptsWithoutVisibleReply: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) =>
+          Number(item.trigger.requiredTargetCount > 0 && item.trigger.confirmedDeliveredBursts === 0),
+        ),
+      ),
+      optionalPromptsWithoutVisibleReply: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) =>
+          Number(item.trigger.requiredTargetCount === 0 && item.trigger.confirmedDeliveredBursts === 0),
+        ),
+      ),
+      actorEstimatedCostUsd: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) =>
+          item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.coverage === "reported"
+            ? item.trigger.actor.costUsd
+            : null,
+        ),
+      ),
+      jevReportedCostUsd: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) =>
+          item.trigger.jev.outcome === "completed"
+            ? item.trigger.jev.costUsd
+            : item.trigger.variant === "jev-off"
+              ? 0
+              : null,
+        ),
+      ),
+      judgeReportedCostUsd: blockMetric(blocks, (block) => blockDelta(block, judgeCostForBlock)),
+      openCodeObservedTotalTokens: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) =>
+          item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.totalTokenCoverage === "reported"
+            ? item.trigger.actor.totalTokens
+            : null,
+        ),
+      ),
+      meanFirstVisibleMsPerTrigger: blockMetric(blocks, (block) =>
+        blockDelta(block, (item) => item.trigger.firstVisibleMs, "mean"),
+      ),
+    },
+  });
+  const contrastGroups = new Map<string, Block[]>();
+  for (const block of structurallyMatchedBlocks) {
+    const key = `${block.factor}:${block.contrastId}`;
+    contrastGroups.set(key, [...(contrastGroups.get(key) ?? []), block]);
+  }
+  const byStratum = [...contrastGroups.values()]
+    .flatMap((contrastBlocks) => {
+      const strata = new Map<string, Block[]>();
+      for (const block of contrastBlocks) strata.set(block.stratumId, [...(strata.get(block.stratumId) ?? []), block]);
+      return [...strata.values()].map((stratumBlocks) => ({
+        factor: stratumBlocks[0]!.factor,
+        contrastId: stratumBlocks[0]!.contrastId,
+        stratumId: stratumBlocks[0]!.stratumId,
+        dynamic: stratumBlocks[0]!.dynamic,
+        arcProfileId: stratumBlocks[0]!.arcProfileId,
+        agentCount: stratumBlocks[0]!.agentCount,
+        energy: stratumBlocks[0]!.energy,
+        paired: blockReadout(stratumBlocks),
+      }));
+    })
+    .sort((left, right) =>
+      `${left.factor}:${left.contrastId}:${left.stratumId}`.localeCompare(
+        `${right.factor}:${right.contrastId}:${right.stratumId}`,
+      ),
+    );
+  const byFactorBlocks = Object.fromEntries(
+    (["jev", "gate", "agent-prompt"] as const).map((factor) => {
+      const requestedBlocks = [...group.values()].filter((rows) => rows[0]?.study?.factor === factor).length;
+      const factorBlocks = structurallyMatchedBlocks.filter((block) => block.factor === factor);
+      const contrasts = [...contrastGroups.values()]
+        .filter((blocks) => blocks[0]?.factor === factor)
+        .map((blocks) => ({
+          contrastId: blocks[0]!.contrastId,
+          armA: blocks[0]!.armA,
+          armB: blocks[0]!.armB,
+          paired: blockReadout(blocks),
+        }))
+        .sort((left, right) => left.contrastId.localeCompare(right.contrastId));
+      return [factor, { requestedBlocks, structurallyMatchedBlocks: factorBlocks.length, contrasts }];
+    }),
+  );
+  const blockWarnings = byStratum.flatMap((stratum) =>
+    stratum.paired.routingEligibleBlocks < 5
+      ? [
+          {
+            code: stratum.paired.routingEligibleBlocks === 0 ? "no-eligible-blocks" : "small-cell",
+            factor: stratum.factor,
+            contrastId: stratum.contrastId,
+            stratumId: stratum.stratumId,
+          },
+        ]
+      : [],
+  );
+  for (const factor of ["jev", "gate", "agent-prompt"] as const) {
+    if (byFactorBlocks[factor]?.requestedBlocks === 0)
+      blockWarnings.push({ code: "missing-factor", factor, contrastId: "", stratumId: "" });
+    const contrasts = byFactorBlocks[factor]?.contrasts ?? [];
+    if (contrasts.length > 1) {
+      const stratumIds = new Set(byStratum.filter((row) => row.factor === factor).map((row) => row.stratumId));
+      for (const contrast of contrasts) {
+        const present = new Set(
+          byStratum
+            .filter((row) => row.factor === factor && row.contrastId === contrast.contrastId)
+            .map((row) => row.stratumId),
+        );
+        for (const stratumId of stratumIds)
+          if (!present.has(stratumId))
+            blockWarnings.push({ code: "non-overlapping-cell", factor, contrastId: contrast.contrastId, stratumId });
+      }
+    }
+  }
   return {
     schemaVersion: 2 as const,
     kind: "conversation-routing-live-study-analysis" as const,
@@ -1191,6 +1583,15 @@ export function analyzeQualityStudy(
         ];
       }),
     ),
+    blockLevelV1: {
+      schemaVersion: 1 as const,
+      unit: "matched-room-pair" as const,
+      byFactor: byFactorBlocks,
+      byStratum,
+      warnings: blockWarnings,
+      interpretation:
+        "Descriptive block-paired differences only. Every complete room pair has equal weight; correlated trigger turns are aggregated within its block. Missing metrics never become zero, and there is no pooled cross-contrast winner or inferential p-value.",
+    },
     triggerObservations: all.map((item) => ({
       scenarioId: item.trigger.scenarioId,
       runId: item.trigger.runId,
@@ -1547,7 +1948,7 @@ async function main() {
     if (!["--manifest", "--ratings", "--seed", "--spot-checks"].includes(arg) || !args[i + 1])
       throw new Error("Invalid analysis invocation.");
     if (arg === "--manifest") {
-      if (manifestPaths.length >= MAX_CASES) throw new Error("Invalid analysis invocation.");
+      if (manifestPaths.length >= MAX_STUDY_PAIRS) throw new Error("Invalid analysis invocation.");
       manifestPaths.push(args[++i]!);
       continue;
     }

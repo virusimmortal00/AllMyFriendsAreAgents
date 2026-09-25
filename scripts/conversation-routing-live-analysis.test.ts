@@ -503,6 +503,164 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("weights correlated trigger turns once per room pair and keeps missing human coverage", () => {
+    const fixture = studyFixture();
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    const contrast = report.blockLevelV1.byFactor.jev!.contrasts[0]!;
+    expect(contrast.paired.axes.social_cadence!.judgeArmBMinusA).toMatchObject({
+      candidateBlocks: 1,
+      pairedBlocks: 1,
+      mean: -1,
+      median: -1,
+    });
+    expect(contrast.paired.axes.social_cadence!.humanArmBMinusA).toMatchObject({
+      candidateBlocks: 1,
+      pairedBlocks: 0,
+      missingBlocks: 1,
+    });
+    expect(report.blockLevelV1.byStratum).toHaveLength(1);
+  });
+
+  it("gives a one-trigger room pair the same weight as a two-trigger room pair", () => {
+    const fixture = studyFixture();
+    const second = structuredClone(fixture.cases);
+    for (const row of second) {
+      row.study.pairId = "pair2";
+      row.study.blockId = "block2";
+      row.study.caseId = `second-${row.study.caseId}`;
+      row.scenarioId = `second-${row.scenarioId}`;
+      row.triggers = row.triggers.slice(0, 1);
+      row.qualityJudge = row.qualityJudge.slice(0, 1);
+      const turn = row.triggers[0]!;
+      turn.scenarioId = `second-${turn.scenarioId}`;
+      turn.runId = `second-${turn.runId}`;
+      const judgment = row.qualityJudge[0]!;
+      judgment.scenarioId = turn.scenarioId;
+      judgment.runId = turn.runId;
+      for (const outcome of judgment.outcomes) {
+        outcome.result.scenarioId = turn.scenarioId;
+        outcome.result.runId = turn.runId;
+        outcome.result.score = row.study.arm === "a" ? 1 : 5;
+      }
+    }
+    const report = analyzeQualityStudy(parseScalarCanaryManifest({ ...fixture, cases: [...fixture.cases, ...second] }));
+    expect(report.byFactor.jev!.paired.axes.social_cadence!.judgeArmBMinusA).toMatchObject({
+      pairedRuns: 3,
+      candidateMinusBaselineMean: 2 / 3,
+    });
+    expect(report.blockLevelV1.byFactor.jev!.contrasts[0]!.paired.axes.social_cadence!.judgeArmBMinusA).toMatchObject({
+      pairedBlocks: 2,
+      mean: 1.5,
+      median: 1.5,
+      minimum: -1,
+      maximum: 4,
+    });
+  });
+
+  it("counts required unanswered prompts separately from optional quiet prompts", () => {
+    const fixture = studyFixture();
+    const a = fixture.cases[0]!.triggers[0]!;
+    const b = fixture.cases[1]!.triggers[0]!;
+    a.confirmedDeliveredBursts = 0;
+    b.requiredAddressAgents = [];
+    b.confirmedDeliveredBursts = 0;
+    fixture.cases[0]!.qualityJudge.shift();
+    fixture.cases[1]!.qualityJudge.shift();
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    const objective = report.blockLevelV1.byFactor.jev!.contrasts[0]!.paired.objectiveArmBMinusA;
+    expect(objective.requiredPromptsWithoutVisibleReply).toMatchObject({ pairedBlocks: 1, mean: -1 });
+    expect(objective.optionalPromptsWithoutVisibleReply).toMatchObject({ pairedBlocks: 1, mean: 1 });
+  });
+
+  it("requires all final batches, disjoint pair IDs, and matching source and profile digests", () => {
+    const fixture = studyFixture();
+    const second = structuredClone(fixture.cases);
+    for (const row of second) {
+      row.scenarioId = `second-${row.scenarioId}`;
+      row.study.pairId = "pair2";
+      row.study.blockId = "block2";
+      row.study.caseId = `second-${row.study.caseId}`;
+      for (const turn of row.triggers) {
+        turn.scenarioId = `second-${turn.scenarioId}`;
+        turn.runId = `second-${turn.runId}`;
+      }
+      for (const judgment of row.qualityJudge) {
+        judgment.scenarioId = `second-${judgment.scenarioId}`;
+        judgment.runId = `second-${judgment.runId}`;
+        for (const outcome of judgment.outcomes) {
+          outcome.result.scenarioId = judgment.scenarioId;
+          outcome.result.runId = judgment.runId;
+        }
+      }
+    }
+    const batch = (cases: typeof fixture.cases, batchIndex: number, pairId: string) =>
+      parseScalarCanaryManifest({
+        ...fixture,
+        cases,
+        studyBatch: {
+          schemaVersion: 1,
+          planCaseCount: 4,
+          planPairCount: 2,
+          batchIndex,
+          batchCount: 2,
+          pairsPerBatch: 1,
+          pairCount: 1,
+          pairIds: [pairId],
+        },
+      });
+    const first = batch(fixture.cases, 0, "pair1");
+    const next = batch(second, 1, "pair2");
+    expect(() => analyzeQualityStudy(first)).toThrow(/complete set/);
+    expect(analyzeQualityStudy(mergeScalarCanaryManifests([first, next])).denominators).toMatchObject({
+      cases: 4,
+      matchedCasePairs: 2,
+    });
+    expect(() => mergeScalarCanaryManifests([first])).toThrow();
+    expect(() => mergeScalarCanaryManifests([first, first])).toThrow();
+    expect(() => mergeScalarCanaryManifests([first, { ...next, sourceSha256: "b".repeat(64) }])).toThrow();
+    const changed = structuredClone(next);
+    changed.cases[0]!.study!.jevProfileDigest = "c".repeat(64);
+    expect(() => mergeScalarCanaryManifests([first, changed])).toThrow();
+    const directory = mkdtempSync(join(tmpdir(), "conversation-study-batches-"));
+    try {
+      const files = [join(directory, "batch-0.json"), join(directory, "batch-1.json")];
+      for (const [index, cases] of [fixture.cases, second].entries()) {
+        writeFileSync(
+          files[index]!,
+          JSON.stringify({
+            ...fixture,
+            cases,
+            studyBatch: {
+              schemaVersion: 1,
+              planCaseCount: 4,
+              planPairCount: 2,
+              batchIndex: index,
+              batchCount: 2,
+              pairsPerBatch: 1,
+              pairCount: 1,
+              pairIds: [index ? "pair2" : "pair1"],
+            },
+          }),
+        );
+      }
+      const output = execFileSync(
+        "pnpm",
+        [
+          "exec",
+          "tsx",
+          "scripts/conversation-routing-live-analysis.ts",
+          "--manifest",
+          files[0]!,
+          "--manifest",
+          files[1]!,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(JSON.parse(output).denominators.cases).toBe(4);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it("keeps four independent axis denominators and pairs only matching trigger ordinals", () => {
     const parsed = parseScalarCanaryManifest(studyFixture());
     const human = parsePrivateQualityRatings({
@@ -550,6 +708,11 @@ describe("versioned quality study analysis", () => {
     const report = analyzeQualityStudy(parseScalarCanaryManifest(drift));
     expect(report.byFactor.jev!.paired.axes.social_cadence!.judgeArmBMinusA.pairedRuns).toBe(1);
     expect(report.byFactor.jev!.paired.axes.social_cadence!.resolvedJudgeModelMismatchPairs).toBe(1);
+    expect(report.blockLevelV1.byFactor.jev!.contrasts[0]!.paired.axes.social_cadence!.judgeArmBMinusA).toMatchObject({
+      candidateBlocks: 1,
+      pairedBlocks: 0,
+      missingBlocks: 1,
+    });
   });
 
   it("accepts a full uint32 study seed and rejects a changed prompt digest", () => {
