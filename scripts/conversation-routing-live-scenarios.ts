@@ -12,6 +12,9 @@ export type RoutingDynamic =
   | "disagreement"
   | "quoted-name";
 
+export const SCENARIO_PROFILE_IDS = ["garden-v1", "garden-chat-v2"] as const;
+export type ScenarioProfileId = (typeof SCENARIO_PROFILE_IDS)[number];
+
 export interface LiveScenario {
   scenarioId: string;
   variant: "jev-on" | "jev-off";
@@ -27,6 +30,7 @@ export interface LiveScenario {
   /** Study plans may use two or three scripted human messages instead of the legacy follow-up. */
   scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
   rosterOrder?: ActiveAgentId[];
+  scenarioProfileId?: ScenarioProfileId;
   study?: StudyCaseMetadataV1;
 }
 
@@ -55,17 +59,20 @@ export interface ScenarioSelection {
   energy: ConversationEnergy;
   preflightMode: PreflightMode;
   classifierEnabled: boolean;
+  scenarioProfileId?: ScenarioProfileId;
 }
 
 /** Every example is fictional and independent of any real room transcript. */
 export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
   const { dynamic, agentCount, energy, preflightMode, classifierEnabled } = selection;
+  const scenarioProfileId = selection.scenarioProfileId ?? "garden-v1";
   if (
     !ROUTING_DYNAMICS.includes(dynamic) ||
     !ROUTING_ENERGIES.includes(energy) ||
     !ROUTING_MODES.includes(preflightMode) ||
     ![1, 2, 3, 4].includes(agentCount) ||
-    typeof classifierEnabled !== "boolean"
+    typeof classifierEnabled !== "boolean" ||
+    !SCENARIO_PROFILE_IDS.includes(scenarioProfileId)
   )
     throw new Error("Invalid scenario selection.");
   if (["multi-address", "disagreement"].includes(dynamic) && agentCount < 2)
@@ -76,7 +83,7 @@ export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
       : dynamic === "direct" || dynamic === "handoff"
         ? [FIXTURE_AGENTS[0].agentId]
         : [];
-  const text: Record<RoutingDynamic, string> = {
+  const gardenV1: Record<RoutingDynamic, string> = {
     direct: "Sol, could you suggest one way to make the fictional garden path safer after rain?",
     "multi-address": "Sol and Nova, what two different low-cost materials might suit the fictional garden path?",
     broadcast: "Everyone, please each offer one idea for the fictional community garden sign.",
@@ -88,6 +95,19 @@ export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
     "quoted-name":
       "The draft sign says “Sol, please water the garden” as a fictional example of instructions printed on a sign.",
   };
+  const gardenChatV2: Record<RoutingDynamic, string> = {
+    direct: "Sol, could you suggest one way to make our garden path safer after rain?",
+    "multi-address":
+      "Sol and Nova, what two low-cost materials might work for the garden path? Please give your own tradeoff.",
+    broadcast: "Everyone, could you each offer one idea for the community garden sign?",
+    casual: "The garden sign is getting easier to read now that the layout is settling.",
+    handoff: "Sol, can you compare two options for the garden sign? Ask me to choose if you need a preference.",
+    disagreement:
+      "Sol, make the case for a wooden garden sign. Nova, make the case for metal. Where do your views differ?",
+    "quoted-name":
+      "The draft sign says “Sol, please water the garden” in its instructions. Will that wording confuse visitors?",
+  };
+  const text = scenarioProfileId === "garden-chat-v2" ? gardenChatV2 : gardenV1;
   return {
     scenarioId: `${dynamic}-${agentCount}-${energy}-${preflightMode}`,
     variant: classifierEnabled ? "jev-on" : "jev-off",
@@ -97,12 +117,16 @@ export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
     preflightMode,
     classifierEnabled,
     text: text[dynamic],
+    ...(selection.scenarioProfileId ? { scenarioProfileId } : {}),
     expectedDirectAgents: targets,
     ...(dynamic === "disagreement" && agentCount >= 3
       ? {
           followup: {
             scenarioId: `resolution-${agentCount}-${energy}-${preflightMode}`,
-            text: "Terra, given the fictional wooden and metal sign ideas above, describe a practical compromise and what Avery should decide.",
+            text:
+              scenarioProfileId === "garden-chat-v2"
+                ? "Terra, given the wooden and metal sign ideas above, what compromise would work? What should I decide?"
+                : "Terra, given the fictional wooden and metal sign ideas above, describe a practical compromise and what Avery should decide.",
             expectedDirectAgents: [FIXTURE_AGENTS[2].agentId],
           },
         }

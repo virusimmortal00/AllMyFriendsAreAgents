@@ -14,6 +14,8 @@ import {
   ROUTING_DYNAMICS,
   ROUTING_ENERGIES,
   type RoutingDynamic,
+  SCENARIO_PROFILE_IDS,
+  type ScenarioProfileId,
 } from "./conversation-routing-live-scenarios.js";
 
 export const STUDY_JEV_PROFILES = ["off-v1", ...JEV_QUESTION_PROFILE_IDS] as const;
@@ -240,7 +242,7 @@ export function expandStudyPlan(plan: StudyPlanV1): LiveScenario[] {
       const suffix = `-${plan.planId}-${block.blockId}-${block.replicateId}-${arm}`;
       const pairId = `${plan.planId}-${block.blockId}-${block.replicateId}`;
       const caseId = `${pairId}-${arm}`;
-      const scriptedFollowups = studyFollowups(block.arcProfileId, suffix);
+      const scriptedFollowups = buildStudyFollowups(block.arcProfileId, suffix);
       const study: StudyCaseMetadataV1 = {
         schemaVersion: 1,
         planId: plan.planId,
@@ -278,7 +280,14 @@ export function expandStudyPlan(plan: StudyPlanV1): LiveScenario[] {
   });
 }
 
-function studyFollowups(arc: ArcProfileId, suffix: string): NonNullable<LiveScenario["scriptedFollowups"]> {
+/** Closed fixture arcs; the opt-in chat profile is pure until a plan selector is wired. */
+export function buildStudyFollowups(
+  arc: ArcProfileId,
+  suffix: string,
+  scenarioProfileId: ScenarioProfileId = "garden-v1",
+): NonNullable<LiveScenario["scriptedFollowups"]> {
+  if (!STUDY_ARC_PROFILES.includes(arc) || !SCENARIO_PROFILE_IDS.includes(scenarioProfileId))
+    throw new Error("Invalid closed study arc profile.");
   const followups: Record<ArcProfileId, NonNullable<LiveScenario["scriptedFollowups"]>> = {
     "single-v1": [],
     "casual-thread-v1": [
@@ -327,5 +336,50 @@ function studyFollowups(arc: ArcProfileId, suffix: string): NonNullable<LiveScen
       },
     ],
   };
-  return followups[arc];
+  if (scenarioProfileId === "garden-v1") return followups[arc];
+  const chatFollowups: Record<ArcProfileId, NonNullable<LiveScenario["scriptedFollowups"]>> = {
+    "single-v1": [],
+    "casual-thread-v1": [
+      {
+        scenarioId: `casual-continuation${suffix}`,
+        text: "The sign is readable from the path now. I think the layout is close.",
+        expectedDirectAgents: [],
+      },
+    ],
+    "agent-exchange-v1": [
+      {
+        scenarioId: `agent-exchange${suffix}`,
+        text: "Sol and Nova, where do your suggestions for the path differ? Keep it brief.",
+        expectedDirectAgents: ["codex-sol", "claude-sonnet"],
+      },
+    ],
+    "agent-exchange-v2": [
+      {
+        scenarioId: `agent-exchange-own-tradeoff${suffix}`,
+        text: "Sol and Nova, each give your own tradeoff between durability and cost for the path material. Answer independently of any earlier reply and keep it brief.",
+        expectedDirectAgents: ["codex-sol", "claude-sonnet"],
+      },
+    ],
+    "handoff-choice-v1": [
+      {
+        scenarioId: `handoff-choice${suffix}`,
+        text: "Sol, I prefer the simpler sign option. Can you confirm what I need to choose next?",
+        expectedDirectAgents: ["codex-sol"],
+      },
+      { scenarioId: `handoff-closure${suffix}`, text: "Thanks, that is enough for now.", expectedDirectAgents: [] },
+    ],
+    "dispute-resolution-v1": [
+      {
+        scenarioId: `dispute-mediator${suffix}`,
+        text: "Terra, given the wooden and metal sign ideas above, what compromise would work? What should I decide?",
+        expectedDirectAgents: ["claude-opus"],
+      },
+      {
+        scenarioId: `dispute-choice${suffix}`,
+        text: "I choose the option that will be easier for volunteers to maintain. Please close any remaining disagreement briefly.",
+        expectedDirectAgents: [],
+      },
+    ],
+  };
+  return chatFollowups[arc];
 }

@@ -211,6 +211,9 @@ describe("OpenCode runtime contract", () => {
     const room = __testing.opencodeEnvironment(environment, "read-only");
     const inline = JSON.parse(room.OPENCODE_CONFIG_CONTENT!);
     expect(inline.agent[__testing.roomAgentName]).toMatchObject({ mode: "primary", permission: JSON.parse(room.OPENCODE_PERMISSION!) });
+    expect(inline.agent[__testing.roomAgentName].prompt).toContain("an application-managed group chat");
+    expect(inline.agent[__testing.roomAgentName].prompt).toContain("Use only granted read-only tools");
+    expect(inline.agent[__testing.roomAgentName].prompt).not.toContain("ROOM BASE PROMPT");
     expect(__testing.roomAgentName).not.toBe("plan");
     expect(__testing.roomAgentName).not.toBe("build");
     expect(inline.agent[__testing.roomAgentName].permission).toMatchObject({ "*": "deny", edit: "deny", bash: "deny", task: "deny" });
@@ -218,6 +221,33 @@ describe("OpenCode runtime contract", () => {
     expect(() => __testing.opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: "{broken" }, "read-only")).toThrow("valid OpenCode inline configuration");
     expect(() => __testing.opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: JSON.stringify({ agent: { [__testing.roomAgentName]: { permission: { edit: "allow" } } } }) }, "read-only")).toThrow("collision");
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
+  });
+
+  it("keeps room identity by default and gates the closed legacy study profile", () => {
+    const production = JSON.parse(__testing.opencodeEnvironment({}, "read-only").OPENCODE_CONFIG_CONTENT!);
+    const productionAgent = production.agent[__testing.roomAgentName];
+    const isolated = { NODE_ENV: "test", AMFAA_ROUTING_STUDY_ISOLATED: "true" };
+    const room = JSON.parse(__testing.opencodeEnvironment({
+      ...isolated,
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+    }, "read-only").OPENCODE_CONFIG_CONTENT!);
+    expect(room.agent[__testing.roomAgentName].prompt).toBe(productionAgent.prompt);
+    const legacy = JSON.parse(__testing.opencodeEnvironment({
+      ...isolated,
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "legacy-v1",
+    }, "read-only").OPENCODE_CONFIG_CONTENT!);
+    expect(legacy.agent[__testing.roomAgentName]).not.toHaveProperty("prompt");
+    expect(legacy.agent[__testing.roomAgentName].permission).toEqual(productionAgent.permission);
+    expect(legacy.agent[__testing.roomAgentName].mode).toBe(productionAgent.mode);
+    for (const environment of [
+      { AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "legacy-v1" },
+      { NODE_ENV: "test", AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1" },
+      { ...isolated, AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "unknown-v1" },
+      { ...isolated, AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "" },
+    ]) {
+      expect(() => __testing.opencodeEnvironment(environment, "read-only")).toThrow("isolated study");
+      expect(() => __testing.opencodeEnvironment(environment, "writable")).toThrow("isolated study");
+    }
   });
 
   it("does not resume model-compatible sessions without deployment provenance", () => {
@@ -292,6 +322,7 @@ describe("OpenCode runtime contract", () => {
     const invocation = requiredAt(structuredTransport.run.mock.calls,0,"structured transport call")[0];
     expect(invocation).toMatchObject({ providerId: "openai", modelId: "gpt-5.6-sol", agent: __testing.roomAgentName });
     expect(JSON.parse(invocation.environment.OPENCODE_CONFIG_CONTENT).agent[__testing.roomAgentName].permission).toMatchObject({ "*": "deny", edit: "deny", bash: "deny", StructuredOutput: "allow" });
+    expect(JSON.parse(invocation.environment.OPENCODE_CONFIG_CONTENT).agent[__testing.roomAgentName].prompt).toContain("application-managed group chat");
     expect(Object.hasOwn(invocation, "variant")).toBe(false);
     expect(Object.hasOwn(invocation, "sessionId")).toBe(false);
     expect(Object.hasOwn(invocation, "signal")).toBe(false);
@@ -690,6 +721,7 @@ writeFileSync(process.env.AMFAA_TEST_CAPTURE_PATH, JSON.stringify({
   freshBinding: process.env.AMFAA_ROOM_COMMAND_TOKEN === "command-fresh-placeholder" && process.env.AMFAA_ROOM_DIAGNOSTICS_TOKEN === "diagnostics-fresh-placeholder",
   roomAgentSelected: selected?.startsWith("amfaa-room-") && selected !== "plan" && !process.argv.includes("--auto"),
   roomAgentDeniedWrites: policy?.["*"] === "deny" && policy?.edit === "deny" && policy?.bash === "deny" && policy?.task === "deny",
+  roomAgentHasSystemIdentity: inline.agent?.[selected]?.prompt?.includes("application-managed group chat") && inline.agent?.[selected]?.prompt?.includes("Use only granted read-only tools"),
 }));
 process.stderr.write(process.env.AMFAA_ROOM_HISTORY_TOKEN + " " + process.env.AMFAA_ROOM_DIAGNOSTICS_URL + "\\n");
 process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_room_tool_smoke", part: { type: "text", text: "room-tool-environment-ok " + process.env.AMFAA_ROOM_COMMAND_TOKEN } }) + "\\n");
@@ -784,6 +816,7 @@ process.stdout.write(JSON.stringify({ text: result.text, sessionId: result.sessi
         freshBinding: true,
         roomAgentSelected: true,
         roomAgentDeniedWrites: true,
+        roomAgentHasSystemIdentity: true,
       });
     } finally {
       await rm(directory, { recursive: true, force: true });

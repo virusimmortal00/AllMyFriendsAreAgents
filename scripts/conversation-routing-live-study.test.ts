@@ -3,9 +3,11 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
 import {
+  buildStudyFollowups,
   expandStudyPlan,
   parseStudyPlan,
   STUDY_AGENT_BASE_PROMPTS,
+  STUDY_ARC_PROFILES,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
 
@@ -38,6 +40,21 @@ function plan(
 }
 
 describe("closed live study plan", () => {
+  it("keeps garden v1 arcs stable and offers opt-in ordinary-chat wording without evaluation cues", () => {
+    for (const arc of STUDY_ARC_PROFILES) {
+      const oldArc = buildStudyFollowups(arc, "-case");
+      expect(buildStudyFollowups(arc, "-case", "garden-v1")).toEqual(oldArc);
+      const chatArc = buildStudyFollowups(arc, "-case", "garden-chat-v2");
+      expect(chatArc.map(({ scenarioId, expectedDirectAgents }) => ({ scenarioId, expectedDirectAgents }))).toEqual(
+        oldArc.map(({ scenarioId, expectedDirectAgents }) => ({ scenarioId, expectedDirectAgents })),
+      );
+      for (const followup of chatArc) expect(followup.text).not.toMatch(/fictional|test|eval|simulation|benchmark/i);
+    }
+    expect(buildStudyFollowups("agent-exchange-v2", "-case", "garden-chat-v2")[0]?.text).toContain(
+      "each give your own tradeoff",
+    );
+    expect(() => buildStudyFollowups("single-v1", "-case", "unreviewed" as never)).toThrow();
+  });
   it("validates the versioned 72-case matrix with balanced orders within each factor", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-large-v1.json", "utf8"));
     const parsed = parseStudyPlan(raw);
