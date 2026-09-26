@@ -39,6 +39,28 @@ under a new `0700` directory; an existing path is rejected. Delete that director
 this flag, private bundles remain only in disposable case roots and are deleted
 on completion or interruption.
 
+This flag also writes one `text-boundaries-case-N-trigger-M.json` file per
+completed trigger. Its `generations` array uses one-based completion ordinals;
+each generation records parser-accepted OpenCode text-part ordinals, message
+and step ordinals, UTF-16 start/end offsets into the parser-assembled response, part
+lengths and SHA-256 hashes, plus counts of unfinished snapshots skipped and
+completed snapshots replaced by a later snapshot of the same part. The
+`completionMarker` distinguishes an explicit numeric `time.end` from the
+legacy compatibility case with no timing marker; only the former proves
+protocol completion. The assembled length and hash fingerprint the raw parser
+output; room delivery can remove disposition and state framing, so this hash
+need not match the visible text in a private review bundle. The offsets identify
+where each part fell in the parser output without retaining actor text. The
+trace contains no prompt, actor text, tool output, CLI stream, provider header,
+or protocol ID. The report is limited to 32 generations per trigger, 64 accepted parts and
+2,048 CLI events per generation, 1 MiB of CLI stdout per generation, 32 Ki
+UTF-16 units of assembled text per generation, and 32 MiB of source log data
+per case. Malformed, missing, or oversized completed CLI evidence fails the
+opt-in case without writing a partial file; an earlier trigger's complete trace
+may remain if a later trigger fails. Ordinary canary runs do not read
+the harness stream for this purpose. As with the private review bundles, delete
+the trace after inspection.
+
 For a single bounded smoke, select one custom case instead of the pilot:
 
 ```sh
