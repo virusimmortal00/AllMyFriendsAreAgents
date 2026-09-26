@@ -13,6 +13,12 @@ import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import {
+  largeStudyProfile,
+  largeStudyProfileDigest,
+  LARGE_STUDY_PROFILES,
+  type LargeStudyProfileId,
+} from "./conversation-routing-live-large-fixtures.js";
+import {
   buildLiveScenario,
   EVERYDAY_FIXTURE_AGENTS,
   FIXTURE_AGENTS,
@@ -142,7 +148,16 @@ export interface StudyPlanV4 extends Omit<StudyPlanV3, "schemaVersion" | "blocks
   blocks: StudyBlockV4[];
 }
 
-export type StudyPlan = StudyPlanV1 | StudyPlanV2 | StudyPlanV3 | StudyPlanV4;
+export interface StudyArmV5 extends StudyArmV3 {}
+export interface StudyBlockV5 extends Omit<StudyBlockV3, "scenarioProfileId" | "arms"> {
+  scenarioProfileId: LargeStudyProfileId;
+  arms: { a: StudyArmV5; b: StudyArmV5 };
+}
+export interface StudyPlanV5 extends Omit<StudyPlanV3, "schemaVersion" | "blocks"> {
+  schemaVersion: 5;
+  blocks: StudyBlockV5[];
+}
+export type StudyPlan = StudyPlanV1 | StudyPlanV2 | StudyPlanV3 | StudyPlanV4 | StudyPlanV5;
 
 export interface StudyCaseMetadataV2 extends Omit<StudyCaseMetadataV1, "schemaVersion" | "factor"> {
   schemaVersion: 2;
@@ -169,7 +184,19 @@ export interface StudyCaseMetadataV4
   scenarioProfileId: ModelScenarioProfileId;
   actorModelId: StudyActorModelId;
 }
-export type StudyCaseMetadata = StudyCaseMetadataV1 | StudyCaseMetadataV2 | StudyCaseMetadataV3 | StudyCaseMetadataV4;
+export interface StudyCaseMetadataV5
+  extends Omit<StudyCaseMetadataV3, "schemaVersion" | "factor" | "scenarioProfileId"> {
+  schemaVersion: 5;
+  factor: StudyFactor;
+  scenarioProfileId: LargeStudyProfileId;
+  theme: "everyday" | "practical";
+}
+export type StudyCaseMetadata =
+  | StudyCaseMetadataV1
+  | StudyCaseMetadataV2
+  | StudyCaseMetadataV3
+  | StudyCaseMetadataV4
+  | StudyCaseMetadataV5;
 
 // IDs are deliberately short because trigger scenario IDs include all three components.
 const SAFE_ID = /^[a-z][a-z0-9-]{0,11}$/;
@@ -210,7 +237,11 @@ function factorOf(a: StudyArmV1, b: StudyArmV1): StudyFactor {
 export function parseStudyPlan(input: unknown): StudyPlan {
   const top = object(input, ["schemaVersion", "planId", "orderSeed", "maxCases", "blocks"]);
   if (
-    (top.schemaVersion !== 1 && top.schemaVersion !== 2 && top.schemaVersion !== 3 && top.schemaVersion !== 4) ||
+    (top.schemaVersion !== 1 &&
+      top.schemaVersion !== 2 &&
+      top.schemaVersion !== 3 &&
+      top.schemaVersion !== 4 &&
+      top.schemaVersion !== 5) ||
     typeof top.planId !== "string" ||
     !SAFE_ID.test(top.planId) ||
     !Number.isSafeInteger(top.orderSeed) ||
@@ -246,7 +277,7 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       !ROUTING_ENERGIES.includes(row.energy as ConversationEnergy) ||
       !Array.isArray(row.rosterOrder) ||
       row.rosterOrder.length < 1 ||
-      row.rosterOrder.length > 4 ||
+      row.rosterOrder.length > (top.schemaVersion === 5 ? 3 : 4) ||
       new Set(row.rosterOrder).size !== row.rosterOrder.length ||
       row.rosterOrder.some((agent) => !AGENT_IDS.includes(agent as ActiveAgentId))
     )
@@ -262,6 +293,8 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       !TERMINAL_SCENARIO_PROFILES.includes(row.scenarioProfileId as TerminalScenarioProfileId)
     )
       throw new Error("Invalid closed terminal scenario profile.");
+    if (top.schemaVersion === 5 && !Object.hasOwn(LARGE_STUDY_PROFILES, row.scenarioProfileId as string))
+      throw new Error("Invalid closed large-study scenario profile.");
     if (top.schemaVersion === 4 && !MODEL_SCENARIO_PROFILES.includes(row.scenarioProfileId as ModelScenarioProfileId))
       throw new Error("Invalid closed model scenario profile.");
     const rosterOrder = row.rosterOrder as ActiveAgentId[];
@@ -287,7 +320,45 @@ export function parseStudyPlan(input: unknown): StudyPlan {
     )
       throw new Error("Invalid closed study plan.");
     const arms = object(row.arms, ["a", "b"]);
-    if (top.schemaVersion === 4) {
+    if (top.schemaVersion === 5) {
+      const a = profileArmV3(arms.a),
+        b = profileArmV3(arms.b);
+      const factor = factorOf(a, b);
+      const profile = largeStudyProfile(row.scenarioProfileId as string);
+      const expectedSuffix = { jev: "j", gate: "g", "agent-prompt": "p" }[factor];
+      if (
+        !profile.id.endsWith(`-${expectedSuffix}`) ||
+        profile.dynamic !== row.dynamic ||
+        a.roomSystemProfileId !== "room-v1" ||
+        b.roomSystemProfileId !== "room-v1" ||
+        a.terminalInstructionProfileId !== "contribution-first-v1" ||
+        b.terminalInstructionProfileId !== "contribution-first-v1" ||
+        (factor === "jev" &&
+          (a.jevProfileId !== "current-v1" ||
+            b.jevProfileId !== "lean-v1" ||
+            a.gateProfileId !== "current-v1" ||
+            b.gateProfileId !== "current-v1")) ||
+        (factor === "gate" &&
+          (a.jevProfileId !== "relevance-v1" ||
+            b.jevProfileId !== "relevance-v1" ||
+            a.gateProfileId !== "current-v1" ||
+            b.gateProfileId !== "relevance-v1" ||
+            row.rosterOrder.length < 2 ||
+            !profile.messages.some((message) => message.expectedDirectAgents.length < rosterOrder.length))) ||
+        (factor === "agent-prompt" &&
+          (a.jevProfileId !== "current-v1" ||
+            b.jevProfileId !== "current-v1" ||
+            a.gateProfileId !== "current-v1" ||
+            b.gateProfileId !== "current-v1" ||
+            a.agentPromptProfileId !== "current-v1" ||
+            b.agentPromptProfileId !== "social-v1"))
+      )
+        throw new Error("Large study arms or scenario are outside the closed matrix.");
+      for (const item of profile.messages) {
+        if (item.expectedDirectAgents.some((agent) => !rosterOrder.includes(agent)))
+          throw new Error("Addressed agent is absent from large-study roster.");
+      }
+    } else if (top.schemaVersion === 4) {
       const a = profileArmV4(arms.a),
         b = profileArmV4(arms.b);
       if (
@@ -331,21 +402,25 @@ export function parseStudyPlan(input: unknown): StudyPlan {
         throw new Error("Identity study arms must differ only in room system profile.");
     } else factorOf(profileArm(arms.a), profileArm(arms.b));
     const a =
-      top.schemaVersion === 4
-        ? profileArmV4(arms.a)
-        : top.schemaVersion === 3
-          ? profileArmV3(arms.a)
-          : top.schemaVersion === 2
-            ? profileArmV2(arms.a)
-            : profileArm(arms.a);
+      top.schemaVersion === 5
+        ? profileArmV3(arms.a)
+        : top.schemaVersion === 4
+          ? profileArmV4(arms.a)
+          : top.schemaVersion === 3
+            ? profileArmV3(arms.a)
+            : top.schemaVersion === 2
+              ? profileArmV2(arms.a)
+              : profileArm(arms.a);
     const b =
-      top.schemaVersion === 4
-        ? profileArmV4(arms.b)
-        : top.schemaVersion === 3
-          ? profileArmV3(arms.b)
-          : top.schemaVersion === 2
-            ? profileArmV2(arms.b)
-            : profileArm(arms.b);
+      top.schemaVersion === 5
+        ? profileArmV3(arms.b)
+        : top.schemaVersion === 4
+          ? profileArmV4(arms.b)
+          : top.schemaVersion === 3
+            ? profileArmV3(arms.b)
+            : top.schemaVersion === 2
+              ? profileArmV2(arms.b)
+              : profileArm(arms.b);
     return {
       blockId: row.blockId,
       replicateId: row.replicateId,
@@ -359,13 +434,32 @@ export function parseStudyPlan(input: unknown): StudyPlan {
             scenarioProfileId: row.scenarioProfileId as
               | StudyBlockV2["scenarioProfileId"]
               | TerminalScenarioProfileId
-              | ModelScenarioProfileId,
+              | ModelScenarioProfileId
+              | LargeStudyProfileId,
           }
         : {}),
     };
   });
   if (new Set(blocks.map(({ blockId, replicateId }) => `${blockId}\0${replicateId}`)).size !== blocks.length)
     throw new Error("Duplicate study block and replicate.");
+  if (top.schemaVersion === 5) {
+    const factors = blocks.map((block) => factorOf(block.arms.a, block.arms.b));
+    const ids = blocks.map((block) => block.scenarioProfileId);
+    if (
+      top.maxCases !== 72 ||
+      blocks.length !== 36 ||
+      new Set(ids).size !== 36 ||
+      (["jev", "gate", "agent-prompt"] as const).some((factor) => {
+        const subset = blocks.filter((block, index) => factors[index] === factor);
+        return (
+          subset.length !== 12 ||
+          subset.filter((block) => largeStudyProfile(block.scenarioProfileId as string).theme === "everyday").length !==
+            6
+        );
+      })
+    )
+      throw new Error("Large study requires all 36 distinct, theme-balanced pairs.");
+  }
   if (
     top.schemaVersion === 3 &&
     (top.maxCases !== 6 ||
@@ -380,37 +474,45 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       new Set(blocks.map(({ scenarioProfileId }) => scenarioProfileId)).size !== 3)
   )
     throw new Error("Model study requires one known regression and two independent holdouts.");
-  return top.schemaVersion === 4
+  return top.schemaVersion === 5
     ? ({
-        schemaVersion: 4,
+        schemaVersion: 5,
         planId: top.planId,
         orderSeed: Number(top.orderSeed),
         maxCases: Number(top.maxCases),
         blocks,
-      } as StudyPlanV4)
-    : top.schemaVersion === 3
+      } as StudyPlanV5)
+    : top.schemaVersion === 4
       ? ({
-          schemaVersion: 3,
+          schemaVersion: 4,
           planId: top.planId,
           orderSeed: Number(top.orderSeed),
           maxCases: Number(top.maxCases),
           blocks,
-        } as StudyPlanV3)
-      : top.schemaVersion === 2
+        } as StudyPlanV4)
+      : top.schemaVersion === 3
         ? ({
-            schemaVersion: 2,
+            schemaVersion: 3,
             planId: top.planId,
             orderSeed: Number(top.orderSeed),
             maxCases: Number(top.maxCases),
             blocks,
-          } as StudyPlanV2)
-        : ({
-            schemaVersion: 1,
-            planId: top.planId,
-            orderSeed: Number(top.orderSeed),
-            maxCases: Number(top.maxCases),
-            blocks,
-          } as StudyPlanV1);
+          } as StudyPlanV3)
+        : top.schemaVersion === 2
+          ? ({
+              schemaVersion: 2,
+              planId: top.planId,
+              orderSeed: Number(top.orderSeed),
+              maxCases: Number(top.maxCases),
+              blocks,
+            } as StudyPlanV2)
+          : ({
+              schemaVersion: 1,
+              planId: top.planId,
+              orderSeed: Number(top.orderSeed),
+              maxCases: Number(top.maxCases),
+              blocks,
+            } as StudyPlanV1);
 }
 
 function profileArmV4(value: unknown): StudyArmV4 {
@@ -481,6 +583,7 @@ function nextRandom(seed: number) {
 
 /** The seed randomizes only block order and AB/BA order, never the product or model. */
 export function expandStudyPlan(plan: StudyPlan): LiveScenario[] {
+  if (plan.schemaVersion === 5) return expandLargeStudyPlan(plan);
   if (plan.schemaVersion === 4) return expandModelStudyPlan(plan);
   if (plan.schemaVersion === 3) return expandTerminalStudyPlan(plan);
   if (plan.schemaVersion === 2) return expandIdentityStudyPlan(plan);
@@ -547,6 +650,89 @@ export function expandStudyPlan(plan: StudyPlan): LiveScenario[] {
         scenarioId: `${base.scenarioId}${suffix}`,
         ...(scriptedFollowups.length ? { scriptedFollowups } : {}),
         rosterOrder: [...block.rosterOrder],
+        study,
+      };
+    });
+  });
+}
+
+function expandLargeStudyPlan(plan: StudyPlanV5): LiveScenario[] {
+  const digest = studyPlanDigest(plan);
+  const random = nextRandom(plan.orderSeed);
+  const blocks = [...plan.blocks];
+  for (let index = blocks.length - 1; index > 0; index--) {
+    const selected = Math.floor(random() * (index + 1));
+    [blocks[index], blocks[selected]] = [blocks[selected]!, blocks[index]!];
+  }
+  const strata = (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+    (["everyday", "practical"] as const).map((theme) => `${factor}:${theme}` as const),
+  );
+  const firstOrder = Object.fromEntries(strata.map((key) => [key, random() < 0.5 ? "ab" : "ba"])) as Record<
+    (typeof strata)[number],
+    "ab" | "ba"
+  >;
+  const counts = Object.fromEntries(strata.map((key) => [key, 0])) as Record<(typeof strata)[number], number>;
+  return blocks.flatMap((block) => {
+    const profile = largeStudyProfile(block.scenarioProfileId);
+    const factor = factorOf(block.arms.a, block.arms.b);
+    const stratum = `${factor}:${profile.theme}` as (typeof strata)[number];
+    const index = counts[stratum]++;
+    const order = index % 2 === 0 ? firstOrder[stratum] : firstOrder[stratum] === "ab" ? "ba" : "ab";
+    const pairId = `${plan.planId}-${block.blockId}-${block.replicateId}`;
+    return [...order].map((arm) => {
+      const selected = block.arms[arm as "a" | "b"];
+      const jev = jevProfileMetadata(
+        selected.jevProfileId as "current-v1" | "lean-v1" | "relevance-v1",
+        selected.gateProfileId,
+      );
+      const study: StudyCaseMetadataV5 = {
+        schemaVersion: 5,
+        planId: plan.planId,
+        planSha256: digest,
+        blockId: block.blockId,
+        replicateId: block.replicateId,
+        pairId,
+        caseId: `${pairId}-${arm}`,
+        arm: arm as "a" | "b",
+        factor,
+        order,
+        arcProfileId: block.arcProfileId,
+        ...selected,
+        scenarioProfileId: block.scenarioProfileId,
+        scenarioProfileDigest: largeStudyProfileDigest(block.scenarioProfileId),
+        theme: profile.theme,
+        roomSystemProfileDigest: roomSystemProfileDigest("room-v1"),
+        terminalInstructionProfileDigest: terminalInstructionProfileDigest("contribution-first-v1"),
+        terminalInstructionCharacters: TASK_TERMINAL_INSTRUCTIONS["contribution-first-v1"].length,
+        jevProfileDigest: jev.jevProfileDigest,
+        gateProfileDigest: jev.gateProfileDigest,
+        agentPromptProfileDigest: createHash("sha256")
+          .update(STUDY_AGENT_BASE_PROMPTS[selected.agentPromptProfileId])
+          .digest("hex"),
+        rosterOrder: [...block.rosterOrder],
+      };
+      const suffix = `-${study.caseId}`;
+      return {
+        scenarioId: `${block.dynamic}-${block.rosterOrder.length}-${block.energy}-enforce${suffix}`,
+        variant: "jev-on" as const,
+        dynamic: block.dynamic,
+        agentCount: block.rosterOrder.length as LiveScenario["agentCount"],
+        energy: block.energy,
+        preflightMode: "enforce" as const,
+        classifierEnabled: true,
+        text: profile.messages[0]!.text,
+        expectedDirectAgents: [...profile.messages[0]!.expectedDirectAgents],
+        ...(profile.messages.length > 1
+          ? {
+              scriptedFollowups: profile.messages.slice(1).map((message, messageIndex) => ({
+                scenarioId: `followup-${messageIndex + 1}${suffix}`,
+                text: message.text,
+                expectedDirectAgents: [...message.expectedDirectAgents],
+              })),
+            }
+          : {}),
+        rosterOrder: [...block.rosterOrder],
+        scenarioProfileId: block.scenarioProfileId,
         study,
       };
     });
