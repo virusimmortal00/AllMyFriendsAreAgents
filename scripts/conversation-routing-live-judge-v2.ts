@@ -309,6 +309,37 @@ export interface QualityJudgeOptions {
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Keep canonical IDs in private evidence while showing only card names to V3 judges. */
+  conversationalNamesOnly?: boolean;
+}
+
+export function projectJudgeConversation(privateCase: PrivateQualityCase, namesOnly: boolean) {
+  if (!namesOnly) {
+    return {
+      expectedDirectAgents: privateCase.expectedDirectAgents,
+      messages: privateCase.messages,
+      qualityContext: privateCase.qualityContext,
+    };
+  }
+  const context = privateCase.qualityContext;
+  if (!context) throw new Error("Conversational name projection requires a quality context.");
+  const names = new Map(context.roster.map(({ agentId, conversationalName }) => [agentId, conversationalName]));
+  const name = (agentId: string) => {
+    const result = names.get(agentId);
+    if (!result) throw new Error("Missing conversational name for judge projection.");
+    return result;
+  };
+  return {
+    expectedDirectAgents: privateCase.expectedDirectAgents.map(name),
+    messages: privateCase.messages.map((message) => ({
+      ...message,
+      speaker: message.kind === "human" ? context.originalHumanAlias : name(message.speaker),
+    })),
+    qualityContext: {
+      originalHumanAlias: context.originalHumanAlias,
+      roster: context.roster.map(({ conversationalName }) => conversationalName),
+    },
+  };
 }
 
 /** One independent rubric call, bounded to 30 seconds and 4,096 output tokens, with no retries. */
@@ -372,6 +403,7 @@ export async function judgeConversationQualityAxis(
   const signal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
     : AbortSignal.timeout(timeoutMs);
+  const judgeConversation = projectJudgeConversation(privateCase, Boolean(options.conversationalNamesOnly));
   let response: Response;
   try {
     response = await (options.fetchImpl ?? fetch)(ENDPOINT, {
@@ -398,10 +430,10 @@ export async function judgeConversationQualityAxis(
             role: "user",
             content: JSON.stringify({
               scenarioKind: privateCase.scenarioKind,
-              expectedDirectAgents: privateCase.expectedDirectAgents,
+              expectedDirectAgents: judgeConversation.expectedDirectAgents,
               prompt: privateCase.prompt,
-              messages: privateCase.messages,
-              ...(privateCase.qualityContext === null ? {} : { qualityContext: privateCase.qualityContext }),
+              messages: judgeConversation.messages,
+              ...(privateCase.qualityContext === null ? {} : { qualityContext: judgeConversation.qualityContext }),
             }),
           },
         ],

@@ -4,6 +4,7 @@ import {
   judgeConversationQualityAxes,
   judgeConversationQualityAxis,
   parsePrivateQualityCase,
+  projectJudgeConversation,
   QUALITY_AXES,
   type QualityAxis,
 } from "./conversation-routing-live-judge-v2.js";
@@ -64,6 +65,21 @@ function response(judgment: unknown, finishReason = "stop") {
 }
 
 describe("versioned private conversation-quality graders", () => {
+  it("projects conversational names only for opt-in judge requests and retains canonical evidence", () => {
+    const parsed = parsePrivateQualityCase(privateCase);
+    const projected = projectJudgeConversation(parsed, true);
+    expect(projected).toEqual({
+      expectedDirectAgents: ["Arlo"],
+      messages: [
+        { speaker: "Avery", kind: "human", text: privateCase.messages[0].text },
+        { speaker: "Arlo", kind: "agent", text: privateCase.messages[1].text },
+      ],
+      qualityContext: { originalHumanAlias: "Avery", roster: ["Arlo", "Bex"] },
+    });
+    expect(JSON.stringify(projected)).not.toContain("agent-a");
+    expect(parsed.messages[1]?.speaker).toBe("agent-a");
+    expect(projectJudgeConversation(parsed, false).messages[1]?.speaker).toBe("agent-a");
+  });
   it("accepts bounded private roster context without changing the strict v1 parser", () => {
     expect(parsePrivateQualityCase(privateCase).qualityContext?.roster).toHaveLength(2);
     expect(() => parsePrivateJudgeCase(privateCase)).toThrow();
@@ -120,6 +136,25 @@ describe("versioned private conversation-quality graders", () => {
     expect(JSON.stringify(result)).not.toContain(privateCase.prompt);
     expect(JSON.stringify(result)).not.toContain(privateCase.qualityContext.originalHumanAlias);
     expect(JSON.stringify(result)).not.toContain(privateCase.messages[1].text);
+  });
+
+  it("sends conversational names in the opt-in quality judge request", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      const content = JSON.parse(request.messages[1].content);
+      expect(content.expectedDirectAgents).toEqual(["Arlo"]);
+      expect(content.messages.map(({ speaker }: { speaker: string }) => speaker)).toEqual(["Avery", "Arlo"]);
+      expect(content.qualityContext.roster).toEqual(["Arlo", "Bex"]);
+      expect(request.messages[1].content).not.toContain("agent-a");
+      return response(judgments.social_cadence);
+    });
+    await judgeConversationQualityAxis(privateCase, {
+      ...options,
+      axis: "social_cadence",
+      conversationalNamesOnly: true,
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("rates a missing required direct reply as too short and lets the model assess optional silence", async () => {

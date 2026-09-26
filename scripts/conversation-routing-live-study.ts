@@ -9,6 +9,7 @@ import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import {
   buildLiveScenario,
+  EVERYDAY_FIXTURE_AGENTS,
   FIXTURE_AGENTS,
   type LiveScenario,
   ROUTING_DYNAMICS,
@@ -93,7 +94,7 @@ export interface StudyArmV2 extends StudyArmV1 {
 }
 
 export interface StudyBlockV2 extends Omit<StudyBlockV1, "arms"> {
-  scenarioProfileId: "garden-chat-v2";
+  scenarioProfileId: "garden-chat-v2" | "everyday-chat-v3";
   arms: { a: StudyArmV2; b: StudyArmV2 };
 }
 
@@ -107,7 +108,7 @@ export type StudyPlan = StudyPlanV1 | StudyPlanV2;
 export interface StudyCaseMetadataV2 extends Omit<StudyCaseMetadataV1, "schemaVersion" | "factor"> {
   schemaVersion: 2;
   factor: "room-system";
-  scenarioProfileId: "garden-chat-v2";
+  scenarioProfileId: "garden-chat-v2" | "everyday-chat-v3";
   scenarioProfileDigest: string;
   roomSystemProfileId: RoomSystemProfileId;
   roomSystemProfileDigest: string;
@@ -195,7 +196,11 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       row.rosterOrder.some((agent) => !AGENT_IDS.includes(agent as ActiveAgentId))
     )
       throw new Error("Invalid closed study plan.");
-    if (top.schemaVersion === 2 && row.scenarioProfileId !== "garden-chat-v2")
+    if (
+      top.schemaVersion === 2 &&
+      row.scenarioProfileId !== "garden-chat-v2" &&
+      row.scenarioProfileId !== "everyday-chat-v3"
+    )
       throw new Error("Invalid closed study scenario profile.");
     const rosterOrder = row.rosterOrder as ActiveAgentId[];
     const expected = AGENT_IDS.slice(0, rosterOrder.length);
@@ -233,7 +238,9 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       rosterOrder,
       energy: row.energy,
       arms: { a, b },
-      ...(top.schemaVersion === 2 ? { scenarioProfileId: "garden-chat-v2" as const } : {}),
+      ...(top.schemaVersion === 2
+        ? { scenarioProfileId: row.scenarioProfileId as StudyBlockV2["scenarioProfileId"] }
+        : {}),
     };
   });
   if (new Set(blocks.map(({ blockId, replicateId }) => `${blockId}\0${replicateId}`)).size !== blocks.length)
@@ -397,7 +404,7 @@ function expandIdentityStudyPlan(plan: StudyPlanV2): LiveScenario[] {
         arcProfileId: block.arcProfileId,
         ...selected,
         scenarioProfileId: block.scenarioProfileId,
-        scenarioProfileDigest: scenarioProfileDigest(),
+        scenarioProfileDigest: scenarioProfileDigest(block.scenarioProfileId),
         roomSystemProfileDigest: roomSystemProfileDigest(selected.roomSystemProfileId),
         jevProfileDigest:
           selected.jevProfileId === "off-v1"
@@ -425,7 +432,7 @@ export function roomSystemProfileDigest(id: RoomSystemProfileId): string {
   return createHash("sha256").update(`room-system-selector-v1\0${id}`).digest("hex");
 }
 
-export function scenarioProfileDigest(): string {
+export function scenarioProfileDigest(id: StudyBlockV2["scenarioProfileId"] = "garden-chat-v2"): string {
   const selection = ROUTING_DYNAMICS.flatMap((dynamic) =>
     [1, 2, 3, 4]
       .filter((agentCount) => (dynamic === "multi-address" || dynamic === "disagreement" ? agentCount >= 2 : true))
@@ -437,13 +444,20 @@ export function scenarioProfileDigest(): string {
             energy: "balanced",
             preflightMode: "enforce",
             classifierEnabled: true,
-            scenarioProfileId: "garden-chat-v2",
+            scenarioProfileId: id,
           }).text,
       ),
   );
-  const arcs = STUDY_ARC_PROFILES.map((arc) => buildStudyFollowups(arc, "", "garden-chat-v2").map(({ text }) => text));
+  const arcs = STUDY_ARC_PROFILES.map((arc) => buildStudyFollowups(arc, "", id).map(({ text }) => text));
   return createHash("sha256")
-    .update(JSON.stringify({ id: "garden-chat-v2", selection, arcs }))
+    .update(
+      JSON.stringify({
+        id,
+        selection,
+        arcs,
+        ...(id === "everyday-chat-v3" ? { cardNames: EVERYDAY_FIXTURE_AGENTS } : {}),
+      }),
+    )
     .digest("hex");
 }
 
@@ -504,6 +518,57 @@ export function buildStudyFollowups(
     ],
   };
   if (scenarioProfileId === "garden-v1") return followups[arc];
+  if (scenarioProfileId === "everyday-chat-v3") {
+    const everydayFollowups: Record<ArcProfileId, NonNullable<LiveScenario["scriptedFollowups"]>> = {
+      "single-v1": [],
+      "casual-thread-v1": [
+        {
+          scenarioId: `casual-continuation${suffix}`,
+          text: "The rest of the clothes are on the rack indoors, away from the rain.",
+          expectedDirectAgents: [],
+        },
+      ],
+      "agent-exchange-v1": [
+        {
+          scenarioId: `agent-exchange${suffix}`,
+          text: "Riley and Jordan, should our shared notes stay in one long document or move to separate pages by topic? Compare how easy each would be to update. If either of you has raised a point, you can respond to it.",
+          expectedDirectAgents: ["codex-sol", "claude-sonnet"],
+        },
+      ],
+      "agent-exchange-v2": [
+        {
+          scenarioId: `agent-exchange-own-tradeoff${suffix}`,
+          text: "Riley and Jordan, for our shared notes, would you keep one long document or separate pages by topic? Compare how easy each would be to update, and respond to a point from the other person if one was made.",
+          expectedDirectAgents: ["codex-sol", "claude-sonnet"],
+        },
+      ],
+      "handoff-choice-v1": [
+        {
+          scenarioId: `handoff-choice${suffix}`,
+          text: "Riley, I need about 10 minutes at the station before my 9:00 train, and travel usually takes 25 minutes. Should I leave at 8:10 or 8:25?",
+          expectedDirectAgents: ["codex-sol"],
+        },
+        {
+          scenarioId: `handoff-closure${suffix}`,
+          text: "I'll leave at 8:10 so I have time at the station. Thanks.",
+          expectedDirectAgents: [],
+        },
+      ],
+      "dispute-resolution-v1": [
+        {
+          scenarioId: `dispute-mediator${suffix}`,
+          text: "Casey, our planning meeting starts at 4. Would you choose the quiet room that closes at 4:30 or a video call that can run until 5 but has a spotty connection? Please weigh focus and time.",
+          expectedDirectAgents: ["claude-opus"],
+        },
+        {
+          scenarioId: `dispute-choice${suffix}`,
+          text: "I've booked the quiet room for the planning meeting. We'll keep it to 30 minutes.",
+          expectedDirectAgents: [],
+        },
+      ],
+    };
+    return everydayFollowups[arc];
+  }
   const chatFollowups: Record<ArcProfileId, NonNullable<LiveScenario["scriptedFollowups"]>> = {
     "single-v1": [],
     "casual-thread-v1": [

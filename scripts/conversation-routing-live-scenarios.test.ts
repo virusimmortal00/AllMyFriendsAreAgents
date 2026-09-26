@@ -22,7 +22,7 @@ describe("closed conversation fixture profiles", () => {
   });
 
   it("offers an opt-in invented ordinary-chat corpus without meta-evaluation cues", () => {
-    expect(SCENARIO_PROFILE_IDS).toEqual(["garden-v1", "garden-chat-v2"]);
+    expect(SCENARIO_PROFILE_IDS).toEqual(["garden-v1", "garden-chat-v2", "everyday-chat-v3"]);
     for (const dynamic of ROUTING_DYNAMICS) {
       const scenario = buildLiveScenario({
         dynamic,
