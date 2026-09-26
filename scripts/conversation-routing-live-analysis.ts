@@ -16,6 +16,7 @@ import {
 import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
+import { largeStudyProfile, largeStudyProfileDigest } from "./conversation-routing-live-large-fixtures.js";
 import {
   modelScenarioProfileDigest,
   roomSystemProfileDigest,
@@ -197,11 +198,11 @@ export interface ScalarCanaryManifest {
   scenarioCatalogSha256s: string[];
   openCodeVersion: string;
   actorModel: string;
-  actorModelScope: "per-case-v1" | null;
+  actorModelScope: "per-case-v1" | "global-v1" | null;
   judgeModel: string | null;
   judgeRubric: "v1" | "v2" | "v3";
   studyPlan: {
-    schemaVersion: 1 | 2 | 3 | 4;
+    schemaVersion: 1 | 2 | 3 | 4 | 5;
     planId: string;
     planSha256: string;
     orderSeed: number;
@@ -525,16 +526,17 @@ function parseStudy(value: unknown): StudyCaseMetadata {
     "jevProfileDigest",
     "gateProfileDigest",
     "rosterOrder",
-    ...([2, 3, 4].includes(Number(version))
+    ...([2, 3, 4, 5].includes(Number(version))
       ? ["scenarioProfileId", "scenarioProfileDigest", "roomSystemProfileId", "roomSystemProfileDigest"]
       : []),
-    ...([3, 4].includes(Number(version))
+    ...([3, 4, 5].includes(Number(version))
       ? ["terminalInstructionProfileId", "terminalInstructionProfileDigest", "terminalInstructionCharacters"]
       : []),
     ...(version === 4 ? ["actorModelId"] : []),
+    ...(version === 5 ? ["theme"] : []),
   ]);
   if (
-    (version !== 1 && version !== 2 && version !== 3 && version !== 4) ||
+    (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) ||
     !["planId", "blockId", "replicateId", "pairId", "caseId"].every((key) => id(row[key])) ||
     ![row.planSha256, row.jevProfileDigest, row.gateProfileDigest, row.agentPromptProfileDigest].every(
       (value) => typeof value === "string" && SHA.test(value),
@@ -546,7 +548,9 @@ function parseStudy(value: unknown): StudyCaseMetadata {
         ? row.factor !== "room-system"
         : version === 3
           ? row.factor !== "terminal-instruction"
-          : row.factor !== "actor-model") ||
+          : version === 4
+            ? row.factor !== "actor-model"
+            : !["jev", "gate", "agent-prompt"].includes(String(row.factor))) ||
     !["ab", "ba"].includes(String(row.order)) ||
     ![
       "single-v1",
@@ -594,7 +598,33 @@ function parseStudy(value: unknown): StudyCaseMetadata {
         row.agentPromptProfileId !== "current-v1" ||
         row.agentPromptProfileDigest !==
           createHash("sha256").update(STUDY_AGENT_BASE_PROMPTS["current-v1"]).digest("hex") ||
-        !STUDY_ACTOR_MODELS.includes(row.actorModelId as (typeof STUDY_ACTOR_MODELS)[number])))
+        !STUDY_ACTOR_MODELS.includes(row.actorModelId as (typeof STUDY_ACTOR_MODELS)[number]))) ||
+    (version === 5 &&
+      (!["current-v1", "lean-v1", "relevance-v1"].includes(String(row.jevProfileId)) ||
+        typeof row.scenarioProfileId !== "string" ||
+        !/^[a-z0-9-]+-[jgp]$/.test(row.scenarioProfileId) ||
+        (() => {
+          try {
+            const profile = largeStudyProfile(row.scenarioProfileId as string);
+            return row.theme !== profile.theme || row.scenarioProfileDigest !== largeStudyProfileDigest(profile.id);
+          } catch {
+            return true;
+          }
+        })() ||
+        row.roomSystemProfileId !== "room-v1" ||
+        row.roomSystemProfileDigest !== roomSystemProfileDigest("room-v1") ||
+        row.terminalInstructionProfileId !== "contribution-first-v1" ||
+        row.terminalInstructionProfileDigest !== terminalInstructionProfileDigest("contribution-first-v1") ||
+        row.terminalInstructionCharacters !== TASK_TERMINAL_INSTRUCTIONS["contribution-first-v1"].length ||
+        row.jevProfileDigest !==
+          jevProfileMetadata(row.jevProfileId as "current-v1", row.gateProfileId as "current-v1").jevProfileDigest ||
+        row.gateProfileDigest !==
+          jevProfileMetadata(row.jevProfileId as "current-v1", row.gateProfileId as "current-v1").gateProfileDigest ||
+        row.agentPromptProfileDigest !==
+          createHash("sha256")
+            .update(STUDY_AGENT_BASE_PROMPTS[row.agentPromptProfileId as "current-v1" | "social-v1"])
+            .digest("hex") ||
+        row.rosterOrder.length > 3))
   )
     throw new Error("Invalid scalar canary manifest.");
   return row as unknown as StudyCaseMetadata;
@@ -867,7 +897,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   if (top.studyPlan !== undefined) {
     const plan = object(top.studyPlan, ["schemaVersion", "planId", "planSha256", "orderSeed", "jevModel"]);
     if (
-      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2 && plan.schemaVersion !== 3 && plan.schemaVersion !== 4) ||
+      ![1, 2, 3, 4, 5].includes(Number(plan.schemaVersion)) ||
       !id(plan.planId) ||
       typeof plan.planSha256 !== "string" ||
       !SHA.test(plan.planSha256) ||
@@ -882,9 +912,16 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   if (
     studyPlan?.schemaVersion === 4
       ? top.actorModelScope !== "per-case-v1" || top.actorModel !== STUDY_ACTOR_MODELS[0]
-      : top.actorModelScope !== undefined
+      : studyPlan?.schemaVersion === 5
+        ? top.actorModelScope !== "global-v1"
+        : top.actorModelScope !== undefined
   )
     throw new Error("Invalid scalar canary manifest.");
+  if (
+    studyPlan?.schemaVersion === 5 &&
+    !STUDY_ACTOR_MODELS.includes(top.actorModel as (typeof STUDY_ACTOR_MODELS)[number])
+  )
+    throw new Error("Invalid scalar canary actor model.");
   let studyBatch: ScalarCanaryManifest["studyBatch"] = null;
   if (top.studyBatch !== undefined) {
     const batch = object(top.studyBatch, [
@@ -983,6 +1020,10 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         throw new Error("Invalid scalar actor model provenance.");
       actorModel = study.actorModelId;
       actorModelProvenanceV1 = provenance as ScalarCanaryManifest["cases"][number]["actorModelProvenanceV1"];
+    } else if (study?.schemaVersion === 5) {
+      if (row.actorModel !== undefined || row.actorModelProvenanceV1 !== undefined)
+        throw new Error("V5 actor model selection must be global.");
+      actorModel = top.actorModel as string;
     } else if (row.actorModel !== undefined || row.actorModelProvenanceV1 !== undefined) {
       throw new Error("Invalid scalar canary manifest.");
     }
@@ -1327,7 +1368,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     scenarioCatalogSha256s: [top.scenarioCatalogSha256],
     openCodeVersion: top.openCodeVersion,
     actorModel: top.actorModel,
-    actorModelScope: top.actorModelScope === "per-case-v1" ? "per-case-v1" : null,
+    actorModelScope:
+      top.actorModelScope === "per-case-v1" || top.actorModelScope === "global-v1" ? top.actorModelScope : null,
     judgeModel: top.judgeModel,
     judgeRubric: (top.judgeRubric ?? "v1") as "v1" | "v2" | "v3",
     studyPlan,
@@ -1343,18 +1385,23 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
 /** Merge independent completed canary invocations without equating different source builds. */
 export function mergeScalarCanaryManifests(
   manifests: readonly ScalarCanaryManifest[],
-  options: { allowPartialV4?: boolean } = {},
+  options: { allowPartialV4?: boolean; allowPartialV5?: boolean } = {},
 ): ScalarCanaryManifest {
   if (!manifests.length || manifests.length > MAX_STUDY_PAIRS) throw new Error("Invalid scalar canary manifest set.");
   const first = manifests[0]!;
   const cases = manifests.flatMap((manifest) => manifest.cases);
   const batched = first.studyBatch !== null;
-  if (options.allowPartialV4 === true && !batched) throw new Error("Partial review requires a batched V4 model study.");
+  if ((options.allowPartialV4 === true || options.allowPartialV5 === true) && !batched)
+    throw new Error("Partial review requires a batched study.");
   if (batched) {
     const batches = manifests.map((manifest) => manifest.studyBatch);
     const expected = first.studyBatch!;
     const partialV4 = options.allowPartialV4 === true && first.studyPlan?.schemaVersion === 4;
+    const partialV5 = options.allowPartialV5 === true && first.studyPlan?.schemaVersion === 5;
     if (options.allowPartialV4 === true && !partialV4) throw new Error("Partial review requires a V4 model study.");
+    if (options.allowPartialV5 === true && !partialV5) throw new Error("Partial review requires a V5 everyday study.");
+    if (partialV4 && partialV5) throw new Error("Invalid partial review mode.");
+    const partial = partialV4 || partialV5;
     const includedPairs = batches.reduce((total, batch) => total + (batch?.pairCount ?? 0), 0);
     const indices = batches.map((batch) => batch?.batchIndex).sort((a, b) => Number(a) - Number(b));
     if (
@@ -1366,13 +1413,17 @@ export function mergeScalarCanaryManifests(
           batch.batchCount !== expected.batchCount ||
           batch.pairsPerBatch !== expected.pairsPerBatch,
       ) ||
-      (partialV4 ? includedPairs < 1 || includedPairs > 2 : batches.length !== expected.batchCount) ||
+      (partialV4
+        ? includedPairs < 1 || includedPairs > 2
+        : partialV5
+          ? batches.length < 1 || batches.length >= expected.batchCount
+          : batches.length !== expected.batchCount) ||
       new Set(batches.map((batch) => batch?.batchIndex)).size !== batches.length ||
-      (partialV4 && indices.some((index, ordinal) => index !== ordinal)) ||
+      (partial && indices.some((index, ordinal) => index !== ordinal)) ||
       batches.some((batch) => batch === null || batch.batchIndex < 0 || batch.batchIndex >= expected.batchCount) ||
-      cases.length !== (partialV4 ? includedPairs * 2 : expected.planCaseCount) ||
+      cases.length !== (partial ? includedPairs * 2 : expected.planCaseCount) ||
       new Set(batches.flatMap((batch) => batch?.pairIds ?? [])).size !== includedPairs ||
-      includedPairs !== (partialV4 ? batches.length * expected.pairsPerBatch : expected.planPairCount)
+      includedPairs !== (partial ? batches.length * expected.pairsPerBatch : expected.planPairCount)
     )
       throw new Error("Incomplete or overlapping scalar canary study batches.");
   } else if (manifests.some((manifest) => manifest.studyBatch !== null)) {
@@ -1421,12 +1472,12 @@ export function mergeScalarCanaryManifests(
             ["room-system", row.study.roomSystemProfileId, row.study.roomSystemProfileDigest],
           ] as [string, string, string][])
         : []),
-      ...([3, 4].includes(row.study.schemaVersion)
+      ...([3, 4, 5].includes(row.study.schemaVersion)
         ? [
             [
               "terminal-instruction",
-              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>).terminalInstructionProfileId,
-              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>).terminalInstructionProfileDigest,
+              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 | 5 }>).terminalInstructionProfileId,
+              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 | 5 }>).terminalInstructionProfileDigest,
             ] as [string, string, string],
           ]
         : []),
@@ -1551,7 +1602,7 @@ export function analyzeQualityStudy(
     ratings: frameRatings,
   });
   if (parsedFrameRatings.length && (studyVersion === 1 || manifest.judgeRubric !== "v3"))
-    throw new Error("Frame human ratings require a V2, V3, or V4 frame study.");
+    throw new Error("Frame human ratings require a V2, V3, V4, or V5 frame study.");
   if (parsedFrameRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))
     throw new Error("Private frame rating does not match a completed canary run.");
   const frameHuman = new Map(parsedFrameRatings.map((row) => [key(row.scenarioId, row.runId), row]));
@@ -1677,6 +1728,33 @@ export function analyzeQualityStudy(
         a.variant === b.variant &&
         a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
       );
+    if (x.schemaVersion === 5 && y.schemaVersion === 5) {
+      const changed = [
+        x.jevProfileId !== y.jevProfileId ? "jev" : null,
+        x.gateProfileId !== y.gateProfileId ? "gate" : null,
+        x.agentPromptProfileId !== y.agentPromptProfileId ? "agent-prompt" : null,
+      ].filter(Boolean);
+      return (
+        changed.length === 1 &&
+        changed[0] === x.factor &&
+        x.scenarioProfileId === y.scenarioProfileId &&
+        x.scenarioProfileDigest === y.scenarioProfileDigest &&
+        x.theme === y.theme &&
+        x.roomSystemProfileId === y.roomSystemProfileId &&
+        x.roomSystemProfileDigest === y.roomSystemProfileDigest &&
+        x.terminalInstructionProfileId === y.terminalInstructionProfileId &&
+        x.terminalInstructionProfileDigest === y.terminalInstructionProfileDigest &&
+        x.terminalInstructionCharacters === y.terminalInstructionCharacters &&
+        (x.factor === "jev" || x.jevProfileDigest === y.jevProfileDigest) &&
+        (x.factor === "gate" || x.gateProfileDigest === y.gateProfileDigest) &&
+        (x.factor === "agent-prompt" || x.agentPromptProfileDigest === y.agentPromptProfileDigest) &&
+        a.preflightMode === b.preflightMode &&
+        a.variant === b.variant &&
+        a.actorModel === manifest.actorModel &&
+        b.actorModel === manifest.actorModel &&
+        a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
+      );
+    }
     if (x.schemaVersion !== 1 || y.schemaVersion !== 1) return false;
     const changed = [
       x.jevProfileId !== y.jevProfileId ? "jev" : null,
@@ -1732,6 +1810,20 @@ export function analyzeQualityStudy(
       }
       pairs.push({ a: first, b: second, pairId });
     }
+  }
+  if (studyVersion === 5) {
+    const casePairs = [...group.values()].map((rows) => rows[0]!.study!);
+    if (
+      casePairs.length !== 36 ||
+      (["jev", "gate", "agent-prompt"] as const).some((factor) =>
+        (["everyday", "practical"] as const).some(
+          (theme) =>
+            casePairs.filter((row) => row.schemaVersion === 5 && row.factor === factor && row.theme === theme)
+              .length !== 6,
+        ),
+      )
+    )
+      throw new Error("Incomplete V5 factor and theme balance.");
   }
   const axes = Object.fromEntries(
     QUALITY_AXES.map((axis) => {
@@ -1933,17 +2025,18 @@ export function analyzeQualityStudy(
           roomSystemProfileDigest: row.study!.roomSystemProfileDigest,
         }
       : {}),
-    ...([3, 4].includes(row.study!.schemaVersion)
+    ...([3, 4, 5].includes(row.study!.schemaVersion)
       ? {
-          terminalInstructionProfileId: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+          terminalInstructionProfileId: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 | 5 }>)
             .terminalInstructionProfileId,
-          terminalInstructionProfileDigest: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+          terminalInstructionProfileDigest: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 | 5 }>)
             .terminalInstructionProfileDigest,
-          terminalInstructionCharacters: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+          terminalInstructionCharacters: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 | 5 }>)
             .terminalInstructionCharacters,
         }
       : {}),
     ...(row.study!.schemaVersion === 4 ? { actorModelId: row.study!.actorModelId } : {}),
+    ...(row.study!.schemaVersion === 5 ? { theme: row.study!.theme } : {}),
   });
   const dynamicFor = (row: StudyCase) => {
     const prefix = /^(direct|multi-address|broadcast|casual|handoff|disagreement|quoted-name)-/.exec(
@@ -2299,6 +2392,7 @@ export function analyzeQualityStudy(
             providerObservedActorModel: null,
           }
         : {}),
+      ...(studyVersion === 5 ? { actorModelScope: "global-v1" as const, providerObservedActorModel: null } : {}),
       jevModelRequested: manifest.studyPlan.jevModel,
       judgeModelRequested: manifest.judgeModel,
     },
@@ -2352,6 +2446,14 @@ export function analyzeQualityStudy(
       jevSkippedTriggers: all.filter((item) => item.trigger.jev.outcome === "skipped").length,
       jevNotConsultedTriggers: all.filter((item) => item.trigger.jev.outcome === "not-consulted").length,
     },
+    actorDelivery: {
+      triggers: all.length,
+      attemptedTurns: all.reduce((sum, item) => sum + item.trigger.attemptedTurns, 0),
+      respondedTurns: all.reduce((sum, item) => sum + item.trigger.respondedTurns, 0),
+      yieldedTurns: all.reduce((sum, item) => sum + item.trigger.yieldedTurns, 0),
+      deliveredBursts: all.reduce((sum, item) => sum + item.trigger.confirmedDeliveredBursts, 0),
+      noVisibleTriggers: all.filter((item) => item.trigger.confirmedDeliveredBursts === 0).length,
+    },
     blocks: [...group.entries()].map(([pairId, rows]) => ({
       pairId,
       blockId: rows[0]!.study!.blockId,
@@ -2377,6 +2479,35 @@ export function analyzeQualityStudy(
         ];
       }),
     ),
+    ...(studyVersion === 5
+      ? {
+          byFactorAndTheme: Object.fromEntries(
+            (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+              (["everyday", "practical"] as const).map((theme) => {
+                const rows = manifest.cases.filter(
+                  (row) => row.study!.factor === factor && row.study!.schemaVersion === 5 && row.study!.theme === theme,
+                );
+                return [
+                  `${factor}:${theme}`,
+                  {
+                    cases: rows.length,
+                    roomPairs: rows.length / 2,
+                    triggers: rows.reduce((sum, row) => sum + row.triggers.length, 0),
+                    paired: pairedReadout(
+                      pairs.filter(
+                        ({ a }) =>
+                          a.caseRow.study!.factor === factor &&
+                          a.caseRow.study!.schemaVersion === 5 &&
+                          a.caseRow.study!.theme === theme,
+                      ),
+                    ),
+                  },
+                ];
+              }),
+            ),
+          ),
+        }
+      : {}),
     blockLevelV1: {
       schemaVersion: 1 as const,
       unit: "matched-room-pair" as const,
@@ -2435,11 +2566,13 @@ export function analyzeQualityStudy(
               rated: frameReviewed.filter(({ human }) => human?.status === "rated").length,
               notAssessable: frameReviewed.filter(({ human }) => human?.status === "not_assessable").length,
               missing: frameReviewed.filter(({ human }) => human === undefined).length,
-              [studyVersion === 4
-                ? "pairedActorModelArmBMinusA"
-                : studyVersion === 3
-                  ? "pairedTerminalInstructionArmBMinusA"
-                  : "pairedRoomSystemArmBMinusA"]: delta(frameHumanPairDeltas),
+              [studyVersion === 5
+                ? "pairedEverydayArmBMinusA"
+                : studyVersion === 4
+                  ? "pairedActorModelArmBMinusA"
+                  : studyVersion === 3
+                    ? "pairedTerminalInstructionArmBMinusA"
+                    : "pairedRoomSystemArmBMinusA"]: delta(frameHumanPairDeltas),
               agreement: {
                 jointStatusReviews: frameReviewed.filter(
                   ({ model, human }) => model?.status === "completed" && human !== undefined,
@@ -2460,11 +2593,13 @@ export function analyzeQualityStudy(
                 ).length,
               },
             },
-            [studyVersion === 4
-              ? "pairedActorModelArmBMinusA"
-              : studyVersion === 3
-                ? "pairedTerminalInstructionArmBMinusA"
-                : "pairedRoomSystemArmBMinusA"]: {
+            [studyVersion === 5
+              ? "pairedEverydayArmBMinusA"
+              : studyVersion === 4
+                ? "pairedActorModelArmBMinusA"
+                : studyVersion === 3
+                  ? "pairedTerminalInstructionArmBMinusA"
+                  : "pairedRoomSystemArmBMinusA"]: {
               ...delta(framePairDeltas),
               unscoredPairs: pairs.length - framePairDeltas.length,
               resolvedJudgeModelUnknownPairs: framePairModelUnknown,
@@ -2827,7 +2962,7 @@ async function main() {
   const parsedFrame = rawFrameRatings === undefined ? [] : parsePrivateFrameRatings(rawFrameRatings);
   if (
     rawFrameRatings !== undefined &&
-    (![2, 3, 4].includes(manifest.studyPlan?.schemaVersion ?? 0) || manifest.judgeRubric !== "v3")
+    (![2, 3, 4, 5].includes(manifest.studyPlan?.schemaVersion ?? 0) || manifest.judgeRubric !== "v3")
   )
     throw new Error("Frame ratings require a V2 frame study.");
   const maxSpotChecks = values.has("--spot-checks") ? Number(values.get("--spot-checks")) : 4;

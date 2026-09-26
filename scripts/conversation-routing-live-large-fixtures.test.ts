@@ -139,6 +139,8 @@ describe("closed 72-case everyday lever study", () => {
       blocks: raw.blocks.map((block: object, i: number) => (i === index ? { ...block, ...patch } : block)),
     });
     expect(() => parseStudyPlan(change(0, { scenarioProfileId: "unreviewed" }))).toThrow();
+    const exchangeIndex = raw.blocks.findIndex((block: { dynamic: string }) => block.dynamic === "multi-address");
+    expect(() => parseStudyPlan(change(exchangeIndex, { arcProfileId: "agent-exchange-v1" }))).toThrow("closed matrix");
     expect(() =>
       parseStudyPlan(change(0, { rosterOrder: ["codex-sol", "claude-sonnet", "claude-opus", "cursor-grok"] })),
     ).toThrow();

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
   analyzeConversationCanary,
   analyzeQualityStudy,
@@ -14,6 +15,11 @@ import {
   parsePrivateConversationRatings,
   parsePrivateQualityRatings,
 } from "./conversation-routing-live-annotations.js";
+import {
+  selectCalibrationReviewQueue,
+  selectEverydayCensusReviewQueues,
+  verifyPartialV5Plan,
+} from "./conversation-routing-live-review.js";
 import {
   expandStudyPlan,
   parseStudyPlan,
@@ -38,6 +44,152 @@ const judge = (scenarioId: string, runId: string, naturalness: number, cost: num
   handoffCorrect: null,
   closureCorrect: true,
   judgeUsage: { inputTokens: 40, outputTokens: 20, reportedCostUsd: cost },
+});
+
+function everydayBatches() {
+  const plan = parseStudyPlan(
+    JSON.parse(
+      readFileSync(
+        new URL("../docs/testing/conversation-routing-study-large-everyday-v5.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  const scenarios = expandStudyPlan(plan);
+  const base = modelStudyFixture();
+  const cases = scenarios.map((scenario, index) => {
+    const template = base.cases[0]!;
+    const { actorModel: _actorModel, actorModelProvenanceV1: _provenance, ...rest } = template;
+    const scenarioId = scenario.scenarioId;
+    const runId = `everyday-run-${index}`;
+    return {
+      ...rest,
+      scenarioId,
+      variant: "jev-on" as const,
+      agentCount: scenario.agentCount,
+      energy: scenario.energy,
+      preflightMode: scenario.preflightMode,
+      study: scenario.study,
+      triggers: [
+        {
+          ...template.triggers[0]!,
+          scenarioId,
+          runId,
+          variant: "jev-on" as const,
+          classifier: {
+            outcome: "completed",
+            reason: null,
+            durationMs: 1,
+            reportedInputTokens: 1,
+            reportedOutputTokens: 1,
+            reportedCostUsd: 0.001,
+            resolvedModelId: "openrouter/example/jev",
+          },
+        },
+      ],
+      qualityJudge: [{ scenarioId, runId, outcomes: axes.map((axis) => qualityOutcome(axis, scenarioId, runId, 5)) }],
+      frameJudge: [frameReceipt(scenarioId, runId, 5)],
+    };
+  });
+  const pairs = [...new Set(cases.map((row) => row.study!.pairId))];
+  return Array.from({ length: 12 }, (_, batchIndex) => ({
+    ...base,
+    actorModel: "openrouter/anthropic/claude-haiku-4.5",
+    actorModelScope: "global-v1",
+    maxCases: 72,
+    studyPlan: {
+      ...base.studyPlan,
+      schemaVersion: 5,
+      planId: plan.planId,
+      planSha256: scenarios[0]!.study!.planSha256,
+      orderSeed: plan.orderSeed,
+    },
+    studyBatch: {
+      schemaVersion: 1,
+      planCaseCount: 72,
+      planPairCount: 36,
+      batchIndex,
+      batchCount: 12,
+      pairsPerBatch: 3,
+      pairCount: 3,
+      pairIds: pairs.slice(batchIndex * 3, batchIndex * 3 + 3),
+    },
+    cases: cases.slice(batchIndex * 6, batchIndex * 6 + 6),
+  }));
+}
+
+function reviewLocatorFor(manifest: ReturnType<typeof mergeScalarCanaryManifests>) {
+  const manifestFingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        sourceSha256: manifest.sourceSha256,
+        studyPlan: manifest.studyPlan,
+        cases: manifest.cases.map((room) => ({
+          scenarioId: room.scenarioId,
+          study: room.study,
+          triggers: room.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+        })),
+      }),
+    )
+    .digest("hex");
+  return {
+    schemaVersion: 1,
+    manifestFingerprint,
+    entries: manifest.cases.flatMap((row) =>
+      row.triggers.map((trigger) => ({
+        reviewId: `review-${createHash("sha256").update(trigger.runId).digest("hex").slice(0, 12)}`,
+        scenarioId: trigger.scenarioId,
+        runId: trigger.runId,
+        sourceFile: `${trigger.runId}.json`,
+        priority: "case-census",
+      })),
+    ),
+  };
+}
+
+describe("schema-5 everyday analysis and private review", () => {
+  it("accepts complete global-actor batches, keeps missing quality counts, and selects balanced blind review", async () => {
+    const batches = everydayBatches().map((batch) => parseScalarCanaryManifest(batch));
+    const merged = mergeScalarCanaryManifests(batches);
+    const report = analyzeQualityStudy(merged);
+    expect(report.denominators).toMatchObject({ cases: 72, requestedCasePairs: 36, matchedCasePairs: 36 });
+    expect(report.byFactor.jev?.cases).toBe(24);
+    expect(report.axes.social_cadence?.human.missing).toBe(72);
+    const locator = reviewLocatorFor(merged);
+    const calibration = selectCalibrationReviewQueue(merged, locator, "everyday-seed");
+    expect(calibration.queue.reviewIds).toHaveLength(24);
+    for (const factor of ["jev", "gate", "agent-prompt"])
+      expect(calibration.receipt.selected.filter((row) => row.factor === factor)).toHaveLength(4);
+    const census = selectEverydayCensusReviewQueues(merged, locator, "everyday-seed");
+    expect(Object.values(census.queues).map((queue) => queue!.reviewIds.length)).toEqual([24, 24, 24]);
+    expect(census.receipt.privateArmMap).toHaveLength(72);
+    const partial = mergeScalarCanaryManifests(batches.slice(0, 1), { allowPartialV5: true });
+    await verifyPartialV5Plan(partial);
+    expect(() => analyzeQualityStudy(partial)).toThrow("complete set");
+    const partialLocator = reviewLocatorFor(partial);
+    expect(selectEverydayCensusReviewQueues(partial, partialLocator, "everyday-seed", true).receipt).toMatchObject({
+      diagnosticOnly: true,
+      evidenceLabel: "PARTIAL DIAGNOSTIC",
+      completedPairs: 3,
+    });
+  });
+
+  it("rejects per-case actor fields, wrong fixture digests, skipped batches, and mixed global actor models", () => {
+    const raw = everydayBatches();
+    const withActor = structuredClone(raw[0]!);
+    (withActor.cases[0] as unknown as Record<string, unknown>).actorModel = withActor.actorModel;
+    expect(() => parseScalarCanaryManifest(withActor)).toThrow();
+    const wrongDigest = structuredClone(raw[0]!);
+    (wrongDigest.cases[0]!.study as unknown as Record<string, unknown>).scenarioProfileDigest = "b".repeat(64);
+    expect(() => parseScalarCanaryManifest(wrongDigest)).toThrow();
+    const batches = raw.map((batch) => parseScalarCanaryManifest(batch));
+    expect(() => mergeScalarCanaryManifests([batches[0]!, batches[2]!], { allowPartialV5: true })).toThrow();
+    const changed = structuredClone(raw[1]!);
+    changed.actorModel = "openrouter/anthropic/claude-sonnet-4.6";
+    expect(() =>
+      mergeScalarCanaryManifests([batches[0]!, parseScalarCanaryManifest(changed)], { allowPartialV5: true }),
+    ).toThrow();
+  });
 });
 
 const qualityOutcome = (axis: string, scenarioId: string, runId: string, score: number | null = 4) => ({
