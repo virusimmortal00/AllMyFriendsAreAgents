@@ -427,6 +427,37 @@ describe("room prompt context", () => {
     ],
   } satisfies RoomState;
 
+  it.each([false, true])("uses roster names for read-only identity in the %s output lane", async (structured) => {
+    const namedState = {
+      ...state,
+      roster: { schemaVersion: 3 as const, revision: 2, entries: [
+        { agentId: "codex-sol", conversationalName: "Riley", providerId: "openrouter", modelId: "anthropic/claude-haiku-4.5", enabled: true, configurationRevision: 2 },
+        { agentId: "claude-sonnet", conversationalName: "Jordan", providerId: "openrouter", modelId: "anthropic/claude-haiku-4.5", enabled: true, configurationRevision: 2 },
+      ] },
+    } satisfies RoomState;
+    const { prompt } = await __testing.buildPromptBundle("codex-sol", namedState, "Join if useful.", false, "read-only", undefined, structured);
+    expect(prompt).toContain("You are Riley participating in AllMyFriendsAreAgents, a shared room with humans (Alice, Bob) and Jordan.");
+    expect(prompt).toContain("only messages labeled [RILEY] are your own history");
+    expect(prompt).toContain("unique conversational name—Riley, Jordan—");
+    expect(prompt).not.toContain("OpenCode [openai/gpt-5.6-sol]");
+    expect(prompt).not.toContain("Claude [Claude Sonnet 5]");
+    expect(prompt).not.toContain("anthropic/claude-haiku-4.5");
+    const writable = await __testing.buildPrompt("codex-sol", namedState, "Join if useful.", false, "writable");
+    expect(writable).toContain("You are OpenCode [openrouter/anthropic/claude-haiku-4.5] (Riley)");
+  });
+
+  it("introduces a lone participant without an empty peer list", async () => {
+    const soloState = {
+      ...state,
+      roster: { schemaVersion: 3 as const, revision: 2, entries: [
+        { agentId: "codex-sol", conversationalName: "Riley", providerId: "openrouter", modelId: "anthropic/claude-haiku-4.5", enabled: true, configurationRevision: 2 },
+      ] },
+    } satisfies RoomState;
+    const prompt = await __testing.buildPrompt("codex-sol", soloState, "Join if useful.", false, "read-only");
+    expect(prompt).toContain("You are Riley participating in AllMyFriendsAreAgents, a shared room with humans (Alice, Bob).\n");
+    expect(prompt).not.toContain("and .");
+  });
+
   it.each([false, true])("instructs direct answers to specified casual creative requests in the %s output lane", async (structured) => {
     const instruction = "Everyone, please each suggest one name for the library cat.";
     const { prompt } = await __testing.buildPromptBundle("codex-sol", state, instruction, false, "read-only", undefined, structured);
@@ -464,7 +495,7 @@ describe("room prompt context", () => {
     expect(prompt).toContain("shared room with humans (Alice, Bob)");
     expect(prompt).toContain(`Your current outgoing message-body style is ${JSON.stringify(state.settings.participantStyles["codex-sol"])}`);
     expect(prompt).not.toContain(JSON.stringify(state.settings.participantStyles["claude-sonnet"]));
-    expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
+    expect(prompt).toContain("You are Sol participating in AllMyFriendsAreAgents");
     expect(prompt).toContain("Your own outgoing style is included below as visual context");
     expect(prompt).toContain("Do not change it unless a comment is clearly self-directed");
     expect(prompt).toContain("backgroundColor highlights your message text only");
@@ -519,9 +550,9 @@ describe("room prompt context", () => {
 
   it("adds the room base prompt without displacing per-agent identity rules", async () => {
     const prompt = await __testing.buildPrompt("codex-sol", { ...state, roomConfiguration: { configurationRevision: 1, basePromptRevision: 1, basePromptText: "Treat evidence as primary.", summarizerModel: null, summarizerPromptText: "{{transcript}}", summarizerPromptRevision: 0, featureFlags: { preflightInvocationGating: false }, preflightMode: "off", intentClassifierEnabled: true, updatedAt: "2026-08-27T00:00:00.000Z" } }, "Join if useful.", false, "read-only");
-    expect(prompt).toContain("You are OpenCode [openai/gpt-5.6-sol] (Sol)");
+    expect(prompt).toContain("You are Sol participating in AllMyFriendsAreAgents");
     expect(prompt).toContain("ROOM BASE PROMPT\nTreat evidence as primary.");
-    expect(prompt.indexOf("You are OpenCode")).toBeLessThan(prompt.indexOf("ROOM BASE PROMPT"));
+    expect(prompt.indexOf("You are Sol")).toBeLessThan(prompt.indexOf("ROOM BASE PROMPT"));
     expect(prompt).toContain("only messages labeled [SOL] are your own history");
   });
 
