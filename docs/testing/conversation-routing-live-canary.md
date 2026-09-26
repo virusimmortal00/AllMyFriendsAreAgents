@@ -646,6 +646,10 @@ instruction fixed. One explicitly selected actor model applies to every case;
 the four quality axes and independent frame outcome use judge rubric v3. The
 runner selects exactly three complete pairs per batch, giving 12 batches with
 indices 0 through 11. Schema v5 cannot use a six-pair batch.
+The first batch contains a casual prompt pair and a handoff gate pair with
+optional seats, plus a practical direct Jev pair. Ten gate and ten prompt
+pairs have optional-seat opportunity; their two broadcast pairs each are
+negative controls and should have separate denominators in the readout.
 
 Inspect each selection without credentials or provider calls, substituting a
 concrete pinned actor model selected for the study:

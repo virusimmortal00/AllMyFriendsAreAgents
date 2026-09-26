@@ -86,6 +86,11 @@ describe("everyday and practical v5 study admission", () => {
       ),
     );
     expect(batches.every(({ cases, studyBatch }) => cases.length === 6 && studyBatch?.batchCount === 12)).toBe(true);
+    expect(
+      batches[0]!.cases
+        .filter((_, index) => index % 2 === 0)
+        .map(({ study }) => (study?.schemaVersion === 5 ? study.scenarioProfileId : null)),
+    ).toEqual(["casual-home-p", "handoff-home-g", "direct-work-j"]);
     expect(new Set(batches.flatMap(({ cases }) => cases.map(({ study: metadata }) => metadata?.caseId))).size).toBe(72);
     expect(
       batches

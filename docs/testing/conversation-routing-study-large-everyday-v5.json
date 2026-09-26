@@ -1,7 +1,7 @@
 {
   "schemaVersion": 5,
   "planId": "everyday72",
-  "orderSeed": 2322044,
+  "orderSeed": 265,
   "maxCases": 72,
   "blocks": [
     {
@@ -311,7 +311,7 @@
       "arcProfileId": "single-v1",
       "scenarioProfileId": "direct-home-g",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "relevance-v1",
@@ -336,7 +336,7 @@
       "arcProfileId": "single-v1",
       "scenarioProfileId": "direct-work-g",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "relevance-v1",
@@ -436,7 +436,7 @@
       "arcProfileId": "handoff-choice-v1",
       "scenarioProfileId": "handoff-work-g",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "relevance-v1",
@@ -486,7 +486,7 @@
       "arcProfileId": "single-v1",
       "scenarioProfileId": "quoted-home-g",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "relevance-v1",
@@ -561,7 +561,7 @@
       "arcProfileId": "casual-thread-v1",
       "scenarioProfileId": "casual-work-g",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "relevance-v1",
@@ -610,8 +610,8 @@
       "dynamic": "direct",
       "arcProfileId": "single-v1",
       "scenarioProfileId": "direct-home-p",
-      "rosterOrder": ["codex-sol"],
-      "energy": "low",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "current-v1",
@@ -635,8 +635,8 @@
       "dynamic": "direct",
       "arcProfileId": "single-v1",
       "scenarioProfileId": "direct-work-p",
-      "rosterOrder": ["codex-sol"],
-      "energy": "low",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "current-v1",
@@ -660,7 +660,7 @@
       "dynamic": "multi-address",
       "arcProfileId": "agent-exchange-v2",
       "scenarioProfileId": "multi-work-p",
-      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
       "energy": "balanced",
       "arms": {
         "a": {
@@ -736,7 +736,7 @@
       "arcProfileId": "handoff-choice-v1",
       "scenarioProfileId": "handoff-work-p",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "current-v1",
@@ -786,7 +786,7 @@
       "arcProfileId": "single-v1",
       "scenarioProfileId": "quoted-home-p",
       "rosterOrder": ["codex-sol", "claude-sonnet"],
-      "energy": "low",
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "current-v1",
@@ -810,7 +810,7 @@
       "dynamic": "multi-address",
       "arcProfileId": "agent-exchange-v2",
       "scenarioProfileId": "multi-home-p",
-      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
       "energy": "balanced",
       "arms": {
         "a": {
@@ -860,8 +860,8 @@
       "dynamic": "casual",
       "arcProfileId": "casual-thread-v1",
       "scenarioProfileId": "casual-work-p",
-      "rosterOrder": ["codex-sol"],
-      "energy": "low",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
       "arms": {
         "a": {
           "jevProfileId": "current-v1",
