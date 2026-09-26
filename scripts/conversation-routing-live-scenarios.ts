@@ -1,6 +1,7 @@
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { PreflightMode } from "../shared/preflight.js";
+import { LARGE_STUDY_PROFILES, type LargeStudyProfileId } from "./conversation-routing-live-large-fixtures.js";
 import type { StudyCaseMetadata } from "./conversation-routing-live-study.js";
 
 export type RoutingDynamic =
@@ -38,7 +39,8 @@ export function usesEverydayFixtureNames(id: LiveScenario["scenarioProfileId"]) 
   return (
     id === "everyday-chat-v3" ||
     TERMINAL_SCENARIO_PROFILES.includes(id as TerminalScenarioProfileId) ||
-    MODEL_SCENARIO_PROFILES.includes(id as ModelScenarioProfileId)
+    MODEL_SCENARIO_PROFILES.includes(id as ModelScenarioProfileId) ||
+    Object.hasOwn(LARGE_STUDY_PROFILES, id as string)
   );
 }
 
@@ -57,7 +59,7 @@ export interface LiveScenario {
   /** Study plans may use two or three scripted human messages instead of the legacy follow-up. */
   scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
   rosterOrder?: ActiveAgentId[];
-  scenarioProfileId?: ScenarioProfileId | TerminalScenarioProfileId | ModelScenarioProfileId;
+  scenarioProfileId?: ScenarioProfileId | TerminalScenarioProfileId | ModelScenarioProfileId | LargeStudyProfileId;
   study?: StudyCaseMetadata;
 }
 
