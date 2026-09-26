@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   type AvailabilityCheckV1,
+  actorModelForCase,
   buildPrivateReviewPayload,
   CANARY_SOURCE_FILES,
   checkIsolatedRosterAvailability,
@@ -38,6 +39,114 @@ const execute = promisify(execFile);
 const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
 
 describe("isolated identity study execution", () => {
+  it("prints one V4 pair with per-case models and no prompt text or credentials", async () => {
+    const { stdout } = await execute(
+      "pnpm",
+      [
+        "exec",
+        "tsx",
+        "scripts/conversation-routing-live-canary.ts",
+        "--dry-run",
+        "--study-plan",
+        path.resolve("docs/testing/conversation-routing-study-model-v4.json"),
+        "--model",
+        "openrouter/anthropic/claude-haiku-4.5",
+        "--jev-model",
+        "typesafe/jev-1.13",
+        "--judge-model",
+        "openrouter/google/gemini-3.8-flash",
+        "--judge-rubric",
+        "v3",
+        "--batch-index",
+        "0",
+        "--pairs-per-batch",
+        "1",
+        "--max-cases",
+        "6",
+        "--max-judge-calls",
+        "10",
+        "--max-generations",
+        "1",
+        "--timeout-ms",
+        "120000",
+        "--total-timeout-ms",
+        "900000",
+      ],
+      { env: { ...process.env, OPENROUTER_API_KEY: "", AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false" } },
+    );
+    const projected = JSON.parse(stdout) as {
+      actorModelScope: string;
+      cases: Array<{ actorModel: string }>;
+      maximumScheduledJudgeCalls: number;
+      maxGenerationsPerCase: number;
+    };
+    expect(projected.actorModelScope).toBe("per-case-v1");
+    expect(projected.cases.map(({ actorModel }) => actorModel)).toEqual([
+      "openrouter/anthropic/claude-sonnet-4.6",
+      "openrouter/anthropic/claude-haiku-4.5",
+    ]);
+    expect(projected.maximumScheduledJudgeCalls).toBe(10);
+    expect(projected.maxGenerationsPerCase).toBe(1);
+    expect(stdout).not.toMatch(/reusable cups|frozen spinach|bus leaves|OPENROUTER_API_KEY/i);
+  });
+  it("selects each V4 case model and rejects unsafe defaults and judge overlap", async () => {
+    const study = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-model-v4.json", "utf8")),
+    );
+    const args = [
+      "--dry-run",
+      "--study-plan",
+      "/fixture/model.json",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v3",
+      "--max-cases",
+      "6",
+      "--max-judge-calls",
+      "30",
+      "--max-generations",
+      "1",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "2400000",
+    ];
+    const selected = parseLiveCanaryOptions(args, {}, study);
+    expect(selected.cases).toHaveLength(6);
+    expect(selected.cases.map((scenario) => actorModelForCase(scenario, selected.model))).toEqual(
+      selected.cases.map((scenario) => (scenario.study?.schemaVersion === 4 ? scenario.study.actorModelId : "")),
+    );
+    expect(new Set(selected.cases.map((scenario) => actorModelForCase(scenario, selected.model)))).toEqual(
+      new Set(["openrouter/anthropic/claude-haiku-4.5", "openrouter/anthropic/claude-sonnet-4.6"]),
+    );
+    expect(selected.cases.map(({ study }) => isolatedRoomSystemProfileEnvironment(study))).toContainEqual({
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+      AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1",
+    });
+    const changedDefault = [...args];
+    changedDefault[changedDefault.indexOf("--model") + 1] = "openrouter/anthropic/claude-sonnet-4.6";
+    expect(() => parseLiveCanaryOptions(changedDefault, {}, study)).toThrow("declared Haiku default");
+    expect(() =>
+      parseLiveCanaryOptions(
+        args.filter((_, index) => index !== args.indexOf("--model") && index !== args.indexOf("--model") + 1),
+        { AMFAA_ROUTING_ROOM_MODEL: "openrouter/anthropic/claude-haiku-4.5" },
+        study,
+      ),
+    ).toThrow("declared Haiku default");
+    const judgeOverlap = [...args];
+    judgeOverlap[judgeOverlap.indexOf("--judge-model") + 1] = "openrouter/anthropic/claude-sonnet-4.6";
+    expect(() => parseLiveCanaryOptions(judgeOverlap, {}, study)).toThrow("both actor models");
+    const broken = selected.cases[0]!.study as Extract<
+      NonNullable<(typeof selected.cases)[number]["study"]>,
+      { schemaVersion: 4 }
+    >;
+    expect(() => isolatedRoomSystemProfileEnvironment({ ...broken, scenarioProfileDigest: "0".repeat(64) })).toThrow();
+  });
   it("prints the V2 identity plan before credential access without fixture text", async () => {
     const { stdout } = await execute(
       "pnpm",

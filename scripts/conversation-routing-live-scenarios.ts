@@ -24,8 +24,22 @@ export const TERMINAL_SCENARIO_TEXT: Record<TerminalScenarioProfileId, string> =
   "draft-v1":
     "Riley, draft a short, friendly message asking the neighbors to bring reusable cups to Saturday's picnic.",
 };
+export const MODEL_SCENARIO_PROFILES = ["draft-known-v1", "meal-holdout-v1", "travel-holdout-v1"] as const;
+export type ModelScenarioProfileId = (typeof MODEL_SCENARIO_PROFILES)[number];
+/** One known V3 regression prompt and two previously unused, self-contained practical prompts. */
+export const MODEL_SCENARIO_TEXT: Record<ModelScenarioProfileId, string> = {
+  "draft-known-v1": TERMINAL_SCENARIO_TEXT["draft-v1"],
+  "meal-holdout-v1":
+    "Riley, I have rice, canned beans, a tomato, and frozen spinach. Suggest a simple dinner for two using these ingredients, with no shopping trip.",
+  "travel-holdout-v1":
+    "Riley, the bus leaves at 8:40, the walk to the stop takes 12 minutes, and I want a 5-minute buffer. What time should I leave home?",
+};
 export function usesEverydayFixtureNames(id: LiveScenario["scenarioProfileId"]) {
-  return id === "everyday-chat-v3" || TERMINAL_SCENARIO_PROFILES.includes(id as TerminalScenarioProfileId);
+  return (
+    id === "everyday-chat-v3" ||
+    TERMINAL_SCENARIO_PROFILES.includes(id as TerminalScenarioProfileId) ||
+    MODEL_SCENARIO_PROFILES.includes(id as ModelScenarioProfileId)
+  );
 }
 
 export interface LiveScenario {
@@ -43,7 +57,7 @@ export interface LiveScenario {
   /** Study plans may use two or three scripted human messages instead of the legacy follow-up. */
   scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
   rosterOrder?: ActiveAgentId[];
-  scenarioProfileId?: ScenarioProfileId | TerminalScenarioProfileId;
+  scenarioProfileId?: ScenarioProfileId | TerminalScenarioProfileId | ModelScenarioProfileId;
   study?: StudyCaseMetadata;
 }
 

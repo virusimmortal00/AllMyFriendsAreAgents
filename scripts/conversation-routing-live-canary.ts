@@ -44,6 +44,7 @@ import {
 import {
   expandStudyPlan,
   MAX_STUDY_CASES,
+  modelScenarioProfileDigest,
   parseStudyPlan,
   roomSystemProfileDigest,
   STUDY_AGENT_BASE_PROMPTS,
@@ -51,9 +52,9 @@ import {
   type StudyCaseMetadata,
   type StudyPlan,
   scenarioProfileDigest,
-  terminalScenarioProfileDigest,
-  terminalInstructionProfileDigest,
   studyPlanDigest,
+  terminalInstructionProfileDigest,
+  terminalScenarioProfileDigest,
 } from "./conversation-routing-live-study.js";
 import {
   createPrivateTextTraceDirectory,
@@ -127,9 +128,24 @@ interface CanaryOptions {
   planningAllowanceMs: number;
 }
 
-/** Only a validated V2 case may select the isolated server's room system identity. */
+/** Only a validated closed case may select the isolated server's room identity. */
 export function isolatedRoomSystemProfileEnvironment(study: StudyCaseMetadata | undefined): Record<string, string> {
   if (!study || study.schemaVersion === 1) return {};
+  if (study.schemaVersion === 4) {
+    if (
+      study.factor !== "actor-model" ||
+      study.roomSystemProfileId !== "room-v1" ||
+      study.roomSystemProfileDigest !== roomSystemProfileDigest("room-v1") ||
+      study.scenarioProfileDigest !== modelScenarioProfileDigest(study.scenarioProfileId) ||
+      study.terminalInstructionProfileId !== "contribution-first-v1" ||
+      study.terminalInstructionProfileDigest !== terminalInstructionProfileDigest("contribution-first-v1")
+    )
+      throw new Error("Invalid isolated model study profile.");
+    return {
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+      AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1",
+    };
+  }
   if (study.schemaVersion === 3) {
     if (
       study.factor !== "terminal-instruction" ||
@@ -347,11 +363,20 @@ export function parseLiveCanaryOptions(
     throw new Error("Study plans require a concrete pinned Jev model ID.");
   if (!MODEL.test(model) || model.endsWith("/auto") || (!dryRun && !path.isAbsolute(command)))
     throw new Error("A concrete OpenRouter model and absolute audited OpenCode command are required.");
+  if (studyPlan?.schemaVersion === 4 && (!values.has("--model") || model !== "openrouter/anthropic/claude-haiku-4.5"))
+    throw new Error("Model study requires the declared Haiku default --model.");
   if (!dryRun && !path.isAbsolute(secretLauncher)) throw new Error("An absolute secret launcher is required.");
   if (dryRun && !studyPlan) throw new Error("Dry-run requires a validated study plan.");
   const judgeModel = values.get("--judge-model")?.[0];
   if (judgeModel && (!MODEL.test(judgeModel) || judgeModel.endsWith("/auto") || judgeModel === model))
     throw new Error("Judge model must be a different pinned OpenRouter model.");
+  if (
+    studyPlan?.schemaVersion === 4 &&
+    studyPlan.blocks.some(
+      (block) => block.arms.a.actorModelId === judgeModel || block.arms.b.actorModelId === judgeModel,
+    )
+  )
+    throw new Error("Model study judge must differ from both actor models.");
   const judgeRubric = values.get("--judge-rubric")?.[0] ?? "v1";
   if (!["v1", "v2", "v3"].includes(judgeRubric) || (judgeRubric !== "v1" && !judgeModel))
     throw new Error("Quality rubrics v2 and v3 require a distinct pinned judge model.");
@@ -653,6 +678,19 @@ interface CaseResult {
   privateReviewRetained: boolean;
   availabilityCheck: AvailabilityCheckV1;
   study?: NonNullable<LiveScenario["study"]>;
+  actorModel?: string;
+  actorModelProvenanceV1?: {
+    schemaVersion: 1;
+    requestedModelId: string;
+    rosterModelId: string;
+    wrapperModelId: string;
+    providerObservedModelId: null;
+  };
+}
+
+/** V1-V3 retain the global single-model selection; V4 declares one model per arm. */
+export function actorModelForCase(scenario: LiveScenario, globalModel: string): string {
+  return scenario.study?.schemaVersion === 4 ? scenario.study.actorModelId : globalModel;
 }
 
 /** A batch exposes progress only once both arms of one matched pair have completed. */
@@ -943,6 +981,12 @@ async function runCase(
   privateDirectory: string | undefined,
   caseOrdinal: number,
 ): Promise<CaseResult> {
+  const actorModel = actorModelForCase(scenario, options.model);
+  if (
+    scenario.study?.schemaVersion === 4 &&
+    (!options.studyPlan || options.studyPlan.schemaVersion !== 4 || actorModel !== scenario.study.actorModelId)
+  )
+    throw new Error("Model study actor selection is inconsistent.");
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-canary-"));
   await chmod(root, 0o700);
   const project = path.join(root, "project");
@@ -960,7 +1004,7 @@ async function runCase(
       secretLauncher: options.secretLauncher,
       launcherHome: process.env.HOME ?? root,
       isolatedHome: root,
-      modelId: options.model.slice("openrouter/".length),
+      modelId: actorModel.slice("openrouter/".length),
     });
     await execute("git", ["init", "-b", "main", project], {
       timeout: 10_000,
@@ -1004,7 +1048,7 @@ async function runCase(
       agentId,
       conversationalName: name,
       providerId: "openrouter",
-      modelId: options.model.slice("openrouter/".length),
+      modelId: actorModel.slice("openrouter/".length),
       enabled: true,
       supportsProjectWrites: false,
       configurationRevision: 1,
@@ -1211,7 +1255,7 @@ async function runCase(
         if (options.judgeModel) {
           const judgeOptions = {
             model: options.judgeModel.slice("openrouter/".length),
-            actorModel: options.model,
+            actorModel,
             apiKey: credential,
             signal: abort,
             timeoutMs: 30_000,
@@ -1276,6 +1320,20 @@ async function runCase(
       privateReviewRetained: Boolean(privateDirectory),
       availabilityCheck: projectAvailabilityCheck(availabilityCheck),
       ...(scenario.study ? { study: scenario.study } : {}),
+      ...(scenario.study?.schemaVersion === 4
+        ? {
+            actorModel,
+            actorModelProvenanceV1: {
+              schemaVersion: 1 as const,
+              requestedModelId: actorModel,
+              rosterModelId: actorModel,
+              wrapperModelId: actorModel,
+              // The current OpenCode evidence collector does not provide a trustworthy
+              // provider-resolved actor model. Unknown remains explicit.
+              providerObservedModelId: null,
+            },
+          }
+        : {}),
     };
   } catch (error) {
     throw error instanceof CaseFailure
@@ -1339,6 +1397,7 @@ async function main() {
         sourceDirty,
         sourceSha256,
         actorModel: options.model,
+        ...(plan.schemaVersion === 4 ? { actorModelScope: "per-case-v1" } : {}),
         jevModel: options.jevModel,
         maxCases: options.maxCases,
         maxGenerationsPerCase: options.maxGenerations,
@@ -1353,6 +1412,7 @@ async function main() {
           variant: scenario.variant,
           triggerCount: 1 + (scenario.scriptedFollowups?.length ?? 0),
           study: scenario.study,
+          ...(scenario.study?.schemaVersion === 4 ? { actorModel: actorModelForCase(scenario, options.model) } : {}),
         })),
       }),
     );
@@ -1486,6 +1546,7 @@ async function main() {
       ...(options.studyBatch ? { studyBatch: options.studyBatch } : {}),
       openCodeVersion: cliVersion,
       actorModel: options.model,
+      ...(options.studyPlan?.schemaVersion === 4 ? { actorModelScope: "per-case-v1" } : {}),
       judgeModel: options.judgeModel ?? null,
       concurrency: 1,
       maxCases: options.maxCases,
