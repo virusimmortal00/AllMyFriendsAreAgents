@@ -10,7 +10,7 @@ import {
   jevProfileMetadata,
 } from "../server/jev-experiment-profiles.js";
 import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
-import type { ConversationEnergy } from "../shared/conversation-energy.js";
+import { CONVERSATION_OPTIONAL_SEATS, type ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import {
   LARGE_STUDY_PROFILES,
@@ -366,6 +366,14 @@ export function parseStudyPlan(input: unknown): StudyPlan {
             b.agentPromptProfileId !== "social-v1"))
       )
         throw new Error("Large study arms or scenario are outside the closed matrix.");
+      if (
+        (factor === "gate" || factor === "agent-prompt") &&
+        profile.dynamic !== "broadcast" &&
+        (CONVERSATION_OPTIONAL_SEATS[row.energy as ConversationEnergy] === 0 ||
+          rosterOrder.length < 2 ||
+          !profile.messages.some((message) => message.expectedDirectAgents.length < rosterOrder.length))
+      )
+        throw new Error("Non-broadcast treatment requires an optional-capable seat.");
       for (const item of profile.messages) {
         if (item.expectedDirectAgents.some((agent) => !rosterOrder.includes(agent)))
           throw new Error("Addressed agent is absent from large-study roster.");
@@ -466,7 +474,10 @@ export function parseStudyPlan(input: unknown): StudyPlan {
         return (
           subset.length !== 12 ||
           subset.filter((block) => largeStudyProfile(block.scenarioProfileId as string).theme === "everyday").length !==
-            6
+            6 ||
+          ((factor === "gate" || factor === "agent-prompt") &&
+            subset.filter((block) => largeStudyProfile(block.scenarioProfileId as string).dynamic === "broadcast")
+              .length !== 2)
         );
       })
     )

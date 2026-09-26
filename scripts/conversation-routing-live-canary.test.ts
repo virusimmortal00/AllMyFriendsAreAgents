@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AvailabilityCheckV1,
   actorModelForCase,
+  buildIsolatedRoster,
   buildPrivateReviewPayload,
   CANARY_SOURCE_FILES,
   checkIsolatedRosterAvailability,
@@ -25,7 +26,7 @@ import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js
 import { JudgeFailure } from "./conversation-routing-live-judge.js";
 import type { QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
-import { parseStudyPlan } from "./conversation-routing-live-study.js";
+import { parseStudyPlan, studyPlanDigest } from "./conversation-routing-live-study.js";
 
 const base = [
   "--model",
@@ -37,6 +38,189 @@ const base = [
 ];
 const execute = promisify(execFile);
 const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
+
+describe("everyday and practical v5 study admission", () => {
+  const argumentsForBatch = [
+    "--study-plan",
+    "/fixture/everyday-v5.json",
+    "--allow-large-study",
+    "--pairs-per-batch",
+    "3",
+    "--model",
+    "openrouter/anthropic/claude-haiku-4.5",
+    "--jev-model",
+    "typesafe/jev-1.13",
+    "--judge-model",
+    "openrouter/google/gemini-3.8-flash",
+    "--judge-rubric",
+    "v3",
+    "--max-cases",
+    "72",
+    "--max-judge-calls",
+    "90",
+    "--max-generations",
+    "24",
+    "--timeout-ms",
+    "120000",
+    "--total-timeout-ms",
+    "10800000",
+    "--opencode",
+    "/fixture/opencode",
+    "--secret-launcher",
+    "/fixture/bws-run",
+  ];
+
+  async function plan() {
+    return parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-large-everyday-v5.json", "utf8")),
+    );
+  }
+
+  it("selects 12 complete three-pair batches with fixed identity and separate v3 judge calls", async () => {
+    const study = await plan();
+    const batches = Array.from({ length: 12 }, (_, index) =>
+      parseLiveCanaryOptions(
+        [...argumentsForBatch, "--dry-run", "--batch-index", String(index)],
+        { OPENROUTER_API_KEY: "" },
+        study,
+      ),
+    );
+    expect(batches.every(({ cases, studyBatch }) => cases.length === 6 && studyBatch?.batchCount === 12)).toBe(true);
+    expect(
+      batches[0]!.cases
+        .filter((_, index) => index % 2 === 0)
+        .map(({ study }) => (study?.schemaVersion === 5 ? study.scenarioProfileId : null)),
+    ).toEqual(["casual-home-p", "handoff-home-g", "direct-work-j"]);
+    expect(new Set(batches.flatMap(({ cases }) => cases.map(({ study: metadata }) => metadata?.caseId))).size).toBe(72);
+    expect(
+      batches
+        .flatMap(({ cases }) => cases)
+        .filter(({ study: metadata }) => metadata?.factor === "gate")
+        .every(
+          (scenario) =>
+            scenario.agentCount > 1 &&
+            [
+              scenario.expectedDirectAgents,
+              ...(scenario.scriptedFollowups?.map(({ expectedDirectAgents }) => expectedDirectAgents) ?? []),
+            ].some((required) => required.length < scenario.agentCount),
+        ),
+    ).toBe(true);
+    expect(CANARY_SOURCE_FILES).toContain("scripts/conversation-routing-live-large-fixtures.ts");
+    const cases = batches.flatMap((batch) => batch.cases);
+    const names: Record<string, string> = {
+      "codex-sol": "Riley",
+      "claude-sonnet": "Jordan",
+      "claude-opus": "Casey",
+    };
+    for (const count of [1, 2, 3]) {
+      const scenario = cases.find(({ agentCount }) => agentCount === count)!;
+      const actorModel = actorModelForCase(scenario, batches[0]!.model);
+      const roster = buildIsolatedRoster(scenario, actorModel);
+      expect(actorModel).toBe(batches[0]!.model);
+      expect(roster).toHaveLength(count);
+      expect(roster.map(({ modelId }) => modelId)).toEqual(Array(count).fill("anthropic/claude-haiku-4.5"));
+      expect(roster.map(({ agentId, conversationalName }) => conversationalName)).toEqual(
+        scenario.rosterOrder!.map((agentId) => names[agentId]),
+      );
+    }
+    for (const batch of batches) {
+      expect(batch.studyBatch?.pairCount).toBe(3);
+      expect(batch.studyBatch?.pairsPerBatch).toBe(3);
+      expect(batch.cases.every(({ study: metadata }) => metadata?.schemaVersion === 5)).toBe(true);
+      expect(batch.cases.map(({ study: metadata }) => isolatedRoomSystemProfileEnvironment(metadata))).toContainEqual({
+        AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+        AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1",
+      });
+      const triggers = batch.cases.reduce((sum, scenario) => sum + 1 + (scenario.scriptedFollowups?.length ?? 0), 0);
+      expect(batch.maxJudgeCalls).toBe(triggers * 5);
+      expect(batch.maxJudgeCalls).toBeLessThanOrEqual(90);
+      expect(batch.planningAllowanceMs).toBeLessThanOrEqual(batch.totalTimeoutMs);
+    }
+    const metadata = batches[0]!.cases[0]!.study as Extract<
+      NonNullable<(typeof batches)[number]["cases"][number]["study"]>,
+      { schemaVersion: 5 }
+    >;
+    expect(() =>
+      isolatedRoomSystemProfileEnvironment({ ...metadata, scenarioProfileDigest: "0".repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      isolatedRoomSystemProfileEnvironment({ ...metadata, terminalInstructionProfileDigest: "0".repeat(64) }),
+    ).toThrow();
+  });
+
+  it("requires a frozen live plan hash and exact three-pair batches without changing older plans", async () => {
+    const study = await plan();
+    const args = [...argumentsForBatch, "--batch-index", "0"];
+    const digest = studyPlanDigest(study);
+    expect(() => parseLiveCanaryOptions(args, {}, study)).toThrow("--expected-plan-sha256");
+    expect(() => parseLiveCanaryOptions([...args, "--expected-plan-sha256", "0".repeat(64)], {}, study)).toThrow(
+      "plan digest differs",
+    );
+    expect(parseLiveCanaryOptions([...args, "--expected-plan-sha256", digest], {}, study).studyBatch?.batchCount).toBe(
+      12,
+    );
+    const fourPairs = [...args];
+    fourPairs[fourPairs.indexOf("--pairs-per-batch") + 1] = "4";
+    expect(() => parseLiveCanaryOptions([...fourPairs, "--expected-plan-sha256", digest], {}, study)).toThrow(
+      "three pairs per batch",
+    );
+    const oldRubric = [...args];
+    oldRubric[oldRubric.indexOf("--judge-rubric") + 1] = "v2";
+    expect(() => parseLiveCanaryOptions([...oldRubric, "--expected-plan-sha256", digest], {}, study)).toThrow(
+      "frame-integrity rubric v3",
+    );
+    const fromEnvironment = args.filter((value, index) => value !== "--model" && args[index - 1] !== "--model");
+    expect(() =>
+      parseLiveCanaryOptions(
+        [...fromEnvironment, "--expected-plan-sha256", digest],
+        { AMFAA_ROUTING_ROOM_MODEL: "openrouter/anthropic/claude-haiku-4.5" },
+        study,
+      ),
+    ).toThrow("explicit pinned actor --model");
+    const actorAlias = [...args];
+    actorAlias[actorAlias.indexOf("--model") + 1] = "openrouter/anthropic/claude-latest";
+    expect(() => parseLiveCanaryOptions([...actorAlias, "--expected-plan-sha256", digest], {}, study)).toThrow(
+      "actor model must be a pinned release",
+    );
+    const oldStudy = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-large-v1.json", "utf8")),
+    );
+    expect(() =>
+      parseLiveCanaryOptions([...args, "--allow-wide-matrix", "--expected-plan-sha256", digest], {}, oldStudy),
+    ).toThrow("applies only to a V5");
+  });
+
+  it("prints one provider-free batch with no fixture wording or credential", async () => {
+    const { stdout } = await execute(
+      "pnpm",
+      [
+        "exec",
+        "tsx",
+        "scripts/conversation-routing-live-canary.ts",
+        "--dry-run",
+        "--study-plan",
+        path.resolve("docs/testing/conversation-routing-study-large-everyday-v5.json"),
+        ...argumentsForBatch.slice(2),
+        "--batch-index",
+        "0",
+      ],
+      { env: { ...process.env, OPENROUTER_API_KEY: "", AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false" } },
+    );
+    const output = JSON.parse(stdout) as {
+      actorModel: string;
+      actorModelScope: string;
+      studyBatch: { batchCount: number; pairCount: number };
+      cases: unknown[];
+      maximumScheduledJudgeCalls: number;
+    };
+    expect(output.studyBatch).toMatchObject({ batchCount: 12, pairCount: 3 });
+    expect(output.actorModelScope).toBe("global-v1");
+    expect(output.actorModel).toBe("openrouter/anthropic/claude-haiku-4.5");
+    expect(output.cases).toHaveLength(6);
+    expect(output.maximumScheduledJudgeCalls).toBeLessThanOrEqual(90);
+    expect(stdout).not.toMatch(/OPENROUTER_API_KEY|"text"\s*:/i);
+  });
+});
 
 describe("isolated identity study execution", () => {
   it("prints one V4 pair with per-case models and no prompt text or credentials", async () => {

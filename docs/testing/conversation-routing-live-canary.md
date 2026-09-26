@@ -635,3 +635,52 @@ Generation-start counts are observed watchdogs, not strict provider-call
 admission. The 144-call judge cap and three-hour timeout apply per batch;
 six batches can cost and take substantially more. No strict dollar cap or
 causal treatment claim follows from these settings.
+
+## Everyday and practical paired study (schema v5)
+
+The [72-case everyday plan](conversation-routing-study-large-everyday-v5.json)
+contains 36 matched pairs across closed everyday and practical fixtures. It
+compares the Jev question, optional-participation gate, and agent prompt in
+separate pairs while holding the room system and contribution-first terminal
+instruction fixed. One explicitly selected actor model applies to every case;
+the four quality axes and independent frame outcome use judge rubric v3. The
+runner selects exactly three complete pairs per batch, giving 12 batches with
+indices 0 through 11. Schema v5 cannot use a six-pair batch.
+The first batch contains a casual prompt pair and a handoff gate pair with
+optional seats, plus a practical direct Jev pair. Ten gate and ten prompt
+pairs have optional-seat opportunity; their two broadcast pairs each are
+negative controls and should have separate denominators in the readout.
+
+Inspect each selection without credentials or provider calls, substituting a
+concrete pinned actor model selected for the study:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --study-plan "$PWD/docs/testing/conversation-routing-study-large-everyday-v5.json" \
+  --allow-large-study \
+  --pairs-per-batch 3 --batch-index 0 \
+  --model openrouter/provider/pinned-actor-release \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --max-cases 72 --max-judge-calls 90 --max-generations 24 \
+  --timeout-ms 120000 --total-timeout-ms 10800000
+```
+
+The 90-call judge cap applies to each selected three-pair batch: at most three
+human triggers in each of six cases, with four quality calls and one frame call
+per trigger. A live invocation uses these same frozen settings, the audited
+`--opencode` and `--secret-launcher` paths, and the paid-provider opt-in
+described above.
+
+Before the first authorized paid batch, record the reviewed plan SHA-256,
+source SHA-256 and commit, actor and judge model IDs, limits, and seeded order
+from the dry run in a private operator record. A live v5 command must add
+`--expected-plan-sha256 <reviewed-plan-sha256>`; the runner checks it against
+the validated plan before accessing credentials. It rejects this option for
+older schemas, so accidentally selecting the earlier garden plan fails. Use
+the same frozen selections in every batch and inspect the first three-pair
+batch as a gate before continuing. If scenarios, settings, prompts, or rubrics
+change after outcomes are visible, version a new plan and study; do not pool
+the earlier batches. Keep partial failure evidence and investigate it before
+any explicitly authorized retry. A progress record without a final batch
+manifest is never a completed batch.

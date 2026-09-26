@@ -29,6 +29,7 @@ import {
   parsePrivateQualityCase,
   type QualityAxisOutcome,
 } from "./conversation-routing-live-judge-v2.js";
+import { largeStudyProfileDigest } from "./conversation-routing-live-large-fixtures.js";
 import {
   buildLiveScenario,
   EVERYDAY_FIXTURE_AGENTS,
@@ -75,6 +76,7 @@ export const CANARY_SOURCE_FILES = [
   "scripts/conversation-routing-live-evidence.ts",
   "scripts/conversation-routing-live-scenarios.ts",
   "scripts/conversation-routing-live-study.ts",
+  "scripts/conversation-routing-live-large-fixtures.ts",
   "scripts/conversation-routing-live-wrapper.ts",
   "scripts/conversation-routing-live-text-trace.ts",
   "scripts/conversation-routing-live-judge.ts",
@@ -131,6 +133,21 @@ interface CanaryOptions {
 /** Only a validated closed case may select the isolated server's room identity. */
 export function isolatedRoomSystemProfileEnvironment(study: StudyCaseMetadata | undefined): Record<string, string> {
   if (!study || study.schemaVersion === 1) return {};
+  if (study.schemaVersion === 5) {
+    if (
+      !["jev", "gate", "agent-prompt"].includes(study.factor) ||
+      study.roomSystemProfileId !== "room-v1" ||
+      study.roomSystemProfileDigest !== roomSystemProfileDigest("room-v1") ||
+      study.scenarioProfileDigest !== largeStudyProfileDigest(study.scenarioProfileId) ||
+      study.terminalInstructionProfileId !== "contribution-first-v1" ||
+      study.terminalInstructionProfileDigest !== terminalInstructionProfileDigest("contribution-first-v1")
+    )
+      throw new Error("Invalid isolated everyday study profile.");
+    return {
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+      AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1",
+    };
+  }
   if (study.schemaVersion === 4) {
     if (
       study.factor !== "actor-model" ||
@@ -261,6 +278,7 @@ export function parseLiveCanaryOptions(
     "--timeout-ms",
     "--total-timeout-ms",
     "--study-plan",
+    "--expected-plan-sha256",
     "--jev-model",
     "--judge-rubric",
     "--max-judge-calls",
@@ -299,6 +317,8 @@ export function parseLiveCanaryOptions(
       : (values.get("--case") ?? []).map((raw) =>
           customScenario(raw, scenarioProfileId as "everyday-chat-v3" | undefined),
         );
+  if (studyPlan?.schemaVersion === 5 && (studyPlan.blocks.length !== 36 || allCases.length !== 72))
+    throw new Error("Everyday study requires exactly 36 complete pairs and 72 cases.");
   if (!allowWideMatrix && allCases.some(({ agentCount }) => agentCount > 3))
     throw new Error("Four-agent cases require --allow-wide-matrix.");
   const batchIndexRaw = values.get("--batch-index")?.[0];
@@ -311,6 +331,8 @@ export function parseLiveCanaryOptions(
   let cases = allCases;
   if (studyPlan && batchIndexRaw && pairsPerBatchRaw) {
     const pairsPerBatch = positiveInteger(pairsPerBatchRaw, "Pairs per batch", MAX_BATCH_PAIRS, MAX_BATCH_PAIRS);
+    if (studyPlan.schemaVersion === 5 && pairsPerBatch !== 3)
+      throw new Error("Everyday study requires exactly three pairs per batch.");
     const planPairCount = studyPlan.blocks.length;
     const batchCount = Math.ceil(planPairCount / pairsPerBatch);
     const batchIndex = Number(batchIndexRaw);
@@ -358,11 +380,22 @@ export function parseLiveCanaryOptions(
   const command = values.get("--opencode")?.[0] ?? env.ALL_MY_FRIENDS_ARE_AGENTS_OPENCODE_COMMAND ?? "";
   const secretLauncher = values.get("--secret-launcher")?.[0] ?? env.AMFAA_ROUTING_SECRET_LAUNCHER ?? "";
   const dryRun = flags.has("--dry-run");
+  const expectedPlanSha256 = values.get("--expected-plan-sha256")?.[0];
+  if (expectedPlanSha256 && studyPlan?.schemaVersion !== 5)
+    throw new Error("Expected plan digest applies only to a V5 everyday study.");
+  if (studyPlan?.schemaVersion === 5) {
+    if (!values.has("--model")) throw new Error("Everyday study requires an explicit pinned actor --model.");
+    if (!dryRun && !expectedPlanSha256) throw new Error("Live everyday study requires --expected-plan-sha256.");
+    if (expectedPlanSha256 && expectedPlanSha256 !== studyPlanDigest(studyPlan))
+      throw new Error("Everyday study plan digest differs from --expected-plan-sha256.");
+  }
   const jevModel = values.get("--jev-model")?.[0];
   if (studyPlan && (!jevModel || !MODEL.test(`openrouter/${jevModel}`) || /(?:^|\/)(?:auto|latest)$/.test(jevModel)))
     throw new Error("Study plans require a concrete pinned Jev model ID.");
   if (!MODEL.test(model) || model.endsWith("/auto") || (!dryRun && !path.isAbsolute(command)))
     throw new Error("A concrete OpenRouter model and absolute audited OpenCode command are required.");
+  if (studyPlan?.schemaVersion === 5 && /(?:\/|-)(?:auto|latest)$/i.test(model))
+    throw new Error("Everyday study actor model must be a pinned release.");
   if (studyPlan?.schemaVersion === 4 && (!values.has("--model") || model !== "openrouter/anthropic/claude-haiku-4.5"))
     throw new Error("Model study requires the declared Haiku default --model.");
   if (!dryRun && !path.isAbsolute(secretLauncher)) throw new Error("An absolute secret launcher is required.");
@@ -370,6 +403,8 @@ export function parseLiveCanaryOptions(
   const judgeModel = values.get("--judge-model")?.[0];
   if (judgeModel && (!MODEL.test(judgeModel) || judgeModel.endsWith("/auto") || judgeModel === model))
     throw new Error("Judge model must be a different pinned OpenRouter model.");
+  if (studyPlan?.schemaVersion === 5 && judgeModel && /(?:\/|-)(?:auto|latest)$/i.test(judgeModel))
+    throw new Error("Everyday study judge model must be a pinned release.");
   if (
     studyPlan?.schemaVersion === 4 &&
     studyPlan.blocks.some(
@@ -381,7 +416,11 @@ export function parseLiveCanaryOptions(
   if (!["v1", "v2", "v3"].includes(judgeRubric) || (judgeRubric !== "v1" && !judgeModel))
     throw new Error("Quality rubrics v2 and v3 require a distinct pinned judge model.");
   if (studyPlan && studyPlan.schemaVersion !== 1 && (judgeRubric !== "v3" || !judgeModel))
-    throw new Error("Identity studies require pinned independent frame-integrity rubric v3.");
+    throw new Error(
+      studyPlan.schemaVersion === 5
+        ? "Everyday study requires pinned independent frame-integrity rubric v3."
+        : "Identity studies require pinned independent frame-integrity rubric v3.",
+    );
   const maxJudgeCalls = cases.reduce(
     (sum, scenario) =>
       sum +
@@ -688,9 +727,37 @@ interface CaseResult {
   };
 }
 
-/** V1-V3 retain the global single-model selection; V4 declares one model per arm. */
+/** V1-V3 and V5 retain one global actor model; V4 declares one model per arm. */
 export function actorModelForCase(scenario: LiveScenario, globalModel: string): string {
   return scenario.study?.schemaVersion === 4 ? scenario.study.actorModelId : globalModel;
+}
+
+function actorModelMetadata(studyPlan: StudyPlan | undefined, model: string) {
+  return {
+    actorModel: model,
+    ...(studyPlan?.schemaVersion === 4
+      ? { actorModelScope: "per-case-v1" }
+      : studyPlan?.schemaVersion === 5
+        ? { actorModelScope: "global-v1" }
+        : {}),
+  };
+}
+
+export function buildIsolatedRoster(scenario: LiveScenario, actorModel: string) {
+  const fixtureAgents = usesEverydayFixtureNames(scenario.scenarioProfileId) ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
+  const selectedAgents = scenario.rosterOrder
+    ? scenario.rosterOrder.map((agentId) => fixtureAgents.find((entry) => entry.agentId === agentId)!)
+    : fixtureAgents.slice(0, scenario.agentCount);
+  return selectedAgents.map(({ agentId, name }) => ({
+    agentId,
+    conversationalName: name,
+    providerId: "openrouter",
+    modelId: actorModel.slice("openrouter/".length),
+    enabled: true,
+    supportsProjectWrites: false,
+    configurationRevision: 1,
+    commandPermissions: { allowAll: false, allowed: [] as Array<"help"> },
+  }));
 }
 
 /** A batch exposes progress only once both arms of one matched pair have completed. */
@@ -1038,22 +1105,7 @@ async function runCase(
       },
       "fixture-owner",
     );
-    const fixtureAgents = usesEverydayFixtureNames(scenario.scenarioProfileId)
-      ? EVERYDAY_FIXTURE_AGENTS
-      : FIXTURE_AGENTS;
-    const selectedAgents = scenario.rosterOrder
-      ? scenario.rosterOrder.map((agentId) => fixtureAgents.find((entry) => entry.agentId === agentId)!)
-      : fixtureAgents.slice(0, scenario.agentCount);
-    const roster = selectedAgents.map(({ agentId, name }) => ({
-      agentId,
-      conversationalName: name,
-      providerId: "openrouter",
-      modelId: actorModel.slice("openrouter/".length),
-      enabled: true,
-      supportsProjectWrites: false,
-      configurationRevision: 1,
-      commandPermissions: { allowAll: false, allowed: [] as Array<"help"> },
-    }));
+    const roster = buildIsolatedRoster(scenario, actorModel);
     const update = await store.updateRoster(store.snapshot().roster!.revision, roster);
     assert.equal(update.kind, "accepted");
     const port = await unusedLoopbackPort();
@@ -1396,8 +1448,7 @@ async function main() {
         sourceCommit,
         sourceDirty,
         sourceSha256,
-        actorModel: options.model,
-        ...(plan.schemaVersion === 4 ? { actorModelScope: "per-case-v1" } : {}),
+        ...actorModelMetadata(plan, options.model),
         jevModel: options.jevModel,
         maxCases: options.maxCases,
         maxGenerationsPerCase: options.maxGenerations,
@@ -1545,8 +1596,7 @@ async function main() {
         : {}),
       ...(options.studyBatch ? { studyBatch: options.studyBatch } : {}),
       openCodeVersion: cliVersion,
-      actorModel: options.model,
-      ...(options.studyPlan?.schemaVersion === 4 ? { actorModelScope: "per-case-v1" } : {}),
+      ...actorModelMetadata(options.studyPlan, options.model),
       judgeModel: options.judgeModel ?? null,
       concurrency: 1,
       maxCases: options.maxCases,
