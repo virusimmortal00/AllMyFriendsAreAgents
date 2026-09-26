@@ -53,6 +53,14 @@ export class OpenCodeStructuredTurnCancelledError extends Error {
   }
 }
 
+export class OpenCodeStructuredTurnSchemaError extends Error {
+  constructor() { super("OpenCode returned an invalid structured room turn."); this.name = "OpenCodeStructuredTurnSchemaError"; }
+}
+
+export class OpenCodeStructuredTurnTimeoutError extends Error {
+  constructor() { super("OpenCode structured room turn timed out."); this.name = "OpenCodeStructuredTurnTimeoutError"; }
+}
+
 export async function executeOpenCodeStructuredTurn(client: OpenCodeStructuredSdk, input: Omit<OpenCodeStructuredTurnInput, "command" | "environment" | "timeoutMs" | "scope">): Promise<OpenCodeStructuredTurnResult> {
   if (input.signal?.aborted) throw new OpenCodeStructuredTurnCancelledError();
   const health = await client.health(input.signal);
@@ -95,10 +103,10 @@ export async function executeOpenCodeStructuredTurn(client: OpenCodeStructuredSd
           tokens,
         };
       } catch (error) {
-        if (attempt > 0) throw error;
+        if (attempt > 0) throw new OpenCodeStructuredTurnSchemaError();
       }
     }
-    throw new Error("OpenCode returned an invalid structured room turn.");
+    throw new OpenCodeStructuredTurnSchemaError();
   } catch (error) {
     if (cancelled || input.signal?.aborted || error instanceof OpenCodeStructuredTurnCancelledError) throw new OpenCodeStructuredTurnCancelledError();
     throw error;
@@ -212,7 +220,7 @@ export class OpenCodePerTurnStructuredTransport {
       child.stdout?.resume();
       return await executeOpenCodeStructuredTurn(sdkClient(url, username, password), { ...input, signal: turnSignal });
     } catch (error) {
-      if (timeoutSignal.aborted && !input.signal?.aborted) throw new Error("OpenCode structured room turn timed out.");
+      if (timeoutSignal.aborted && !input.signal?.aborted) throw new OpenCodeStructuredTurnTimeoutError();
       throw error;
     } finally {
       await this.supervisor.release(child);

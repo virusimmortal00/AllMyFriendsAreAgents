@@ -331,6 +331,26 @@ describe("OpenCode runtime contract", () => {
     expect(invocation.prompt).not.toContain("TURN_DISPOSITION:");
   });
 
+  it("journals only a closed diagnostic for malformed structured output", async () => {
+    const participant = { agentId: "codex-sol" as const, conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
+    const state = {
+      messages: [], sessions: {}, roster: { schemaVersion: 3 as const, revision: 1, entries: [participant] },
+      settings: { roomName: "Room", topic: "Fixture", writableAgent: "nobody" as const, conversationEnergy: "balanced" as const, projectPath: process.cwd(), participantStyles: structuredClone(DEFAULT_PARTICIPANT_STYLES) }, status: "idle" as const,
+    } satisfies RoomState;
+    const discovery = { discover: async () => ({
+      status: "available" as const, discoveredAt: "2026-09-01T00:00:00.000Z",
+      runtime: { version: "1.18.25-amfaa.2", compatible: true, distribution: "downstream" as const, protocol: "opencode-cli-jsonl-v1" as const, capabilities: ["verbose-model-catalog", "jsonl-events", "variant-selection"] as const },
+      models: [{ providerId: "openai", modelId: "gpt-5.6-sol", displayName: "Fixture", provenance: "opencode-catalog" as const }],
+    }) } as unknown as ModelDiscoveryService;
+    const journal = { append: vi.fn(async (_event: import("./generation-journal.js").GenerationJournalEvent) => {}) };
+    const { OpenCodeStructuredTurnSchemaError } = await import("./opencode-structured-transport.js");
+    const structuredTransport = { run: vi.fn(async () => { throw new OpenCodeStructuredTurnSchemaError(); }) };
+    await expect(runAgent("codex-sol", state, "Fixture", false, journal as unknown as import("./generation-journal.js").GenerationJournal, undefined, undefined, undefined, undefined, undefined, undefined, undefined, discovery, { runtimeCommand: () => "/app/runtime/opencode/bin/opencode", structuredTransport })).rejects.toBeInstanceOf(OpenCodeStructuredTurnSchemaError);
+    const failed = journal.append.mock.calls.map(([event]) => event).find((event) => event.type === "generation.failed");
+    expect(failed?.failureDiagnostic).toMatchObject({ origin: "structured-output", category: "schema", statusCode: null, providerCode: null, healthReason: "unknown" });
+    expect(JSON.stringify(failed?.failureDiagnostic)).not.toContain("Fixture");
+  });
+
   it("journals a refused generation-start reservation as cancellation without spawning a subprocess", async () => {
     const participant = { agentId: "agent-55555555-5555-4555-8555-555555555555", conversationalName: "Alpha", providerId: "openai", modelId: "fixture-model", enabled: true, configurationRevision: 1 };
     const state = {

@@ -18,7 +18,8 @@ import type { ModelDiscoveryService } from "./model-discovery.js";
 import { deploymentPromptContext, type DeploymentProvenance } from "./deployment-provenance.js";
 import { logOperationSafely, type OperationLog } from "./operation-log.js";
 import { ProviderInvocationError, providerFailuresFromOpenCodeOutput } from "./provider-failure.js";
-import { OpenCodePerTurnStructuredTransport, OpenCodeStructuredTurnCancelledError, type OpenCodeStructuredTurnResult } from "./opencode-structured-transport.js";
+import { generationFailureDiagnostic } from "./generation-failure-diagnostic.js";
+import { OpenCodePerTurnStructuredTransport, OpenCodeStructuredTurnCancelledError, OpenCodeStructuredTurnSchemaError, OpenCodeStructuredTurnTimeoutError, type OpenCodeStructuredTurnResult } from "./opencode-structured-transport.js";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 80_000;
@@ -229,7 +230,7 @@ export class AgentProcessSupervisor {
 }
 
 class ProcessExecutionError extends Error {
-  constructor(message: string, readonly process: ProcessResult & { exitCode: number | null }) {
+  constructor(message: string, readonly process: ProcessResult & { exitCode: number | null }, readonly timedOut = false) {
     super(message);
     this.name = "ProcessExecutionError";
   }
@@ -557,7 +558,7 @@ function runProcess(command: string, args: string[], cwd: string, options: RunPr
       void terminateWith(new ProcessExecutionError(`${command} timed out after ${Math.round(timeoutMs / 1000)} seconds`, {
         ...capturedProcessResult(stdout, stderr, options.redactOutputValues),
         exitCode: null,
-      }));
+      }, true));
     }, timeoutMs);
 
     child.stdout!.on("data", (chunk) => {
@@ -1128,12 +1129,22 @@ export async function runAgent(
         throw new AgentGenerationCancelledError();
       }
       const failedProtocol = error instanceof ProcessExecutionError ? parseOpenCodeOutput(error.process.stdout) : undefined;
+      const durationMs = Date.now() - startedAt;
+      const failureDiagnostic = generationFailureDiagnostic({
+        ...(failedProtocol?.errors[0] ? { provider: failedProtocol.errors[0] } : {}),
+        ...(error instanceof ProcessExecutionError ? { process: { exitCode: error.process.exitCode, timedOut: error.timedOut } } : {}),
+        structuredInvalid: error instanceof OpenCodeStructuredTurnSchemaError,
+        structuredTimedOut: error instanceof OpenCodeStructuredTurnTimeoutError,
+        launchFailed: (error as NodeJS.ErrnoException | null)?.code === "ENOENT",
+        durationMs,
+      });
       await publishGenerationActivity("failed", failedProtocol?.cost);
       await append({
         type: "generation.failed",
         generationId,
         agent,
-        durationMs: Date.now() - startedAt,
+        durationMs,
+        failureDiagnostic,
         error: error instanceof Error ? error.message : String(error),
         ...(failedProtocol ? openCodeJournalMetadata(failedProtocol) : {}),
         ...(error instanceof ProcessExecutionError ? {

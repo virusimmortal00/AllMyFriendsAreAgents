@@ -309,7 +309,28 @@ describe("live routing scalar extraction", () => {
       category: "generation-failed",
       generations: [{ ordinal: 1, category: "failed" }],
     });
+    expect(result.failureEvidenceV1).toEqual({ schemaVersion: 1, failures: [{
+      ordinal: 1, origin: "unknown", category: "unknown", statusCode: null, providerCode: null,
+      retryable: null, exitCode: null, durationMs: null, healthReason: "unknown",
+    }] });
     expect(JSON.stringify(result)).not.toContain("private provider failure detail");
+  });
+
+  it("projects a joined closed failure cause and rejects unapproved diagnostic fields", () => {
+    const input = silentFixture();
+    input.records = input.records.filter((record) => record.event !== "generation.completed" && record.event !== "provider.exchange.observed" && record.stage !== "generation-completed");
+    const failure = { event: "generation.failed", runId: "run_12345678", generationId: "gen_12345678", error: "private error", failureDiagnostic: {
+      origin: "provider", category: "quota", statusCode: 402, providerCode: "insufficient_quota", retryable: false,
+      exitCode: 1, durationMs: 24, healthReason: "usage_exhausted",
+    } };
+    input.records.push(failure);
+    const turn = input.records.find((record) => record.event === "conversation.turn.finished")!;
+    turn.outcome = "failed";
+    turn.reason = "generation-failed";
+    expect(collectFixture(input).failureEvidenceV1?.failures).toEqual([{ ordinal: 1, ...failure.failureDiagnostic }]);
+    expect(JSON.stringify(collectFixture(input))).not.toContain("private error");
+    failure.failureDiagnostic = { ...failure.failureDiagnostic, raw: "private error" } as typeof failure.failureDiagnostic;
+    expect(() => collectFixture(input)).toThrow("Invalid closed generation failure diagnostic");
   });
 
   it("counts only an explicit interpreted yield as deliberate", () => {

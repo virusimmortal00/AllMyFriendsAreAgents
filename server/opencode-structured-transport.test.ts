@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AssistantMessage } from "@opencode-ai/sdk/v2";
-import { executeOpenCodeStructuredTurn, OpenCodeStructuredTurnCancelledError, type OpenCodeStructuredSdk } from "./opencode-structured-transport.js";
+import { executeOpenCodeStructuredTurn, OpenCodeStructuredTurnCancelledError, OpenCodeStructuredTurnSchemaError, type OpenCodeStructuredSdk } from "./opencode-structured-transport.js";
 
 function assistant(structured: unknown): AssistantMessage {
   return {
@@ -68,6 +68,7 @@ describe("OpenCode structured transport", () => {
     vi.mocked(stock.health).mockResolvedValue({ healthy: true, version: "1.18.25" });
     await expect(executeOpenCodeStructuredTurn(stock, input)).rejects.toThrow(/approved downstream runtime/);
     await expect(executeOpenCodeStructuredTurn(client(undefined), input)).rejects.toThrow(/invalid structured room turn/);
+    await expect(executeOpenCodeStructuredTurn(client(undefined), input)).rejects.toBeInstanceOf(OpenCodeStructuredTurnSchemaError);
     await expect(executeOpenCodeStructuredTurn(client({ schemaVersion: 1, action: "yield", reason: "not_addressed", explanation: "private" }), input)).rejects.toThrow(/invalid structured room turn/);
   });
 
