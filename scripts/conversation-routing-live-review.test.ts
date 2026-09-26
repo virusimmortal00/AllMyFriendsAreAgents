@@ -17,11 +17,14 @@ import {
   reviewFingerprint,
   selectCalibrationReviewQueue,
   selectCompleteFrameReviewQueue,
+  selectCompleteModelReviewQueue,
   selectFlaggedReviewQueue,
   selectFrameCandidateReviewQueue,
   selectPairedReviewQueue,
   selectVisibleReviewQueue,
+  verifyPartialV4Plan,
 } from "./conversation-routing-live-review.js";
+import { expandStudyPlan, parseStudyPlan, studyPlanDigest } from "./conversation-routing-live-study.js";
 
 const ids = [
   "review-aaaaaaaaaaaa",
@@ -159,6 +162,154 @@ const exported = () => ({
 });
 
 describe("private offline review pack", () => {
+  it("selects all six V4 cards with arm mapping only in the private receipt", () => {
+    const cases = ["draft", "meal", "travel"].flatMap((pairId) =>
+      (["a", "b"] as const).map((arm) => ({
+        scenarioId: `${pairId}-${arm}`,
+        study: {
+          schemaVersion: 4,
+          factor: "actor-model",
+          pairId,
+          arm,
+          actorModelId:
+            arm === "a" ? "openrouter/anthropic/claude-haiku-4.5" : "openrouter/anthropic/claude-sonnet-4.6",
+          terminalInstructionProfileId: "contribution-first-v1",
+          roomSystemProfileId: "room-v1",
+        },
+        triggers: [{ scenarioId: `${pairId}-${arm}`, runId: `run-${pairId}-${arm}` }],
+      })),
+    );
+    const studyManifest = { sourceSha256: "a".repeat(64), judgeRubric: "v3", studyPlan: { schemaVersion: 4 }, cases };
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceSha256: studyManifest.sourceSha256,
+          studyPlan: studyManifest.studyPlan,
+          cases: cases.map((row) => ({
+            scenarioId: row.scenarioId,
+            study: row.study,
+            triggers: row.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+          })),
+        }),
+      )
+      .digest("hex");
+    const entries = cases.map((row, index) => ({
+      reviewId: ids[index]!,
+      scenarioId: row.scenarioId,
+      runId: row.triggers[0]!.runId,
+      sourceFile: `source-${index}.json`,
+      priority: "sample",
+    }));
+    const locator = { schemaVersion: 1, manifestFingerprint: fingerprint, entries };
+    const selected = selectCompleteModelReviewQueue(studyManifest, locator, "fixed-seed");
+    expect(selected.queue.reviewIds).toHaveLength(6);
+    expect(selected.receipt).toMatchObject({
+      kind: "model-complete",
+      screenedTriggers: 6,
+      privateArmMap: expect.arrayContaining([
+        { reviewId: ids[0], pairId: "draft", arm: "a", actorModelId: "openrouter/anthropic/claude-haiku-4.5" },
+      ]),
+    });
+    const cards = selected.queue.reviewIds.map((id) => bundle(id, "Could you draft a short note?"));
+    const html = buildOfflineReviewHtml(selected.queue, cards, "model-complete");
+    expect(html).toContain("complete model pilot");
+    expect(html).not.toContain("claude-haiku");
+    expect(html).not.toContain("claude-sonnet");
+    expect(JSON.stringify(selected.queue)).not.toContain("actorModelId");
+    const partial = {
+      schemaVersion: 1,
+      kind: "blinded-quality-ratings",
+      packFingerprint: reviewFingerprint(selected.queue, cards),
+      ratings: [{ reviewId: ids[0], axes: { social_cadence: { status: "rated", score: 4 } } }],
+    };
+    expect(parseOfflineReviewExport(partial, selected.queue, partial.packFingerprint).ratings).toHaveLength(1);
+    const incomplete = { ...studyManifest, cases: cases.slice(0, 4) };
+    expect(() => selectCompleteModelReviewQueue(incomplete, locator, "fixed-seed")).toThrow();
+    const diagnostic = {
+      ...incomplete,
+      studyBatch: { planPairCount: 3, planCaseCount: 6, batchIndex: 0, batchCount: 3, pairsPerBatch: 1 },
+    };
+    const partialLocator = {
+      ...locator,
+      manifestFingerprint: createHash("sha256")
+        .update(
+          JSON.stringify({
+            sourceSha256: diagnostic.sourceSha256,
+            studyPlan: diagnostic.studyPlan,
+            cases: diagnostic.cases.map((row) => ({
+              scenarioId: row.scenarioId,
+              study: row.study,
+              triggers: row.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+            })),
+          }),
+        )
+        .digest("hex"),
+      entries: entries.slice(0, 4),
+    };
+    const diagnosticSelection = selectCompleteModelReviewQueue(diagnostic, partialLocator, "fixed-seed", true);
+    expect(diagnosticSelection.queue.reviewIds).toHaveLength(4);
+    expect(diagnosticSelection.receipt).toMatchObject({
+      kind: "model-partial",
+      completedPairs: 2,
+      plannedPairs: 3,
+      diagnosticOnly: true,
+    });
+    const partialCards = diagnosticSelection.queue.reviewIds.map((id) => bundle(id, "Could you draft a short note?"));
+    for (const reviewSet of ["model-partial", "frame-partial"] as const) {
+      const html = buildOfflineReviewHtml(diagnosticSelection.queue, partialCards, reviewSet, {
+        completedPairs: 2,
+        plannedPairs: 3,
+      });
+      expect(html).toContain("PARTIAL DIAGNOSTIC: 2 of 3 planned matched pairs completed");
+      expect(html).not.toContain("claude-haiku");
+      expect(html).not.toContain("claude-sonnet");
+      expect(html).not.toContain("actorModelId");
+    }
+    expect(() =>
+      selectCompleteModelReviewQueue(
+        { ...diagnostic, cases: diagnostic.cases.slice(0, 3) },
+        partialLocator,
+        "fixed-seed",
+        true,
+      ),
+    ).toThrow();
+    expect(() => selectCompleteModelReviewQueue(studyManifest, locator, "fixed-seed", true)).toThrow();
+    expect(() => buildOfflineReviewHtml(diagnosticSelection.queue, partialCards, "model-partial")).toThrow();
+  });
+  it("pins partial V4 review to the committed plan and its first contiguous pairs", async () => {
+    const plan = parseStudyPlan(
+      JSON.parse(readFileSync(resolve("docs/testing/conversation-routing-study-model-v4.json"), "utf8")),
+    );
+    const expected = expandStudyPlan(plan);
+    const first = expected.slice(0, 2);
+    const input = {
+      studyPlan: { schemaVersion: 4, planId: plan.planId, planSha256: studyPlanDigest(plan) },
+      studyBatch: {
+        planPairCount: 3,
+        planCaseCount: 6,
+        batchIndex: 0,
+        batchCount: 3,
+        pairsPerBatch: 1,
+      },
+      cases: first.map((row) => ({ scenarioId: row.scenarioId, study: row.study })),
+    };
+    const manifest = input as unknown as Parameters<typeof verifyPartialV4Plan>[0];
+    await expect(verifyPartialV4Plan(manifest)).resolves.toBeUndefined();
+    await expect(
+      verifyPartialV4Plan({ ...manifest, studyPlan: { ...manifest.studyPlan!, planSha256: "f".repeat(64) } }),
+    ).rejects.toThrow();
+    const skipped = {
+      ...input,
+      cases: expected.slice(2, 4).map((row) => ({ scenarioId: row.scenarioId, study: row.study })),
+    };
+    await expect(verifyPartialV4Plan(skipped as unknown as typeof manifest)).rejects.toThrow();
+    const drift = structuredClone(input);
+    drift.cases[0]!.study = {
+      ...drift.cases[0]!.study!,
+      actorModelId: "openrouter/example/foreign-model",
+    } as unknown as (typeof drift.cases)[0]["study"];
+    await expect(verifyPartialV4Plan(drift as unknown as typeof manifest)).rejects.toThrow();
+  });
   it("selects every small V2 identity trigger without judge-dependent filtering or adjacent twins", () => {
     const cases = ["one", "two"].flatMap((pairId) =>
       ["a", "b"].map((arm) => ({
