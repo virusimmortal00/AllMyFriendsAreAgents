@@ -1,0 +1,908 @@
+{
+  "schemaVersion": 5,
+  "planId": "everyday72",
+  "orderSeed": 2322044,
+  "maxCases": 72,
+  "blocks": [
+    {
+      "blockId": "s01",
+      "replicateId": "j",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-home-j",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s02",
+      "replicateId": "j",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-work-j",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s03",
+      "replicateId": "j",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-work-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s04",
+      "replicateId": "j",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-home-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s05",
+      "replicateId": "j",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-home-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s06",
+      "replicateId": "j",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-work-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s07",
+      "replicateId": "j",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "scenarioProfileId": "dispute-work-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s08",
+      "replicateId": "j",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "quoted-home-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s09",
+      "replicateId": "j",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-home-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s10",
+      "replicateId": "j",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-work-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s11",
+      "replicateId": "j",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-work-j",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s12",
+      "replicateId": "j",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-home-j",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "lean-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s01",
+      "replicateId": "g",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s02",
+      "replicateId": "g",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s03",
+      "replicateId": "g",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s04",
+      "replicateId": "g",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s05",
+      "replicateId": "g",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s06",
+      "replicateId": "g",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s07",
+      "replicateId": "g",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "scenarioProfileId": "dispute-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s08",
+      "replicateId": "g",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "quoted-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s09",
+      "replicateId": "g",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s10",
+      "replicateId": "g",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s11",
+      "replicateId": "g",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-work-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s12",
+      "replicateId": "g",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-home-g",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "relevance-v1",
+          "gateProfileId": "relevance-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s01",
+      "replicateId": "p",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-home-p",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s02",
+      "replicateId": "p",
+      "dynamic": "direct",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "direct-work-p",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s03",
+      "replicateId": "p",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-work-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s04",
+      "replicateId": "p",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-home-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s05",
+      "replicateId": "p",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-home-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s06",
+      "replicateId": "p",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-work-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s07",
+      "replicateId": "p",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "scenarioProfileId": "dispute-work-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s08",
+      "replicateId": "p",
+      "dynamic": "quoted-name",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "quoted-home-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s09",
+      "replicateId": "p",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "multi-home-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s10",
+      "replicateId": "p",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "broadcast-work-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s11",
+      "replicateId": "p",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "casual-work-p",
+      "rosterOrder": ["codex-sol"],
+      "energy": "low",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    },
+    {
+      "blockId": "s12",
+      "replicateId": "p",
+      "dynamic": "handoff",
+      "arcProfileId": "handoff-choice-v1",
+      "scenarioProfileId": "handoff-home-p",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "social-v1",
+          "roomSystemProfileId": "room-v1",
+          "terminalInstructionProfileId": "contribution-first-v1"
+        }
+      }
+    }
+  ]
+}
