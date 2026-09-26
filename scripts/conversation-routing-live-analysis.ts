@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { TASK_TERMINAL_INSTRUCTIONS } from "../server/conversation.js";
 import { jevProfileMetadata } from "../server/jev-experiment-profiles.js";
+import { CONVERSATION_OPTIONAL_SEATS } from "../shared/conversation-energy.js";
 import {
   type ConversationRating,
   type FrameHumanRating,
@@ -2055,6 +2056,27 @@ export function analyzeQualityStudy(
       )[row.study!.arcProfileId] ?? "unknown"
     );
   };
+  const optionalOpportunity = (row: StudyCase) => {
+    if (row.study?.schemaVersion !== 5) return false;
+    const fixture = largeStudyProfile(row.study.scenarioProfileId);
+    return (
+      fixture.dynamic !== "broadcast" &&
+      CONVERSATION_OPTIONAL_SEATS[row.energy] !== 0 &&
+      row.agentCount >= 2 &&
+      fixture.messages.some((message) => message.expectedDirectAgents.length < row.agentCount)
+    );
+  };
+  if (studyVersion === 5) {
+    for (const factor of ["gate", "agent-prompt"] as const) {
+      const rows = [...group.values()].filter((cases) => cases[0]?.study?.factor === factor).map((cases) => cases[0]!);
+      if (
+        rows.length !== 12 ||
+        rows.filter(optionalOpportunity).length !== 10 ||
+        rows.filter((row) => !optionalOpportunity(row) && dynamicFor(row) === "broadcast").length !== 2
+      )
+        throw new Error("Invalid V5 treatment opportunity matrix.");
+    }
+  }
   const structurallyMatchedBlocks = [...group.entries()].flatMap(([pairId, rows]) => {
     const a = rows.find((row) => row.study!.arm === "a");
     const b = rows.find((row) => row.study!.arm === "b");
@@ -2475,10 +2497,44 @@ export function analyzeQualityStudy(
             blocks: new Set(cases.map((row) => `${row.study!.blockId}\u0000${row.study!.replicateId}`)).size,
             triggers: cases.reduce((sum, row) => sum + row.triggers.length, 0),
             paired: pairedReadout(selectedPairs),
+            ...(studyVersion === 5 && (factor === "gate" || factor === "agent-prompt")
+              ? {
+                  interpretation:
+                    "All-pair descriptive readout includes broadcast negative controls; use leverOpportunity for treatment-capable denominators.",
+                }
+              : {}),
           },
         ];
       }),
     ),
+    ...(studyVersion === 5
+      ? {
+          leverOpportunity: Object.fromEntries(
+            (["gate", "agent-prompt"] as const).map((factor) => {
+              const pairRows = [...group.values()].filter((rows) => rows[0]?.study?.factor === factor);
+              const readout = (eligible: boolean) => {
+                const roomPairs = pairRows.filter((rows) => optionalOpportunity(rows[0]!) === eligible);
+                const pairIds = new Set(roomPairs.map((rows) => rows[0]!.study!.pairId));
+                const triggerPairs = pairs.filter((pair) => pairIds.has(pair.pairId));
+                return {
+                  requestedRoomPairs: roomPairs.length,
+                  matchedTriggerPairs: triggerPairs.length,
+                  paired: pairedReadout(triggerPairs),
+                };
+              };
+              return [
+                factor,
+                {
+                  optionalCapable: readout(true),
+                  noOptionalOpportunityControls: readout(false),
+                  interpretation:
+                    "Structural opportunity follows the closed fixture and optional-seat policy; it does not prove live routing changed. Broadcast gate routing is invariant to the optional filter, while a broadcast prompt may still affect required reply style.",
+                },
+              ];
+            }),
+          ),
+        }
+      : {}),
     ...(studyVersion === 5
       ? {
           byFactorAndTheme: Object.fromEntries(

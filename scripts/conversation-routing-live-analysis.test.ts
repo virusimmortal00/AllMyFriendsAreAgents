@@ -155,6 +155,10 @@ describe("schema-5 everyday analysis and private review", () => {
     expect(report.denominators).toMatchObject({ cases: 72, requestedCasePairs: 36, matchedCasePairs: 36 });
     expect(report.byFactor.jev?.cases).toBe(24);
     expect(report.axes.social_cadence?.human.missing).toBe(72);
+    expect(report.leverOpportunity?.gate?.optionalCapable.requestedRoomPairs).toBe(10);
+    expect(report.leverOpportunity?.gate?.noOptionalOpportunityControls.requestedRoomPairs).toBe(2);
+    expect(report.leverOpportunity?.["agent-prompt"]?.optionalCapable.requestedRoomPairs).toBe(10);
+    expect(report.leverOpportunity?.["agent-prompt"]?.noOptionalOpportunityControls.requestedRoomPairs).toBe(2);
     const locator = reviewLocatorFor(merged);
     const calibration = selectCalibrationReviewQueue(merged, locator, "everyday-seed");
     expect(calibration.queue.reviewIds).toHaveLength(24);
