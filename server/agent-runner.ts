@@ -279,8 +279,11 @@ async function buildPromptBundle(
   const conversationalName = roomAgentEntry(state.roster, agent)?.conversationalName || AGENT_PROFILES[agent]?.conversationalName;
   if (!conversationalName) throw new Error("The participant has no registered conversation name.");
   const profile = { conversationalName };
-  const rosterAgents = enabledRoomAgentIds(normalizeRoomAgentRoster(state.roster));
-  const otherParticipants = rosterAgents.filter((candidate) => candidate !== agent).map(agentScreenName);
+  const roster = normalizeRoomAgentRoster(state.roster);
+  const rosterAgents = enabledRoomAgentIds(roster);
+  const otherParticipants = roster.entries
+    .filter((participant) => participant.enabled && participant.agentId !== agent)
+    .map((participant) => permission === "read-only" ? participant.conversationalName : agentScreenName(participant.agentId));
   const humanNames = state.humans?.map(({ name }) => name) || [];
   const humanDescription = humanNames.length > 0 ? humanNames.join(", ") : "the room's humans";
   const currentStyle = state.settings.participantStyles[agent];
@@ -326,7 +329,9 @@ ${(await currentDiff(state.settings.projectPath, state.deployment?.commitSha)) |
   const styleRule = structuredOutput
     ? `- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. Change it only through the optional structured style field. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit values from the supported AIM 5.x palette. Omit style when keeping your current look.`
     : `- Your current outgoing message-body style is ${JSON.stringify(currentStyle)}. You may change only your own future message style by adding one final single-line directive in this exact form: STYLE: {"fontFamily":"Arial","fontSize":17,"textColor":"#000000","backgroundColor":"#ffffff","bold":false,"italic":false,"underline":false}. Allowed fonts are ${CHAT_FONT_FAMILIES.join(", ")}; size is 12-28; text and highlight colors must be lowercase six-digit hex values supported by the AIM 5.x palette. Unsupported values are ignored. backgroundColor highlights your message text only; it never changes the room. Screen names, timestamps, and local transcript magnification are application-controlled. Omit STYLE when keeping your current look.`;
-  const prompt = `You are ${agentScreenName(agent)} (${profile.conversationalName}) participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription}) and ${otherParticipants.join(", ")}.
+  const actorName = permission === "read-only" ? profile.conversationalName : `${agentScreenName(agent)} (${profile.conversationalName})`;
+  const peerDescription = otherParticipants.length > 0 ? ` and ${otherParticipants.join(", ")}` : "";
+  const prompt = `You are ${actorName} participating in AllMyFriendsAreAgents, a shared room with humans (${humanDescription})${peerDescription}.
 ${agentBehaviorContext()}
 ${basePromptSection}
 ${commandGuide}
