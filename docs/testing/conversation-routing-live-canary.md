@@ -206,3 +206,116 @@ caps. The dry-run shows a conservative planning allowance and whether the
 chosen total watchdog covers it. One failed axis does not erase the other
 axes' scalar results. Human spot-check ratings remain separate from model
 scores.
+
+## Expanded paired study
+
+The [versioned 72-case example](conversation-routing-study-large-v1.json) has
+36 matched pairs. It estimates three distinct observational contrasts, with
+12 pairs each: Jev question `current-v1` versus `lean-v1`, optional gate
+`current-v1` versus `relevance-v1` while both arms use the relevance Jev
+question, and agent prompt `current-v1` versus `social-v1`. Gate pairs use
+rooms with optional participants; they do not pool single-agent direct
+requests into an optional-gate effect. The matrix includes one- through
+four-agent rooms, all seven dynamics, all four energy settings, one- to
+three-message arcs, and repeated fixtures with distinct replicate IDs.
+`agent-exchange-v2` asks each addressed agent for its own tradeoff even when
+only one spoke earlier. The original `agent-exchange-v1` fixture remains
+unchanged, so prior evidence keeps its meaning. Silence is an observed
+outcome, not automatically a routing failure.
+
+A large plan requires `--allow-large-study`; four-agent cases also require
+`--allow-wide-matrix`. The plan ceiling is 144 cases, but each invocation
+selects at most six complete A/B pairs with `--pairs-per-batch` and a
+zero-based `--batch-index`. The example therefore has six batches, indices
+0 through 5. `--max-cases` bounds the full plan, whereas judge calls,
+generation starts, and time are bounded for each selected batch. The runner
+validates the whole plan, selected pair boundaries, model IDs, and caps before
+accessing a credential. A batch emits `pair-complete` only after both arms
+finish. A final scalar manifest carries `studyBatch` with the full-plan
+counts and selected pair IDs; progress records alone are never a completed
+batch.
+
+From a clean committed source tree, first dry-run each batch without a key:
+
+```sh
+for batch in 0 1 2 3 4 5; do
+  pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+    --dry-run --study-plan "$PWD/docs/testing/conversation-routing-study-large-v1.json" \
+    --allow-large-study --allow-wide-matrix \
+    --pairs-per-batch 6 --batch-index "$batch" \
+    --model openrouter/anthropic/claude-haiku-4.5 \
+    --jev-model typesafe/jev-1.13 \
+    --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v2 \
+    --max-cases 72 --max-judge-calls 144 --max-generations 24 \
+    --timeout-ms 120000 --total-timeout-ms 10800000
+done
+```
+
+After separate authorization for paid calls, the same selections can run
+serially with one new private directory per batch. The following shell
+example uses placeholder executable paths and keeps scalar progress, error
+output, final manifests, and private review bundles outside the repository.
+It stops on the first failed batch; do not automatically retry one.
+
+```bash
+set -eu
+umask 077
+private_root=$(mktemp -d "${TMPDIR:-/tmp}/routing-study.XXXXXX")
+opencode=/absolute/path/to/audited/opencode
+secret_launcher=/absolute/path/to/bws-run
+manifest_args=()
+for batch in 0 1 2 3 4 5; do
+  batch_dir=$(mktemp -d "$private_root/batch-${batch}.XXXXXX")
+  AMFAA_CANARY_ALLOW_REAL_PROVIDER=true "$secret_launcher" pnpm exec tsx \
+    scripts/conversation-routing-live-canary.ts \
+    --study-plan "$PWD/docs/testing/conversation-routing-study-large-v1.json" \
+    --allow-large-study --allow-wide-matrix \
+    --pairs-per-batch 6 --batch-index "$batch" \
+    --model openrouter/anthropic/claude-haiku-4.5 \
+    --jev-model typesafe/jev-1.13 \
+    --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v2 \
+    --max-cases 72 --max-judge-calls 144 --max-generations 24 \
+    --timeout-ms 120000 --total-timeout-ms 10800000 \
+    --opencode "$opencode" --secret-launcher "$secret_launcher" \
+    --retain-private-review "$batch_dir/review" \
+    > "$batch_dir/progress.jsonl" 2> "$batch_dir/runner.stderr"
+  node - "$batch_dir/progress.jsonl" "$batch_dir/manifest.json" "$batch" <<'NODE'
+const fs = require('node:fs');
+try {
+  const lines = fs.readFileSync(process.argv[2], 'utf8').trim().split('\n').map(JSON.parse);
+  const manifest = lines.at(-1);
+  const batchIndex = Number(process.argv[4]);
+  if (manifest?.kind !== 'conversation-routing-live-canary' ||
+      manifest.studyBatch?.batchIndex !== batchIndex ||
+      manifest.cases?.length !== 12 ||
+      lines.filter((row) => row.event === 'pair-complete').length !== 6 ||
+      lines.some((row) => row.event === 'case-failed')) throw Error();
+  fs.writeFileSync(process.argv[3], JSON.stringify(manifest) + '\n', { mode: 0o600, flag: 'wx' });
+} catch {
+  process.stderr.write('Completed batch manifest was not verified.\n');
+  process.exitCode = 1;
+}
+NODE
+  manifest_args+=(--manifest "$batch_dir/manifest.json")
+done
+pnpm exec tsx scripts/conversation-routing-live-analysis.ts "${manifest_args[@]}" \
+  > "$private_root/analysis.json"
+```
+
+Retain only final verified `manifest.json` files for aggregate analysis. The
+analysis command uses six `--manifest` arguments and requires the same
+plan, source, models, complete batch-index coverage, and nonoverlapping pair
+IDs. It rejects incomplete or duplicate batches. If a batch stops after one
+arm, its JSONL may contain earlier `pair-complete` records but has no final
+manifest. Preserve that record as an interruption, inspect the closed failure
+category, and resume later by rerunning that whole batch into a fresh private
+directory after authorization; never assemble its partial progress as if the
+missing arm ran. Each batch needs a distinct private review directory. A
+private review pack may read all six directories by repeated directory
+arguments; do not copy their raw text into the repository.
+
+The seed fixes fixture and A/B order, not provider sampling or scheduling.
+Generation-start counts are observed watchdogs, not strict provider-call
+admission. The 144-call judge cap and three-hour timeout apply per batch;
+six batches can cost and take substantially more. No strict dollar cap or
+causal treatment claim follows from these settings.
