@@ -223,6 +223,33 @@ describe("OpenCode runtime contract", () => {
     expect(__testing.opencodeEnvironment(environment, "writable")).toBe(environment);
   });
 
+  it("keeps room identity by default and gates the closed legacy study profile", () => {
+    const production = JSON.parse(__testing.opencodeEnvironment({}, "read-only").OPENCODE_CONFIG_CONTENT!);
+    const productionAgent = production.agent[__testing.roomAgentName];
+    const isolated = { NODE_ENV: "test", AMFAA_ROUTING_STUDY_ISOLATED: "true" };
+    const room = JSON.parse(__testing.opencodeEnvironment({
+      ...isolated,
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+    }, "read-only").OPENCODE_CONFIG_CONTENT!);
+    expect(room.agent[__testing.roomAgentName].prompt).toBe(productionAgent.prompt);
+    const legacy = JSON.parse(__testing.opencodeEnvironment({
+      ...isolated,
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "legacy-v1",
+    }, "read-only").OPENCODE_CONFIG_CONTENT!);
+    expect(legacy.agent[__testing.roomAgentName]).not.toHaveProperty("prompt");
+    expect(legacy.agent[__testing.roomAgentName].permission).toEqual(productionAgent.permission);
+    expect(legacy.agent[__testing.roomAgentName].mode).toBe(productionAgent.mode);
+    for (const environment of [
+      { AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "legacy-v1" },
+      { NODE_ENV: "test", AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1" },
+      { ...isolated, AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "unknown-v1" },
+      { ...isolated, AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "" },
+    ]) {
+      expect(() => __testing.opencodeEnvironment(environment, "read-only")).toThrow("isolated study");
+      expect(() => __testing.opencodeEnvironment(environment, "writable")).toThrow("isolated study");
+    }
+  });
+
   it("does not resume model-compatible sessions without deployment provenance", () => {
     const codex = { agentId: "codex-sol", conversationalName: "Sol", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 1 };
     const openCode = { agentId: "opencode-configured", conversationalName: "OpenCode", modelId: "configured", enabled: true, configurationRevision: 1 };
