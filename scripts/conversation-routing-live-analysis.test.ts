@@ -379,6 +379,26 @@ describe("provider-free conversation canary analysis", () => {
       }
     }
   });
+  it("accepts optional closed failure evidence, rejects private or contradictory fields, and keeps legacy absence", () => {
+    const base = manifest();
+    expect(parseScalarCanaryManifest(base)).toBeTruthy();
+    const failure = { ordinal: 1, origin: "provider", category: "quota", statusCode: 402, providerCode: "insufficient_quota", retryable: false, exitCode: 1, durationMs: 23, healthReason: "usage_exhausted" };
+    const scalar = trigger("jev-on", {
+      generationStarts: 1, generationCompletions: 0, generationFailures: 1,
+      confirmedDeliveredBursts: 0, respondedTurns: 0,
+      noVisibleAttributionV1: { schemaVersion: 1, category: "generation-failed", generations: [{ ordinal: 1, category: "failed" }] },
+      failureEvidenceV1: { schemaVersion: 1, failures: [failure] },
+    });
+    const row = { ...base.cases[0]!, triggers: [scalar] };
+    expect(parseScalarCanaryManifest(manifest({ cases: [row] })).cases[0]!.triggers[0]!.failureEvidenceV1?.failures).toEqual([failure]);
+    for (const invalid of [
+      { ...failure, rawError: "private text" },
+      { ...failure, ordinal: 2 },
+      { ...failure, category: "some-private-model-output" },
+      { ...failure, origin: "process" },
+    ]) expect(() => parseScalarCanaryManifest(manifest({ cases: [{ ...row, triggers: [{ ...scalar, failureEvidenceV1: { schemaVersion: 1, failures: [invalid] } }] }] }))).toThrow();
+  });
+
   it("pairs Jev variants and keeps judge-only and human-rated naturalness separate", () => {
     const scalar = parseScalarCanaryManifest(manifest());
     const ratings = parsePrivateConversationRatings({

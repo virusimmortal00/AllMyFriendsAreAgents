@@ -99,6 +99,22 @@ case and whole-study watchdogs still apply. Failed cases may carry the same
 closed check in their scalar failure record. No model catalog, diagnostic text,
 or token is included.
 
+Completed triggers also carry optional `failureEvidenceV1` for actor generations
+that failed. It records one row per failed generation start, using the start's
+1-based ordinal rather than its private generation ID. Each row contains only a
+closed origin/category and health reason, an allowlisted provider code, numeric
+HTTP status, retryable flag, exit code, and elapsed milliseconds when observed.
+Missing cause data is `unknown` or `null`; a generic `generation.failed` event
+does not establish an upstream provider failure. Private error messages, CLI
+output, response bodies, headers, prompts, and credentials never enter the
+scalar projection. Older final manifests without this field remain valid.
+The health reason is a classification from typed failure facts, not a snapshot
+of the room's later availability state.
+Stock OpenCode CLI JSONL can supply structured provider status/code fields.
+The approved downstream structured SDK lane currently classifies malformed
+output and its own watchdog timeout, but leaves opaque SDK provider failures
+`unknown`; it does not inspect their message or response body for a cause.
+
 The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and

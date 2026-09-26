@@ -3,6 +3,7 @@ import path from "node:path";
 import { PREFLIGHT_REASONS } from "../server/preflight-gate.js";
 import type { PreflightAuditRecord } from "../server/preflight-store.js";
 import { isActiveAgentId } from "../shared/participants.js";
+import type { GenerationFailureDiagnostic } from "../server/generation-failure-diagnostic.js";
 
 type RecordValue = Record<string, unknown>;
 const STREAM_FILE = /^(?:generations|openrouter-provider)(?:\.[A-Za-z0-9_-]+)?\.jsonl$/;
@@ -98,6 +99,8 @@ export interface LiveScenarioResult {
         | "incomplete";
     }>;
   };
+  /** One closed diagnostic per failed start; ordinals replace private generation IDs. */
+  failureEvidenceV1?: { schemaVersion: 1; failures: Array<{ ordinal: number } & GenerationFailureDiagnostic> };
   openCodeObservedInputTokens: number | null;
   openCodeObservedOutputTokens: number | null;
   openCodeObservedReasoningTokens: number | null;
@@ -293,6 +296,29 @@ export function collectLiveScenarioEvidence(input: {
   const cancellations = generationRecords.filter((record) => event(record, "generation.cancelled"));
   const retries = generationRecords.filter((record) => event(record, "generation.retry"));
   const startedIds = new Set(starts.map((record) => record.generationId));
+  if (new Set(failures.map((record) => record.generationId)).size !== failures.length || failures.some((record) => !startedIds.has(record.generationId)))
+    throw new Error("Generation failure correlation is inconsistent.");
+  const origins = new Set(["provider", "process", "structured-output", "local-launch", "unknown"]);
+  const categories = new Set(["authentication", "rate-limit", "quota", "model", "timeout", "server", "transport", "schema", "process-exit", "local-launch", "provider-other", "unknown"]);
+  const healthReasons = new Set(["authentication", "rate_limit", "timeout", "transient_provider", "configuration", "provider_error", "usage_exhausted", "usage_not_included", "account_rate_limit", "unknown"]);
+  const providerCodes = new Set(["insufficient_quota", "free_tier_limit", "account_rate_limit", "usage_not_included"]);
+  const failureEvidence = starts.flatMap((started, index) => {
+    const failed = failures.find((record) => record.generationId === started.generationId);
+    if (!failed) return [];
+    const raw = object(failed.failureDiagnostic);
+    const unknown: GenerationFailureDiagnostic = { origin: "unknown", category: "unknown", statusCode: null, providerCode: null, retryable: null, exitCode: null, durationMs: null, healthReason: "unknown" };
+    if (!raw) return [{ ordinal: index + 1, ...unknown }];
+    if (
+      Object.keys(raw).length !== 8 || !origins.has(raw.origin as string) || !categories.has(raw.category as string) ||
+      !healthReasons.has(raw.healthReason as string) ||
+      (raw.providerCode !== null && !providerCodes.has(raw.providerCode as string)) ||
+      (raw.statusCode !== null && (!Number.isSafeInteger(raw.statusCode) || Number(raw.statusCode) < 100 || Number(raw.statusCode) > 599)) ||
+      (raw.retryable !== null && typeof raw.retryable !== "boolean") ||
+      (raw.exitCode !== null && !Number.isSafeInteger(raw.exitCode)) ||
+      (raw.durationMs !== null && (!Number.isSafeInteger(raw.durationMs) || Number(raw.durationMs) < 0))
+    ) throw new Error("Invalid closed generation failure diagnostic.");
+    return [{ ordinal: index + 1, ...(raw as unknown as GenerationFailureDiagnostic) }];
+  });
   if (
     startedIds.size !== starts.length ||
     completions.some((record) => !startedIds.has(record.generationId)) ||
@@ -445,6 +471,7 @@ export function collectLiveScenarioEvidence(input: {
     generationStarts: starts.length,
     generationCompletions: completions.length,
     generationFailures: failures.length,
+    failureEvidenceV1: { schemaVersion: 1, failures: failureEvidence },
     noVisibleAttributionV1: {
       schemaVersion: 1,
       category: attributionCategory,

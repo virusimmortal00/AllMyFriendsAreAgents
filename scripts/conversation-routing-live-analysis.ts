@@ -96,6 +96,11 @@ type NoVisibleAttribution = {
   category: (typeof ATTRIBUTION_CATEGORIES)[number];
   generations: Array<{ ordinal: number; category: (typeof GENERATION_CATEGORIES)[number] }>;
 };
+const FAILURE_ORIGINS = ["provider", "process", "structured-output", "local-launch", "unknown"] as const;
+const FAILURE_CATEGORIES = ["authentication", "rate-limit", "quota", "model", "timeout", "server", "transport", "schema", "process-exit", "local-launch", "provider-other", "unknown"] as const;
+const FAILURE_HEALTH_REASONS = ["authentication", "rate_limit", "timeout", "transient_provider", "configuration", "provider_error", "usage_exhausted", "usage_not_included", "account_rate_limit", "unknown"] as const;
+const FAILURE_PROVIDER_CODES = ["insufficient_quota", "free_tier_limit", "account_rate_limit", "usage_not_included"] as const;
+type FailureEvidence = { schemaVersion: 1; failures: Array<{ ordinal: number; origin: (typeof FAILURE_ORIGINS)[number]; category: (typeof FAILURE_CATEGORIES)[number]; statusCode: number | null; providerCode: (typeof FAILURE_PROVIDER_CODES)[number] | null; retryable: boolean | null; exitCode: number | null; durationMs: number | null; healthReason: (typeof FAILURE_HEALTH_REASONS)[number] }> };
 interface ScalarTrigger {
   scenarioId: string;
   runId: string;
@@ -126,6 +131,7 @@ interface ScalarTrigger {
   confirmedDeliveredBursts: number;
   requiredTargetCount: number;
   noVisibleAttributionV1: NoVisibleAttribution | null;
+  failureEvidenceV1: FailureEvidence | null;
   combined: {
     openCodeObservedTotalPlusJevPromptCompletionTokens: number | null;
     costUsd: number | null;
@@ -277,6 +283,36 @@ function parseNoVisibleAttribution(input: unknown, trigger: Record<string, unkno
     expected = "completed-no-delivery";
   if (row.category !== expected) throw new Error("Contradictory scalar no-visible attribution.");
   return { schemaVersion: 1, category: expected, generations };
+}
+function parseFailureEvidence(input: unknown, trigger: Record<string, unknown>): FailureEvidence {
+  const row = object(input, ["schemaVersion", "failures"]);
+  const failureCount = integer(trigger.generationFailures, 100);
+  const starts = integer(trigger.generationStarts, 100);
+  if (Object.keys(row).length !== 2 || row.schemaVersion !== 1 || !Array.isArray(row.failures) || failureCount === null || starts === null || row.failures.length !== failureCount)
+    throw new Error("Invalid scalar failure evidence.");
+  const seen = new Set<number>();
+  const failures = row.failures.map((entry: unknown) => {
+    const record = object(entry, ["ordinal", "origin", "category", "statusCode", "providerCode", "retryable", "exitCode", "durationMs", "healthReason"]);
+    if (Object.keys(record).length !== 9 || !Number.isSafeInteger(record.ordinal) || Number(record.ordinal) < 1 || Number(record.ordinal) > starts || seen.has(Number(record.ordinal)) ||
+      !FAILURE_ORIGINS.includes(record.origin as FailureEvidence["failures"][number]["origin"]) ||
+      !FAILURE_CATEGORIES.includes(record.category as FailureEvidence["failures"][number]["category"]) ||
+      !FAILURE_HEALTH_REASONS.includes(record.healthReason as FailureEvidence["failures"][number]["healthReason"]) ||
+      (record.providerCode !== null && !FAILURE_PROVIDER_CODES.includes(record.providerCode as NonNullable<FailureEvidence["failures"][number]["providerCode"]>)) ||
+      (record.statusCode !== null && (!Number.isSafeInteger(record.statusCode) || Number(record.statusCode) < 100 || Number(record.statusCode) > 599)) ||
+      (record.retryable !== null && typeof record.retryable !== "boolean") ||
+      (record.exitCode !== null && !Number.isSafeInteger(record.exitCode)) ||
+      (record.durationMs !== null && (!Number.isSafeInteger(record.durationMs) || Number(record.durationMs) < 0)) ||
+      (record.origin !== "provider" && (record.statusCode !== null || record.providerCode !== null || record.retryable !== null)))
+      throw new Error("Invalid scalar failure evidence.");
+    seen.add(Number(record.ordinal));
+    return record as FailureEvidence["failures"][number];
+  });
+  if (trigger.noVisibleAttributionV1 !== undefined) {
+    const attribution = parseNoVisibleAttribution(trigger.noVisibleAttributionV1, trigger);
+    if (failures.some((failure) => attribution.generations[failure.ordinal - 1]?.category !== "failed"))
+      throw new Error("Contradictory scalar failure evidence.");
+  }
+  return { schemaVersion: 1, failures };
 }
 function id(value: unknown): value is string {
   return typeof value === "string" && ID.test(value);
@@ -834,6 +870,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         "openCodeUsageCoverage",
         "openCodeTotalCoverage",
         "noVisibleAttributionV1",
+        "failureEvidenceV1",
       ]);
       const current = trigger.openCodeUsageProvenance === "step-fields-v1";
       if (
@@ -866,6 +903,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         trigger.noVisibleAttributionV1 === undefined
           ? null
           : parseNoVisibleAttribution(trigger.noVisibleAttributionV1, trigger);
+      const failureEvidenceV1 = trigger.failureEvidenceV1 === undefined ? null : parseFailureEvidence(trigger.failureEvidenceV1, trigger);
       const classifier = object(trigger.classifier, [
         "outcome",
         "reason",
@@ -991,6 +1029,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
           })(),
         requiredTargetCount: trigger.requiredAddressAgents.length,
         noVisibleAttributionV1,
+        failureEvidenceV1,
         combined: {
           openCodeObservedTotalPlusJevPromptCompletionTokens: totalTokensComplete
             ? actor.totalTokens! + (noJev ? 0 : jev.inputTokens! + jev.outputTokens!)

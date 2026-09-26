@@ -6,6 +6,11 @@ without adding private room bundles or provider output. The analysis command is
 provider-free: it reads that manifest and optional private human ratings, then
 prints only bounded aggregate fields and a deterministic review queue.
 
+An optional `failureEvidenceV1` records one closed cause per failed actor start.
+The parser checks ordinals and counts against generation evidence, rejects
+unknown or private fields, and accepts older manifests without it. A generic
+generation failure is `unknown`, not proof of an upstream provider error.
+
 ```sh
 pnpm exec tsx scripts/conversation-routing-live-analysis.ts \
   --manifest /absolute/path/to/scalar-manifest.json \
