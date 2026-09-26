@@ -5,6 +5,7 @@ import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
 import {
   buildStudyFollowups,
   expandStudyPlan,
+  modelScenarioProfileDigest,
   parseStudyPlan,
   STUDY_AGENT_BASE_PROMPTS,
   STUDY_ARC_PROFILES,
@@ -42,6 +43,64 @@ function plan(
 }
 
 describe("closed live study plan", () => {
+  it("isolates the V4 actor model across one known regression and two holdouts", async () => {
+    const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-model-v4.json", "utf8"));
+    const plan = parseStudyPlan(raw);
+    expect(plan.schemaVersion).toBe(4);
+    expect(studyPlanDigest(plan)).toBe("2476d61f16ed6109999d70e7f27e45fa6b734490b0a72c892a45189ed7c8c2cc");
+    const cases = expandStudyPlan(plan);
+    expect(cases).toHaveLength(6);
+    expect(new Set(cases.map(({ study }) => study?.pairId)).size).toBe(3);
+    expect(cases.filter(({ study }) => study?.order === "ab")).toHaveLength(2);
+    expect(cases.filter(({ study }) => study?.order === "ba")).toHaveLength(4);
+    for (let index = 0; index < cases.length; index += 2) {
+      const [a, b] = [cases[index]!, cases[index + 1]!];
+      expect(a.text).toBe(b.text);
+      expect(a.rosterOrder).toEqual(["codex-sol"]);
+      expect(a.study?.factor).toBe("actor-model");
+      const left = a.study as Extract<NonNullable<typeof a.study>, { schemaVersion: 4 }>;
+      const right = b.study as typeof left;
+      expect(left.scenarioProfileDigest).toBe(right.scenarioProfileDigest);
+      expect(left.jevProfileDigest).toBe(right.jevProfileDigest);
+      expect(left.gateProfileDigest).toBe(right.gateProfileDigest);
+      expect(left.agentPromptProfileDigest).toBe(right.agentPromptProfileDigest);
+      expect(left.roomSystemProfileDigest).toBe(right.roomSystemProfileDigest);
+      expect(left.terminalInstructionProfileDigest).toBe(right.terminalInstructionProfileDigest);
+      expect(new Set([left.actorModelId, right.actorModelId])).toEqual(
+        new Set(["openrouter/anthropic/claude-haiku-4.5", "openrouter/anthropic/claude-sonnet-4.6"]),
+      );
+    }
+    expect(() => modelScenarioProfileDigest("unknown" as never)).toThrow();
+    expect(() =>
+      parseStudyPlan({
+        ...raw,
+        blocks: [
+          {
+            ...raw.blocks[0],
+            arms: {
+              ...raw.blocks[0].arms,
+              b: { ...raw.blocks[0].arms.b, actorModelId: "openrouter/anthropic/claude-opus-4.6" },
+            },
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseStudyPlan({
+        ...raw,
+        blocks: [
+          {
+            ...raw.blocks[0],
+            arms: {
+              ...raw.blocks[0].arms,
+              b: { ...raw.blocks[0].arms.b, gateProfileId: "off-v1" },
+            },
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() => parseStudyPlan({ ...raw, blocks: raw.blocks.slice(0, 2) })).toThrow();
+  });
   it("keeps a six-case terminal study to one instruction factor with fresh-room case IDs", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-terminal-v3.json", "utf8"));
     const parsed = parseStudyPlan(raw);

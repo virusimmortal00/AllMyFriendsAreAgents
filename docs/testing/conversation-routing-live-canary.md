@@ -192,6 +192,65 @@ passing samples.
 
 ## Closed study plans
 
+The [model-only V4 plan](conversation-routing-study-model-v4.json) is a new
+six-case study. It pairs pinned Claude Haiku 4.5 and Claude Sonnet 4.6 in three
+fresh-room pairs. One prompt is the V3 drafting request, labeled a **known
+regression case** because the earlier contribution-first arm still announced
+drafting; the meal and bus-time prompts are **previously unused holdouts**.
+Every arm uses the same contribution-first-v1 terminal instruction, room-v1
+identity, current Jev and gate profiles, base prompt, one Riley card, low
+energy, direct routing, read-only permissions, and one-generation cap. Only the
+actor model changes. The plan admits exactly the two pinned model IDs and all
+three domains; unknown IDs, free text, or a second changed profile fail closed.
+
+Preview without credentials or provider calls, one whole pair at a time:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --study-plan "$PWD/docs/testing/conversation-routing-study-model-v4.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --batch-index 0 --pairs-per-batch 1 \
+  --max-cases 6 --max-judge-calls 10 --max-generations 1 \
+  --timeout-ms 120000 --total-timeout-ms 900000
+```
+
+Use batch indices 0, 1, and 2 after inspecting the previous pair. The order
+seed shuffles domain order and balances AB/BA execution; it does not control
+model sampling. The global `--model` is the required Haiku default; each V4
+case records its explicit actor model in `study.actorModelId`, `actorModel`,
+and `actorModelProvenanceV1`. The provenance records the selected roster and
+wrapper model IDs. Provider-resolved actor identity is `null` because the
+current OpenCode collector does not expose a trustworthy value. The global
+manifest actor model remains the declared default, not a claim that all V4
+cases use Haiku. The independent judge must differ from both actor models.
+
+After explicit live-provider authorization and after the V4 analysis and blind
+review support is ready, run one pair with the audited paths and a new private
+review directory outside the repository:
+
+```sh
+AMFAA_CANARY_ALLOW_REAL_PROVIDER=true bws-run pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --study-plan "$PWD/docs/testing/conversation-routing-study-model-v4.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --batch-index 0 --pairs-per-batch 1 \
+  --opencode /absolute/path/to/audited/opencode \
+  --secret-launcher /absolute/path/to/bws-run \
+  --retain-private-review /PRIVATE/model-review-batch-0 \
+  --max-cases 6 --max-judge-calls 10 --max-generations 1 \
+  --timeout-ms 120000 --total-timeout-ms 900000
+```
+
+Use a fresh review directory and indices 1 and 2 for later pairs. Keep each
+batch's scalar manifest and private text
+boundary traces. Stop if the cumulative observed spend nears a soft **$0.50
+ceiling for all six cases**; the watchdogs and generation caps do not enforce
+dollars. Treat the known case and holdouts separately. Six stochastic cases
+cannot establish a causal model-quality claim.
+
 The [terminal-instruction V3 plan](conversation-routing-study-terminal-v3.json)
 is a bounded six-case follow-up to the everyday direct smoke. It pairs the
 current generic task-turn instruction with a contribution-first equivalent for
