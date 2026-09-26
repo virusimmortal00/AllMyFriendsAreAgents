@@ -65,6 +65,23 @@ describe("independent frame-integrity judge", () => {
     expect(JSON.stringify(result)).not.toContain(privateCase.messages[1].text);
   });
 
+  it("sends card names rather than canonical IDs for the opt-in profile", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      const content = JSON.parse(request.messages[1].content);
+      expect(content.messages.map(({ speaker }: { speaker: string }) => speaker)).toEqual(["Avery", "Arlo"]);
+      expect(content.qualityContext.roster).toEqual(["Arlo"]);
+      expect(request.messages[1].content).not.toContain("agent-a");
+      return response(good);
+    });
+    await judgeConversationFrameIntegrity(privateCase, {
+      ...options,
+      conversationalNamesOnly: true,
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("keeps no-visible and no-human cases out of the frame score denominator without a provider call", async () => {
     const fetchImpl = vi.fn();
     const quiet = { ...privateCase, messages: privateCase.messages.slice(0, 1) };

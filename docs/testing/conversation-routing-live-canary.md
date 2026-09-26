@@ -321,6 +321,63 @@ audited absolute `--opencode` and `--secret-launcher`, the explicit
 `AMFAA_CANARY_ALLOW_REAL_PROVIDER=true` opt-in, and launch-time credentials as
 documented above. Do not launch it merely to inspect the plan.
 
+The separate [everyday and practical identity plan](conversation-routing-study-everyday-v3.json)
+keeps the same closed V2 identity contrast and uses the opt-in
+`everyday-chat-v3` scenario profile. Its six pairs cover an invite agenda,
+shared notes, a dinner idea, a casual laundry update, a train departure, and a
+meeting format choice. Each message supplies its own context; later human
+messages make sense even if no agent answered an earlier one. The exchange
+invites Riley and Jordan to address each other's points when present. The meeting
+prompt gives them distinct priorities, but actual disagreement and multiple
+visible speakers are outcomes to observe, not guaranteed properties of a case.
+The laundry continuation uses four participants and lively energy to include
+the optional multi-speaker setting that motivated this identity check.
+Riley, Jordan, Casey, and Morgan are conversational card names for one configured actor;
+they do not identify separate model providers. The quality and frame judges see
+those names in their request context, while the private evidence retains the
+canonical agent IDs for correlation. Existing V1 and garden V2 plans
+and digests remain unchanged.
+
+Inspect this plan without credentials or provider calls:
+
+```bash
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --allow-wide-matrix \
+  --study-plan "$PWD/docs/testing/conversation-routing-study-everyday-v3.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --max-cases 12 --max-judge-calls 120 --max-generations 18 \
+  --timeout-ms 120000 --total-timeout-ms 9000000
+```
+
+It schedules 12 cases, 24 human triggers, and at most 120 judge calls. A
+single custom delivery smoke can select the same closed wording with
+`--case direct:1:low:enforce:jev-on --scenario-profile everyday-chat-v3`.
+The profile selector is accepted only with `--case`; omitting it retains the
+original custom-case wording.
+
+After the provider-free plan inspection, use this one-case delivery smoke only
+when live provider use is authorized and the audited executable paths are known:
+
+```sh
+AMFAA_CANARY_ALLOW_REAL_PROVIDER=true bws-run pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --case direct:1:low:enforce:jev-on --scenario-profile everyday-chat-v3 \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --opencode /absolute/path/to/audited/opencode \
+  --secret-launcher /absolute/path/to/bws-run \
+  --max-cases 1 --max-generations 1 --timeout-ms 120000 --require-visible
+```
+
+`--require-visible` is only for the delivery smoke. The paired study must
+retain quiet outcomes. Run one complete pair at a time using the dry-run
+command above with `--pairs-per-batch 1 --batch-index 0`, then increase the
+batch index through `5` for subsequent pairs. Before each next pair, inspect
+the previous pair's scalar case status, delivery evidence, and typed
+actor-failure evidence. Confirmed quiet or yield is a valid observation. Stop
+for actor execution failure or missing or inconsistent delivery evidence;
+shell success alone is insufficient. The live batch additionally needs the audited `--opencode` and
+`--secret-launcher` paths and the provider opt-in described above.
+
 ## Expanded paired study
 
 The [versioned 72-case example](conversation-routing-study-large-v1.json) has

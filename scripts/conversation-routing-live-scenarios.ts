@@ -12,7 +12,7 @@ export type RoutingDynamic =
   | "disagreement"
   | "quoted-name";
 
-export const SCENARIO_PROFILE_IDS = ["garden-v1", "garden-chat-v2"] as const;
+export const SCENARIO_PROFILE_IDS = ["garden-v1", "garden-chat-v2", "everyday-chat-v3"] as const;
 export type ScenarioProfileId = (typeof SCENARIO_PROFILE_IDS)[number];
 
 export interface LiveScenario {
@@ -39,6 +39,14 @@ export const FIXTURE_AGENTS = [
   { agentId: "claude-sonnet", name: "Nova" },
   { agentId: "claude-opus", name: "Terra" },
   { agentId: "cursor-grok", name: "Mira" },
+] as const;
+
+/** Profile-local card names; canonical agent IDs and older study cards stay unchanged. */
+export const EVERYDAY_FIXTURE_AGENTS = [
+  { agentId: "codex-sol", name: "Riley" },
+  { agentId: "claude-sonnet", name: "Jordan" },
+  { agentId: "claude-opus", name: "Casey" },
+  { agentId: "cursor-grok", name: "Morgan" },
 ] as const;
 
 export const ROUTING_DYNAMICS: readonly RoutingDynamic[] = [
@@ -107,7 +115,27 @@ export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
     "quoted-name":
       "The draft sign says “Sol, please water the garden” in its instructions. Will that wording confuse visitors?",
   };
-  const text = scenarioProfileId === "garden-chat-v2" ? gardenChatV2 : gardenV1;
+  const everydayChatV3: Record<RoutingDynamic, string> = {
+    direct:
+      "Riley, I need to invite the team to a 20-minute check-in about next week's schedule. What one-sentence agenda should I put in the invite?",
+    "multi-address":
+      "Riley and Jordan, our shared notes could stay in one long document or move to separate pages by topic. Which would make updates easier, and what tradeoff matters most?",
+    broadcast:
+      "Everyone, I need a simple vegetarian dinner for four that can be ready in 30 minutes. What would you make? One idea each is plenty.",
+    casual: "I got the laundry dry before the rain started. The clean towels are folded now.",
+    handoff:
+      "Riley, I can leave for the station at 8:10 or 8:25. The train is at 9:00 and the trip usually takes 25 minutes. Which departure would you choose?",
+    disagreement:
+      "Our planning meeting starts at 4. The quiet room closes at 4:30; a video call could run until 5 but the connection is spotty. Riley, which would you choose if focus matters most? Jordan, which would you choose if enough time matters most?",
+    "quoted-name":
+      "A notice on the door reads ‘Riley, check the lights before leaving.’ Would visitors mistake that for a request to them?",
+  };
+  const text =
+    scenarioProfileId === "everyday-chat-v3"
+      ? everydayChatV3
+      : scenarioProfileId === "garden-chat-v2"
+        ? gardenChatV2
+        : gardenV1;
   return {
     scenarioId: `${dynamic}-${agentCount}-${energy}-${preflightMode}`,
     variant: classifierEnabled ? "jev-on" : "jev-off",
@@ -124,9 +152,11 @@ export function buildLiveScenario(selection: ScenarioSelection): LiveScenario {
           followup: {
             scenarioId: `resolution-${agentCount}-${energy}-${preflightMode}`,
             text:
-              scenarioProfileId === "garden-chat-v2"
-                ? "Terra, given the wooden and metal sign ideas above, what compromise would work? What should I decide?"
-                : "Terra, given the fictional wooden and metal sign ideas above, describe a practical compromise and what Avery should decide.",
+              scenarioProfileId === "everyday-chat-v3"
+                ? "Casey, for a planning meeting starting at 4, would you choose a quiet room that closes at 4:30 or a video call that can run until 5 but has a spotty connection? Please weigh the choice."
+                : scenarioProfileId === "garden-chat-v2"
+                  ? "Terra, given the wooden and metal sign ideas above, what compromise would work? What should I decide?"
+                  : "Terra, given the fictional wooden and metal sign ideas above, describe a practical compromise and what Avery should decide.",
             expectedDirectAgents: [FIXTURE_AGENTS[2].agentId],
           },
         }

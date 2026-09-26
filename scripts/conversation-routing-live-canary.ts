@@ -31,6 +31,7 @@ import {
 } from "./conversation-routing-live-judge-v2.js";
 import {
   buildLiveScenario,
+  EVERYDAY_FIXTURE_AGENTS,
   FIXTURE_AGENTS,
   type LiveScenario,
   pilotScenarios,
@@ -122,9 +123,9 @@ export function isolatedRoomSystemProfileEnvironment(study: StudyCaseMetadata | 
   if (!study || study.schemaVersion === 1) return {};
   if (
     study.factor !== "room-system" ||
-    study.scenarioProfileId !== "garden-chat-v2" ||
+    (study.scenarioProfileId !== "garden-chat-v2" && study.scenarioProfileId !== "everyday-chat-v3") ||
     !STUDY_ROOM_SYSTEM_PROFILES.includes(study.roomSystemProfileId) ||
-    study.scenarioProfileDigest !== scenarioProfileDigest() ||
+    study.scenarioProfileDigest !== scenarioProfileDigest(study.scenarioProfileId) ||
     study.roomSystemProfileDigest !== roomSystemProfileDigest(study.roomSystemProfileId)
   )
     throw new Error("Invalid isolated room system study profile.");
@@ -166,7 +167,7 @@ export function matchesPinnedJevResolution(requested: string, resolved: string):
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() + 1 === month && parsed.getUTCDate() === day;
 }
 
-function customScenario(raw: string): LiveScenario {
+function customScenario(raw: string, scenarioProfileId?: "everyday-chat-v3"): LiveScenario {
   const parts = raw.split(":");
   if (parts.length !== 5) throw new Error("Custom case must be dynamic:agents:energy:mode:jev-on|jev-off.");
   const [dynamic, rawCount, energy, preflightMode, classifier] = parts;
@@ -187,6 +188,7 @@ function customScenario(raw: string): LiveScenario {
     energy: energy as LiveScenario["energy"],
     preflightMode: preflightMode as LiveScenario["preflightMode"],
     classifierEnabled: classifier === "jev-on",
+    ...(scenarioProfileId ? { scenarioProfileId } : {}),
   });
 }
 
@@ -209,6 +211,7 @@ export function parseLiveCanaryOptions(
   ]);
   const valued = new Set([
     "--case",
+    "--scenario-profile",
     "--model",
     "--opencode",
     "--secret-launcher",
@@ -244,6 +247,9 @@ export function parseLiveCanaryOptions(
     throw new Error("Choose one pilot, case list, or validated study plan.");
   if (studyPlan && flags.has("--require-visible"))
     throw new Error("Study plans must retain quiet outcomes; --require-visible is not allowed.");
+  const scenarioProfileId = values.get("--scenario-profile")?.[0];
+  if (scenarioProfileId && (scenarioProfileId !== "everyday-chat-v3" || !values.has("--case")))
+    throw new Error("Custom case scenario profile must be everyday-chat-v3.");
   const allowWideMatrix = flags.has("--allow-wide-matrix");
   const allowLargeStudy = flags.has("--allow-large-study");
   if (allowLargeStudy && !studyPlan) throw new Error("Large-study opt-in requires a validated study plan.");
@@ -251,7 +257,9 @@ export function parseLiveCanaryOptions(
     ? expandStudyPlan(studyPlan)
     : flags.has("--pilot")
       ? pilotScenarios()
-      : (values.get("--case") ?? []).map(customScenario);
+      : (values.get("--case") ?? []).map((raw) =>
+          customScenario(raw, scenarioProfileId as "everyday-chat-v3" | undefined),
+        );
   if (!allowWideMatrix && allCases.some(({ agentCount }) => agentCount > 3))
     throw new Error("Four-agent cases require --allow-wide-matrix.");
   const batchIndexRaw = values.get("--batch-index")?.[0];
@@ -868,6 +876,7 @@ export function buildPrivateReviewPayload(
   followup: boolean,
   qualityV2: boolean,
 ) {
+  const fixtureAgents = scenario.scenarioProfileId === "everyday-chat-v3" ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
   const v1 = parsePrivateJudgeCase({
     schemaVersion: 1,
     scenarioId: result.scenarioId,
@@ -895,7 +904,7 @@ export function buildPrivateReviewPayload(
             scenario.rosterOrder ?? FIXTURE_AGENTS.slice(0, scenario.agentCount).map(({ agentId }) => agentId)
           ).map((agentId) => ({
             agentId,
-            conversationalName: FIXTURE_AGENTS.find((agent) => agent.agentId === agentId)!.name,
+            conversationalName: fixtureAgents.find((agent) => agent.agentId === agentId)!.name,
           })),
         },
       })
@@ -961,9 +970,10 @@ async function runCase(
       },
       "fixture-owner",
     );
+    const fixtureAgents = scenario.scenarioProfileId === "everyday-chat-v3" ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
     const selectedAgents = scenario.rosterOrder
-      ? scenario.rosterOrder.map((agentId) => FIXTURE_AGENTS.find((entry) => entry.agentId === agentId)!)
-      : FIXTURE_AGENTS.slice(0, scenario.agentCount);
+      ? scenario.rosterOrder.map((agentId) => fixtureAgents.find((entry) => entry.agentId === agentId)!)
+      : fixtureAgents.slice(0, scenario.agentCount);
     const roster = selectedAgents.map(({ agentId, name }) => ({
       agentId,
       conversationalName: name,
@@ -1179,6 +1189,7 @@ async function runCase(
             apiKey: credential,
             signal: abort,
             timeoutMs: 30_000,
+            conversationalNamesOnly: scenario.scenarioProfileId === "everyday-chat-v3",
           };
           if (options.judgeRubric !== "v1") {
             if (!result.runId) throw new Error("Quality judge requires a correlated run ID.");

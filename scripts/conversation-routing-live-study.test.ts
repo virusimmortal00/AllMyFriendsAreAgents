@@ -8,6 +8,7 @@ import {
   parseStudyPlan,
   STUDY_AGENT_BASE_PROMPTS,
   STUDY_ARC_PROFILES,
+  scenarioProfileDigest,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
 
@@ -54,6 +55,8 @@ describe("closed live study plan", () => {
   it("validates and balances the closed identity v2 pairs without changing other factors", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-identity-v2.json", "utf8"));
     const plan = parseStudyPlan(raw);
+    expect(studyPlanDigest(plan)).toBe("16b5e5088de45a56cebdda89e76eb93ef9eead4fd35710cf16aa6651dfeab005");
+    expect(scenarioProfileDigest()).toBe("16dad94378722e4717b650c199a78e39c04e29fe7c70c58bab4fdd51751e2c26");
     expect(plan.schemaVersion).toBe(2);
     const cases = expandStudyPlan(plan);
     expect(cases).toHaveLength(12);
@@ -92,6 +95,58 @@ describe("closed live study plan", () => {
     ).toHaveLength(2);
     expect(cases.filter(({ dynamic }) => dynamic === "broadcast")).toHaveLength(2);
     expect(cases.every(({ text }) => !/fictional|eval|simulation|benchmark/i.test(text))).toBe(true);
+  });
+
+  it("keeps the new everyday identity plan closed, paired, and coherent after silence", async () => {
+    const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-everyday-v3.json", "utf8"));
+    const plan = parseStudyPlan(raw);
+    expect(studyPlanDigest(plan)).toBe("8fb86eea3e63ed8ff5f105ebf25555ac75b0eb2502d964c97e51fc2719d2f546");
+    expect(scenarioProfileDigest("everyday-chat-v3")).toBe(
+      "c85abc97b1c37bcb2e8e95edfff0b375195d83c33f9f84596fe6be9469de97da",
+    );
+    const cases = expandStudyPlan(plan);
+    expect(cases).toHaveLength(12);
+    expect(new Set(cases.map(({ study }) => study?.pairId)).size).toBe(6);
+    expect(cases.filter(({ study }) => study?.order === "ab")).toHaveLength(6);
+    expect(cases.filter(({ study }) => study?.order === "ba")).toHaveLength(6);
+    expect(new Set(cases.map(({ dynamic }) => dynamic))).toEqual(
+      new Set(["direct", "multi-address", "broadcast", "casual", "handoff", "disagreement"]),
+    );
+    expect(
+      cases.filter(
+        ({ dynamic, agentCount, energy }) => dynamic === "casual" && agentCount === 4 && energy === "lively",
+      ),
+    ).toHaveLength(2);
+    expect(cases.reduce((sum, scenario) => sum + 1 + (scenario.scriptedFollowups?.length ?? 0), 0)).toBe(24);
+    for (let index = 0; index < cases.length; index += 2) {
+      const a = cases[index]!,
+        b = cases[index + 1]!;
+      expect(a.study?.pairId).toBe(b.study?.pairId);
+      expect(a.text).toBe(b.text);
+      expect(a.scriptedFollowups?.map(({ text, expectedDirectAgents }) => ({ text, expectedDirectAgents }))).toEqual(
+        b.scriptedFollowups?.map(({ text, expectedDirectAgents }) => ({ text, expectedDirectAgents })),
+      );
+      expect(a.rosterOrder).toEqual(b.rosterOrder);
+      expect(a.study).toMatchObject({ schemaVersion: 2, scenarioProfileId: "everyday-chat-v3", factor: "room-system" });
+      expect(
+        new Set([
+          a.study?.schemaVersion === 2 && a.study.roomSystemProfileId,
+          b.study?.schemaVersion === 2 && b.study.roomSystemProfileId,
+        ]),
+      ).toEqual(new Set(["legacy-v1", "room-v1"]));
+      for (const message of [a.text, ...(a.scriptedFollowups ?? []).map(({ text }) => text)]) {
+        expect(message).not.toMatch(
+          /fictional|test|eval|simulation|benchmark|as (you|we) (said|discussed)|ideas above/i,
+        );
+      }
+    }
+    const exchange = cases.find(({ dynamic }) => dynamic === "multi-address")!;
+    expect(exchange.scriptedFollowups?.[0]?.text).toContain("one long document or separate pages by topic");
+    expect(exchange.scriptedFollowups?.[0]?.text).toContain("if one was made");
+    const mediator = cases.find(({ dynamic }) => dynamic === "disagreement")!;
+    expect(mediator.scriptedFollowups?.[0]?.text).toContain("quiet room that closes at 4:30");
+    expect(mediator.scriptedFollowups?.[0]?.text).toContain("video call that can run until 5");
+    expect(() => parseStudyPlan({ ...raw, blocks: [{ ...raw.blocks[0], scenarioProfileId: "unreviewed" }] })).toThrow();
   });
 
   it("rejects half-wired identity studies before expansion", () => {

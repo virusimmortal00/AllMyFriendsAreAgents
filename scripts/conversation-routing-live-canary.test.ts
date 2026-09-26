@@ -631,6 +631,33 @@ describe("routing canary selection", () => {
     });
     expect(JSON.stringify(payload)).not.toMatch(/gateProfileId|relevance-v1|factor|study/);
   });
+  it("passes the everyday profile's card names to private quality review", () => {
+    const scenario = buildLiveScenario({
+      dynamic: "multi-address",
+      agentCount: 2,
+      energy: "balanced",
+      preflightMode: "enforce",
+      classifierEnabled: true,
+      scenarioProfileId: "everyday-chat-v3",
+    });
+    const payload = buildPrivateReviewPayload(
+      scenario,
+      { scenarioId: scenario.scenarioId, runId: "run_fixture" } as LiveScenarioResult,
+      scenario.text,
+      scenario.expectedDirectAgents,
+      [{ speaker: "you", kind: "chat", text: scenario.text }],
+      false,
+      true,
+    );
+    expect(payload).toMatchObject({
+      qualityContext: {
+        roster: [
+          { agentId: "codex-sol", conversationalName: "Riley" },
+          { agentId: "claude-sonnet", conversationalName: "Jordan" },
+        ],
+      },
+    });
+  });
   it("prints a credential-free closed study dry-run with ordering and judge-call budget", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-study-test-"));
     const file = path.join(root, "plan.json");
@@ -821,6 +848,24 @@ describe("routing canary selection", () => {
     expect(() =>
       parseLiveCanaryOptions(
         [...base, "--case", "direct:1:low:enforce:jev-on", "--case", "direct:1:low:enforce:jev-on"],
+        {},
+      ),
+    ).toThrow();
+  });
+
+  it("allows only the closed everyday profile for a custom delivery smoke", () => {
+    const selection = [...base, "--case", "direct:1:low:enforce:jev-on"];
+    const ordinary = parseLiveCanaryOptions(selection, {});
+    expect(ordinary.cases[0]?.scenarioProfileId).toBeUndefined();
+    expect(ordinary.cases[0]?.text).toContain("fictional garden path");
+    const selected = parseLiveCanaryOptions([...selection, "--scenario-profile", "everyday-chat-v3"], {});
+    expect(selected.cases[0]?.scenarioProfileId).toBe("everyday-chat-v3");
+    expect(selected.cases[0]?.text).toContain("20-minute check-in");
+    expect(() => parseLiveCanaryOptions([...selection, "--scenario-profile", "garden-chat-v2"], {})).toThrow();
+    expect(() => parseLiveCanaryOptions([...base, "--pilot", "--scenario-profile", "everyday-chat-v3"], {})).toThrow();
+    expect(() =>
+      parseLiveCanaryOptions(
+        [...selection, "--scenario-profile", "everyday-chat-v3", "--scenario-profile", "everyday-chat-v3"],
         {},
       ),
     ).toThrow();

@@ -1,6 +1,10 @@
 /** Independent frame-integrity judgment; private room text never enters the scalar result. */
 import { JudgeFailure, type JudgeFailureCategory } from "./conversation-routing-live-judge.js";
-import { parsePrivateQualityCase, type QualityJudgeOptions } from "./conversation-routing-live-judge-v2.js";
+import {
+  parsePrivateQualityCase,
+  projectJudgeConversation,
+  type QualityJudgeOptions,
+} from "./conversation-routing-live-judge-v2.js";
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const MODEL = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i;
@@ -129,6 +133,7 @@ export async function judgeConversationFrameIntegrity(
   options: QualityJudgeOptions,
 ): Promise<FrameIntegrityResult> {
   const privateCase = parsePrivateQualityCase(input);
+  const judgeConversation = projectJudgeConversation(privateCase, Boolean(options.conversationalNamesOnly));
   const actorModel = options.actorModel.replace(/^openrouter\//, "");
   if (
     !MODEL.test(options.model) ||
@@ -194,8 +199,8 @@ export async function judgeConversationFrameIntegrity(
             content: JSON.stringify({
               scenarioKind: privateCase.scenarioKind,
               prompt: privateCase.prompt,
-              messages: privateCase.messages,
-              qualityContext: privateCase.qualityContext,
+              messages: judgeConversation.messages,
+              qualityContext: judgeConversation.qualityContext,
             }),
           },
         ],
