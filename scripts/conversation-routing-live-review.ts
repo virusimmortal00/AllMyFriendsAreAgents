@@ -517,6 +517,7 @@ type ReviewPair = {
   pairId: string;
   factor: StudyFactor;
   agentCount: number;
+  theme: "everyday" | "practical" | null;
   ordinals: Array<{ ids: [string, string]; requiredNoVisible: boolean; bothVisible: boolean }>;
 };
 type SelectedReviewPair = {
@@ -603,7 +604,15 @@ function studyPairs(manifest: unknown, locatorInput: unknown): ReviewPair[] {
           right.confirmedDeliveredBursts > 0,
       };
     });
-    pairs.push({ pairId, factor: record(a.study).factor as StudyFactor, agentCount: Number(a.agentCount), ordinals });
+    pairs.push({
+      pairId,
+      factor: record(a.study).factor as StudyFactor,
+      agentCount: Number(a.agentCount),
+      theme: ["everyday", "practical"].includes(String(record(a.study).theme))
+        ? (record(a.study).theme as "everyday" | "practical")
+        : null,
+      ordinals,
+    });
   }
   return pairs;
 }
@@ -635,18 +644,30 @@ export function selectCalibrationReviewQueue(manifest: unknown, locator: unknown
   const selected: SelectedReviewPair[] = [];
   for (const factor of factors) {
     const available = pairs.filter((pair) => pair.factor === factor);
-    const counts = [...new Set(available.map((pair) => pair.agentCount))].sort();
-    if (available.length < 4 || counts.length < 2 || counts.length > 4)
-      throw new Error("Insufficient calibration strata.");
     const chosen: ReviewPair[] = [];
-    for (const count of counts) {
-      const stratum = available.filter((pair) => pair.agentCount === count);
-      stratum.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
-      chosen.push(stratum[0]!);
+    if (record(manifest).studyPlan && record(record(manifest).studyPlan).schemaVersion === 5) {
+      if (available.length !== 12) throw new Error("Incomplete V5 calibration factor.");
+      for (const theme of ["everyday", "practical"] as const) {
+        const stratum = available.filter((pair) => pair.theme === theme);
+        if (stratum.length !== 6) throw new Error("Incomplete V5 calibration theme.");
+        stratum.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
+        const first = stratum[0]!;
+        chosen.push(first);
+        chosen.push(stratum.find((pair) => pair.agentCount !== first.agentCount) ?? stratum[1]!);
+      }
+    } else {
+      const counts = [...new Set(available.map((pair) => pair.agentCount))].sort();
+      if (available.length < 4 || counts.length < 2 || counts.length > 4)
+        throw new Error("Insufficient calibration strata.");
+      for (const count of counts) {
+        const stratum = available.filter((pair) => pair.agentCount === count);
+        stratum.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
+        chosen.push(stratum[0]!);
+      }
+      const remainder = available.filter((pair) => !chosen.includes(pair));
+      remainder.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
+      chosen.push(...remainder.slice(0, 4 - chosen.length));
     }
-    const remainder = available.filter((pair) => !chosen.includes(pair));
-    remainder.sort((a, b) => seedHash(seed, `pair:${a.pairId}`).localeCompare(seedHash(seed, `pair:${b.pairId}`)));
-    chosen.push(...remainder.slice(0, 4 - chosen.length));
     if (chosen.length !== 4) throw new Error("Insufficient calibration strata.");
     for (const pair of chosen) {
       const ordinals = pair.ordinals.map((_, ordinal) => ordinal);
@@ -672,6 +693,66 @@ export function selectCalibrationReviewQueue(manifest: unknown, locator: unknown
     unavailableFactors: [],
   };
   return { queue: blindSelected(selected, seed), receipt };
+}
+
+/** Optional V5 case census: one seed-selected trigger per pair, in three manageable factor packs. */
+export function selectEverydayCensusReviewQueues(
+  manifest: unknown,
+  locator: unknown,
+  seed: string,
+  allowPartialV5 = false,
+) {
+  validSeed(seed);
+  const top = record(manifest);
+  if (record(top.studyPlan).schemaVersion !== 5 || !Array.isArray(top.cases))
+    throw new Error("A V5 everyday study is required.");
+  const pairs = studyPairs(manifest, locator);
+  const plannedPairs = Number(record(top.studyBatch).planPairCount);
+  if (
+    plannedPairs !== 36 ||
+    pairs.length !== (top.cases as unknown[]).length / 2 ||
+    (allowPartialV5 ? pairs.length < 3 || pairs.length >= 36 || pairs.length % 3 !== 0 : pairs.length !== 36)
+  )
+    throw new Error("Incomplete V5 case census.");
+  const selected = pairs.map((pair): SelectedReviewPair => {
+    const ordinals = pair.ordinals.map((_, index) => index);
+    ordinals.sort((a, b) =>
+      seedHash(seed, `ordinal:${pair.pairId}:${a}`).localeCompare(seedHash(seed, `ordinal:${pair.pairId}:${b}`)),
+    );
+    const triggerOrdinal = ordinals[0]!;
+    return {
+      pairId: pair.pairId,
+      factor: pair.factor,
+      agentCount: pair.agentCount,
+      triggerOrdinal,
+      reviewIds: pair.ordinals[triggerOrdinal]!.ids,
+    };
+  });
+  const queues = Object.fromEntries(
+    (["jev", "gate", "agent-prompt"] as const).flatMap((factor) => {
+      const rows = selected.filter((row) => row.factor === factor);
+      return rows.length ? [[factor, blindSelected(rows, seed)]] : [];
+    }),
+  ) as Partial<Record<StudyFactor, PrivateReviewQueue>>;
+  if (!allowPartialV5 && Object.values(queues).some((queue) => queue!.reviewIds.length !== 24))
+    throw new Error("Incomplete V5 factor census.");
+  return {
+    queues,
+    receipt: {
+      schemaVersion: 1 as const,
+      kind: allowPartialV5 ? ("everyday-partial" as const) : ("everyday-census" as const),
+      manifestFingerprint: manifestFingerprint(manifest),
+      seed,
+      completedPairs: pairs.length,
+      plannedPairs,
+      ...(allowPartialV5 ? { diagnosticOnly: true, evidenceLabel: "PARTIAL DIAGNOSTIC" } : {}),
+      selected,
+      privateArmMap: selected.flatMap((row) => [
+        { reviewId: row.reviewIds[0], pairId: row.pairId, arm: "a" as const, factor: row.factor },
+        { reviewId: row.reviewIds[1], pairId: row.pairId, arm: "b" as const, factor: row.factor },
+      ]),
+    },
+  };
 }
 
 /** A separate outcome-conditioned inspection set; never mix it into calibration denominators. */
@@ -1053,12 +1134,25 @@ export function buildOfflineReviewHtml(
     | "frame-partial"
     | "model-complete"
     | "model-partial"
+    | "everyday-census"
+    | "everyday-partial"
     | null = null,
   diagnostic?: { completedPairs: number; plannedPairs: number },
 ): string {
-  if ((reviewSet === "model-partial" || reviewSet === "frame-partial") !== (diagnostic !== undefined))
+  if (
+    (reviewSet === "model-partial" || reviewSet === "frame-partial" || reviewSet === "everyday-partial") !==
+    (diagnostic !== undefined)
+  )
     throw new Error("Partial review requires diagnostic counts.");
-  if (diagnostic && (![1, 2].includes(diagnostic.completedPairs) || diagnostic.plannedPairs !== 3))
+  if (
+    diagnostic &&
+    (reviewSet === "everyday-partial"
+      ? diagnostic.completedPairs < 3 ||
+        diagnostic.completedPairs >= 36 ||
+        diagnostic.completedPairs % 3 !== 0 ||
+        diagnostic.plannedPairs !== 36
+      : ![1, 2].includes(diagnostic.completedPairs) || diagnostic.plannedPairs !== 3)
+  )
     throw new Error("Invalid partial diagnostic denominator.");
   const queue = parseReviewQueue(queueInput);
   if (bundlesInput.length !== queue.reviewIds.length) throw new Error("Invalid private review input.");
@@ -1083,13 +1177,17 @@ export function buildOfflineReviewHtml(
       ? "Blinded conversation review · complete model pilot"
       : reviewSet === "model-partial"
         ? "Blinded conversation review · PARTIAL DIAGNOSTIC model pilot"
-        : reviewSet === "visible-enriched"
-          ? "Blinded conversation review · visible-response enriched inspection"
-          : reviewSet === "flagged"
-            ? "Blinded conversation review · flagged inspection"
-            : reviewSet === "calibration"
-              ? "Blinded conversation review · calibration sample"
-              : "Blinded conversation review";
+        : reviewSet === "everyday-partial"
+          ? "Blinded conversation review · PARTIAL DIAGNOSTIC everyday study"
+          : reviewSet === "everyday-census"
+            ? "Blinded conversation review · everyday study case census"
+            : reviewSet === "visible-enriched"
+              ? "Blinded conversation review · visible-response enriched inspection"
+              : reviewSet === "flagged"
+                ? "Blinded conversation review · flagged inspection"
+                : reviewSet === "calibration"
+                  ? "Blinded conversation review · calibration sample"
+                  : "Blinded conversation review";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1>${diagnostic ? `<p>PARTIAL DIAGNOSTIC: ${diagnostic.completedPairs} of ${diagnostic.plannedPairs} planned matched pairs completed. Rate only these cases; missing pairs have no results.</p>` : ""}<div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet?.startsWith("frame-") ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
@@ -1131,6 +1229,39 @@ export async function verifyPartialV4Plan(manifest: ReturnType<typeof mergeScala
   )
     throw new Error("Partial diagnostic review has foreign or skipped cases.");
 }
+export async function verifyPartialV5Plan(manifest: ReturnType<typeof mergeScalarCanaryManifests>, allowFull = false) {
+  const plan = parseStudyPlan(
+    await readBounded(resolve(REPO_ROOT, "docs/testing/conversation-routing-study-large-everyday-v5.json")),
+  );
+  const batch = manifest.studyBatch;
+  if (
+    plan.schemaVersion !== 5 ||
+    manifest.studyPlan?.schemaVersion !== 5 ||
+    manifest.studyPlan.planId !== plan.planId ||
+    manifest.studyPlan.planSha256 !== studyPlanDigest(plan) ||
+    !batch ||
+    batch.planPairCount !== plan.blocks.length ||
+    batch.planCaseCount !== plan.maxCases ||
+    batch.pairsPerBatch !== 3 ||
+    batch.batchCount !== 12
+  )
+    throw new Error("Partial diagnostic review requires the committed V5 plan.");
+  const expected = expandStudyPlan(plan);
+  const expectedPairs = [...new Set(expected.map((scenario) => scenario.study!.pairId))];
+  const actualPairs = [...new Set(manifest.cases.map((row) => row.study?.pairId))];
+  if (
+    actualPairs.length < 3 ||
+    actualPairs.length > (allowFull ? 36 : 33) ||
+    actualPairs.length % 3 !== 0 ||
+    actualPairs.some((pairId, index) => pairId !== expectedPairs[index]) ||
+    manifest.cases.some((row) => {
+      const scenario = expected.find((item) => item.scenarioId === row.scenarioId);
+      return !scenario || !isDeepStrictEqual(row.study, scenario.study);
+    })
+  )
+    throw new Error("Partial diagnostic review has foreign or skipped cases.");
+}
+
 async function privateDirectory(directory: string) {
   if (!isAbsolute(directory)) throw new Error("Private directory path must be absolute.");
   const real = await realpath(directory);
@@ -1277,17 +1408,19 @@ async function main() {
               ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
               : command === "select-frame"
                 ? ["--manifest", "--map", "--source-dir", "--seed", "--output", "--receipt"]
-                : command === "select-frame-all" || command === "select-model-all"
-                  ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
-                  : command === "pack"
-                    ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
-                    : command === "convert"
-                      ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
-                      : [];
-  const allowPartialV4 = flags.get("--allow-partial")?.[0] === "true";
-  if (flags.has("--allow-partial") && !allowPartialV4) throw new Error("Invalid partial review option.");
+                : command === "select-everyday-all"
+                  ? ["--manifest", "--map", "--seed", "--output-dir"]
+                  : command === "select-frame-all" || command === "select-model-all"
+                    ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
+                    : command === "pack"
+                      ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
+                      : command === "convert"
+                        ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
+                        : [];
+  const allowPartial = flags.get("--allow-partial")?.[0] === "true";
+  if (flags.has("--allow-partial") && !allowPartial) throw new Error("Invalid partial review option.");
   const optionalFlags =
-    (allowPartialV4 ? 1 : 0) + (["pack", "convert"].includes(command ?? "") && flags.has("--review-set") ? 1 : 0);
+    (allowPartial ? 1 : 0) + (["pack", "convert"].includes(command ?? "") && flags.has("--review-set") ? 1 : 0);
   if (!required.length || flags.size !== required.length + optionalFlags || required.some((key) => !flags.has(key)))
     throw new Error("Invalid review command.");
   if (
@@ -1300,11 +1433,15 @@ async function main() {
   const manifestFiles = flags.get("--manifest")!;
   if (manifestFiles.length > 72 || new Set(manifestFiles).size !== manifestFiles.length)
     throw new Error("Invalid review manifests.");
-  const manifest = mergeScalarCanaryManifests(
-    await Promise.all(manifestFiles.map(async (file) => parseScalarCanaryManifest(await readBounded(file)))),
-    { allowPartialV4 },
+  const manifests = await Promise.all(
+    manifestFiles.map(async (file) => parseScalarCanaryManifest(await readBounded(file))),
   );
+  const allowPartialV4 = allowPartial && manifests[0]?.studyPlan?.schemaVersion === 4;
+  const allowPartialV5 = allowPartial && manifests[0]?.studyPlan?.schemaVersion === 5;
+  if (allowPartial && !allowPartialV4 && !allowPartialV5) throw new Error("Invalid partial review study.");
+  const manifest = mergeScalarCanaryManifests(manifests, { allowPartialV4, allowPartialV5 });
   if (allowPartialV4) await verifyPartialV4Plan(manifest);
+  if (manifest.studyPlan?.schemaVersion === 5) await verifyPartialV5Plan(manifest, !allowPartialV5);
   if (command === "blind") {
     const output = one("--output-dir");
     if (!isAbsolute(output)) throw new Error("Private output requires an absolute path.");
@@ -1330,6 +1467,28 @@ async function main() {
     });
     await privateWrite(one("--output"), `${JSON.stringify(queue, null, 2)}\n`);
     process.stdout.write("Private review artifact created.\n");
+    return;
+  }
+  if (command === "select-everyday-all") {
+    const output = one("--output-dir");
+    if (!isAbsolute(output)) throw new Error("Private output requires an absolute path.");
+    const result = selectEverydayCensusReviewQueues(
+      manifest,
+      await readBounded(one("--map")),
+      one("--seed"),
+      allowPartialV5,
+    );
+    await privateDirectory(dirname(output));
+    await mkdir(output, { mode: 0o700 });
+    try {
+      for (const [factor, queue] of Object.entries(result.queues))
+        await privateWrite(resolve(output, `${factor}-queue.json`), `${JSON.stringify(queue, null, 2)}\n`);
+      await privateWrite(resolve(output, "private-receipt.json"), `${JSON.stringify(result.receipt, null, 2)}\n`);
+    } catch (error) {
+      await rm(output, { recursive: true, force: true });
+      throw error;
+    }
+    process.stdout.write("Private everyday review queues created.\n");
     return;
   }
   if (command === "select-frame") {
@@ -1379,7 +1538,7 @@ async function main() {
   const queue = parseReviewQueue(await readBounded(one("--queue")));
   const locator = parseReviewLocator(await readBounded(one("--map")), queue, manifest);
   if (
-    allowPartialV4 &&
+    allowPartial &&
     (queue.reviewIds.length !== locator.entries.length ||
       queue.reviewIds.some((id) => !locator.entries.some((entry) => entry.reviewId === id)))
   )
@@ -1390,7 +1549,18 @@ async function main() {
     if (
       allowPartialV4
         ? !["frame-partial", "model-partial"].includes(reviewSet ?? "")
-        : reviewSet !== undefined && !["frame-candidate", "frame-complete", "model-complete"].includes(reviewSet)
+        : allowPartialV5
+          ? reviewSet !== "everyday-partial"
+          : reviewSet !== undefined &&
+            ![
+              "frame-candidate",
+              "frame-complete",
+              "model-complete",
+              "everyday-census",
+              "calibration",
+              "flagged",
+              "visible-enriched",
+            ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
     const converted = reviewSet?.startsWith("frame-")
@@ -1410,10 +1580,15 @@ async function main() {
         "model-complete",
         "frame-partial",
         "model-partial",
+        "everyday-census",
+        "everyday-partial",
       ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
-    if (allowPartialV4 !== ["frame-partial", "model-partial"].includes(reviewSet ?? ""))
+    if (
+      allowPartialV4 !== ["frame-partial", "model-partial"].includes(reviewSet ?? "") ||
+      allowPartialV5 !== (reviewSet === "everyday-partial")
+    )
       throw new Error("Invalid partial review set.");
     await privateWrite(
       one("--output"),
@@ -1429,8 +1604,14 @@ async function main() {
           | "frame-partial"
           | "model-complete"
           | "model-partial"
+          | "everyday-census"
+          | "everyday-partial"
           | null,
-        allowPartialV4 ? { completedPairs: manifest.cases.length / 2, plannedPairs: 3 } : undefined,
+        allowPartialV4
+          ? { completedPairs: manifest.cases.length / 2, plannedPairs: 3 }
+          : allowPartialV5
+            ? { completedPairs: manifest.cases.length / 2, plannedPairs: 36 }
+            : undefined,
       ),
     );
   }
