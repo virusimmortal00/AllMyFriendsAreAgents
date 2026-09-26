@@ -14,6 +14,7 @@ import {
   parsePrivateConversationRatings,
   parsePrivateQualityRatings,
 } from "./conversation-routing-live-annotations.js";
+import { roomSystemProfileDigest, scenarioProfileDigest } from "./conversation-routing-live-study.js";
 
 const sha = "a".repeat(64);
 const judge = (scenarioId: string, runId: string, naturalness: number, cost: number) => ({
@@ -131,7 +132,7 @@ function studyFixture() {
   };
 }
 
-function identityFixture() {
+function identityFixture(scenarioProfileId: "garden-chat-v2" | "everyday-chat-v3" = "garden-chat-v2") {
   const base = studyFixture();
   const offClassifier = base.cases[1]!.triggers[0]!.classifier;
   return {
@@ -149,10 +150,10 @@ function identityFixture() {
         factor: "room-system",
         jevProfileId: "off-v1",
         jevProfileDigest: "b".repeat(64),
-        scenarioProfileId: "garden-chat-v2",
-        scenarioProfileDigest: "c".repeat(64),
+        scenarioProfileId,
+        scenarioProfileDigest: scenarioProfileDigest(scenarioProfileId),
         roomSystemProfileId: index === 0 ? "legacy-v1" : "room-v1",
-        roomSystemProfileDigest: (index === 0 ? "d" : "e").repeat(64),
+        roomSystemProfileDigest: roomSystemProfileDigest(index === 0 ? "legacy-v1" : "room-v1"),
       },
     })),
   };
@@ -691,6 +692,32 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("accepts pinned everyday V2 metadata and rejects unknown or mismatched profiles and digests", () => {
+    const fixture = identityFixture("everyday-chat-v3");
+    const parsed = parseScalarCanaryManifest(fixture);
+    expect(parsed.cases.map(({ study }) => study)).toEqual([
+      expect.objectContaining({ scenarioProfileId: "everyday-chat-v3" }),
+      expect.objectContaining({ scenarioProfileId: "everyday-chat-v3" }),
+    ]);
+    expect(analyzeQualityStudy(parsed).byFactor["room-system"]?.paired.triggerPairs).toBe(2);
+
+    const unknown = structuredClone(fixture);
+    Object.assign(unknown.cases[0]!.study, { scenarioProfileId: "unreviewed-v1" });
+    expect(() => parseScalarCanaryManifest(unknown)).toThrow(/Invalid scalar canary manifest/);
+
+    const unknownRoomProfile = structuredClone(fixture);
+    Object.assign(unknownRoomProfile.cases[0]!.study, { roomSystemProfileId: "unreviewed-v1" });
+    expect(() => parseScalarCanaryManifest(unknownRoomProfile)).toThrow(/Invalid scalar canary manifest/);
+
+    const wrongScenarioDigest = structuredClone(fixture);
+    wrongScenarioDigest.cases[0]!.study.scenarioProfileDigest = scenarioProfileDigest("garden-chat-v2");
+    expect(() => parseScalarCanaryManifest(wrongScenarioDigest)).toThrow(/Invalid scalar canary manifest/);
+
+    const wrongRoomDigest = structuredClone(fixture);
+    wrongRoomDigest.cases[0]!.study.roomSystemProfileDigest = roomSystemProfileDigest("room-v1");
+    expect(() => parseScalarCanaryManifest(wrongRoomDigest)).toThrow(/Invalid scalar canary manifest/);
+  });
+
   it("accepts V3 terminal pairs and rejects a second changed profile", () => {
     const base = identityFixture();
     const fixture = {
@@ -809,10 +836,12 @@ describe("versioned quality study analysis", () => {
     expect(() => parseScalarCanaryManifest(wrongRubric)).toThrow();
     const changed = structuredClone(fixture);
     changed.cases[1]!.study.scenarioProfileDigest = "f".repeat(64);
-    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(changed))).toThrow(/Mislabeled/);
+    expect(() => parseScalarCanaryManifest(changed)).toThrow(/Invalid scalar canary manifest/);
     const reversed = structuredClone(fixture);
     reversed.cases[0]!.study.roomSystemProfileId = "room-v1";
+    reversed.cases[0]!.study.roomSystemProfileDigest = roomSystemProfileDigest("room-v1");
     reversed.cases[1]!.study.roomSystemProfileId = "legacy-v1";
+    reversed.cases[1]!.study.roomSystemProfileDigest = roomSystemProfileDigest("legacy-v1");
     expect(() => analyzeQualityStudy(parseScalarCanaryManifest(reversed))).toThrow(/Mislabeled/);
   });
   it("keeps old four-axis receipts missing for frame integrity and parses separate version-3 receipts", () => {

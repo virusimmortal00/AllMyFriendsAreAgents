@@ -14,7 +14,11 @@ import {
 import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
-import type { StudyCaseMetadata } from "./conversation-routing-live-study.js";
+import {
+  roomSystemProfileDigest,
+  scenarioProfileDigest,
+  type StudyCaseMetadata,
+} from "./conversation-routing-live-study.js";
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SHA = /^[a-f0-9]{64}$/;
@@ -470,11 +474,12 @@ function parseStudy(value: unknown): StudyCaseMetadata {
     row.rosterOrder.length > 4 ||
     row.rosterOrder.some((value) => !id(value)) ||
     new Set(row.rosterOrder).size !== row.rosterOrder.length ||
+    (version === 2 && row.scenarioProfileId !== "garden-chat-v2" && row.scenarioProfileId !== "everyday-chat-v3") ||
+    (version === 2 && row.roomSystemProfileId !== "legacy-v1" && row.roomSystemProfileId !== "room-v1") ||
     (version === 2 &&
-      (row.scenarioProfileId !== "garden-chat-v2" ||
-        !SHA.test(String(row.scenarioProfileDigest)) ||
-        !["legacy-v1", "room-v1"].includes(String(row.roomSystemProfileId)) ||
-        !SHA.test(String(row.roomSystemProfileDigest)))) ||
+      (row.scenarioProfileDigest !==
+        scenarioProfileDigest(row.scenarioProfileId as "garden-chat-v2" | "everyday-chat-v3") ||
+        row.roomSystemProfileDigest !== roomSystemProfileDigest(row.roomSystemProfileId as "legacy-v1" | "room-v1"))) ||
     (version === 3 &&
       (!["brief-v1", "comparison-v1", "draft-v1"].includes(String(row.scenarioProfileId)) ||
         !SHA.test(String(row.scenarioProfileDigest)) ||
