@@ -16,8 +16,10 @@ import {
   parsePrivateQualityRatings,
 } from "./conversation-routing-live-annotations.js";
 import {
+  buildOfflineReviewHtml,
   selectCalibrationReviewQueue,
   selectEverydayCensusReviewQueues,
+  selectFirstBatchAllTriggersReviewQueue,
   verifyPartialV5Plan,
 } from "./conversation-routing-live-review.js";
 import {
@@ -155,6 +157,10 @@ describe("schema-5 everyday analysis and private review", () => {
     expect(report.denominators).toMatchObject({ cases: 72, requestedCasePairs: 36, matchedCasePairs: 36 });
     expect(report.byFactor.jev?.cases).toBe(24);
     expect(report.axes.social_cadence?.human.missing).toBe(72);
+    expect(report.leverOpportunity?.gate?.optionalCapable.requestedRoomPairs).toBe(10);
+    expect(report.leverOpportunity?.gate?.noOptionalOpportunityControls.requestedRoomPairs).toBe(2);
+    expect(report.leverOpportunity?.["agent-prompt"]?.optionalCapable.requestedRoomPairs).toBe(10);
+    expect(report.leverOpportunity?.["agent-prompt"]?.noOptionalOpportunityControls.requestedRoomPairs).toBe(2);
     const locator = reviewLocatorFor(merged);
     const calibration = selectCalibrationReviewQueue(merged, locator, "everyday-seed");
     expect(calibration.queue.reviewIds).toHaveLength(24);
@@ -189,6 +195,60 @@ describe("schema-5 everyday analysis and private review", () => {
     expect(() =>
       mergeScalarCanaryManifests([batches[0]!, parseScalarCanaryManifest(changed)], { allowPartialV5: true }),
     ).toThrow();
+  });
+
+  it("blinds every trigger in the first complete batch for a diagnostic gate review", async () => {
+    const raw = everydayBatches()[0]!;
+    const plan = parseStudyPlan(
+      JSON.parse(
+        readFileSync(
+          new URL("../docs/testing/conversation-routing-study-large-everyday-v5.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+    const scenarios = expandStudyPlan(plan).slice(0, 6);
+    raw.cases.forEach((row, index) => {
+      const extra = scenarios[index]!.scriptedFollowups ?? [];
+      for (let ordinal = 0; ordinal < extra.length; ordinal++) {
+        const runId = `${row.triggers[0]!.runId}-extra-${ordinal}`;
+        row.triggers.push({ ...row.triggers[0]!, runId });
+        row.qualityJudge.push({
+          scenarioId: row.scenarioId,
+          runId,
+          outcomes: axes.map((axis) => qualityOutcome(axis, row.scenarioId, runId, 5)),
+        });
+        row.frameJudge.push(frameReceipt(row.scenarioId, runId, 5));
+      }
+    });
+    const partial = mergeScalarCanaryManifests([parseScalarCanaryManifest(raw)], { allowPartialV5: true });
+    await verifyPartialV5Plan(partial);
+    const locator = reviewLocatorFor(partial);
+    const result = selectFirstBatchAllTriggersReviewQueue(partial, locator, "first-batch-seed");
+    expect(result.receipt.selectedTriggerPairs).toBe(6);
+    expect(result.queue.reviewIds).toHaveLength(12);
+    expect(result.receipt.privateArmMap).toHaveLength(12);
+    const bundles = result.queue.reviewIds.map((reviewId) => ({
+      schemaVersion: 1,
+      reviewId,
+      scenarioKind: "casual",
+      expectedDirectAgents: [],
+      prompt: "A short prompt.",
+      messages: [{ speaker: "you", kind: "human", text: "A short prompt." }],
+      qualityContext: { originalHumanAlias: "You", roster: [] },
+    }));
+    expect(
+      buildOfflineReviewHtml(result.queue, bundles, "first-batch-all-triggers", {
+        completedPairs: 3,
+        plannedPairs: 36,
+      }),
+    ).toContain("PARTIAL DIAGNOSTIC first batch, all triggers");
+    const missingCase = structuredClone(partial);
+    missingCase.cases.pop();
+    expect(() => selectFirstBatchAllTriggersReviewQueue(missingCase, locator, "first-batch-seed")).toThrow();
+    const shifted = structuredClone(partial);
+    shifted.studyBatch!.batchIndex = 1;
+    expect(() => selectFirstBatchAllTriggersReviewQueue(shifted, locator, "first-batch-seed")).toThrow();
   });
 });
 

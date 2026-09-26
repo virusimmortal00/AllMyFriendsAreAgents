@@ -755,6 +755,66 @@ export function selectEverydayCensusReviewQueues(
   };
 }
 
+/** All trigger ordinals in the first complete V5 batch, for a private go/no-go review. */
+export function selectFirstBatchAllTriggersReviewQueue(manifest: unknown, locator: unknown, seed: string) {
+  validSeed(seed);
+  const top = record(manifest);
+  const batch = record(top.studyBatch);
+  if (
+    record(top.studyPlan).schemaVersion !== 5 ||
+    batch.batchIndex !== 0 ||
+    batch.planPairCount !== 36 ||
+    batch.pairsPerBatch !== 3 ||
+    !Array.isArray(top.cases) ||
+    top.cases.length !== 6
+  )
+    throw new Error("First-batch review requires the first complete V5 batch.");
+  const pairs = studyPairs(manifest, locator);
+  if (pairs.length !== 3 || new Set(pairs.map((pair) => pair.factor)).size !== 3)
+    throw new Error("First-batch review requires one complete pair per factor.");
+  const selected = pairs.flatMap((pair): SelectedReviewPair[] =>
+    pair.ordinals.map((ordinal, triggerOrdinal) => ({
+      pairId: pair.pairId,
+      factor: pair.factor,
+      agentCount: pair.agentCount,
+      triggerOrdinal,
+      reviewIds: ordinal.ids,
+    })),
+  );
+  const queue = blindSelected(selected, seed);
+  return {
+    queue,
+    receipt: {
+      schemaVersion: 1 as const,
+      kind: "first-batch-all-triggers" as const,
+      manifestFingerprint: manifestFingerprint(manifest),
+      seed,
+      diagnosticOnly: true,
+      evidenceLabel: "PARTIAL DIAGNOSTIC" as const,
+      completedPairs: 3,
+      plannedPairs: 36,
+      selectedTriggerPairs: selected.length,
+      selected,
+      privateArmMap: selected.flatMap((row) => [
+        {
+          reviewId: row.reviewIds[0],
+          pairId: row.pairId,
+          triggerOrdinal: row.triggerOrdinal,
+          arm: "a" as const,
+          factor: row.factor,
+        },
+        {
+          reviewId: row.reviewIds[1],
+          pairId: row.pairId,
+          triggerOrdinal: row.triggerOrdinal,
+          arm: "b" as const,
+          factor: row.factor,
+        },
+      ]),
+    },
+  };
+}
+
 /** A separate outcome-conditioned inspection set; never mix it into calibration denominators. */
 export function selectFlaggedReviewQueue(manifest: unknown, locator: unknown, calibrationInput: unknown, seed: string) {
   validSeed(seed);
@@ -1136,21 +1196,26 @@ export function buildOfflineReviewHtml(
     | "model-partial"
     | "everyday-census"
     | "everyday-partial"
+    | "first-batch-all-triggers"
     | null = null,
   diagnostic?: { completedPairs: number; plannedPairs: number },
 ): string {
   if (
-    (reviewSet === "model-partial" || reviewSet === "frame-partial" || reviewSet === "everyday-partial") !==
+    (reviewSet === "model-partial" ||
+      reviewSet === "frame-partial" ||
+      reviewSet === "everyday-partial" ||
+      reviewSet === "first-batch-all-triggers") !==
     (diagnostic !== undefined)
   )
     throw new Error("Partial review requires diagnostic counts.");
   if (
     diagnostic &&
-    (reviewSet === "everyday-partial"
+    (reviewSet === "everyday-partial" || reviewSet === "first-batch-all-triggers"
       ? diagnostic.completedPairs < 3 ||
         diagnostic.completedPairs >= 36 ||
         diagnostic.completedPairs % 3 !== 0 ||
-        diagnostic.plannedPairs !== 36
+        diagnostic.plannedPairs !== 36 ||
+        (reviewSet === "first-batch-all-triggers" && diagnostic.completedPairs !== 3)
       : ![1, 2].includes(diagnostic.completedPairs) || diagnostic.plannedPairs !== 3)
   )
     throw new Error("Invalid partial diagnostic denominator.");
@@ -1179,15 +1244,17 @@ export function buildOfflineReviewHtml(
         ? "Blinded conversation review · PARTIAL DIAGNOSTIC model pilot"
         : reviewSet === "everyday-partial"
           ? "Blinded conversation review · PARTIAL DIAGNOSTIC everyday study"
-          : reviewSet === "everyday-census"
-            ? "Blinded conversation review · everyday study case census"
-            : reviewSet === "visible-enriched"
-              ? "Blinded conversation review · visible-response enriched inspection"
-              : reviewSet === "flagged"
-                ? "Blinded conversation review · flagged inspection"
-                : reviewSet === "calibration"
-                  ? "Blinded conversation review · calibration sample"
-                  : "Blinded conversation review";
+          : reviewSet === "first-batch-all-triggers"
+            ? "Blinded conversation review · PARTIAL DIAGNOSTIC first batch, all triggers"
+            : reviewSet === "everyday-census"
+              ? "Blinded conversation review · everyday study case census"
+              : reviewSet === "visible-enriched"
+                ? "Blinded conversation review · visible-response enriched inspection"
+                : reviewSet === "flagged"
+                  ? "Blinded conversation review · flagged inspection"
+                  : reviewSet === "calibration"
+                    ? "Blinded conversation review · calibration sample"
+                    : "Blinded conversation review";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1>${diagnostic ? `<p>PARTIAL DIAGNOSTIC: ${diagnostic.completedPairs} of ${diagnostic.plannedPairs} planned matched pairs completed. Rate only these cases; missing pairs have no results.</p>` : ""}<div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet?.startsWith("frame-") ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
@@ -1410,13 +1477,15 @@ async function main() {
                 ? ["--manifest", "--map", "--source-dir", "--seed", "--output", "--receipt"]
                 : command === "select-everyday-all"
                   ? ["--manifest", "--map", "--seed", "--output-dir"]
-                  : command === "select-frame-all" || command === "select-model-all"
+                  : command === "select-first-batch-all-triggers"
                     ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
-                    : command === "pack"
-                      ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
-                      : command === "convert"
-                        ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
-                        : [];
+                    : command === "select-frame-all" || command === "select-model-all"
+                      ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
+                      : command === "pack"
+                        ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
+                        : command === "convert"
+                          ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
+                          : [];
   const allowPartial = flags.get("--allow-partial")?.[0] === "true";
   if (flags.has("--allow-partial") && !allowPartial) throw new Error("Invalid partial review option.");
   const optionalFlags =
@@ -1491,6 +1560,14 @@ async function main() {
     process.stdout.write("Private everyday review queues created.\n");
     return;
   }
+  if (command === "select-first-batch-all-triggers") {
+    if (!allowPartialV5) throw new Error("First-batch review requires explicit partial mode.");
+    const result = selectFirstBatchAllTriggersReviewQueue(manifest, await readBounded(one("--map")), one("--seed"));
+    await privateWrite(one("--output"), `${JSON.stringify(result.queue, null, 2)}\n`);
+    await privateWrite(one("--receipt"), `${JSON.stringify(result.receipt, null, 2)}\n`);
+    process.stdout.write("Private first-batch all-trigger review created.\n");
+    return;
+  }
   if (command === "select-frame") {
     const sources = await sourceBundles(manifest, flags.get("--source-dir")!);
     const result = selectFrameCandidateReviewQueue(
@@ -1538,7 +1615,7 @@ async function main() {
   const queue = parseReviewQueue(await readBounded(one("--queue")));
   const locator = parseReviewLocator(await readBounded(one("--map")), queue, manifest);
   if (
-    allowPartial &&
+    (allowPartialV4 || (allowPartialV5 && flags.get("--review-set")?.[0] === "first-batch-all-triggers")) &&
     (queue.reviewIds.length !== locator.entries.length ||
       queue.reviewIds.some((id) => !locator.entries.some((entry) => entry.reviewId === id)))
   )
@@ -1550,7 +1627,7 @@ async function main() {
       allowPartialV4
         ? !["frame-partial", "model-partial"].includes(reviewSet ?? "")
         : allowPartialV5
-          ? reviewSet !== "everyday-partial"
+          ? !["everyday-partial", "first-batch-all-triggers"].includes(reviewSet ?? "")
           : reviewSet !== undefined &&
             ![
               "frame-candidate",
@@ -1582,12 +1659,13 @@ async function main() {
         "model-partial",
         "everyday-census",
         "everyday-partial",
+        "first-batch-all-triggers",
       ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
     if (
       allowPartialV4 !== ["frame-partial", "model-partial"].includes(reviewSet ?? "") ||
-      allowPartialV5 !== (reviewSet === "everyday-partial")
+      allowPartialV5 !== ["everyday-partial", "first-batch-all-triggers"].includes(reviewSet ?? "")
     )
       throw new Error("Invalid partial review set.");
     await privateWrite(
@@ -1606,6 +1684,7 @@ async function main() {
           | "model-partial"
           | "everyday-census"
           | "everyday-partial"
+          | "first-batch-all-triggers"
           | null,
         allowPartialV4
           ? { completedPairs: manifest.cases.length / 2, plannedPairs: 3 }
