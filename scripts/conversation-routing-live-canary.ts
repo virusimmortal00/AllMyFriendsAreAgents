@@ -52,6 +52,11 @@ import {
   scenarioProfileDigest,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
+import {
+  createPrivateTextTraceDirectory,
+  PRIVATE_TEXT_TRACE_SUBDIRECTORY,
+  retainPrivateTextTrace,
+} from "./conversation-routing-live-text-trace.js";
 import { createLiveOpenCodeWrapper } from "./conversation-routing-live-wrapper.js";
 
 const execute = promisify(execFile);
@@ -67,6 +72,7 @@ export const CANARY_SOURCE_FILES = [
   "scripts/conversation-routing-live-scenarios.ts",
   "scripts/conversation-routing-live-study.ts",
   "scripts/conversation-routing-live-wrapper.ts",
+  "scripts/conversation-routing-live-text-trace.ts",
   "scripts/conversation-routing-live-judge.ts",
   "scripts/conversation-routing-live-judge-v2.ts",
   "scripts/conversation-routing-live-frame-judge.ts",
@@ -918,6 +924,7 @@ async function runCase(
   credential: string,
   abort: AbortSignal,
   privateDirectory: string | undefined,
+  caseOrdinal: number,
 ): Promise<CaseResult> {
   const root = await mkdtemp(path.join(os.tmpdir(), "amfaa-routing-canary-"));
   await chmod(root, 0o700);
@@ -1217,6 +1224,19 @@ async function runCase(
     stage = "cleanup";
     await stopProcessGroup(child);
     child = undefined;
+    if (privateDirectory) {
+      for (const [index, trigger] of triggerResults.entries()) {
+        if (!trigger.runId) throw new Error("Private text trace requires a correlated run.");
+        await retainPrivateTextTrace(
+          path.join(data, "logs", "authoritative-v1"),
+          path.join(privateDirectory, PRIVATE_TEXT_TRACE_SUBDIRECTORY),
+          caseOrdinal,
+          index + 1,
+          trigger.runId,
+          trigger.generationCompletions,
+        );
+      }
+    }
     const unchanged = await execute("git", ["-C", project, "status", "--porcelain", "--untracked-files=all"], {
       timeout: 10_000,
       env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
@@ -1344,6 +1364,7 @@ async function main() {
     if (canonical === repositoryRoot || canonical.startsWith(`${repositoryRoot}${path.sep}`))
       throw new Error("Private review files must stay outside the repository.");
     await chmod(canonical, 0o700);
+    await createPrivateTextTraceDirectory(canonical);
   }
   const abort = new AbortController();
   const interrupt = () => abort.abort();
@@ -1352,10 +1373,10 @@ async function main() {
   const totalTimer = setTimeout(() => abort.abort(), options.totalTimeoutMs);
   const results: CaseResult[] = [];
   try {
-    for (const scenario of options.cases) {
+    for (const [index, scenario] of options.cases.entries()) {
       abort.signal.throwIfAborted();
       try {
-        results.push(await runCase(scenario, options, credential, abort.signal, privateDirectory));
+        results.push(await runCase(scenario, options, credential, abort.signal, privateDirectory, index + 1));
       } catch (error) {
         const failure = error instanceof CaseFailure ? error : new CaseFailure("cleanup", "internal");
         console.log(
