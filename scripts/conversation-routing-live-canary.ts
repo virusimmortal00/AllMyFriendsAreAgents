@@ -39,6 +39,7 @@ import {
   ROUTING_ENERGIES,
   ROUTING_MODES,
   type RoutingDynamic,
+  usesEverydayFixtureNames,
 } from "./conversation-routing-live-scenarios.js";
 import {
   expandStudyPlan,
@@ -50,6 +51,8 @@ import {
   type StudyCaseMetadata,
   type StudyPlan,
   scenarioProfileDigest,
+  terminalScenarioProfileDigest,
+  terminalInstructionProfileDigest,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
 import {
@@ -127,6 +130,20 @@ interface CanaryOptions {
 /** Only a validated V2 case may select the isolated server's room system identity. */
 export function isolatedRoomSystemProfileEnvironment(study: StudyCaseMetadata | undefined): Record<string, string> {
   if (!study || study.schemaVersion === 1) return {};
+  if (study.schemaVersion === 3) {
+    if (
+      study.factor !== "terminal-instruction" ||
+      study.roomSystemProfileId !== "room-v1" ||
+      study.roomSystemProfileDigest !== roomSystemProfileDigest("room-v1") ||
+      study.scenarioProfileDigest !== terminalScenarioProfileDigest(study.scenarioProfileId) ||
+      study.terminalInstructionProfileDigest !== terminalInstructionProfileDigest(study.terminalInstructionProfileId)
+    )
+      throw new Error("Invalid isolated terminal instruction study profile.");
+    return {
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+      AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: study.terminalInstructionProfileId,
+    };
+  }
   if (
     study.factor !== "room-system" ||
     (study.scenarioProfileId !== "garden-chat-v2" && study.scenarioProfileId !== "everyday-chat-v3") ||
@@ -338,7 +355,7 @@ export function parseLiveCanaryOptions(
   const judgeRubric = values.get("--judge-rubric")?.[0] ?? "v1";
   if (!["v1", "v2", "v3"].includes(judgeRubric) || (judgeRubric !== "v1" && !judgeModel))
     throw new Error("Quality rubrics v2 and v3 require a distinct pinned judge model.");
-  if (studyPlan?.schemaVersion === 2 && (judgeRubric !== "v3" || !judgeModel))
+  if (studyPlan && studyPlan.schemaVersion !== 1 && (judgeRubric !== "v3" || !judgeModel))
     throw new Error("Identity studies require pinned independent frame-integrity rubric v3.");
   const maxJudgeCalls = cases.reduce(
     (sum, scenario) =>
@@ -882,7 +899,7 @@ export function buildPrivateReviewPayload(
   followup: boolean,
   qualityV2: boolean,
 ) {
-  const fixtureAgents = scenario.scenarioProfileId === "everyday-chat-v3" ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
+  const fixtureAgents = usesEverydayFixtureNames(scenario.scenarioProfileId) ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
   const v1 = parsePrivateJudgeCase({
     schemaVersion: 1,
     scenarioId: result.scenarioId,
@@ -977,7 +994,9 @@ async function runCase(
       },
       "fixture-owner",
     );
-    const fixtureAgents = scenario.scenarioProfileId === "everyday-chat-v3" ? EVERYDAY_FIXTURE_AGENTS : FIXTURE_AGENTS;
+    const fixtureAgents = usesEverydayFixtureNames(scenario.scenarioProfileId)
+      ? EVERYDAY_FIXTURE_AGENTS
+      : FIXTURE_AGENTS;
     const selectedAgents = scenario.rosterOrder
       ? scenario.rosterOrder.map((agentId) => fixtureAgents.find((entry) => entry.agentId === agentId)!)
       : fixtureAgents.slice(0, scenario.agentCount);
@@ -1196,7 +1215,7 @@ async function runCase(
             apiKey: credential,
             signal: abort,
             timeoutMs: 30_000,
-            conversationalNamesOnly: scenario.scenarioProfileId === "everyday-chat-v3",
+            conversationalNamesOnly: usesEverydayFixtureNames(scenario.scenarioProfileId),
           };
           if (options.judgeRubric !== "v1") {
             if (!result.runId) throw new Error("Quality judge requires a correlated run ID.");

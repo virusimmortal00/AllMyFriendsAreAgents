@@ -192,6 +192,56 @@ passing samples.
 
 ## Closed study plans
 
+The [terminal-instruction V3 plan](conversation-routing-study-terminal-v3.json)
+is a bounded six-case follow-up to the everyday direct smoke. It pairs the
+current generic task-turn instruction with a contribution-first equivalent for
+three independent prompts: a brief recommendation, a factual comparison, and
+a short drafting request. Each arm starts in a fresh isolated room with one
+participant. Both arms pin the `room-v1` system identity, the same base prompt,
+model, Jev question, gate, roster, energy, preflight mode, and output lane. Only
+the final `YOUR TURN` instruction changes. The alternate still directs the
+agent to answer when addressed or useful and to yield otherwise; it does not
+alter routing, permissions, parser behavior, or tool access. The parser rejects
+unknown profiles and requires the isolated test server for the override.
+
+Preview the six cases without credentials or provider calls:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --study-plan "$PWD/docs/testing/conversation-routing-study-terminal-v3.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --max-cases 6 --max-judge-calls 30 --max-generations 1 \
+  --timeout-ms 120000 --total-timeout-ms 2400000
+```
+
+The dry-run prints profile IDs, SHA-256 digests, instruction character counts,
+case order, and limits; it contains no prompt text or private room IDs. Actor
+token observations, when available in a later live manifest, remain separate
+from the static instruction lengths. A live run requires the repository's
+explicit paid-provider opt-in and an audited OpenCode binary, for example:
+
+```sh
+AMFAA_CANARY_ALLOW_REAL_PROVIDER=true bws-run pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --study-plan "$PWD/docs/testing/conversation-routing-study-terminal-v3.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 \
+  --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --opencode /absolute/path/to/audited/opencode \
+  --secret-launcher /absolute/path/to/bws-run \
+  --retain-private-review /PRIVATE/terminal-review \
+  --max-cases 6 --max-judge-calls 30 --max-generations 1 \
+  --timeout-ms 120000 --total-timeout-ms 2400000
+```
+
+Capture stdout in a private mode-`0600` manifest file for review. The V3
+manifest retains scalar judge outcomes and closed profile evidence; private
+review files and completed actor text traces remain outside the repository.
+The existing v3 quality and frame rubric, human-rating import, and the complete
+blinded `select-frame-all` review queue accept this V3 plan. A single run is a
+small stochastic comparison, not a validated quality improvement.
+
 The optional [fictional study example](conversation-routing-study-example.json)
 uses a versioned JSON plan to compare one factor at a time. Each block fixes
 its scenario, roster order, energy, and two explicit arms; the arms must differ

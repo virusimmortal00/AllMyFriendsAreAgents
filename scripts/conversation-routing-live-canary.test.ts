@@ -165,6 +165,51 @@ describe("isolated identity study execution", () => {
       } as never),
     ).toThrow();
   });
+  it("passes the V3 terminal selector with a 30-call dry-run cap and rejects a smaller cap", async () => {
+    const study = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-terminal-v3.json", "utf8")),
+    );
+    const args = [
+      "--dry-run",
+      "--study-plan",
+      "/fixture/terminal.json",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v3",
+      "--max-cases",
+      "6",
+      "--max-judge-calls",
+      "30",
+      "--max-generations",
+      "1",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "2400000",
+    ];
+    const selected = parseLiveCanaryOptions(args, {}, study);
+    expect(selected.cases).toHaveLength(6);
+    expect(selected.maxJudgeCalls).toBe(30);
+    expect(selected.cases.map(({ study: metadata }) => isolatedRoomSystemProfileEnvironment(metadata))).toContainEqual({
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "room-v1",
+      AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1",
+    });
+    const tooFew = [...args];
+    tooFew[tooFew.indexOf("--max-judge-calls") + 1] = "29";
+    expect(() => parseLiveCanaryOptions(tooFew, {}, study)).toThrow("judge-call cap");
+    const noIsolation = selected.cases[0]!.study as Extract<
+      NonNullable<(typeof selected.cases)[number]["study"]>,
+      { schemaVersion: 3 }
+    >;
+    expect(() =>
+      isolatedRoomSystemProfileEnvironment({ ...noIsolation, terminalInstructionProfileDigest: "0".repeat(64) }),
+    ).toThrow();
+  });
 });
 
 const lengthOutcome = (

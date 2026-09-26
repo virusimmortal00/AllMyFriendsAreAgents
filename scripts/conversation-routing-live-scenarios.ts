@@ -14,6 +14,19 @@ export type RoutingDynamic =
 
 export const SCENARIO_PROFILE_IDS = ["garden-v1", "garden-chat-v2", "everyday-chat-v3"] as const;
 export type ScenarioProfileId = (typeof SCENARIO_PROFILE_IDS)[number];
+export const TERMINAL_SCENARIO_PROFILES = ["brief-v1", "comparison-v1", "draft-v1"] as const;
+export type TerminalScenarioProfileId = (typeof TERMINAL_SCENARIO_PROFILES)[number];
+export const TERMINAL_SCENARIO_TEXT: Record<TerminalScenarioProfileId, string> = {
+  "brief-v1":
+    "Riley, our book club can meet Tuesday at 6 or Thursday at 7. Which would you recommend if most members finish work at 6, and why?",
+  "comparison-v1":
+    "Riley, compare a 20-minute walk and a 20-minute bike ride for a short local errand. Which usually covers more distance?",
+  "draft-v1":
+    "Riley, draft a short, friendly message asking the neighbors to bring reusable cups to Saturday's picnic.",
+};
+export function usesEverydayFixtureNames(id: LiveScenario["scenarioProfileId"]) {
+  return id === "everyday-chat-v3" || TERMINAL_SCENARIO_PROFILES.includes(id as TerminalScenarioProfileId);
+}
 
 export interface LiveScenario {
   scenarioId: string;
@@ -30,7 +43,7 @@ export interface LiveScenario {
   /** Study plans may use two or three scripted human messages instead of the legacy follow-up. */
   scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
   rosterOrder?: ActiveAgentId[];
-  scenarioProfileId?: ScenarioProfileId;
+  scenarioProfileId?: ScenarioProfileId | TerminalScenarioProfileId;
   study?: StudyCaseMetadata;
 }
 

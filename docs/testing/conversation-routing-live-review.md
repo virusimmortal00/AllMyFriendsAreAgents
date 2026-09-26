@@ -166,7 +166,8 @@ are not any of the four established quality axes. In every review pack, visible
 speaker labels use the fictional conversational roster names, rather than
 backend agent IDs that could suggest the wrong model identity.
 
-For a small schema-version-2 room-system pilot, use `select-frame-all` after
+For a small schema-version-2 room-system or schema-version-3 terminal-instruction
+pilot, use `select-frame-all` after
 `blind` to include **every trigger** (up to 30), irrespective of visibility,
 judge score, or lexical flags. It requires complete paired arms and writes a
 private receipt with the pilot trigger denominator. The order is seed-stable,

@@ -147,7 +147,13 @@ export interface ScalarCanaryManifest {
   actorModel: string;
   judgeModel: string | null;
   judgeRubric: "v1" | "v2" | "v3";
-  studyPlan: { schemaVersion: 1 | 2; planId: string; planSha256: string; orderSeed: number; jevModel: string } | null;
+  studyPlan: {
+    schemaVersion: 1 | 2 | 3;
+    planId: string;
+    planSha256: string;
+    orderSeed: number;
+    jevModel: string;
+  } | null;
   studyBatch: {
     schemaVersion: 1;
     planCaseCount: number;
@@ -428,18 +434,25 @@ function parseStudy(value: unknown): StudyCaseMetadata {
     "jevProfileDigest",
     "gateProfileDigest",
     "rosterOrder",
-    ...(version === 2
+    ...(version === 2 || version === 3
       ? ["scenarioProfileId", "scenarioProfileDigest", "roomSystemProfileId", "roomSystemProfileDigest"]
+      : []),
+    ...(version === 3
+      ? ["terminalInstructionProfileId", "terminalInstructionProfileDigest", "terminalInstructionCharacters"]
       : []),
   ]);
   if (
-    (version !== 1 && version !== 2) ||
+    (version !== 1 && version !== 2 && version !== 3) ||
     !["planId", "blockId", "replicateId", "pairId", "caseId"].every((key) => id(row[key])) ||
     ![row.planSha256, row.jevProfileDigest, row.gateProfileDigest, row.agentPromptProfileDigest].every(
       (value) => typeof value === "string" && SHA.test(value),
     ) ||
     !["a", "b"].includes(String(row.arm)) ||
-    (version === 1 ? !["jev", "gate", "agent-prompt"].includes(String(row.factor)) : row.factor !== "room-system") ||
+    (version === 1
+      ? !["jev", "gate", "agent-prompt"].includes(String(row.factor))
+      : version === 2
+        ? row.factor !== "room-system"
+        : row.factor !== "terminal-instruction") ||
     !["ab", "ba"].includes(String(row.order)) ||
     ![
       "single-v1",
@@ -461,7 +474,15 @@ function parseStudy(value: unknown): StudyCaseMetadata {
       (row.scenarioProfileId !== "garden-chat-v2" ||
         !SHA.test(String(row.scenarioProfileDigest)) ||
         !["legacy-v1", "room-v1"].includes(String(row.roomSystemProfileId)) ||
-        !SHA.test(String(row.roomSystemProfileDigest))))
+        !SHA.test(String(row.roomSystemProfileDigest)))) ||
+    (version === 3 &&
+      (!["brief-v1", "comparison-v1", "draft-v1"].includes(String(row.scenarioProfileId)) ||
+        !SHA.test(String(row.scenarioProfileDigest)) ||
+        row.roomSystemProfileId !== "room-v1" ||
+        !SHA.test(String(row.roomSystemProfileDigest)) ||
+        !["current-v1", "contribution-first-v1"].includes(String(row.terminalInstructionProfileId)) ||
+        !SHA.test(String(row.terminalInstructionProfileDigest)) ||
+        integer(row.terminalInstructionCharacters, 1000) === null))
   )
     throw new Error("Invalid scalar canary manifest.");
   return row as unknown as StudyCaseMetadata;
@@ -733,7 +754,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   if (top.studyPlan !== undefined) {
     const plan = object(top.studyPlan, ["schemaVersion", "planId", "planSha256", "orderSeed", "jevModel"]);
     if (
-      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2) ||
+      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2 && plan.schemaVersion !== 3) ||
       !id(plan.planId) ||
       typeof plan.planSha256 !== "string" ||
       !SHA.test(plan.planSha256) ||
@@ -743,7 +764,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     )
       throw new Error("Invalid scalar canary manifest.");
     studyPlan = plan as unknown as NonNullable<ScalarCanaryManifest["studyPlan"]>;
-    if (plan.schemaVersion === 2 && top.judgeRubric !== "v3") throw new Error("Invalid scalar canary manifest.");
+    if (plan.schemaVersion !== 1 && top.judgeRubric !== "v3") throw new Error("Invalid scalar canary manifest.");
   }
   let studyBatch: ScalarCanaryManifest["studyBatch"] = null;
   if (top.studyBatch !== undefined) {
@@ -1234,11 +1255,20 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
       ["jev", row.study.jevProfileId, row.study.jevProfileDigest],
       ["gate", row.study.gateProfileId, row.study.gateProfileDigest],
       ["agent-prompt", row.study.agentPromptProfileId, row.study.agentPromptProfileDigest],
-      ...(row.study.schemaVersion === 2
+      ...(row.study.schemaVersion !== 1
         ? ([
             ["scenario", row.study.scenarioProfileId, row.study.scenarioProfileDigest],
             ["room-system", row.study.roomSystemProfileId, row.study.roomSystemProfileDigest],
           ] as [string, string, string][])
+        : []),
+      ...(row.study.schemaVersion === 3
+        ? [
+            [
+              "terminal-instruction",
+              row.study.terminalInstructionProfileId,
+              row.study.terminalInstructionProfileDigest,
+            ] as [string, string, string],
+          ]
         : []),
     ];
     for (const [kind, profileId, digest] of profiles) {
@@ -1323,7 +1353,12 @@ export function analyzeQualityStudy(
     throw new Error("A complete set of final study batches is required.");
   const parsedRatings = parsePrivateQualityRatings({ schemaVersion: 2, ratings });
   const studyVersion = manifest.studyPlan.schemaVersion;
-  const factors = studyVersion === 2 ? (["room-system"] as const) : (["jev", "gate", "agent-prompt"] as const);
+  const factors =
+    studyVersion === 3
+      ? (["terminal-instruction"] as const)
+      : studyVersion === 2
+        ? (["room-system"] as const)
+        : (["jev", "gate", "agent-prompt"] as const);
   const all = manifest.cases.flatMap((caseRow) =>
     caseRow.triggers.map((trigger, ordinal) => ({
       caseRow,
@@ -1353,8 +1388,8 @@ export function analyzeQualityStudy(
     rubricVersion: "room-frame-integrity-v1",
     ratings: frameRatings,
   });
-  if (parsedFrameRatings.length && (studyVersion !== 2 || manifest.judgeRubric !== "v3"))
-    throw new Error("Frame human ratings require a V2 frame study.");
+  if (parsedFrameRatings.length && (studyVersion === 1 || manifest.judgeRubric !== "v3"))
+    throw new Error("Frame human ratings require a V2 or V3 frame study.");
   if (parsedFrameRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))
     throw new Error("Private frame rating does not match a completed canary run.");
   const frameHuman = new Map(parsedFrameRatings.map((row) => [key(row.scenarioId, row.runId), row]));
@@ -1433,6 +1468,28 @@ export function analyzeQualityStudy(
         a.variant === b.variant &&
         a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
       );
+    if (x.schemaVersion === 3 && y.schemaVersion === 3)
+      return (
+        x.factor === "terminal-instruction" &&
+        y.factor === "terminal-instruction" &&
+        x.scenarioProfileId === y.scenarioProfileId &&
+        x.scenarioProfileDigest === y.scenarioProfileDigest &&
+        x.roomSystemProfileId === "room-v1" &&
+        y.roomSystemProfileId === "room-v1" &&
+        x.roomSystemProfileDigest === y.roomSystemProfileDigest &&
+        x.terminalInstructionProfileId === "current-v1" &&
+        y.terminalInstructionProfileId === "contribution-first-v1" &&
+        x.terminalInstructionProfileDigest !== y.terminalInstructionProfileDigest &&
+        x.jevProfileId === y.jevProfileId &&
+        x.jevProfileDigest === y.jevProfileDigest &&
+        x.gateProfileId === y.gateProfileId &&
+        x.gateProfileDigest === y.gateProfileDigest &&
+        x.agentPromptProfileId === y.agentPromptProfileId &&
+        x.agentPromptProfileDigest === y.agentPromptProfileDigest &&
+        a.preflightMode === b.preflightMode &&
+        a.variant === b.variant &&
+        a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
+      );
     if (x.schemaVersion !== 1 || y.schemaVersion !== 1) return false;
     const changed = [
       x.jevProfileId !== y.jevProfileId ? "jev" : null,
@@ -1460,7 +1517,7 @@ export function analyzeQualityStudy(
     const a = cases.find((row) => row.study!.arm === "a"),
       b = cases.find((row) => row.study!.arm === "b");
     if (cases.length !== 2 || !a || !b || !compatible(a, b)) {
-      if (studyVersion === 2) throw new Error("Mislabeled or incomplete identity study pair.");
+      if (studyVersion !== 1) throw new Error("Mislabeled or incomplete paired study case.");
       excludedCasePairs++;
       continue;
     }
@@ -1681,12 +1738,19 @@ export function analyzeQualityStudy(
     gateProfileDigest: row.study!.gateProfileDigest,
     agentPromptProfileId: row.study!.agentPromptProfileId,
     agentPromptProfileDigest: row.study!.agentPromptProfileDigest,
-    ...(row.study!.schemaVersion === 2
+    ...(row.study!.schemaVersion !== 1
       ? {
           scenarioProfileId: row.study!.scenarioProfileId,
           scenarioProfileDigest: row.study!.scenarioProfileDigest,
           roomSystemProfileId: row.study!.roomSystemProfileId,
           roomSystemProfileDigest: row.study!.roomSystemProfileDigest,
+        }
+      : {}),
+    ...(row.study!.schemaVersion === 3
+      ? {
+          terminalInstructionProfileId: row.study!.terminalInstructionProfileId,
+          terminalInstructionProfileDigest: row.study!.terminalInstructionProfileDigest,
+          terminalInstructionCharacters: row.study!.terminalInstructionCharacters,
         }
       : {}),
   });
@@ -2167,13 +2231,13 @@ export function analyzeQualityStudy(
         missing: frameOutcomes.length - frameCosts.length,
         total: frameCosts.length ? frameCosts.reduce((sum, value) => sum + value, 0) : null,
       },
-      ...(studyVersion === 2
+      ...(studyVersion !== 1
         ? {
             human: {
               rated: frameReviewed.filter(({ human }) => human?.status === "rated").length,
               notAssessable: frameReviewed.filter(({ human }) => human?.status === "not_assessable").length,
               missing: frameReviewed.filter(({ human }) => human === undefined).length,
-              pairedRoomSystemArmBMinusA: delta(frameHumanPairDeltas),
+              [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]: delta(frameHumanPairDeltas),
               agreement: {
                 jointStatusReviews: frameReviewed.filter(
                   ({ model, human }) => model?.status === "completed" && human !== undefined,
@@ -2194,7 +2258,7 @@ export function analyzeQualityStudy(
                 ).length,
               },
             },
-            pairedRoomSystemArmBMinusA: {
+            [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]: {
               ...delta(framePairDeltas),
               unscoredPairs: pairs.length - framePairDeltas.length,
               resolvedJudgeModelUnknownPairs: framePairModelUnknown,
@@ -2555,7 +2619,10 @@ async function main() {
   const rawRatings = values.has("--ratings") ? await readBounded(values.get("--ratings")!) : undefined;
   const rawFrameRatings = values.has("--frame-ratings") ? await readBounded(values.get("--frame-ratings")!) : undefined;
   const parsedFrame = rawFrameRatings === undefined ? [] : parsePrivateFrameRatings(rawFrameRatings);
-  if (rawFrameRatings !== undefined && (manifest.studyPlan?.schemaVersion !== 2 || manifest.judgeRubric !== "v3"))
+  if (
+    rawFrameRatings !== undefined &&
+    (![2, 3].includes(manifest.studyPlan?.schemaVersion ?? 0) || manifest.judgeRubric !== "v3")
+  )
     throw new Error("Frame ratings require a V2 frame study.");
   const maxSpotChecks = values.has("--spot-checks") ? Number(values.get("--spot-checks")) : 4;
   if (!Number.isSafeInteger(maxSpotChecks) || maxSpotChecks < 0 || maxSpotChecks > 12)

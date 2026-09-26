@@ -141,7 +141,7 @@ describe.each(factories)("%s command repository", (_backend, makeFixture) => {
       expect(await fixture.repository.listPendingCommandAttempts(DEFAULT_ROOM_ID)).toEqual([]);
       const audit = { auditId: "audit-1", roomId: DEFAULT_ROOM_ID, submissionId: "submission-1", command: "poll" as const, invokerKind: "human" as const, invokerId: "human-1", targetAgentIds: [] as const, createdAt: submission().createdAt };
       expect((await fixture.repository.createCommandAuditIdentity(audit)).kind).toBe("created");
-      const diagnostic = { recordId: "diagnostic-1", roomId: DEFAULT_ROOM_ID, agentId: "codex-sol" as const, attemptId: "attempt-1", generationId: "generation-1", correlationId: "correlation-1", promptHead: "bounded", promptFingerprint: "sha256:prompt", reason: "stalled", metadata: { bytes: 7 }, diagnosticText: "safe partial", createdAt: submission().createdAt };
+      const diagnostic = { recordId: "diagnostic-1", roomId: DEFAULT_ROOM_ID, agentId: "codex-sol" as const, attemptId: "attempt-1", generationId: "generation-1", correlationId: "correlation-1", promptHead: "bounded", promptFingerprint: "sha256:prompt", reason: "stalled", metadata: { bytes: 7 }, diagnosticText: "safe partial", createdAt: new Date().toISOString() };
       expect((await fixture.repository.appendDiagnostic(diagnostic)).kind).toBe("created");
       expect((await fixture.repository.appendDiagnostic({ ...diagnostic, recordId: "replay" })).kind).toBe("duplicate");
       const reopened = await fixture.reopen();

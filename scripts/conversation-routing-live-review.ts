@@ -889,13 +889,13 @@ export function selectFrameCandidateReviewQueue(
   return { queue: reviewIds.length ? parseReviewQueue({ schemaVersion: 1, reviewIds }) : null, receipt };
 }
 
-/** A complete, judge-independent frame census of one small V2 pilot. */
+/** A complete, judge-independent frame census of one small paired pilot. */
 export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: unknown, seed: string) {
   validSeed(seed);
   const top = record(manifest);
   const plan = record(top.studyPlan);
-  if (plan.schemaVersion !== 2 || top.judgeRubric !== "v3" || !Array.isArray(top.cases))
-    throw new Error("A V2 frame identity study is required.");
+  if (![2, 3].includes(Number(plan.schemaVersion)) || top.judgeRubric !== "v3" || !Array.isArray(top.cases))
+    throw new Error("A V2 or V3 frame study is required.");
   const locator = parseReviewLocator(locatorInput, null, manifest);
   const keys = scalarRunKeys(manifest);
   const byRun = new Map(locator.entries.map((entry) => [`${entry.scenarioId}\u0000${entry.runId}`, entry.reviewId]));
@@ -905,7 +905,11 @@ export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: 
   for (const value of top.cases) {
     const room = record(value);
     const study = record(room.study);
-    if (study.schemaVersion !== 2 || study.factor !== "room-system" || !safeId(study.pairId))
+    if (
+      study.schemaVersion !== plan.schemaVersion ||
+      study.factor !== (plan.schemaVersion === 3 ? "terminal-instruction" : "room-system") ||
+      !safeId(study.pairId)
+    )
       throw new Error("Invalid private frame census.");
     groups.set(study.pairId, [...(groups.get(study.pairId) ?? []), room]);
   }
@@ -917,7 +921,12 @@ export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: 
       !a ||
       !b ||
       rows.length !== 2 ||
-      record(a.study).roomSystemProfileId !== "legacy-v1" ||
+      (plan.schemaVersion === 3
+        ? record(a.study).terminalInstructionProfileId !== "current-v1" ||
+          record(b.study).terminalInstructionProfileId !== "contribution-first-v1" ||
+          record(a.study).roomSystemProfileId !== "room-v1" ||
+          record(b.study).roomSystemProfileId !== "room-v1"
+        : record(a.study).roomSystemProfileId !== "legacy-v1") ||
       record(b.study).roomSystemProfileId !== "room-v1" ||
       !Array.isArray(a.triggers) ||
       !Array.isArray(b.triggers) ||
