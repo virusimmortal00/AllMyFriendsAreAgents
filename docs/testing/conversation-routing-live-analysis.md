@@ -126,6 +126,14 @@ with `{ "status": "rated", "score": 1 }` through score 5, or with
 An omitted axis remains missing. Optional `privateNote` is discarded by the
 parser. Keep ratings and bundles private and outside the repository.
 
+New studies may choose `--judge-rubric v3`. The analysis keeps the existing
+four-axis comparisons unchanged and reports independent `frameIntegrity`
+coverage, scores, closed failure flags, and judge cost. Historical v2 triggers
+appear as **missing** for frame integrity, never as favorable fifth-axis scores.
+Frame-candidate human ratings use a separate private `schemaVersion: 3` file
+from the [offline review tool](conversation-routing-live-review.md); they are
+not pooled with the four-axis human calibration or its denominators.
+
 Use the four-axis rubric independently:
 social cadence covers visible text rhythm and social cues, not measured
 latency; length fit penalizes too-short and too-long exchanges; address radius

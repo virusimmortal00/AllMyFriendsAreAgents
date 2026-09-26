@@ -16,6 +16,7 @@ import {
   type LiveScenarioResult,
   readRoutingEvents,
 } from "./conversation-routing-live-evidence.js";
+import { type FrameIntegrityOutcome, judgeConversationFrameOutcome } from "./conversation-routing-live-frame-judge.js";
 import {
   JudgeFailure,
   type JudgeFailureCategory,
@@ -106,7 +107,7 @@ interface CanaryOptions {
   studyPlan?: StudyPlanV1;
   studyBatch?: StudyBatchMetadataV1;
   jevModel?: string;
-  judgeRubric: "v1" | "v2";
+  judgeRubric: "v1" | "v2" | "v3";
   maxJudgeCalls: number;
   planningAllowanceMs: number;
 }
@@ -300,10 +301,12 @@ export function parseLiveCanaryOptions(
   if (judgeModel && (!MODEL.test(judgeModel) || judgeModel.endsWith("/auto") || judgeModel === model))
     throw new Error("Judge model must be a different pinned OpenRouter model.");
   const judgeRubric = values.get("--judge-rubric")?.[0] ?? "v1";
-  if (!["v1", "v2"].includes(judgeRubric) || (judgeRubric === "v2" && !judgeModel))
-    throw new Error("Quality rubric v2 requires a distinct pinned judge model.");
+  if (!["v1", "v2", "v3"].includes(judgeRubric) || (judgeRubric !== "v1" && !judgeModel))
+    throw new Error("Quality rubrics v2 and v3 require a distinct pinned judge model.");
   const maxJudgeCalls = cases.reduce(
-    (sum, scenario) => sum + (judgeModel ? (judgeRubric === "v2" ? 4 : 1) * scenarioTriggerCount(scenario) : 0),
+    (sum, scenario) =>
+      sum +
+      (judgeModel ? (judgeRubric === "v3" ? 5 : judgeRubric === "v2" ? 4 : 1) * scenarioTriggerCount(scenario) : 0),
     0,
   );
   const explicitJudgeCap = values.get("--max-judge-calls")?.[0];
@@ -353,7 +356,7 @@ export function parseLiveCanaryOptions(
     ...(studyPlan ? { studyPlan } : {}),
     ...(studyBatch ? { studyBatch } : {}),
     ...(jevModel ? { jevModel } : {}),
-    judgeRubric: judgeRubric as "v1" | "v2",
+    judgeRubric: judgeRubric as "v1" | "v2" | "v3",
     maxJudgeCalls,
     planningAllowanceMs,
   };
@@ -592,6 +595,7 @@ interface CaseResult {
   triggers: LiveScenarioResult[];
   judge: JudgeScalarResult[];
   qualityJudge?: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
+  frameJudge?: Array<{ scenarioId: string; runId: string; outcome: FrameIntegrityOutcome }>;
   privateReviewRetained: boolean;
   availabilityCheck: AvailabilityCheckV1;
   study?: NonNullable<LiveScenario["study"]>;
@@ -1016,6 +1020,7 @@ async function runCase(
     if (!checked.available) throw new Error("Selected OpenCode participant is unavailable.");
     const judgments: JudgeScalarResult[] = [];
     const qualityJudgments: NonNullable<CaseResult["qualityJudge"]> = [];
+    const frameJudgments: NonNullable<CaseResult["frameJudge"]> = [];
     const prompts = [
       {
         scenarioId: scenario.scenarioId,
@@ -1141,7 +1146,7 @@ async function runCase(
           prompt.expected,
           messages,
           prompt.followup,
-          options.judgeRubric === "v2",
+          options.judgeRubric !== "v1",
         );
         if (options.judgeModel) {
           const judgeOptions = {
@@ -1151,7 +1156,7 @@ async function runCase(
             signal: abort,
             timeoutMs: 30_000,
           };
-          if (options.judgeRubric === "v2") {
+          if (options.judgeRubric !== "v1") {
             if (!result.runId) throw new Error("Quality judge requires a correlated run ID.");
             qualityJudgments.push({
               scenarioId: result.scenarioId,
@@ -1162,6 +1167,12 @@ async function runCase(
                 result.requiredAddressAgents.length,
               ),
             });
+            if (options.judgeRubric === "v3")
+              frameJudgments.push({
+                scenarioId: result.scenarioId,
+                runId: result.runId,
+                outcome: await judgeConversationFrameOutcome(privateCase, judgeOptions),
+              });
           } else {
             judgments.push(await judgeConversationCase(parsePrivateJudgeCase(privateCase), judgeOptions));
           }
@@ -1186,7 +1197,8 @@ async function runCase(
       preflightMode: scenario.preflightMode,
       triggers: triggerResults,
       judge: judgments,
-      ...(options.judgeRubric === "v2" ? { qualityJudge: qualityJudgments } : {}),
+      ...(options.judgeRubric !== "v1" ? { qualityJudge: qualityJudgments } : {}),
+      ...(options.judgeRubric === "v3" ? { frameJudge: frameJudgments } : {}),
       privateReviewRetained: Boolean(privateDirectory),
       availabilityCheck: projectAvailabilityCheck(availabilityCheck),
       ...(scenario.study ? { study: scenario.study } : {}),

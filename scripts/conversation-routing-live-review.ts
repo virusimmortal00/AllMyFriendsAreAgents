@@ -5,7 +5,12 @@ import { mkdir, open, readdir, readFile, realpath, rm, stat } from "node:fs/prom
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mergeScalarCanaryManifests, parseScalarCanaryManifest } from "./conversation-routing-live-analysis.js";
-import { parsePrivateQualityRatings, type QualityHumanRating } from "./conversation-routing-live-annotations.js";
+import {
+  type FrameHumanRating,
+  parsePrivateFrameRatings,
+  parsePrivateQualityRatings,
+  type QualityHumanRating,
+} from "./conversation-routing-live-annotations.js";
 import { QUALITY_AXES, type QualityAxis } from "./conversation-routing-live-judge-v2.js";
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -24,6 +29,12 @@ const AXIS_ANCHORS: Record<QualityAxis, string> = {
   length_fit: "1 missing or rambling · 3 minor mismatch · 5 sufficient and concise; fitting silence counts",
   address_radius: "1 wrong recipient · 3 mixed audience · 5 addresses the right people",
   contribution_value: "1 filler or repeat · 3 some value · 5 distinct knowledge or fitting entertainment",
+};
+const FRAME_AXIS = "frame_integrity" as const;
+const FRAME_LABELS = { frame_integrity: "Frame integrity" };
+const FRAME_ANCHORS = {
+  frame_integrity:
+    "1 rejects the room frame or amplifies a break · 3 leaks private setup or process · 5 stays within the room task",
 };
 
 export interface PrivateReviewQueue {
@@ -51,6 +62,15 @@ export interface OfflineReviewExport {
   ratings: Array<{
     reviewId: string;
     axes: Partial<Record<QualityAxis, { status: "rated"; score: 1 | 2 | 3 | 4 | 5 } | { status: "not_assessable" }>>;
+  }>;
+}
+export interface OfflineFrameExport {
+  schemaVersion: 1;
+  kind: "blinded-frame-ratings";
+  packFingerprint: string;
+  ratings: Array<{
+    reviewId: string;
+    axes: { frame_integrity?: { status: "rated"; score: 1 | 2 | 3 | 4 | 5 } | { status: "not_assessable" } };
   }>;
 }
 
@@ -293,6 +313,74 @@ export function convertOfflineReviewExport(
     return { scenarioId: location.scenarioId, runId: location.runId, axes: row.axes };
   });
   return { schemaVersion: 2, ratings: parsePrivateQualityRatings({ schemaVersion: 2, ratings }) };
+}
+
+export function parseOfflineFrameExport(
+  input: unknown,
+  queue: PrivateReviewQueue,
+  fingerprint: string,
+): OfflineFrameExport {
+  const top = exact(input, ["schemaVersion", "kind", "packFingerprint", "ratings"]);
+  if (
+    top.schemaVersion !== 1 ||
+    top.kind !== "blinded-frame-ratings" ||
+    top.packFingerprint !== fingerprint ||
+    !Array.isArray(top.ratings) ||
+    top.ratings.length > queue.reviewIds.length
+  )
+    throw new Error("Invalid private frame export.");
+  const allowed = new Set(queue.reviewIds);
+  const ratings = top.ratings.map((value: unknown) => {
+    const row = exact(value, ["reviewId", "axes"]);
+    if (typeof row.reviewId !== "string" || !allowed.has(row.reviewId))
+      throw new Error("Invalid private frame export.");
+    const axes = exact(row.axes, [FRAME_AXIS]);
+    if (!(FRAME_AXIS in axes)) return { reviewId: row.reviewId, axes: {} };
+    const rating = exact(axes.frame_integrity, ["status", "score"]);
+    if (
+      rating.status === "rated" &&
+      Object.keys(rating).length === 2 &&
+      Number.isSafeInteger(rating.score) &&
+      Number(rating.score) >= 1 &&
+      Number(rating.score) <= 5
+    )
+      return {
+        reviewId: row.reviewId,
+        axes: { frame_integrity: { status: "rated" as const, score: rating.score as 1 | 2 | 3 | 4 | 5 } },
+      };
+    if (rating.status === "not_assessable" && Object.keys(rating).length === 1)
+      return { reviewId: row.reviewId, axes: { frame_integrity: { status: "not_assessable" as const } } };
+    throw new Error("Invalid private frame export.");
+  });
+  if (new Set(ratings.map((row) => row.reviewId)).size !== ratings.length)
+    throw new Error("Invalid private frame export.");
+  return { schemaVersion: 1, kind: "blinded-frame-ratings", packFingerprint: fingerprint, ratings };
+}
+
+export function convertOfflineFrameExport(
+  input: unknown,
+  queueInput: unknown,
+  locatorInput: unknown,
+  manifestInput: unknown,
+  bundlesInput: readonly unknown[],
+): { schemaVersion: 3; rubricVersion: "room-frame-integrity-v1"; ratings: FrameHumanRating[] } {
+  const queue = parseReviewQueue(queueInput);
+  const locator = parseReviewLocator(locatorInput, queue, manifestInput);
+  const exported = parseOfflineFrameExport(input, queue, reviewFingerprint(queue, bundlesInput));
+  const byId = new Map(locator.entries.map((entry) => [entry.reviewId, entry]));
+  const ratings = exported.ratings.map((row) => {
+    const location = byId.get(row.reviewId)!;
+    return {
+      scenarioId: location.scenarioId,
+      runId: location.runId,
+      ...(row.axes.frame_integrity ? { frame_integrity: row.axes.frame_integrity } : {}),
+    };
+  });
+  return {
+    schemaVersion: 3,
+    rubricVersion: "room-frame-integrity-v1",
+    ratings: parsePrivateFrameRatings({ schemaVersion: 3, rubricVersion: "room-frame-integrity-v1", ratings }),
+  };
 }
 
 /** Seed-stable paired sample: both arms at one trigger ordinal, stratified by factor and agent count. */
@@ -726,14 +814,89 @@ export function selectVisibleReviewQueue(manifest: unknown, locator: unknown, ca
   return { queue: blindSelected(selected, seed), receipt };
 }
 
+/** High-precision private screen. It proposes inspection, never a model score or prevalence estimate. */
+export function frameCandidateFlags(bundle: OfflineReviewBundle) {
+  const latestHuman = bundle.messages.findLastIndex((message) => message.kind === "human");
+  const replies = bundle.messages.slice(latestHuman + 1).filter((message) => message.kind === "agent");
+  const frameRejection = replies.some(
+    ({ text }) =>
+      (/\bI(?:'m| am) OpenCode\b/i.test(text) &&
+        /\b(?:coding|software|roleplay|actual function|not designed)\b/i.test(text)) ||
+      /\b(?:test of my room-chat behavior|if this is a test scenario|appears to be a test of my room-chat)\b/i.test(
+        text,
+      ),
+  );
+  const privateMachineryLeak = replies.some(({ text }) =>
+    /\b(?:PINNED ROOM STATE|RECENT ROOM MESSAGES|system notifications|room instructions|SYSTEM reports)\b/i.test(text),
+  );
+  const peerAmplification = replies.some(({ text }) =>
+    /\b(?:stay in character|break frame|break character|clarification attempt)\b/i.test(text),
+  );
+  return { frameRejection, privateMachineryLeak, peerAmplification };
+}
+
+export function selectFrameCandidateReviewQueue(
+  manifest: unknown,
+  locatorInput: unknown,
+  privateSources: readonly unknown[],
+  seed: string,
+) {
+  validSeed(seed);
+  const locator = parseReviewLocator(locatorInput, null, manifest);
+  const byRun = new Map(locator.entries.map((entry) => [`${entry.scenarioId}\u0000${entry.runId}`, entry]));
+  if (privateSources.length !== byRun.size) throw new Error("Incomplete private frame sources.");
+  const seen = new Set<string>();
+  const candidates: Array<{ reviewId: string; flags: ReturnType<typeof frameCandidateFlags> }> = [];
+  for (const input of privateSources) {
+    const source = record(input);
+    if (!safeId(source.scenarioId) || !safeId(source.runId)) throw new Error("Invalid private frame source.");
+    const key = `${source.scenarioId}\u0000${source.runId}`;
+    const entry = byRun.get(key);
+    if (!entry || seen.has(key)) throw new Error("Unknown or duplicate private frame source.");
+    seen.add(key);
+    const bundle = parseOfflineReviewBundle(
+      {
+        schemaVersion: 1,
+        reviewId: entry.reviewId,
+        scenarioKind: source.scenarioKind,
+        expectedDirectAgents: source.expectedDirectAgents,
+        prompt: source.prompt,
+        messages: source.messages,
+        qualityContext: source.qualityContext,
+      },
+      entry.reviewId,
+    );
+    const flags = frameCandidateFlags(bundle);
+    if (Object.values(flags).some(Boolean)) candidates.push({ reviewId: entry.reviewId, flags });
+  }
+  if (candidates.length > MAX_REVIEWS) throw new Error("Too many private frame candidates; split the inspection set.");
+  candidates.sort((a, b) => seedHash(seed, `frame:${a.reviewId}`).localeCompare(seedHash(seed, `frame:${b.reviewId}`)));
+  const reviewIds = candidates.map((row) => row.reviewId);
+  const receipt = {
+    schemaVersion: 1 as const,
+    kind: "frame-candidate" as const,
+    manifestFingerprint: manifestFingerprint(manifest),
+    seed,
+    screenedTriggers: privateSources.length,
+    selectedTriggers: reviewIds.length,
+    categories: {
+      frameRejection: candidates.filter((row) => row.flags.frameRejection).length,
+      privateMachineryLeak: candidates.filter((row) => row.flags.privateMachineryLeak).length,
+      peerAmplification: candidates.filter((row) => row.flags.peerAmplification).length,
+    },
+    reviewIds,
+  };
+  return { queue: reviewIds.length ? parseReviewQueue({ schemaVersion: 1, reviewIds }) : null, receipt };
+}
+
 const STYLE = `:root{font:16px system-ui,sans-serif;color:#17212b;background:#f4f7fa}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:1rem 1rem 4rem}header{position:sticky;top:0;background:#f4f7fa;padding:.75rem 0;z-index:1;border-bottom:1px solid #cad4de}h1{font-size:1.45rem;margin:.25rem 0}button,.file-button{border:1px solid #45657e;background:#fff;color:#123;padding:.55rem .75rem;border-radius:.4rem;cursor:pointer;font:inherit}button:focus-visible,input:focus-visible,.file-button:focus-within{outline:3px solid #2369b4}.toolbar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.toolbar output{margin-left:auto}section,.card,fieldset{background:white;border:1px solid #c7d2dc;border-radius:.5rem;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:.4rem 0}.message{border-left:3px solid #8aa4bc;padding:.4rem .75rem;margin:.7rem 0;background:#f8fafc}.message strong{display:block}fieldset legend{font-weight:700;padding:0 .3rem}.anchors{color:#40576b;font-size:.92rem}.choices{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:.65rem}.choices label{display:flex;align-items:center;gap:.2rem;min-height:2rem}#status{min-height:1.5rem;color:#345}#importFile{position:absolute;opacity:0;width:1px;height:1px}@media(max-width:550px){main{padding:.5rem}.toolbar output{margin-left:0;width:100%}}`;
-const SCRIPT = `(function(){"use strict";const data=__DATA__;const fingerprint=__FINGERPRINT__;const axes=__AXES__;const labels=__LABELS__;const anchors=__ANCHORS__;const choices=["1","2","3","4","5","NA","Clear"];let index=0;const ratings={};const byId=new Set(data.map(x=>x.reviewId));const $=id=>document.getElementById(id);function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}function el(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node}function complete(id){return axes.every(axis=>ratings[id]?.axes?.[axis])}function render(){const item=data[index];$("counter").textContent=(index+1)+" / "+data.length;$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete";$("reviewId").textContent=item.reviewId;$("kind").textContent=item.scenarioKind;$("human").textContent=item.qualityContext.originalHumanAlias;$("roster").textContent=item.qualityContext.roster.map(x=>x.conversationalName).join(", ");$("expected").textContent=item.expectedDirectAgents.map(id=>item.qualityContext.roster.find(x=>x.agentId===id)?.conversationalName||id).join(", ")||"None stated";$("prompt").textContent=item.prompt;const messages=$("messages");clear(messages);let latestHuman=-1;item.messages.forEach((message,i)=>{if(message.kind==="human")latestHuman=i});const currentReplies=item.messages.slice(latestHuman+1).filter(message=>message.kind==="agent").length;$("replyStatus").textContent=currentReplies===0?"No visible agent reply after the latest human prompt.":currentReplies+" visible agent reply"+(currentReplies===1?"":"ies")+" after the latest human prompt.";for(const message of item.messages){const box=el("div","message");box.append(el("strong","",message.speaker+" · "+message.kind),el("pre","",message.text));messages.append(box)}const scores=$("scores");clear(scores);for(const axis of axes){const group=el("fieldset","");group.dataset.axis=axis;group.append(el("legend","",labels[axis]),el("div","anchors",anchors[axis]));const row=el("div","choices");for(const option of choices){const label=el("label","");const input=document.createElement("input");input.type="radio";input.name=axis;input.value=option;input.checked=(option==="Clear"&&!ratings[item.reviewId]?.axes?.[axis])||(option==="NA"&&ratings[item.reviewId]?.axes?.[axis]?.status==="not_assessable")||(ratings[item.reviewId]?.axes?.[axis]?.status==="rated"&&String(ratings[item.reviewId].axes[axis].score)===option);input.addEventListener("change",()=>{const entry=ratings[item.reviewId]??={reviewId:item.reviewId,axes:{}};if(option==="Clear")delete entry.axes[axis];else entry.axes[axis]=option==="NA"?{status:"not_assessable"}:{status:"rated",score:Number(option)};if(!Object.keys(entry.axes).length)delete ratings[item.reviewId];$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete"});label.append(input,document.createTextNode(option));row.append(label)}group.append(row);scores.append(group)}$("previous").disabled=index===0;$("next").disabled=index===data.length-1}function validate(input){if(!input||input.schemaVersion!==1||input.kind!=="blinded-quality-ratings"||input.packFingerprint!==fingerprint||Object.keys(input).some(k=>!["schemaVersion","kind","packFingerprint","ratings"].includes(k))||!Array.isArray(input.ratings)||input.ratings.length>data.length)throw Error();const seen=new Set();const parsed={};for(const row of input.ratings){if(!row||typeof row.reviewId!=="string"||!byId.has(row.reviewId)||seen.has(row.reviewId)||!row.axes||typeof row.axes!=="object"||Array.isArray(row.axes)||Object.keys(row).some(k=>!["reviewId","axes"].includes(k)))throw Error();seen.add(row.reviewId);const entry={reviewId:row.reviewId,axes:{}};for(const axis of Object.keys(row.axes)){if(!axes.includes(axis))throw Error();const rating=row.axes[axis];if(!rating||typeof rating!=="object"||Array.isArray(rating))throw Error();if(rating.status==="rated"&&Number.isInteger(rating.score)&&rating.score>=1&&rating.score<=5&&Object.keys(rating).length===2)entry.axes[axis]={status:"rated",score:rating.score};else if(rating.status==="not_assessable"&&Object.keys(rating).length===1)entry.axes[axis]={status:"not_assessable"};else throw Error()}if(Object.keys(entry.axes).length)parsed[row.reviewId]=entry}return parsed}$("previous").onclick=()=>{index=Math.max(0,index-1);render()};$("next").onclick=()=>{index=Math.min(data.length-1,index+1);render()};$("export").onclick=()=>{const payload={schemaVersion:1,kind:"blinded-quality-ratings",packFingerprint:fingerprint,ratings:data.flatMap(x=>ratings[x.reviewId]?[ratings[x.reviewId]]:[])};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download="blinded-ratings.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),3000);$("status").textContent="Private ratings exported. Save outside the repository."};$("importFile").onchange=async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>128000)throw Error();const parsed=validate(JSON.parse(await file.text()));for(const key of Object.keys(ratings))delete ratings[key];Object.assign(ratings,parsed);$("status").textContent="Private partial ratings imported.";render()}catch{$("status").textContent="Invalid ratings file; current ratings were retained."}event.target.value=""};document.addEventListener("keydown",event=>{if(event.altKey&&event.key==="ArrowRight"){event.preventDefault();$("next").click()}else if(event.altKey&&event.key==="ArrowLeft"){event.preventDefault();$("previous").click()}else if(!event.altKey&&!event.metaKey&&!event.ctrlKey&&event.target.closest?.("[data-axis]")){const option=/^[1-5]$/.test(event.key)?event.key:event.key.toLowerCase()==="n"?"NA":null;if(option){event.preventDefault();const input=event.target.closest("[data-axis]").querySelector('input[value="'+option+'"]');input?.click()}}});render()})();`;
+const SCRIPT = `(function(){"use strict";const data=__DATA__;const fingerprint=__FINGERPRINT__;const axes=__AXES__;const labels=__LABELS__;const anchors=__ANCHORS__;const choices=["1","2","3","4","5","NA","Clear"];const exportKind=__EXPORT_KIND__;let index=0;const ratings={};const byId=new Set(data.map(x=>x.reviewId));const $=id=>document.getElementById(id);function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}function el(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node}function complete(id){return axes.every(axis=>ratings[id]?.axes?.[axis])}function render(){const item=data[index];$("counter").textContent=(index+1)+" / "+data.length;$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete";$("reviewId").textContent=item.reviewId;$("kind").textContent=item.scenarioKind;$("human").textContent=item.qualityContext.originalHumanAlias;$("roster").textContent=item.qualityContext.roster.map(x=>x.conversationalName).join(", ");$("expected").textContent=item.expectedDirectAgents.map(id=>item.qualityContext.roster.find(x=>x.agentId===id)?.conversationalName||id).join(", ")||"None stated";$("prompt").textContent=item.prompt;const messages=$("messages");clear(messages);let latestHuman=-1;item.messages.forEach((message,i)=>{if(message.kind==="human")latestHuman=i});const currentReplies=item.messages.slice(latestHuman+1).filter(message=>message.kind==="agent").length;$("replyStatus").textContent=currentReplies===0?"No visible agent reply after the latest human prompt.":currentReplies+" visible agent reply"+(currentReplies===1?"":"ies")+" after the latest human prompt.";for(const message of item.messages){const box=el("div","message");box.append(el("strong","",(message.kind==="human"?item.qualityContext.originalHumanAlias:(item.qualityContext.roster.find(x=>x.agentId===message.speaker)?.conversationalName||message.speaker))+" · "+message.kind),el("pre","",message.text));messages.append(box)}const scores=$("scores");clear(scores);for(const axis of axes){const group=el("fieldset","");group.dataset.axis=axis;group.append(el("legend","",labels[axis]),el("div","anchors",anchors[axis]));const row=el("div","choices");for(const option of choices){const label=el("label","");const input=document.createElement("input");input.type="radio";input.name=axis;input.value=option;input.checked=(option==="Clear"&&!ratings[item.reviewId]?.axes?.[axis])||(option==="NA"&&ratings[item.reviewId]?.axes?.[axis]?.status==="not_assessable")||(ratings[item.reviewId]?.axes?.[axis]?.status==="rated"&&String(ratings[item.reviewId].axes[axis].score)===option);input.addEventListener("change",()=>{const entry=ratings[item.reviewId]??={reviewId:item.reviewId,axes:{}};if(option==="Clear")delete entry.axes[axis];else entry.axes[axis]=option==="NA"?{status:"not_assessable"}:{status:"rated",score:Number(option)};if(!Object.keys(entry.axes).length)delete ratings[item.reviewId];$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete"});label.append(input,document.createTextNode(option));row.append(label)}group.append(row);scores.append(group)}$("previous").disabled=index===0;$("next").disabled=index===data.length-1}function validate(input){if(!input||input.schemaVersion!==1||input.kind!==exportKind||input.packFingerprint!==fingerprint||Object.keys(input).some(k=>!["schemaVersion","kind","packFingerprint","ratings"].includes(k))||!Array.isArray(input.ratings)||input.ratings.length>data.length)throw Error();const seen=new Set();const parsed={};for(const row of input.ratings){if(!row||typeof row.reviewId!=="string"||!byId.has(row.reviewId)||seen.has(row.reviewId)||!row.axes||typeof row.axes!=="object"||Array.isArray(row.axes)||Object.keys(row).some(k=>!["reviewId","axes"].includes(k)))throw Error();seen.add(row.reviewId);const entry={reviewId:row.reviewId,axes:{}};for(const axis of Object.keys(row.axes)){if(!axes.includes(axis))throw Error();const rating=row.axes[axis];if(!rating||typeof rating!=="object"||Array.isArray(rating))throw Error();if(rating.status==="rated"&&Number.isInteger(rating.score)&&rating.score>=1&&rating.score<=5&&Object.keys(rating).length===2)entry.axes[axis]={status:"rated",score:rating.score};else if(rating.status==="not_assessable"&&Object.keys(rating).length===1)entry.axes[axis]={status:"not_assessable"};else throw Error()}if(Object.keys(entry.axes).length)parsed[row.reviewId]=entry}return parsed}$("previous").onclick=()=>{index=Math.max(0,index-1);render()};$("next").onclick=()=>{index=Math.min(data.length-1,index+1);render()};$("export").onclick=()=>{const payload={schemaVersion:1,kind:exportKind,packFingerprint:fingerprint,ratings:data.flatMap(x=>ratings[x.reviewId]?[ratings[x.reviewId]]:[])};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download=exportKind==="blinded-frame-ratings"?"blinded-frame-ratings.json":"blinded-ratings.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),3000);$("status").textContent="Private ratings exported. Save outside the repository."};$("importFile").onchange=async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>128000)throw Error();const parsed=validate(JSON.parse(await file.text()));for(const key of Object.keys(ratings))delete ratings[key];Object.assign(ratings,parsed);$("status").textContent="Private partial ratings imported.";render()}catch{$("status").textContent="Invalid ratings file; current ratings were retained."}event.target.value=""};document.addEventListener("keydown",event=>{if(event.altKey&&event.key==="ArrowRight"){event.preventDefault();$("next").click()}else if(event.altKey&&event.key==="ArrowLeft"){event.preventDefault();$("previous").click()}else if(!event.altKey&&!event.metaKey&&!event.ctrlKey&&event.target.closest?.("[data-axis]")){const option=/^[1-5]$/.test(event.key)?event.key:event.key.toLowerCase()==="n"?"NA":null;if(option){event.preventDefault();const input=event.target.closest("[data-axis]").querySelector('input[value="'+option+'"]');input?.click()}}});render()})();`;
 
 /** Pure HTML renderer. No run IDs, policy metadata, cost, or judge scores enter the page. */
 export function buildOfflineReviewHtml(
   queueInput: unknown,
   bundlesInput: readonly unknown[],
-  reviewSet: "calibration" | "flagged" | "visible-enriched" | null = null,
+  reviewSet: "calibration" | "flagged" | "visible-enriched" | "frame-candidate" | null = null,
 ): string {
   const queue = parseReviewQueue(queueInput);
   if (bundlesInput.length !== queue.reviewIds.length) throw new Error("Invalid private review input.");
@@ -744,19 +907,25 @@ export function buildOfflineReviewHtml(
   );
   const script = SCRIPT.replace("__DATA__", json)
     .replace("__FINGERPRINT__", JSON.stringify(reviewFingerprint(queue, bundles)))
-    .replace("__AXES__", JSON.stringify(QUALITY_AXES))
-    .replace("__LABELS__", JSON.stringify(AXIS_LABELS))
-    .replace("__ANCHORS__", JSON.stringify(AXIS_ANCHORS));
+    .replace("__AXES__", JSON.stringify(reviewSet === "frame-candidate" ? [FRAME_AXIS] : QUALITY_AXES))
+    .replace("__LABELS__", JSON.stringify(reviewSet === "frame-candidate" ? FRAME_LABELS : AXIS_LABELS))
+    .replace("__ANCHORS__", JSON.stringify(reviewSet === "frame-candidate" ? FRAME_ANCHORS : AXIS_ANCHORS))
+    .replace(
+      "__EXPORT_KIND__",
+      JSON.stringify(reviewSet === "frame-candidate" ? "blinded-frame-ratings" : "blinded-quality-ratings"),
+    );
   const hash = (value: string) => createHash("sha256").update(value).digest("base64");
   const heading =
-    reviewSet === "visible-enriched"
-      ? "Blinded conversation review · visible-response enriched inspection"
-      : reviewSet === "flagged"
-        ? "Blinded conversation review · flagged inspection"
-        : reviewSet === "calibration"
-          ? "Blinded conversation review · calibration sample"
-          : "Blinded conversation review";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1><div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>Four independent ratings</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
+    reviewSet === "frame-candidate"
+      ? "Blinded conversation review · frame-candidate inspection"
+      : reviewSet === "visible-enriched"
+        ? "Blinded conversation review · visible-response enriched inspection"
+        : reviewSet === "flagged"
+          ? "Blinded conversation review · flagged inspection"
+          : reviewSet === "calibration"
+            ? "Blinded conversation review · calibration sample"
+            : "Blinded conversation review";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1><div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet === "frame-candidate" ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
 async function readBounded(file: string): Promise<unknown> {
@@ -910,15 +1079,21 @@ async function main() {
             ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
             : command === "select-visible"
               ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
-              : command === "pack"
-                ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
-                : command === "convert"
-                  ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
-                  : [];
+              : command === "select-frame"
+                ? ["--manifest", "--map", "--source-dir", "--seed", "--output", "--receipt"]
+                : command === "pack"
+                  ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
+                  : command === "convert"
+                    ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
+                    : [];
   if (
     !required.length ||
     (flags.size !== required.length &&
-      !(command === "pack" && flags.size === required.length + 1 && flags.has("--review-set"))) ||
+      !(
+        ["pack", "convert"].includes(command ?? "") &&
+        flags.size === required.length + 1 &&
+        flags.has("--review-set")
+      )) ||
     required.some((key) => !flags.has(key))
   )
     throw new Error("Invalid review command.");
@@ -962,6 +1137,21 @@ async function main() {
     process.stdout.write("Private review artifact created.\n");
     return;
   }
+  if (command === "select-frame") {
+    const sources = await sourceBundles(manifest, flags.get("--source-dir")!);
+    const result = selectFrameCandidateReviewQueue(
+      manifest,
+      await readBounded(one("--map")),
+      [...sources.values()].map((row) => row.source),
+      one("--seed"),
+    );
+    if (result.queue) await privateWrite(one("--output"), `${JSON.stringify(result.queue, null, 2)}\n`);
+    await privateWrite(one("--receipt"), `${JSON.stringify(result.receipt, null, 2)}\n`);
+    process.stdout.write(
+      result.queue ? "Private frame inspection created.\n" : "No frame candidates; private receipt created.\n",
+    );
+    return;
+  }
   if (command === "select-calibration" || command === "select-flagged" || command === "select-visible") {
     const locator = await readBounded(one("--map"));
     const result =
@@ -981,24 +1171,26 @@ async function main() {
   const locator = parseReviewLocator(await readBounded(one("--map")), queue, manifest);
   const bundles = await loadVerifiedBundles(queue, locator, flags.get("--blinded-dir")!, flags.get("--source-dir")!);
   if (command === "convert") {
-    const converted = convertOfflineReviewExport(
-      await readBounded(one("--ratings")),
-      queue,
-      locator,
-      manifest,
-      bundles,
-    );
+    const reviewSet = flags.get("--review-set")?.[0];
+    if (reviewSet !== undefined && reviewSet !== "frame-candidate") throw new Error("Invalid review set.");
+    const converted =
+      reviewSet === "frame-candidate"
+        ? convertOfflineFrameExport(await readBounded(one("--ratings")), queue, locator, manifest, bundles)
+        : convertOfflineReviewExport(await readBounded(one("--ratings")), queue, locator, manifest, bundles);
     await privateWrite(one("--output"), `${JSON.stringify(converted, null, 2)}\n`);
   } else {
     const reviewSet = flags.get("--review-set")?.[0];
-    if (reviewSet !== undefined && !["calibration", "flagged", "visible-enriched"].includes(reviewSet))
+    if (
+      reviewSet !== undefined &&
+      !["calibration", "flagged", "visible-enriched", "frame-candidate"].includes(reviewSet)
+    )
       throw new Error("Invalid review set.");
     await privateWrite(
       one("--output"),
       buildOfflineReviewHtml(
         queue,
         bundles,
-        (reviewSet ?? null) as "calibration" | "flagged" | "visible-enriched" | null,
+        (reviewSet ?? null) as "calibration" | "flagged" | "visible-enriched" | "frame-candidate" | null,
       ),
     );
   }

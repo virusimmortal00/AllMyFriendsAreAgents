@@ -9,6 +9,7 @@ import {
   type QualityHumanRating,
   summarizeConversationRatings,
 } from "./conversation-routing-live-annotations.js";
+import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
 import type { StudyCaseMetadataV1 } from "./conversation-routing-live-study.js";
@@ -137,7 +138,7 @@ export interface ScalarCanaryManifest {
   openCodeVersion: string;
   actorModel: string;
   judgeModel: string | null;
-  judgeRubric: "v1" | "v2";
+  judgeRubric: "v1" | "v2" | "v3";
   studyPlan: { schemaVersion: 1; planId: string; planSha256: string; orderSeed: number; jevModel: string } | null;
   studyBatch: {
     schemaVersion: 1;
@@ -159,6 +160,7 @@ export interface ScalarCanaryManifest {
     triggers: ScalarTrigger[];
     judge: JudgeScalarResult[];
     qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: ParsedQualityAxisOutcome[] }>;
+    frameJudge: Array<{ scenarioId: string; runId: string; outcome: FrameIntegrityOutcome }>;
     study: StudyCaseMetadataV1 | null;
     availabilityCheck: AvailabilityCheck | null;
   }>;
@@ -541,6 +543,87 @@ function parseQualityOutcome(
   };
 }
 
+function parseFrameOutcome(
+  value: unknown,
+  scenarioId: string,
+  runId: string,
+  judgeModel: string,
+  visibleBursts: number,
+): FrameIntegrityOutcome {
+  const row = object(value, ["axis", "status", "result", "category"]);
+  if (row.axis !== "frame_integrity") throw new Error("Invalid scalar canary manifest.");
+  if (row.status === "failed") {
+    if (Object.keys(row).length !== 3 || !JUDGE_FAILURES.includes(row.category as (typeof JUDGE_FAILURES)[number]))
+      throw new Error("Invalid scalar canary manifest.");
+    return {
+      axis: "frame_integrity",
+      status: "failed",
+      category: row.category as Extract<FrameIntegrityOutcome, { status: "failed" }>["category"],
+    };
+  }
+  if (row.status !== "completed" || Object.keys(row).length !== 3) throw new Error("Invalid scalar canary manifest.");
+  const result = object(row.result, [
+    "schemaVersion",
+    "rubricVersion",
+    "axis",
+    "scenarioId",
+    "runId",
+    "judgeModel",
+    "resolvedJudgeModel",
+    "status",
+    "score",
+    "reasonCode",
+    "details",
+    "judgeUsage",
+  ]);
+  if (
+    Object.keys(result).length !== 12 ||
+    result.schemaVersion !== 3 ||
+    result.rubricVersion !== "room-frame-integrity-v1" ||
+    result.axis !== "frame_integrity" ||
+    result.scenarioId !== scenarioId ||
+    result.runId !== runId ||
+    result.judgeModel !== judgeModel ||
+    (result.resolvedJudgeModel !== null &&
+      (typeof result.resolvedJudgeModel !== "string" || !RESOLVED_MODEL.test(result.resolvedJudgeModel))) ||
+    !["rated", "not_assessable"].includes(String(result.status))
+  )
+    throw new Error("Invalid scalar canary manifest.");
+  const details = object(result.details, ["frameRejection", "privateMachineryLeak", "peerAmplification"]);
+  if (Object.keys(details).length !== 3) throw new Error("Invalid scalar canary manifest.");
+  const flags = Object.values(details);
+  const usage = object(result.judgeUsage, ["inputTokens", "outputTokens", "reportedCostUsd"]);
+  if (Object.keys(usage).length !== 3) throw new Error("Invalid scalar canary manifest.");
+  nullableInteger(usage.inputTokens, 1_000_000);
+  nullableInteger(usage.outputTokens, 1_000_000);
+  nullableNumber(usage.reportedCostUsd, 1_000);
+  if (result.status === "rated") {
+    if (
+      visibleBursts === 0 ||
+      !score(result.score) ||
+      result.reasonCode !== "observable_exchange" ||
+      flags.some((flag) => flag !== "present" && flag !== "absent") ||
+      ((details.frameRejection === "present" || details.peerAmplification === "present") && Number(result.score) > 2) ||
+      (details.privateMachineryLeak === "present" && Number(result.score) > 3) ||
+      (flags.every((flag) => flag === "absent") && Number(result.score) < 4)
+    )
+      throw new Error("Invalid scalar canary manifest.");
+  } else if (
+    result.score !== null ||
+    flags.some((flag) => flag !== null) ||
+    !["no_visible_reply", "insufficient_context"].includes(String(result.reasonCode)) ||
+    (visibleBursts > 0 && result.reasonCode === "no_visible_reply") ||
+    (visibleBursts === 0 && result.reasonCode !== "no_visible_reply") ||
+    (result.reasonCode === "no_visible_reply" && Object.values(usage).some((value) => value !== null))
+  )
+    throw new Error("Invalid scalar canary manifest.");
+  return {
+    axis: "frame_integrity",
+    status: "completed",
+    result: result as unknown as Extract<FrameIntegrityOutcome, { status: "completed" }>["result"],
+  };
+}
+
 /** Copy only bounded scalar fields. Unknown keys, including prompt/output text, fail closed. */
 export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest {
   const top = object(input, [
@@ -580,7 +663,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     typeof top.actorModel !== "string" ||
     !MODEL.test(top.actorModel) ||
     (top.judgeModel !== null && (typeof top.judgeModel !== "string" || !MODEL.test(top.judgeModel))) ||
-    (top.judgeRubric !== undefined && top.judgeRubric !== "v1" && top.judgeRubric !== "v2") ||
+    (top.judgeRubric !== undefined && !["v1", "v2", "v3"].includes(String(top.judgeRubric))) ||
+    (top.judgeRubric === "v3" && top.judgeModel === null) ||
     (top.maximumScheduledJudgeCalls !== undefined && integer(top.maximumScheduledJudgeCalls, 500) === null) ||
     (top.planningAllowanceMs !== undefined && integer(top.planningAllowanceMs, 86_400_000) === null) ||
     top.concurrency !== 1 ||
@@ -663,6 +747,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       "triggers",
       "judge",
       "qualityJudge",
+      "frameJudge",
       "study",
       "privateReviewRetained",
       "availabilityCheck",
@@ -681,7 +766,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       row.triggers.length > 3 ||
       !Array.isArray(row.judge) ||
       row.judge.length > 3 ||
-      (row.qualityJudge !== undefined && (!Array.isArray(row.qualityJudge) || row.qualityJudge.length > 3))
+      (row.qualityJudge !== undefined && (!Array.isArray(row.qualityJudge) || row.qualityJudge.length > 3)) ||
+      (row.frameJudge !== undefined && (!Array.isArray(row.frameJudge) || row.frameJudge.length > 3))
     )
       throw new Error("Invalid scalar canary manifest.");
     const study = row.study === undefined ? null : parseStudy(row.study);
@@ -945,10 +1031,37 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         ),
       };
     });
+    const frameJudge = ((row.frameJudge ?? []) as unknown[]).map((entry: unknown) => {
+      const value = object(entry, ["scenarioId", "runId", "outcome"]);
+      if (
+        Object.keys(value).length !== 3 ||
+        !id(value.scenarioId) ||
+        !id(value.runId) ||
+        !top.judgeModel ||
+        !triggers.some((trigger) => trigger.scenarioId === value.scenarioId && trigger.runId === value.runId)
+      )
+        throw new Error("Invalid scalar canary manifest.");
+      return {
+        scenarioId: value.scenarioId as string,
+        runId: value.runId as string,
+        outcome: parseFrameOutcome(
+          value.outcome,
+          value.scenarioId as string,
+          value.runId as string,
+          (top.judgeModel as string).slice("openrouter/".length),
+          triggers.find((trigger) => trigger.scenarioId === value.scenarioId && trigger.runId === value.runId)!
+            .confirmedDeliveredBursts,
+        ),
+      };
+    });
     if (
       new Set(qualityJudge.map((entry) => `${entry.scenarioId}\u0000${entry.runId}`)).size !== qualityJudge.length ||
-      ((top.judgeRubric ?? "v1") === "v2" && judge.length !== 0) ||
-      ((top.judgeRubric ?? "v1") === "v1" && qualityJudge.length !== 0)
+      new Set(frameJudge.map((entry) => `${entry.scenarioId}\u0000${entry.runId}`)).size !== frameJudge.length ||
+      ((top.judgeRubric ?? "v1") !== "v1" && judge.length !== 0) ||
+      ((top.judgeRubric ?? "v1") === "v1" && qualityJudge.length !== 0) ||
+      ((top.judgeRubric ?? "v1") !== "v3" && frameJudge.length !== 0) ||
+      ((top.judgeRubric ?? "v1") === "v3" &&
+        (frameJudge.length !== qualityJudge.length || frameJudge.length !== triggers.length))
     )
       throw new Error("Invalid scalar canary manifest.");
     return {
@@ -960,6 +1073,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       triggers,
       judge,
       qualityJudge,
+      frameJudge,
       study,
       availabilityCheck,
     };
@@ -992,7 +1106,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     openCodeVersion: top.openCodeVersion,
     actorModel: top.actorModel,
     judgeModel: top.judgeModel,
-    judgeRubric: (top.judgeRubric ?? "v1") as "v1" | "v2",
+    judgeRubric: (top.judgeRubric ?? "v1") as "v1" | "v2" | "v3",
     studyPlan,
     studyBatch,
     runLimits: {
@@ -1140,7 +1254,11 @@ export function analyzeQualityStudy(
   ratings: readonly QualityHumanRating[] = [],
   options: { seed?: string; maxSpotChecks?: number } = {},
 ) {
-  if (manifest.judgeRubric !== "v2" || !manifest.studyPlan || manifest.cases.some((row) => !row.study))
+  if (
+    (manifest.judgeRubric !== "v2" && manifest.judgeRubric !== "v3") ||
+    !manifest.studyPlan ||
+    manifest.cases.some((row) => !row.study)
+  )
     throw new Error("A versioned study manifest is required.");
   if (manifest.studyBatch && manifest.cases.length !== manifest.studyBatch.planCaseCount)
     throw new Error("A complete set of final study batches is required.");
@@ -1767,6 +1885,15 @@ export function analyzeQualityStudy(
       }
     }
   }
+  const frameOutcomes = manifest.cases.flatMap((row) => row.frameJudge.map((entry) => entry.outcome));
+  const frameRated = frameOutcomes.flatMap((outcome) =>
+    outcome.status === "completed" && outcome.result.status === "rated" ? [outcome.result] : [],
+  );
+  const frameCosts = frameOutcomes.flatMap((outcome) =>
+    outcome.status === "completed" && outcome.result.judgeUsage.reportedCostUsd !== null
+      ? [outcome.result.judgeUsage.reportedCostUsd]
+      : [],
+  );
   return {
     schemaVersion: 2 as const,
     kind: "conversation-routing-live-study-analysis" as const,
@@ -1885,6 +2012,27 @@ export function analyzeQualityStudy(
       ),
     })),
     axes,
+    frameIntegrity: {
+      rubricVersion: manifest.judgeRubric === "v3" ? ("room-frame-integrity-v1" as const) : null,
+      totalTriggers: all.length,
+      rated: frameRated.length,
+      notAssessable: frameOutcomes.filter(
+        (outcome) => outcome.status === "completed" && outcome.result.status === "not_assessable",
+      ).length,
+      failed: frameOutcomes.filter((outcome) => outcome.status === "failed").length,
+      missing: all.length - frameOutcomes.length,
+      scores: Object.fromEntries(
+        [1, 2, 3, 4, 5].map((score) => [score, frameRated.filter((row) => row.score === score).length]),
+      ),
+      frameRejectionPresent: frameRated.filter((row) => row.details.frameRejection === "present").length,
+      privateMachineryLeakPresent: frameRated.filter((row) => row.details.privateMachineryLeak === "present").length,
+      peerAmplificationPresent: frameRated.filter((row) => row.details.peerAmplification === "present").length,
+      reportedJudgeCostUsd: {
+        reported: frameCosts.length,
+        missing: frameOutcomes.length - frameCosts.length,
+        total: frameCosts.length ? frameCosts.reduce((sum, value) => sum + value, 0) : null,
+      },
+    },
     resources: {
       actorEstimatedCostUsd: metric((item) =>
         item.trigger.actor.provenance === "step-fields-v1" && item.trigger.actor.coverage === "reported"
@@ -2183,7 +2331,7 @@ export function analyzeConversationCanary(
 }
 
 export function privateRatingTemplate(manifest: ScalarCanaryManifest) {
-  if (manifest.judgeRubric === "v2")
+  if (manifest.judgeRubric === "v2" || manifest.judgeRubric === "v3")
     return {
       schemaVersion: 2 as const,
       ratings: manifest.cases.flatMap((row) =>
@@ -2234,7 +2382,7 @@ async function main() {
   if (!Number.isSafeInteger(maxSpotChecks) || maxSpotChecks < 0 || maxSpotChecks > 12)
     throw new Error("Invalid analysis invocation.");
   process.stdout.write(
-    `${JSON.stringify(template ? privateRatingTemplate(manifest) : manifest.judgeRubric === "v2" ? analyzeQualityStudy(manifest, rawRatings === undefined ? [] : parsePrivateQualityRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }) : analyzeConversationCanary(manifest, rawRatings === undefined ? [] : parsePrivateConversationRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }), null, 2)}\n`,
+    `${JSON.stringify(template ? privateRatingTemplate(manifest) : manifest.judgeRubric === "v2" || manifest.judgeRubric === "v3" ? analyzeQualityStudy(manifest, rawRatings === undefined ? [] : parsePrivateQualityRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }) : analyzeConversationCanary(manifest, rawRatings === undefined ? [] : parsePrivateConversationRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }), null, 2)}\n`,
   );
 }
 

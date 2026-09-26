@@ -131,6 +131,33 @@ function studyFixture() {
   };
 }
 
+const frameReceipt = (scenarioId: string, runId: string, score: 1 | 5) => ({
+  scenarioId,
+  runId,
+  outcome: {
+    axis: "frame_integrity",
+    status: "completed",
+    result: {
+      schemaVersion: 3,
+      rubricVersion: "room-frame-integrity-v1",
+      axis: "frame_integrity",
+      scenarioId,
+      runId,
+      judgeModel: "google/pinned-judge",
+      resolvedJudgeModel: "google/pinned-judge",
+      status: "rated",
+      score,
+      reasonCode: "observable_exchange",
+      details: {
+        frameRejection: score === 1 ? "present" : "absent",
+        privateMachineryLeak: score === 1 ? "present" : "absent",
+        peerAmplification: "absent",
+      },
+      judgeUsage: { inputTokens: 12, outputTokens: 6, reportedCostUsd: 0.002 },
+    },
+  },
+});
+
 const trigger = (variant: "jev-on" | "jev-off", changes: Record<string, unknown> = {}) => ({
   schemaVersion: 1,
   scenarioId: "direct-2-low-enforce",
@@ -617,6 +644,38 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("keeps old four-axis receipts missing for frame integrity and parses separate version-3 receipts", () => {
+    const legacy = analyzeQualityStudy(parseScalarCanaryManifest(studyFixture()));
+    expect(legacy.frameIntegrity).toMatchObject({ rubricVersion: null, totalTriggers: 4, rated: 0, missing: 4 });
+    const fixture = studyFixture();
+    const withFrame = {
+      ...fixture,
+      judgeRubric: "v3",
+      maximumScheduledJudgeCalls: 10,
+      cases: fixture.cases.map((room) => ({
+        ...room,
+        frameJudge: room.triggers.map((trigger, index) =>
+          frameReceipt(trigger.scenarioId, trigger.runId, index === 0 ? 1 : 5),
+        ),
+      })),
+    };
+    const parsed = parseScalarCanaryManifest(withFrame);
+    expect(parsed.cases[0]?.frameJudge).toHaveLength(2);
+    expect(analyzeQualityStudy(parsed).frameIntegrity).toMatchObject({
+      rubricVersion: "room-frame-integrity-v1",
+      totalTriggers: 4,
+      rated: 4,
+      missing: 0,
+      frameRejectionPresent: 2,
+      privateMachineryLeakPresent: 2,
+      peerAmplificationPresent: 0,
+      reportedJudgeCostUsd: { reported: 4, missing: 0, total: 0.008 },
+    });
+    const bad = structuredClone(withFrame);
+    bad.cases[0]!.frameJudge[0]!.outcome.result.schemaVersion = 2;
+    expect(() => parseScalarCanaryManifest(bad)).toThrow();
+    expect(() => parseScalarCanaryManifest({ ...fixture, cases: withFrame.cases })).toThrow();
+  });
   it("preserves legacy studies and counts closed availability recovery only on completed cases", () => {
     const legacy = analyzeQualityStudy(parseScalarCanaryManifest(studyFixture()));
     expect(legacy.availability.overall).toMatchObject({

@@ -125,3 +125,43 @@ selection. The HTML heading identifies the set. Convert its ratings with the
 same command using the visible queue and distinct output paths. Keep its
 ratings and denominator separate from calibration and flagged inspection.
 This enriched set is not a prevalence estimate or an unbiased quality sample.
+
+`select-frame` is a fourth, separate **frame-candidate inspection** set. It scans
+only the current trigger's private visible agent replies for narrow phrases
+indicating room-frame rejection, private instruction/test machinery leakage, or
+another agent amplifying a frame break. The private receipt records only opaque
+review IDs and category counts. The screen is deliberately incomplete and is
+not a measured failure rate. It never changes the seed-only calibration queue.
+Supply the same finalized manifests and private source directories used for
+`blind`, then build a frame-only pack:
+
+```bash
+pnpm exec tsx scripts/conversation-routing-live-review.ts select-frame \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --map /PRIVATE/blinded-review/blinded-map.json \
+  --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
+  --seed PLAN_SHA256 --output /PRIVATE/frame-queue.json \
+  --receipt /PRIVATE/frame-selection.json
+
+pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --queue /PRIVATE/frame-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
+  --blinded-dir /PRIVATE/blinded-review/blinded \
+  --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
+  --review-set frame-candidate --output /PRIVATE/frame.html
+
+pnpm exec tsx scripts/conversation-routing-live-review.ts convert \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --queue /PRIVATE/frame-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
+  --blinded-dir /PRIVATE/blinded-review/blinded \
+  --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
+  --ratings /PRIVATE/blinded-frame-ratings.json --review-set frame-candidate \
+  --output /PRIVATE/human-frame-ratings.json
+```
+
+The frame pack has its own 1–5/NA rating and exports a closed, separate
+`schemaVersion: 3` human-rating file. A 1 rejects the room frame or amplifies a
+break; 3 leaks private setup or process; 5 stays in the room task. These ratings
+are not any of the four established quality axes. In every review pack, visible
+speaker labels use the fictional conversational roster names, rather than
+backend agent IDs that could suggest the wrong model identity.
