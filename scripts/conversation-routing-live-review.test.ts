@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,6 +16,7 @@ import {
   parseReviewQueue,
   reviewFingerprint,
   selectCalibrationReviewQueue,
+  selectCompleteFrameReviewQueue,
   selectFlaggedReviewQueue,
   selectFrameCandidateReviewQueue,
   selectPairedReviewQueue,
@@ -157,6 +159,57 @@ const exported = () => ({
 });
 
 describe("private offline review pack", () => {
+  it("selects every small V2 identity trigger without judge-dependent filtering or adjacent twins", () => {
+    const cases = ["one", "two"].flatMap((pairId) =>
+      ["a", "b"].map((arm) => ({
+        scenarioId: `${pairId}-${arm}`,
+        study: {
+          schemaVersion: 2,
+          factor: "room-system",
+          pairId,
+          arm,
+          roomSystemProfileId: arm === "a" ? "legacy-v1" : "room-v1",
+        },
+        triggers: [{ scenarioId: `${pairId}-${arm}`, runId: `run-${pairId}-${arm}` }],
+      })),
+    );
+    const studyManifest = { sourceSha256: "a".repeat(64), judgeRubric: "v3", studyPlan: { schemaVersion: 2 }, cases };
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceSha256: studyManifest.sourceSha256,
+          studyPlan: studyManifest.studyPlan,
+          cases: cases.map((row) => ({
+            scenarioId: row.scenarioId,
+            study: row.study,
+            triggers: row.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+          })),
+        }),
+      )
+      .digest("hex");
+    const entries = cases.map((row, index) => ({
+      reviewId: ids[index]!,
+      scenarioId: row.scenarioId,
+      runId: row.triggers[0]!.runId,
+      sourceFile: `source-${index}.json`,
+      priority: "sample",
+    }));
+    const locator = { schemaVersion: 1, manifestFingerprint: fingerprint, entries };
+    const chosen = selectCompleteFrameReviewQueue(studyManifest, locator, "fixed-seed");
+    expect(chosen.queue.reviewIds).toHaveLength(4);
+    expect(new Set(chosen.queue.reviewIds)).toEqual(new Set(entries.map((entry) => entry.reviewId)));
+    expect(chosen.receipt).toMatchObject({ kind: "frame-complete", screenedTriggers: 4, selectedTriggers: 4 });
+    expect(selectCompleteFrameReviewQueue(studyManifest, locator, "fixed-seed")).toEqual(chosen);
+    expect(JSON.stringify(chosen.receipt)).not.toContain("room-v1");
+    const firstPair = (id: string) => entries.find((entry) => entry.reviewId === id)!.scenarioId.split("-")[0];
+    expect(chosen.queue.reviewIds.slice(0, 2).map(firstPair)).toEqual(expect.arrayContaining(["one", "two"]));
+    expect(() =>
+      selectCompleteFrameReviewQueue(studyManifest, { ...locator, entries: entries.slice(1) }, "fixed-seed"),
+    ).toThrow();
+    const mixed = structuredClone(studyManifest);
+    mixed.cases[0]!.study.schemaVersion = 1;
+    expect(() => selectCompleteFrameReviewQueue(mixed, locator, "fixed-seed")).toThrow();
+  });
   it("samples 12 distinct factor-balanced pairs without judge-score influence and keeps flagged cases separate", () => {
     const cases: Record<string, unknown>[] = [];
     const entries: Array<{
@@ -579,6 +632,10 @@ describe("private offline review pack", () => {
       };
       const html = join(root, "frame.html");
       writeFileSync(html, buildOfflineReviewHtml(one, [card], "frame-candidate"), { mode: 0o600 });
+      const completeHtml = buildOfflineReviewHtml(one, [card], "frame-complete");
+      expect(completeHtml).toContain("complete frame pilot");
+      expect(completeHtml).toContain("blinded-frame-ratings");
+      expect(completeHtml).not.toContain("Four independent ratings");
       const page = await browser.newPage({ acceptDownloads: true });
       const outbound: string[] = [];
       page.on("request", (request) => {

@@ -165,3 +165,15 @@ break; 3 leaks private setup or process; 5 stays in the room task. These ratings
 are not any of the four established quality axes. In every review pack, visible
 speaker labels use the fictional conversational roster names, rather than
 backend agent IDs that could suggest the wrong model identity.
+
+For a small schema-version-2 room-system pilot, use `select-frame-all` after
+`blind` to include **every trigger** (up to 30), irrespective of visibility,
+judge score, or lexical flags. It requires complete paired arms and writes a
+private receipt with the pilot trigger denominator. The order is seed-stable,
+blinded, and separates paired arms. Pass `--manifest` once per final batch,
+plus `--map`, `--seed`, `--output`, and `--receipt`. Then use `pack` and `convert`
+as above with `--review-set frame-complete`; the export stays frame-only and
+contains opaque review IDs, not arm labels or transcript text. This complete
+pilot census is separate from the unbiased calibration queue and the
+outcome-conditioned frame-candidate queue. Missing ratings remain missing and
+NA is explicit; a small pilot is not a population prevalence estimate.
