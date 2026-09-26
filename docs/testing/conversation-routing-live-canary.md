@@ -246,6 +246,18 @@ chosen total watchdog covers it. One failed axis does not erase the other
 axes' scalar results. Human spot-check ratings remain separate from model
 scores.
 
+`--judge-rubric v3` retains those four v2 calls and adds one independent
+frame-integrity call per trigger. Its separate `frameJudge` receipt uses
+`schemaVersion: 3` and `room-frame-integrity-v1`; old v2 receipts never imply a
+fifth score. Anchors are 1 for explicit room-frame rejection or peer
+amplification, 3 for visible private instruction/test machinery leakage, and 5
+for staying within the room task. The result has closed flags, reason, score,
+model IDs, and its own reported usage; no model response text enters the scalar
+manifest. A missing visible reply yields an unassessable, no-call receipt.
+Budget **five** calls per trigger and an adequate total watchdog when selecting
+v3. The frame call is a distinct rubric; it does not change the four existing
+axes or their historical scores.
+
 ## Expanded paired study
 
 The [versioned 72-case example](conversation-routing-study-large-v1.json) has

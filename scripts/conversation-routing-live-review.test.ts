@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { parseScalarCanaryManifest } from "./conversation-routing-live-analysis.js";
 import {
   buildOfflineReviewHtml,
+  convertOfflineFrameExport,
   convertOfflineReviewExport,
   parseOfflineReviewExport,
   parseReviewLocator,
@@ -15,6 +16,7 @@ import {
   reviewFingerprint,
   selectCalibrationReviewQueue,
   selectFlaggedReviewQueue,
+  selectFrameCandidateReviewQueue,
   selectPairedReviewQueue,
   selectVisibleReviewQueue,
 } from "./conversation-routing-live-review.js";
@@ -516,6 +518,99 @@ describe("private offline review pack", () => {
       expect(await page.locator('fieldset[data-axis="social_cadence"] input[value="4"]').isChecked()).toBe(true);
       await expect.poll(async () => page.locator("#status").textContent()).toContain("retained");
       expect(await page.locator("#replyStatus").textContent()).toContain("visible agent reply");
+      expect(outbound).toEqual([]);
+      await page.close();
+    } finally {
+      await browser.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("selects high-confidence frame candidates separately from seed-only calibration without raw receipt text", () => {
+    const sources = [
+      {
+        ...bundle(ids[0]!),
+        scenarioId: "case-a",
+        runId: "run-a",
+        messages: [
+          { speaker: "Operator", kind: "human", text: "Please suggest a fictional sign." },
+          {
+            speaker: "agent-a",
+            kind: "agent",
+            text: "I am OpenCode, a coding assistant; this roleplay room is not my function.",
+          },
+        ],
+      },
+      {
+        ...bundle(ids[1]!),
+        scenarioId: "case-b",
+        runId: "run-b",
+        messages: [
+          { speaker: "Operator", kind: "human", text: "Please suggest a fictional sign." },
+          { speaker: "agent-a", kind: "agent", text: "A concise garden sign idea." },
+        ],
+      },
+    ];
+    const selected = selectFrameCandidateReviewQueue(manifest, map, sources, "fixed-seed");
+    expect(selected.queue?.reviewIds).toEqual([ids[0]]);
+    expect(selected.receipt).toMatchObject({
+      kind: "frame-candidate",
+      screenedTriggers: 2,
+      selectedTriggers: 1,
+      categories: { frameRejection: 1, privateMachineryLeak: 0, peerAmplification: 0 },
+    });
+    expect(JSON.stringify(selected.receipt)).not.toContain("OpenCode");
+    expect(selectFrameCandidateReviewQueue(manifest, map, sources, "fixed-seed")).toEqual(selected);
+    expect(() => selectFrameCandidateReviewQueue(manifest, map, [...sources, sources[0]], "fixed-seed")).toThrow();
+    expect(() => selectFrameCandidateReviewQueue(manifest, map, sources.slice(1), "fixed-seed")).toThrow();
+  });
+
+  it("renders a private frame-only pack with conversational names and converts bounded ratings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "private-frame-browser-"));
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const one = { schemaVersion: 1, reviewIds: [ids[0]] };
+      const card = {
+        ...bundle(ids[0]!),
+        messages: [
+          { speaker: "Operator", kind: "human" as const, text: "Please suggest a fictional sign." },
+          { speaker: "agent-a", kind: "agent" as const, text: "I am OpenCode; this room is not my job." },
+        ],
+      };
+      const html = join(root, "frame.html");
+      writeFileSync(html, buildOfflineReviewHtml(one, [card], "frame-candidate"), { mode: 0o600 });
+      const page = await browser.newPage({ acceptDownloads: true });
+      const outbound: string[] = [];
+      page.on("request", (request) => {
+        if (/^https?:/.test(request.url())) outbound.push(request.url());
+      });
+      await page.goto(pathToFileURL(html).href);
+      expect(await page.locator("fieldset[data-axis='frame_integrity']").count()).toBe(1);
+      expect(await page.locator("fieldset[data-axis='social_cadence']").count()).toBe(0);
+      expect(await page.locator(".message strong").allTextContents()).toEqual(["Operator · human", "Agent A · agent"]);
+      await page.locator('fieldset[data-axis="frame_integrity"] input[value="1"]').check();
+      const downloadPromise = page.waitForEvent("download");
+      await page.locator("#export").click();
+      const download = await downloadPromise;
+      expect(download.suggestedFilename()).toBe("blinded-frame-ratings.json");
+      const exported = JSON.parse(readFileSync((await download.path())!, "utf8"));
+      expect(exported.kind).toBe("blinded-frame-ratings");
+      expect(JSON.stringify(exported)).not.toContain(card.messages[1]!.text);
+      expect(JSON.stringify(exported)).not.toContain("case-a");
+      expect(convertOfflineFrameExport(exported, one, map, manifest, [card])).toEqual({
+        schemaVersion: 3,
+        rubricVersion: "room-frame-integrity-v1",
+        ratings: [{ scenarioId: "case-a", runId: "run-a", frame_integrity: { status: "rated", score: 1 } }],
+      });
+      expect(() =>
+        convertOfflineFrameExport(
+          { ...exported, ratings: [{ reviewId: ids[0], axes: { frame_integrity: { status: "rated", score: 6 } } }] },
+          one,
+          map,
+          manifest,
+          [card],
+        ),
+      ).toThrow();
       expect(outbound).toEqual([]);
       await page.close();
     } finally {

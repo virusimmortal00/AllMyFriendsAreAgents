@@ -30,6 +30,45 @@ export interface QualityHumanRating {
   axes: Partial<Record<QualityAxis, QualityHumanAxisRating>>;
 }
 
+export interface FrameHumanRating {
+  scenarioId: string;
+  runId: string;
+  frame_integrity?: QualityHumanAxisRating;
+}
+
+/** Version 3 is independent of the four quality axes; missing is never a favorable score. */
+export function parsePrivateFrameRatings(input: unknown): FrameHumanRating[] {
+  const envelope = object(input, ["schemaVersion", "rubricVersion", "ratings"]);
+  if (
+    envelope.schemaVersion !== 3 ||
+    envelope.rubricVersion !== "room-frame-integrity-v1" ||
+    !Array.isArray(envelope.ratings) ||
+    envelope.ratings.length > MAX_RATINGS
+  )
+    throw new Error("Invalid private frame rating input.");
+  const rows = envelope.ratings.map((value: unknown): FrameHumanRating => {
+    const row = object(value, ["scenarioId", "runId", "frame_integrity"]);
+    if (!id(row.scenarioId) || !id(row.runId)) throw new Error("Invalid private frame rating input.");
+    if (row.frame_integrity === undefined) return { scenarioId: row.scenarioId, runId: row.runId };
+    const rating = object(row.frame_integrity, ["status", "score"]);
+    if (rating.status === "rated") {
+      if (Object.keys(rating).length !== 2 || !count(rating.score, 5) || rating.score < 1)
+        throw new Error("Invalid private frame rating input.");
+      return {
+        scenarioId: row.scenarioId,
+        runId: row.runId,
+        frame_integrity: { status: "rated", score: rating.score as 1 | 2 | 3 | 4 | 5 },
+      };
+    }
+    if (rating.status !== "not_assessable" || Object.keys(rating).length !== 1)
+      throw new Error("Invalid private frame rating input.");
+    return { scenarioId: row.scenarioId, runId: row.runId, frame_integrity: { status: "not_assessable" } };
+  });
+  if (new Set(rows.map((row) => `${row.scenarioId}\u0000${row.runId}`)).size !== rows.length)
+    throw new Error("Invalid private frame rating input.");
+  return rows;
+}
+
 /** Only fields already projected by the live collector may cross into comparison. */
 export interface ObservedConversationRun {
   scenarioId: string;

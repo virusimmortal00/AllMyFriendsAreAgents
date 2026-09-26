@@ -425,6 +425,44 @@ describe("routing canary selection", () => {
     tooLow[tooLow.indexOf("--max-generations") + 1] = "8";
     expect(() => parseLiveCanaryOptions(tooLow, {}, study)).toThrow("roster-by-trigger planning minimum");
   });
+  it("budgets a fifth independent frame call only for rubric v3", async () => {
+    const study = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8")),
+    );
+    const base = [
+      "--study-plan",
+      "/fixture/study.json",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v3",
+      "--opencode",
+      "/fixture/opencode",
+      "--secret-launcher",
+      "/fixture/bws-run",
+      "--max-cases",
+      "12",
+      "--max-generations",
+      "18",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "9000000",
+      "--max-judge-calls",
+      "130",
+    ];
+    const options = parseLiveCanaryOptions(base, {}, study);
+    expect(options.judgeRubric).toBe("v3");
+    expect(options.maxJudgeCalls).toBe(130);
+    expect(options.planningAllowanceMs).toBe(7_630_000);
+    const insufficient = [...base];
+    insufficient[insufficient.indexOf("--max-judge-calls") + 1] = "129";
+    expect(() => parseLiveCanaryOptions(insufficient, {}, study)).toThrow("judge-call cap");
+  });
   it("keeps v2 audience context private and excludes study policy from judge input", () => {
     const scenario = {
       ...buildLiveScenario({
