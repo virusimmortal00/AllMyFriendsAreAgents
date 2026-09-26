@@ -251,6 +251,17 @@ ceiling for all six cases**; the watchdogs and generation caps do not enforce
 dollars. Treat the known case and holdouts separately. Six stochastic cases
 cannot establish a causal model-quality claim.
 
+For this pilot, batch 0 is the meal holdout. Run its Sonnet case, then its
+Haiku counterpart; inspect both private replies and text-boundary traces
+before considering batch 1. Pause on provider, delivery, or parse failure;
+do not score missing replies as intentional silence. Stop further pairs if
+Sonnet visibly narrates its process or identity, or breaks the room frame.
+Haiku defects alone remain comparative evidence. Do not silently rerun a
+case. Human-rate every completed case in blind quality and frame packs before
+opening the private arm map. The soft cumulative $0.50 ceiling applies across
+all batches, and this six-case study is a suitability pilot, not a model
+ranking or the full Jev settings matrix.
+
 The [terminal-instruction V3 plan](conversation-routing-study-terminal-v3.json)
 is a bounded six-case follow-up to the everyday direct smoke. It pairs the
 current generic task-turn instruction with a contribution-first equivalent for

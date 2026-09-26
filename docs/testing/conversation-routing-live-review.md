@@ -190,6 +190,43 @@ opaque review IDs. Run `pack --review-set model-complete` for the four quality
 axes, and `convert --review-set model-complete` to produce the private human
 ratings file. The existing export/import controls support partial grading and
 resume. `select-frame-all` can create a separate complete frame-integrity pack
-for the same V4 study. The normal CLI requires all three completed pairs; an
-early-stopped pilot needs a separately marked diagnostic review path and cannot
-be presented as the complete comparison.
+for the same V4 study. The normal CLI requires all three completed pairs.
+
+If the pilot stops after batch 0 or 1, `--allow-partial true` accepts only one
+or two complete matched V4 pairs from contiguous batches starting at zero. It
+checks the committed V4 plan and case metadata, and rejects a half pair,
+skipped batch, changed profile, foreign plan, missing source bundle, or
+duplicate case. Supply the flag on **every** command. For example, after
+batch 0:
+
+```sh
+pnpm exec tsx scripts/conversation-routing-live-review.ts blind \
+  --manifest /PRIVATE/model-batch-0.json --source-dir /PRIVATE/model-batch-0-review \
+  --output-dir /PRIVATE/model-blind --allow-partial true
+pnpm exec tsx scripts/conversation-routing-live-review.ts select-model-all \
+  --manifest /PRIVATE/model-batch-0.json --map /PRIVATE/model-blind/blinded-map.json \
+  --seed PLAN_SHA256 --output /PRIVATE/model-queue.json \
+  --receipt /PRIVATE/model-selection.json --allow-partial true
+pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
+  --manifest /PRIVATE/model-batch-0.json --queue /PRIVATE/model-queue.json \
+  --map /PRIVATE/model-blind/blinded-map.json --blinded-dir /PRIVATE/model-blind/blinded \
+  --source-dir /PRIVATE/model-batch-0-review --review-set model-partial \
+  --output /PRIVATE/model-quality-partial.html --allow-partial true
+pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
+  --manifest /PRIVATE/model-batch-0.json --queue /PRIVATE/model-queue.json \
+  --map /PRIVATE/model-blind/blinded-map.json --blinded-dir /PRIVATE/model-blind/blinded \
+  --source-dir /PRIVATE/model-batch-0-review --review-set frame-partial \
+  --output /PRIVATE/model-frame-partial.html --allow-partial true
+```
+
+For two completed batches, repeat `--manifest` and `--source-dir` with batch
+1, keeping the same order on every command. The HTML and private selection
+receipt say **PARTIAL DIAGNOSTIC** and state completed versus planned pairs.
+Quality and frame packs use the same opaque queue and rate every completed
+case; the arm/model mapping appears only in the private selection receipt.
+Export and convert each pack with its matching `--review-set`
+(`model-partial` or `frame-partial`) and `--allow-partial true`. Keep the
+receipt hidden until human ratings for all completed cases are saved. A
+partial pack supplies case-level evidence only; missing pairs have no scores
+or aggregate result. The six-case pilot tests suitability for this setting,
+not a model ranking or the complete Jev settings matrix.

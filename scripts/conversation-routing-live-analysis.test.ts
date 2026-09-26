@@ -836,6 +836,18 @@ describe("versioned quality study analysis", () => {
     const report = analyzeQualityStudy(parsed);
     expect(report.denominators.matchedCasePairs).toBe(3);
     expect(report.byFactor["actor-model"]?.paired.triggerPairs).toBe(3);
+    expect(report.frameIntegrity).toMatchObject({
+      pairedActorModelArmBMinusA: { pairedRuns: 3, candidateMinusBaselineMean: 4 },
+    });
+    expect(report.frameIntegrity).not.toHaveProperty("pairedRoomSystemArmBMinusA");
+    const humanFrame = fixture.cases.map((row) => ({
+      scenarioId: row.triggers[0]!.scenarioId,
+      runId: row.triggers[0]!.runId,
+      frame_integrity: { status: "rated" as const, score: (row.study.arm === "a" ? 1 : 5) as 1 | 5 },
+    }));
+    expect(analyzeQualityStudy(parsed, [], {}, humanFrame).frameIntegrity).toMatchObject({
+      human: { pairedActorModelArmBMinusA: { pairedRuns: 3, candidateMinusBaselineMean: 4 } },
+    });
     expect(report.source).toMatchObject({
       actorModelsByArm: {
         a: "openrouter/anthropic/claude-haiku-4.5",
@@ -862,6 +874,34 @@ describe("versioned quality study analysis", () => {
     const incomplete = structuredClone(fixture);
     incomplete.cases.pop();
     expect(() => parseScalarCanaryManifest(incomplete)).toThrow();
+  });
+  it("merges only contiguous complete V4 batches in opt-in diagnostic mode", () => {
+    const fixture = modelStudyFixture();
+    const batches = [0, 1, 2].map((index) => {
+      const cases = fixture.cases.slice(index * 2, index * 2 + 2);
+      return parseScalarCanaryManifest({
+        ...fixture,
+        studyBatch: {
+          ...fixture.studyBatch,
+          batchIndex: index,
+          batchCount: 3,
+          pairsPerBatch: 1,
+          pairCount: 1,
+          pairIds: [cases[0]!.study.pairId],
+        },
+        cases,
+      });
+    });
+    expect(mergeScalarCanaryManifests(batches.slice(0, 1), { allowPartialV4: true }).cases).toHaveLength(2);
+    expect(mergeScalarCanaryManifests(batches.slice(0, 2), { allowPartialV4: true }).cases).toHaveLength(4);
+    expect(() => mergeScalarCanaryManifests(batches.slice(0, 2))).toThrow();
+    expect(() => mergeScalarCanaryManifests(batches.slice(1, 2), { allowPartialV4: true })).toThrow();
+    expect(() => mergeScalarCanaryManifests([batches[0]!, batches[2]!], { allowPartialV4: true })).toThrow();
+    expect(() => mergeScalarCanaryManifests(batches, { allowPartialV4: true })).toThrow();
+    expect(() => mergeScalarCanaryManifests([batches[0]!, batches[0]!], { allowPartialV4: true })).toThrow();
+    expect(() =>
+      mergeScalarCanaryManifests([parseScalarCanaryManifest(identityFixture())], { allowPartialV4: true }),
+    ).toThrow();
   });
   it("accepts V3 terminal pairs and rejects a second changed profile", () => {
     const base = identityFixture();

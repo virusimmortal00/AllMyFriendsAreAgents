@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { mkdir, open, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { mergeScalarCanaryManifests, parseScalarCanaryManifest } from "./conversation-routing-live-analysis.js";
 import {
   type FrameHumanRating,
@@ -12,6 +13,7 @@ import {
   type QualityHumanRating,
 } from "./conversation-routing-live-annotations.js";
 import { QUALITY_AXES, type QualityAxis } from "./conversation-routing-live-judge-v2.js";
+import { expandStudyPlan, parseStudyPlan, studyPlanDigest } from "./conversation-routing-live-study.js";
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const REVIEW_ID = /^review-[a-f0-9]{12}$/;
@@ -890,7 +892,12 @@ export function selectFrameCandidateReviewQueue(
 }
 
 /** A complete, judge-independent frame census of one small paired pilot. */
-export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: unknown, seed: string) {
+export function selectCompleteFrameReviewQueue(
+  manifest: unknown,
+  locatorInput: unknown,
+  seed: string,
+  allowPartialV4 = false,
+) {
   validSeed(seed);
   const top = record(manifest);
   const plan = record(top.studyPlan);
@@ -918,7 +925,13 @@ export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: 
       throw new Error("Invalid private frame census.");
     groups.set(study.pairId, [...(groups.get(study.pairId) ?? []), room]);
   }
-  if (plan.schemaVersion === 4 && (groups.size !== 3 || keys.size !== 6))
+  if (allowPartialV4 && plan.schemaVersion !== 4) throw new Error("Partial review requires a V4 model study.");
+  if (
+    plan.schemaVersion === 4 &&
+    (allowPartialV4
+      ? ![1, 2].includes(groups.size) || keys.size !== groups.size * 2 || !top.studyBatch
+      : groups.size !== 3 || keys.size !== 6)
+  )
     throw new Error("Incomplete V4 model study review.");
   const cards: Array<{ key: string; first: string; second: string }> = [];
   for (const [pairId, rows] of groups) {
@@ -976,12 +989,15 @@ export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: 
     queue,
     receipt: {
       schemaVersion: 1 as const,
-      kind: "frame-complete" as const,
+      kind: (allowPartialV4 ? "frame-partial" : "frame-complete") as "frame-partial" | "frame-complete",
       manifestFingerprint: manifestFingerprint(manifest),
       seed,
       screenedTriggers: keys.size,
       selectedTriggers: queue.reviewIds.length,
       pairOrdinals: cards.length,
+      ...(allowPartialV4
+        ? { completedPairs: groups.size, plannedPairs: 3, diagnosticOnly: true, evidenceLabel: "PARTIAL DIAGNOSTIC" }
+        : {}),
       ...(plan.schemaVersion === 4
         ? {
             privateArmMap: [...groups].flatMap(([pairId, rows]) =>
@@ -1004,10 +1020,21 @@ export function selectCompleteFrameReviewQueue(manifest: unknown, locatorInput: 
 }
 
 /** Complete V4 quality review, with arm identities in the private receipt only. */
-export function selectCompleteModelReviewQueue(manifest: unknown, locatorInput: unknown, seed: string) {
+export function selectCompleteModelReviewQueue(
+  manifest: unknown,
+  locatorInput: unknown,
+  seed: string,
+  allowPartialV4 = false,
+) {
   if (record(record(manifest).studyPlan).schemaVersion !== 4) throw new Error("A V4 model study is required.");
-  const result = selectCompleteFrameReviewQueue(manifest, locatorInput, seed);
-  return { queue: result.queue, receipt: { ...result.receipt, kind: "model-complete" as const } };
+  const result = selectCompleteFrameReviewQueue(manifest, locatorInput, seed, allowPartialV4);
+  return {
+    queue: result.queue,
+    receipt: {
+      ...result.receipt,
+      kind: (allowPartialV4 ? "model-partial" : "model-complete") as "model-partial" | "model-complete",
+    },
+  };
 }
 
 const STYLE = `:root{font:16px system-ui,sans-serif;color:#17212b;background:#f4f7fa}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:1rem 1rem 4rem}header{position:sticky;top:0;background:#f4f7fa;padding:.75rem 0;z-index:1;border-bottom:1px solid #cad4de}h1{font-size:1.45rem;margin:.25rem 0}button,.file-button{border:1px solid #45657e;background:#fff;color:#123;padding:.55rem .75rem;border-radius:.4rem;cursor:pointer;font:inherit}button:focus-visible,input:focus-visible,.file-button:focus-within{outline:3px solid #2369b4}.toolbar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.toolbar output{margin-left:auto}section,.card,fieldset{background:white;border:1px solid #c7d2dc;border-radius:.5rem;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:.4rem 0}.message{border-left:3px solid #8aa4bc;padding:.4rem .75rem;margin:.7rem 0;background:#f8fafc}.message strong{display:block}fieldset legend{font-weight:700;padding:0 .3rem}.anchors{color:#40576b;font-size:.92rem}.choices{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:.65rem}.choices label{display:flex;align-items:center;gap:.2rem;min-height:2rem}#status{min-height:1.5rem;color:#345}#importFile{position:absolute;opacity:0;width:1px;height:1px}@media(max-width:550px){main{padding:.5rem}.toolbar output{margin-left:0;width:100%}}`;
@@ -1023,9 +1050,16 @@ export function buildOfflineReviewHtml(
     | "visible-enriched"
     | "frame-candidate"
     | "frame-complete"
+    | "frame-partial"
     | "model-complete"
+    | "model-partial"
     | null = null,
+  diagnostic?: { completedPairs: number; plannedPairs: number },
 ): string {
+  if ((reviewSet === "model-partial" || reviewSet === "frame-partial") !== (diagnostic !== undefined))
+    throw new Error("Partial review requires diagnostic counts.");
+  if (diagnostic && (![1, 2].includes(diagnostic.completedPairs) || diagnostic.plannedPairs !== 3))
+    throw new Error("Invalid partial diagnostic denominator.");
   const queue = parseReviewQueue(queueInput);
   if (bundlesInput.length !== queue.reviewIds.length) throw new Error("Invalid private review input.");
   const bundles = queue.reviewIds.map((id, index) => parseOfflineReviewBundle(bundlesInput[index], id));
@@ -1044,17 +1078,19 @@ export function buildOfflineReviewHtml(
     );
   const hash = (value: string) => createHash("sha256").update(value).digest("base64");
   const heading = reviewSet?.startsWith("frame-")
-    ? `Blinded conversation review · ${reviewSet === "frame-complete" ? "complete frame pilot" : "frame-candidate inspection"}`
+    ? `Blinded conversation review · ${reviewSet === "frame-partial" ? "PARTIAL DIAGNOSTIC frame pilot" : reviewSet === "frame-complete" ? "complete frame pilot" : "frame-candidate inspection"}`
     : reviewSet === "model-complete"
       ? "Blinded conversation review · complete model pilot"
-      : reviewSet === "visible-enriched"
-        ? "Blinded conversation review · visible-response enriched inspection"
-        : reviewSet === "flagged"
-          ? "Blinded conversation review · flagged inspection"
-          : reviewSet === "calibration"
-            ? "Blinded conversation review · calibration sample"
-            : "Blinded conversation review";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1><div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet?.startsWith("frame-") ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
+      : reviewSet === "model-partial"
+        ? "Blinded conversation review · PARTIAL DIAGNOSTIC model pilot"
+        : reviewSet === "visible-enriched"
+          ? "Blinded conversation review · visible-response enriched inspection"
+          : reviewSet === "flagged"
+            ? "Blinded conversation review · flagged inspection"
+            : reviewSet === "calibration"
+              ? "Blinded conversation review · calibration sample"
+              : "Blinded conversation review";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1>${diagnostic ? `<p>PARTIAL DIAGNOSTIC: ${diagnostic.completedPairs} of ${diagnostic.plannedPairs} planned matched pairs completed. Rate only these cases; missing pairs have no results.</p>` : ""}<div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet?.startsWith("frame-") ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
 async function readBounded(file: string): Promise<unknown> {
@@ -1063,6 +1099,37 @@ async function readBounded(file: string): Promise<unknown> {
   const bytes = await readFile(file);
   if (bytes.length > MAX_INPUT_BYTES) throw new Error("Invalid private review input.");
   return JSON.parse(bytes.toString("utf8")) as unknown;
+}
+export async function verifyPartialV4Plan(manifest: ReturnType<typeof mergeScalarCanaryManifests>) {
+  const plan = parseStudyPlan(
+    await readBounded(resolve(REPO_ROOT, "docs/testing/conversation-routing-study-model-v4.json")),
+  );
+  const batch = manifest.studyBatch;
+  if (
+    plan.schemaVersion !== 4 ||
+    manifest.studyPlan?.schemaVersion !== 4 ||
+    manifest.studyPlan.planId !== plan.planId ||
+    manifest.studyPlan.planSha256 !== studyPlanDigest(plan) ||
+    !batch ||
+    batch.planPairCount !== plan.blocks.length ||
+    batch.planCaseCount !== plan.maxCases ||
+    batch.pairsPerBatch !== 1 ||
+    batch.batchCount !== plan.blocks.length
+  )
+    throw new Error("Partial diagnostic review requires the committed V4 plan.");
+  const expected = expandStudyPlan(plan);
+  const expectedPairs = [...new Set(expected.map((scenario) => scenario.study!.pairId))];
+  const actualPairs = [...new Set(manifest.cases.map((row) => row.study?.pairId))];
+  if (
+    actualPairs.length < 1 ||
+    actualPairs.length > 2 ||
+    actualPairs.some((pairId, index) => pairId !== expectedPairs[index]) ||
+    manifest.cases.some((row) => {
+      const scenario = expected.find((item) => item.scenarioId === row.scenarioId);
+      return !scenario || !isDeepStrictEqual(row.study, scenario.study);
+    })
+  )
+    throw new Error("Partial diagnostic review has foreign or skipped cases.");
 }
 async function privateDirectory(directory: string) {
   if (!isAbsolute(directory)) throw new Error("Private directory path must be absolute.");
@@ -1217,16 +1284,11 @@ async function main() {
                     : command === "convert"
                       ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
                       : [];
-  if (
-    !required.length ||
-    (flags.size !== required.length &&
-      !(
-        ["pack", "convert"].includes(command ?? "") &&
-        flags.size === required.length + 1 &&
-        flags.has("--review-set")
-      )) ||
-    required.some((key) => !flags.has(key))
-  )
+  const allowPartialV4 = flags.get("--allow-partial")?.[0] === "true";
+  if (flags.has("--allow-partial") && !allowPartialV4) throw new Error("Invalid partial review option.");
+  const optionalFlags =
+    (allowPartialV4 ? 1 : 0) + (["pack", "convert"].includes(command ?? "") && flags.has("--review-set") ? 1 : 0);
+  if (!required.length || flags.size !== required.length + optionalFlags || required.some((key) => !flags.has(key)))
     throw new Error("Invalid review command.");
   if (
     [...flags].some(
@@ -1240,7 +1302,9 @@ async function main() {
     throw new Error("Invalid review manifests.");
   const manifest = mergeScalarCanaryManifests(
     await Promise.all(manifestFiles.map(async (file) => parseScalarCanaryManifest(await readBounded(file)))),
+    { allowPartialV4 },
   );
+  if (allowPartialV4) await verifyPartialV4Plan(manifest);
   if (command === "blind") {
     const output = one("--output-dir");
     if (!isAbsolute(output)) throw new Error("Private output requires an absolute path.");
@@ -1286,8 +1350,8 @@ async function main() {
   if (command === "select-frame-all" || command === "select-model-all") {
     const result =
       command === "select-model-all"
-        ? selectCompleteModelReviewQueue(manifest, await readBounded(one("--map")), one("--seed"))
-        : selectCompleteFrameReviewQueue(manifest, await readBounded(one("--map")), one("--seed"));
+        ? selectCompleteModelReviewQueue(manifest, await readBounded(one("--map")), one("--seed"), allowPartialV4)
+        : selectCompleteFrameReviewQueue(manifest, await readBounded(one("--map")), one("--seed"), allowPartialV4);
     await privateWrite(one("--output"), `${JSON.stringify(result.queue, null, 2)}\n`);
     await privateWrite(one("--receipt"), `${JSON.stringify(result.receipt, null, 2)}\n`);
     process.stdout.write(
@@ -1314,10 +1378,20 @@ async function main() {
   }
   const queue = parseReviewQueue(await readBounded(one("--queue")));
   const locator = parseReviewLocator(await readBounded(one("--map")), queue, manifest);
+  if (
+    allowPartialV4 &&
+    (queue.reviewIds.length !== locator.entries.length ||
+      queue.reviewIds.some((id) => !locator.entries.some((entry) => entry.reviewId === id)))
+  )
+    throw new Error("Partial diagnostic review must include every completed case.");
   const bundles = await loadVerifiedBundles(queue, locator, flags.get("--blinded-dir")!, flags.get("--source-dir")!);
   if (command === "convert") {
     const reviewSet = flags.get("--review-set")?.[0];
-    if (reviewSet !== undefined && !["frame-candidate", "frame-complete", "model-complete"].includes(reviewSet))
+    if (
+      allowPartialV4
+        ? !["frame-partial", "model-partial"].includes(reviewSet ?? "")
+        : reviewSet !== undefined && !["frame-candidate", "frame-complete", "model-complete"].includes(reviewSet)
+    )
       throw new Error("Invalid review set.");
     const converted = reviewSet?.startsWith("frame-")
       ? convertOfflineFrameExport(await readBounded(one("--ratings")), queue, locator, manifest, bundles)
@@ -1327,11 +1401,20 @@ async function main() {
     const reviewSet = flags.get("--review-set")?.[0];
     if (
       reviewSet !== undefined &&
-      !["calibration", "flagged", "visible-enriched", "frame-candidate", "frame-complete", "model-complete"].includes(
-        reviewSet,
-      )
+      ![
+        "calibration",
+        "flagged",
+        "visible-enriched",
+        "frame-candidate",
+        "frame-complete",
+        "model-complete",
+        "frame-partial",
+        "model-partial",
+      ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
+    if (allowPartialV4 !== ["frame-partial", "model-partial"].includes(reviewSet ?? ""))
+      throw new Error("Invalid partial review set.");
     await privateWrite(
       one("--output"),
       buildOfflineReviewHtml(
@@ -1343,8 +1426,11 @@ async function main() {
           | "visible-enriched"
           | "frame-candidate"
           | "frame-complete"
+          | "frame-partial"
           | "model-complete"
+          | "model-partial"
           | null,
+        allowPartialV4 ? { completedPairs: manifest.cases.length / 2, plannedPairs: 3 } : undefined,
       ),
     );
   }

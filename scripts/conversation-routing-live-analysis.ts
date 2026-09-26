@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { TASK_TERMINAL_INSTRUCTIONS } from "../server/conversation.js";
+import { jevProfileMetadata } from "../server/jev-experiment-profiles.js";
 import {
   type ConversationRating,
   type FrameHumanRating,
@@ -14,16 +16,14 @@ import {
 import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
-import { TASK_TERMINAL_INSTRUCTIONS } from "../server/conversation.js";
-import { jevProfileMetadata } from "../server/jev-experiment-profiles.js";
 import {
   modelScenarioProfileDigest,
   roomSystemProfileDigest,
   scenarioProfileDigest,
   STUDY_ACTOR_MODELS,
   STUDY_AGENT_BASE_PROMPTS,
-  terminalInstructionProfileDigest,
   type StudyCaseMetadata,
+  terminalInstructionProfileDigest,
 } from "./conversation-routing-live-study.js";
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -1341,14 +1341,22 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
 }
 
 /** Merge independent completed canary invocations without equating different source builds. */
-export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManifest[]): ScalarCanaryManifest {
+export function mergeScalarCanaryManifests(
+  manifests: readonly ScalarCanaryManifest[],
+  options: { allowPartialV4?: boolean } = {},
+): ScalarCanaryManifest {
   if (!manifests.length || manifests.length > MAX_STUDY_PAIRS) throw new Error("Invalid scalar canary manifest set.");
   const first = manifests[0]!;
   const cases = manifests.flatMap((manifest) => manifest.cases);
   const batched = first.studyBatch !== null;
+  if (options.allowPartialV4 === true && !batched) throw new Error("Partial review requires a batched V4 model study.");
   if (batched) {
     const batches = manifests.map((manifest) => manifest.studyBatch);
     const expected = first.studyBatch!;
+    const partialV4 = options.allowPartialV4 === true && first.studyPlan?.schemaVersion === 4;
+    if (options.allowPartialV4 === true && !partialV4) throw new Error("Partial review requires a V4 model study.");
+    const includedPairs = batches.reduce((total, batch) => total + (batch?.pairCount ?? 0), 0);
+    const indices = batches.map((batch) => batch?.batchIndex).sort((a, b) => Number(a) - Number(b));
     if (
       batches.some(
         (batch) =>
@@ -1358,12 +1366,13 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
           batch.batchCount !== expected.batchCount ||
           batch.pairsPerBatch !== expected.pairsPerBatch,
       ) ||
-      batches.length !== expected.batchCount ||
-      new Set(batches.map((batch) => batch?.batchIndex)).size !== expected.batchCount ||
+      (partialV4 ? includedPairs < 1 || includedPairs > 2 : batches.length !== expected.batchCount) ||
+      new Set(batches.map((batch) => batch?.batchIndex)).size !== batches.length ||
+      (partialV4 && indices.some((index, ordinal) => index !== ordinal)) ||
       batches.some((batch) => batch === null || batch.batchIndex < 0 || batch.batchIndex >= expected.batchCount) ||
-      cases.length !== expected.planCaseCount ||
-      new Set(batches.flatMap((batch) => batch?.pairIds ?? [])).size !== expected.planPairCount ||
-      batches.flatMap((batch) => batch?.pairIds ?? []).length !== expected.planPairCount
+      cases.length !== (partialV4 ? includedPairs * 2 : expected.planCaseCount) ||
+      new Set(batches.flatMap((batch) => batch?.pairIds ?? [])).size !== includedPairs ||
+      includedPairs !== (partialV4 ? batches.length * expected.pairsPerBatch : expected.planPairCount)
     )
       throw new Error("Incomplete or overlapping scalar canary study batches.");
   } else if (manifests.some((manifest) => manifest.studyBatch !== null)) {
@@ -2426,8 +2435,11 @@ export function analyzeQualityStudy(
               rated: frameReviewed.filter(({ human }) => human?.status === "rated").length,
               notAssessable: frameReviewed.filter(({ human }) => human?.status === "not_assessable").length,
               missing: frameReviewed.filter(({ human }) => human === undefined).length,
-              [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]:
-                delta(frameHumanPairDeltas),
+              [studyVersion === 4
+                ? "pairedActorModelArmBMinusA"
+                : studyVersion === 3
+                  ? "pairedTerminalInstructionArmBMinusA"
+                  : "pairedRoomSystemArmBMinusA"]: delta(frameHumanPairDeltas),
               agreement: {
                 jointStatusReviews: frameReviewed.filter(
                   ({ model, human }) => model?.status === "completed" && human !== undefined,
@@ -2448,7 +2460,11 @@ export function analyzeQualityStudy(
                 ).length,
               },
             },
-            [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]: {
+            [studyVersion === 4
+              ? "pairedActorModelArmBMinusA"
+              : studyVersion === 3
+                ? "pairedTerminalInstructionArmBMinusA"
+                : "pairedRoomSystemArmBMinusA"]: {
               ...delta(framePairDeltas),
               unscoredPairs: pairs.length - framePairDeltas.length,
               resolvedJudgeModelUnknownPairs: framePairModelUnknown,
