@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 2,
+  "planId": "identityv2",
+  "orderSeed": 427,
+  "maxCases": 12,
+  "blocks": [
+    {
+      "blockId": "garden-a",
+      "replicateId": "r1",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus", "cursor-grok"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    },
+    {
+      "blockId": "garden-b",
+      "replicateId": "r2",
+      "dynamic": "casual",
+      "arcProfileId": "casual-thread-v1",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["cursor-grok", "claude-opus", "claude-sonnet", "codex-sol"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    },
+    {
+      "blockId": "path-a",
+      "replicateId": "r3",
+      "dynamic": "multi-address",
+      "arcProfileId": "agent-exchange-v2",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["codex-sol", "claude-sonnet"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    },
+    {
+      "blockId": "group-a",
+      "replicateId": "r4",
+      "dynamic": "broadcast",
+      "arcProfileId": "single-v1",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["claude-sonnet", "codex-sol", "claude-opus", "cursor-grok"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    },
+    {
+      "blockId": "sign-a",
+      "replicateId": "r5",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["codex-sol", "claude-sonnet", "claude-opus"],
+      "energy": "lively",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    },
+    {
+      "blockId": "sign-b",
+      "replicateId": "r6",
+      "dynamic": "disagreement",
+      "arcProfileId": "dispute-resolution-v1",
+      "scenarioProfileId": "garden-chat-v2",
+      "rosterOrder": ["claude-sonnet", "codex-sol", "claude-opus"],
+      "energy": "balanced",
+      "arms": {
+        "a": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "legacy-v1"
+        },
+        "b": {
+          "jevProfileId": "current-v1",
+          "gateProfileId": "current-v1",
+          "agentPromptProfileId": "current-v1",
+          "roomSystemProfileId": "room-v1"
+        }
+      }
+    }
+  ]
+}

@@ -35,6 +35,8 @@ export type GateProfileId = (typeof STUDY_GATE_PROFILES)[number];
 export type AgentPromptProfileId = (typeof STUDY_AGENT_PROMPT_PROFILES)[number];
 export type ArcProfileId = (typeof STUDY_ARC_PROFILES)[number];
 export type StudyFactor = "jev" | "gate" | "agent-prompt";
+export const STUDY_ROOM_SYSTEM_PROFILES = ["legacy-v1", "room-v1"] as const;
+export type RoomSystemProfileId = (typeof STUDY_ROOM_SYSTEM_PROFILES)[number];
 export const MAX_STUDY_CASES = 144;
 export const MAX_STUDY_BLOCKS = MAX_STUDY_CASES / 2;
 
@@ -86,6 +88,33 @@ export interface StudyCaseMetadataV1 extends StudyArmV1 {
   rosterOrder: ActiveAgentId[];
 }
 
+export interface StudyArmV2 extends StudyArmV1 {
+  roomSystemProfileId: RoomSystemProfileId;
+}
+
+export interface StudyBlockV2 extends Omit<StudyBlockV1, "arms"> {
+  scenarioProfileId: "garden-chat-v2";
+  arms: { a: StudyArmV2; b: StudyArmV2 };
+}
+
+export interface StudyPlanV2 extends Omit<StudyPlanV1, "schemaVersion" | "blocks"> {
+  schemaVersion: 2;
+  blocks: StudyBlockV2[];
+}
+
+export type StudyPlan = StudyPlanV1 | StudyPlanV2;
+
+export interface StudyCaseMetadataV2 extends Omit<StudyCaseMetadataV1, "schemaVersion" | "factor"> {
+  schemaVersion: 2;
+  factor: "room-system";
+  scenarioProfileId: "garden-chat-v2";
+  scenarioProfileDigest: string;
+  roomSystemProfileId: RoomSystemProfileId;
+  roomSystemProfileDigest: string;
+}
+
+export type StudyCaseMetadata = StudyCaseMetadataV1 | StudyCaseMetadataV2;
+
 // IDs are deliberately short because trigger scenario IDs include all three components.
 const SAFE_ID = /^[a-z][a-z0-9-]{0,11}$/;
 const SHA = /^[a-f0-9]{64}$/;
@@ -122,10 +151,10 @@ function factorOf(a: StudyArmV1, b: StudyArmV1): StudyFactor {
 }
 
 /** Parse caller data before any credential/runtime access; reject arbitrary text and unknown keys. */
-export function parseStudyPlan(input: unknown): StudyPlanV1 {
+export function parseStudyPlan(input: unknown): StudyPlan {
   const top = object(input, ["schemaVersion", "planId", "orderSeed", "maxCases", "blocks"]);
   if (
-    top.schemaVersion !== 1 ||
+    (top.schemaVersion !== 1 && top.schemaVersion !== 2) ||
     typeof top.planId !== "string" ||
     !SAFE_ID.test(top.planId) ||
     !Number.isSafeInteger(top.orderSeed) ||
@@ -141,7 +170,16 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
   )
     throw new Error("Invalid closed study plan.");
   const blocks = top.blocks.map((value) => {
-    const row = object(value, ["blockId", "replicateId", "dynamic", "arcProfileId", "rosterOrder", "energy", "arms"]);
+    const row = object(value, [
+      "blockId",
+      "replicateId",
+      "dynamic",
+      "arcProfileId",
+      "rosterOrder",
+      "energy",
+      "arms",
+      ...(top.schemaVersion === 2 ? ["scenarioProfileId"] : []),
+    ]);
     if (
       typeof row.blockId !== "string" ||
       !SAFE_ID.test(row.blockId) ||
@@ -157,6 +195,8 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
       row.rosterOrder.some((agent) => !AGENT_IDS.includes(agent as ActiveAgentId))
     )
       throw new Error("Invalid closed study plan.");
+    if (top.schemaVersion === 2 && row.scenarioProfileId !== "garden-chat-v2")
+      throw new Error("Invalid closed study scenario profile.");
     const rosterOrder = row.rosterOrder as ActiveAgentId[];
     const expected = AGENT_IDS.slice(0, rosterOrder.length);
     if (expected.some((agent) => !rosterOrder.includes(agent))) throw new Error("Invalid closed study plan.");
@@ -171,9 +211,20 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
     )
       throw new Error("Invalid closed study plan.");
     const arms = object(row.arms, ["a", "b"]);
-    const a = profileArm(arms.a),
-      b = profileArm(arms.b);
-    factorOf(a, b);
+    if (top.schemaVersion === 2) {
+      const a = profileArmV2(arms.a),
+        b = profileArmV2(arms.b);
+      if (
+        a.roomSystemProfileId !== "legacy-v1" ||
+        b.roomSystemProfileId !== "room-v1" ||
+        a.jevProfileId !== b.jevProfileId ||
+        a.gateProfileId !== b.gateProfileId ||
+        a.agentPromptProfileId !== b.agentPromptProfileId
+      )
+        throw new Error("Identity study arms must differ only in room system profile.");
+    } else factorOf(profileArm(arms.a), profileArm(arms.b));
+    const a = top.schemaVersion === 2 ? profileArmV2(arms.a) : profileArm(arms.a);
+    const b = top.schemaVersion === 2 ? profileArmV2(arms.b) : profileArm(arms.b);
     return {
       blockId: row.blockId,
       replicateId: row.replicateId,
@@ -182,20 +233,41 @@ export function parseStudyPlan(input: unknown): StudyPlanV1 {
       rosterOrder,
       energy: row.energy,
       arms: { a, b },
-    } as StudyBlockV1;
+      ...(top.schemaVersion === 2 ? { scenarioProfileId: "garden-chat-v2" as const } : {}),
+    };
   });
   if (new Set(blocks.map(({ blockId, replicateId }) => `${blockId}\0${replicateId}`)).size !== blocks.length)
     throw new Error("Duplicate study block and replicate.");
-  return {
-    schemaVersion: 1,
-    planId: top.planId,
-    orderSeed: Number(top.orderSeed),
-    maxCases: Number(top.maxCases),
-    blocks,
-  };
+  return top.schemaVersion === 2
+    ? ({
+        schemaVersion: 2,
+        planId: top.planId,
+        orderSeed: Number(top.orderSeed),
+        maxCases: Number(top.maxCases),
+        blocks,
+      } as StudyPlanV2)
+    : ({
+        schemaVersion: 1,
+        planId: top.planId,
+        orderSeed: Number(top.orderSeed),
+        maxCases: Number(top.maxCases),
+        blocks,
+      } as StudyPlanV1);
 }
 
-export function studyPlanDigest(plan: StudyPlanV1): string {
+function profileArmV2(value: unknown): StudyArmV2 {
+  const row = object(value, ["jevProfileId", "gateProfileId", "agentPromptProfileId", "roomSystemProfileId"]);
+  const arm = profileArm({
+    jevProfileId: row.jevProfileId,
+    gateProfileId: row.gateProfileId,
+    agentPromptProfileId: row.agentPromptProfileId,
+  });
+  if (!STUDY_ROOM_SYSTEM_PROFILES.includes(row.roomSystemProfileId as RoomSystemProfileId))
+    throw new Error("Invalid closed room system profile.");
+  return { ...arm, roomSystemProfileId: row.roomSystemProfileId as RoomSystemProfileId };
+}
+
+export function studyPlanDigest(plan: StudyPlan): string {
   return createHash("sha256").update(JSON.stringify(plan)).digest("hex");
 }
 
@@ -210,7 +282,8 @@ function nextRandom(seed: number) {
 }
 
 /** The seed randomizes only block order and AB/BA order, never the product or model. */
-export function expandStudyPlan(plan: StudyPlanV1): LiveScenario[] {
+export function expandStudyPlan(plan: StudyPlan): LiveScenario[] {
+  if (plan.schemaVersion === 2) return expandIdentityStudyPlan(plan);
   const digest = studyPlanDigest(plan);
   if (!SHA.test(digest)) throw new Error("Invalid study digest.");
   const random = nextRandom(plan.orderSeed);
@@ -278,6 +351,100 @@ export function expandStudyPlan(plan: StudyPlanV1): LiveScenario[] {
       };
     });
   });
+}
+
+/** V2 remains a separate path so V1 ordering, digests, and metadata stay byte-for-byte stable. */
+function expandIdentityStudyPlan(plan: StudyPlanV2): LiveScenario[] {
+  const digest = studyPlanDigest(plan);
+  const random = nextRandom(plan.orderSeed);
+  const blocks = [...plan.blocks];
+  for (let index = blocks.length - 1; index > 0; index--) {
+    const selected = Math.floor(random() * (index + 1));
+    [blocks[index], blocks[selected]] = [blocks[selected]!, blocks[index]!];
+  }
+  const firstOrder: "ab" | "ba" = random() < 0.5 ? "ab" : "ba";
+  return blocks.flatMap((block, index) => {
+    const order: "ab" | "ba" = index % 2 === 0 ? firstOrder : firstOrder === "ab" ? "ba" : "ab";
+    return [...order].map((arm) => {
+      const selected = block.arms[arm as "a" | "b"];
+      const base = buildLiveScenario({
+        dynamic: block.dynamic,
+        agentCount: block.rosterOrder.length as LiveScenario["agentCount"],
+        energy: block.energy,
+        preflightMode: "enforce",
+        classifierEnabled: selected.jevProfileId !== "off-v1",
+        scenarioProfileId: block.scenarioProfileId,
+      });
+      const { followup: _legacyFollowup, ...baseWithoutFollowup } = base;
+      const suffix = `-${plan.planId}-${block.blockId}-${block.replicateId}-${arm}`;
+      const pairId = `${plan.planId}-${block.blockId}-${block.replicateId}`;
+      const scriptedFollowups = buildStudyFollowups(block.arcProfileId, suffix, block.scenarioProfileId);
+      const profile = jevProfileMetadata(
+        selected.jevProfileId === "off-v1" ? "current-v1" : selected.jevProfileId,
+        selected.gateProfileId,
+      );
+      const study: StudyCaseMetadataV2 = {
+        schemaVersion: 2,
+        planId: plan.planId,
+        planSha256: digest,
+        blockId: block.blockId,
+        replicateId: block.replicateId,
+        pairId,
+        caseId: `${pairId}-${arm}`,
+        arm: arm as "a" | "b",
+        factor: "room-system",
+        order,
+        arcProfileId: block.arcProfileId,
+        ...selected,
+        scenarioProfileId: block.scenarioProfileId,
+        scenarioProfileDigest: scenarioProfileDigest(),
+        roomSystemProfileDigest: roomSystemProfileDigest(selected.roomSystemProfileId),
+        jevProfileDigest:
+          selected.jevProfileId === "off-v1"
+            ? createHash("sha256").update("off-v1").digest("hex")
+            : profile.jevProfileDigest,
+        gateProfileDigest: profile.gateProfileDigest,
+        agentPromptProfileDigest: createHash("sha256")
+          .update(STUDY_AGENT_BASE_PROMPTS[selected.agentPromptProfileId])
+          .digest("hex"),
+        rosterOrder: [...block.rosterOrder],
+      };
+      return {
+        ...baseWithoutFollowup,
+        scenarioId: `${base.scenarioId}${suffix}`,
+        ...(scriptedFollowups.length ? { scriptedFollowups } : {}),
+        rosterOrder: [...block.rosterOrder],
+        study,
+      };
+    });
+  });
+}
+
+export function roomSystemProfileDigest(id: RoomSystemProfileId): string {
+  if (!STUDY_ROOM_SYSTEM_PROFILES.includes(id)) throw new Error("Invalid closed room system profile.");
+  return createHash("sha256").update(`room-system-selector-v1\0${id}`).digest("hex");
+}
+
+export function scenarioProfileDigest(): string {
+  const selection = ROUTING_DYNAMICS.flatMap((dynamic) =>
+    [1, 2, 3, 4]
+      .filter((agentCount) => (dynamic === "multi-address" || dynamic === "disagreement" ? agentCount >= 2 : true))
+      .map(
+        (agentCount) =>
+          buildLiveScenario({
+            dynamic,
+            agentCount: agentCount as LiveScenario["agentCount"],
+            energy: "balanced",
+            preflightMode: "enforce",
+            classifierEnabled: true,
+            scenarioProfileId: "garden-chat-v2",
+          }).text,
+      ),
+  );
+  const arcs = STUDY_ARC_PROFILES.map((arc) => buildStudyFollowups(arc, "", "garden-chat-v2").map(({ text }) => text));
+  return createHash("sha256")
+    .update(JSON.stringify({ id: "garden-chat-v2", selection, arcs }))
+    .digest("hex");
 }
 
 /** Closed fixture arcs; the opt-in chat profile is pure until a plan selector is wired. */

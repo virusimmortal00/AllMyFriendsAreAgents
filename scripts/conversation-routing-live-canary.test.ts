@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 import {
   type AvailabilityCheckV1,
   buildPrivateReviewPayload,
+  CANARY_SOURCE_FILES,
   checkIsolatedRosterAvailability,
+  isolatedRoomSystemProfileEnvironment,
   matchesPinnedJevResolution,
   parseLiveCanaryOptions,
   projectCaseFailedEvent,
@@ -34,6 +36,136 @@ const base = [
 ];
 const execute = promisify(execFile);
 const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
+
+describe("isolated identity study execution", () => {
+  it("prints the V2 identity plan before credential access without fixture text", async () => {
+    const { stdout } = await execute(
+      "pnpm",
+      [
+        "exec",
+        "tsx",
+        "scripts/conversation-routing-live-canary.ts",
+        "--dry-run",
+        "--allow-wide-matrix",
+        "--study-plan",
+        path.resolve("docs/testing/conversation-routing-study-identity-v2.json"),
+        "--model",
+        "openrouter/anthropic/claude-haiku-4.5",
+        "--jev-model",
+        "typesafe/jev-1.13",
+        "--judge-model",
+        "openrouter/google/gemini-3.8-flash",
+        "--judge-rubric",
+        "v3",
+        "--max-cases",
+        "12",
+        "--max-judge-calls",
+        "130",
+        "--max-generations",
+        "18",
+        "--timeout-ms",
+        "120000",
+        "--total-timeout-ms",
+        "9000000",
+      ],
+      { env: { ...process.env, OPENROUTER_API_KEY: "", AMFAA_CANARY_ALLOW_REAL_PROVIDER: "false" } },
+    );
+    const projected = JSON.parse(stdout) as Record<string, unknown>;
+    expect(projected).toMatchObject({
+      kind: "conversation-routing-study-dry-run",
+      maximumScheduledJudgeCalls: 130,
+      planningAllowanceMs: 7_630_000,
+    });
+    expect(projected.cases as unknown[]).toHaveLength(12);
+    expect(stdout).not.toMatch(/garden path|path material|wooden|metal sign/i);
+  });
+  it("binds the fifth rubric and profile implementation to the source fingerprint", () => {
+    expect(CANARY_SOURCE_FILES).toContain("scripts/conversation-routing-live-frame-judge.ts");
+    expect(CANARY_SOURCE_FILES).toContain("scripts/conversation-routing-live-study.ts");
+    expect(CANARY_SOURCE_FILES).toContain("scripts/conversation-routing-live-scenarios.ts");
+    expect(CANARY_SOURCE_FILES).toContain("server/agent-runner.ts");
+  });
+  it("passes only a validated V2 selector and budgets all five rubric calls per trigger", async () => {
+    const study = parseStudyPlan(
+      JSON.parse(await readFile("docs/testing/conversation-routing-study-identity-v2.json", "utf8")),
+    );
+    const args = [
+      "--allow-wide-matrix",
+      "--study-plan",
+      "/fixture/identity.json",
+      "--model",
+      "openrouter/anthropic/claude-haiku-4.5",
+      "--jev-model",
+      "typesafe/jev-1.13",
+      "--judge-model",
+      "openrouter/google/gemini-3.8-flash",
+      "--judge-rubric",
+      "v3",
+      "--opencode",
+      "/fixture/opencode",
+      "--secret-launcher",
+      "/fixture/bws-run",
+      "--max-cases",
+      "12",
+      "--max-judge-calls",
+      "130",
+      "--max-generations",
+      "18",
+      "--timeout-ms",
+      "120000",
+      "--total-timeout-ms",
+      "9000000",
+    ];
+    const options = parseLiveCanaryOptions(args, {}, study);
+    expect(options.maxJudgeCalls).toBe(130);
+    expect(options.cases).toHaveLength(12);
+    expect(options.studyPlan?.schemaVersion).toBe(2);
+    expect(options.cases.map(({ study: meta }) => isolatedRoomSystemProfileEnvironment(meta))).toContainEqual({
+      AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: "legacy-v1",
+    });
+    expect(isolatedRoomSystemProfileEnvironment(undefined)).toEqual({});
+    expect(
+      isolatedRoomSystemProfileEnvironment(
+        parseLiveCanaryOptions(
+          [
+            "--study-plan",
+            "/fixture/v1.json",
+            "--model",
+            "openrouter/anthropic/claude-haiku-4.5",
+            "--jev-model",
+            "typesafe/jev-1.13",
+            "--opencode",
+            "/fixture/opencode",
+            "--secret-launcher",
+            "/fixture/bws-run",
+            "--max-cases",
+            "12",
+            "--max-generations",
+            "18",
+            "--timeout-ms",
+            "120000",
+            "--total-timeout-ms",
+            "7200000",
+          ],
+          {},
+          parseStudyPlan(JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8"))),
+        ).cases[0]?.study,
+      ),
+    ).toEqual({});
+    const low = [...args];
+    low[low.indexOf("--max-judge-calls") + 1] = "129";
+    expect(() => parseLiveCanaryOptions(low, {}, study)).toThrow("judge-call cap");
+    const v2Rubric = [...args];
+    v2Rubric[v2Rubric.indexOf("--judge-rubric") + 1] = "v2";
+    expect(() => parseLiveCanaryOptions(v2Rubric, {}, study)).toThrow("frame-integrity rubric v3");
+    expect(() =>
+      parseLiveCanaryOptions(args, {}, {
+        ...study,
+        blocks: [{ ...study.blocks[0], scenarioProfileId: "garden-v1" }],
+      } as never),
+    ).toThrow();
+  });
+});
 
 const lengthOutcome = (
   reasonCode: "required_reply_missing" | "silence_fit" | "observable_exchange",

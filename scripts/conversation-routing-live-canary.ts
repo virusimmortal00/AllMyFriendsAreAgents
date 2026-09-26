@@ -43,8 +43,12 @@ import {
   expandStudyPlan,
   MAX_STUDY_CASES,
   parseStudyPlan,
+  roomSystemProfileDigest,
   STUDY_AGENT_BASE_PROMPTS,
-  type StudyPlanV1,
+  STUDY_ROOM_SYSTEM_PROFILES,
+  type StudyCaseMetadata,
+  type StudyPlan,
+  scenarioProfileDigest,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
 import { createLiveOpenCodeWrapper } from "./conversation-routing-live-wrapper.js";
@@ -56,7 +60,7 @@ const MODEL = /^openrouter\/[a-z0-9][a-z0-9._/-]{1,150}$/i;
 const MAX_PILOT_CASES = 12;
 const MAX_WIDE_CASES = 36;
 const MAX_BATCH_PAIRS = 6;
-const SOURCE_FILES = [
+export const CANARY_SOURCE_FILES = [
   "scripts/conversation-routing-live-canary.ts",
   "scripts/conversation-routing-live-evidence.ts",
   "scripts/conversation-routing-live-scenarios.ts",
@@ -64,6 +68,7 @@ const SOURCE_FILES = [
   "scripts/conversation-routing-live-wrapper.ts",
   "scripts/conversation-routing-live-judge.ts",
   "scripts/conversation-routing-live-judge-v2.ts",
+  "scripts/conversation-routing-live-frame-judge.ts",
   "scripts/conversation-routing-live-annotations.ts",
   "server/agent-runner.ts",
   "server/agent-behavior.ts",
@@ -82,7 +87,7 @@ const SOURCE_FILES = [
 
 async function sourceDigest() {
   const hash = createHash("sha256");
-  for (const file of SOURCE_FILES) {
+  for (const file of CANARY_SOURCE_FILES) {
     hash.update(file);
     hash.update("\0");
     hash.update(await readFile(path.join(repositoryRoot, file)));
@@ -104,12 +109,26 @@ interface CanaryOptions {
   allowWideMatrix: boolean;
   requireVisible: boolean;
   dryRun: boolean;
-  studyPlan?: StudyPlanV1;
+  studyPlan?: StudyPlan;
   studyBatch?: StudyBatchMetadataV1;
   jevModel?: string;
   judgeRubric: "v1" | "v2" | "v3";
   maxJudgeCalls: number;
   planningAllowanceMs: number;
+}
+
+/** Only a validated V2 case may select the isolated server's room system identity. */
+export function isolatedRoomSystemProfileEnvironment(study: StudyCaseMetadata | undefined): Record<string, string> {
+  if (!study || study.schemaVersion === 1) return {};
+  if (
+    study.factor !== "room-system" ||
+    study.scenarioProfileId !== "garden-chat-v2" ||
+    !STUDY_ROOM_SYSTEM_PROFILES.includes(study.roomSystemProfileId) ||
+    study.scenarioProfileDigest !== scenarioProfileDigest() ||
+    study.roomSystemProfileDigest !== roomSystemProfileDigest(study.roomSystemProfileId)
+  )
+    throw new Error("Invalid isolated room system study profile.");
+  return { AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: study.roomSystemProfileId };
 }
 
 export interface StudyBatchMetadataV1 {
@@ -175,8 +194,10 @@ function customScenario(raw: string): LiveScenario {
 export function parseLiveCanaryOptions(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
-  studyPlan?: StudyPlanV1,
+  studyPlan?: StudyPlan,
 ): CanaryOptions {
+  // Also validate plans supplied by in-process callers, not only plans read from disk.
+  if (studyPlan) studyPlan = parseStudyPlan(studyPlan);
   const values = new Map<string, string[]>();
   const flags = new Set<string>();
   const valueless = new Set([
@@ -303,6 +324,8 @@ export function parseLiveCanaryOptions(
   const judgeRubric = values.get("--judge-rubric")?.[0] ?? "v1";
   if (!["v1", "v2", "v3"].includes(judgeRubric) || (judgeRubric !== "v1" && !judgeModel))
     throw new Error("Quality rubrics v2 and v3 require a distinct pinned judge model.");
+  if (studyPlan?.schemaVersion === 2 && (judgeRubric !== "v3" || !judgeModel))
+    throw new Error("Identity studies require pinned independent frame-integrity rubric v3.");
   const maxJudgeCalls = cases.reduce(
     (sum, scenario) =>
       sum +
@@ -989,6 +1012,7 @@ async function runCase(
                 ? {}
                 : { AMFAA_ROUTING_JEV_PROFILE: scenario.study.jevProfileId }),
               AMFAA_ROUTING_GATE_PROFILE: scenario.study.gateProfileId,
+              ...isolatedRoomSystemProfileEnvironment(scenario.study),
             }
           : {}),
       },
@@ -1219,7 +1243,7 @@ async function runCase(
   }
 }
 
-async function loadStudyPlan(argv: readonly string[]): Promise<StudyPlanV1 | undefined> {
+async function loadStudyPlan(argv: readonly string[]): Promise<StudyPlan | undefined> {
   const positions = argv.flatMap((arg, index) => (arg === "--study-plan" ? [index] : []));
   if (!positions.length) return undefined;
   if (positions.length !== 1 || !argv[positions[0]! + 1] || !path.isAbsolute(argv[positions[0]! + 1]!))
@@ -1400,7 +1424,7 @@ async function main() {
       ...(options.studyPlan
         ? {
             studyPlan: {
-              schemaVersion: 1,
+              schemaVersion: options.studyPlan.schemaVersion,
               planId: options.studyPlan.planId,
               planSha256: studyPlanDigest(options.studyPlan),
               orderSeed: options.studyPlan.orderSeed,
