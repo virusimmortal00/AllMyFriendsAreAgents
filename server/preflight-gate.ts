@@ -86,12 +86,16 @@ export interface PreflightDecision {
 
 export interface PreflightRoutableTurn {
   agent: AgentId;
+  instruction: string;
   preflight?: { decisionId: string; shadowSuppressed: boolean; required?: boolean };
 }
 
 const REQUIRED_REASONS = new Set<PreflightReason>([
   "required_mention", "required_plain_address", "structured_task_context", "classified_addressed", "explicit_broadcast",
 ]);
+const INFERRED_ADDRESS_REASONS = new Set<PreflightReason>(["required_plain_address", "classified_addressed"]);
+const INFERRED_ADDRESS_INSTRUCTION =
+  "The latest human message appears to address you. Reply by default with a concise, natural answer or acknowledgment. Silence is exceptional: yield with the appropriate TURN_DISPOSITION reason only when replying would be inappropriate, unsafe, impossible, or genuinely add nothing.";
 
 /** Applies an already-recorded decision without ever inventing a generation ID. */
 export function routePreflightTurns<T extends PreflightRoutableTurn>(
@@ -109,10 +113,14 @@ export function routePreflightTurns<T extends PreflightRoutableTurn>(
       preflight: { decisionId, shadowSuppressed: byAgent.get(turn.agent)?.outcome === "suppress" },
     }));
   }
-  return turns.filter(({ agent }) => byAgent.get(agent)?.outcome === "invoke").map((turn) => ({
-    ...turn,
-    preflight: { decisionId, shadowSuppressed: false, required: REQUIRED_REASONS.has(byAgent.get(turn.agent)?.reason ?? "no_routing_signal") },
-  }));
+  return turns.filter(({ agent }) => byAgent.get(agent)?.outcome === "invoke").map((turn) => {
+    const reason = byAgent.get(turn.agent)?.reason ?? "no_routing_signal";
+    return {
+      ...turn,
+      ...(INFERRED_ADDRESS_REASONS.has(reason) ? { instruction: INFERRED_ADDRESS_INSTRUCTION } : {}),
+      preflight: { decisionId, shadowSuppressed: false, required: REQUIRED_REASONS.has(reason) },
+    };
+  });
 }
 
 function recentParticipants(room: RoomState, trigger: RoomMessage, window: number) {

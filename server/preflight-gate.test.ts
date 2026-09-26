@@ -71,6 +71,25 @@ describe("pre-flight responder selection", () => {
     expect(requiredAt(routed,1,"second shadow preflight turn").preflight).toEqual({ decisionId: "decision-1", shadowSuppressed: true });
   });
 
+  it("tells a classifier-selected addressee to answer while leaving optional and shadow turns alone", () => {
+    const trigger = humanMessage({ text: "Riley, the rehearsal starts at 3 and the walk takes ten minutes. Should I leave at 2:40 or 2:55?" });
+    const decision = decidePreflight({
+      trigger, room: room(trigger), rankedAgents: agents, health: {}, routing: {}, energy: "balanced", wholeRoomInvitation: false,
+      classification: { agents: { "codex-sol": 0.99 }, wholeRoom: 0 },
+    });
+    expect(decision.decisions.find(({ agent }) => agent === "codex-sol")).toEqual({ agent: "codex-sol", outcome: "invoke", reason: "classified_addressed" });
+    const turns = agents.map((agent) => ({ agent, instruction: `original:${agent}` }));
+    const enforced = routePreflightTurns(turns, "enforce", decision, "decision-direct");
+    const required = requiredAt(enforced, 0, "required turn");
+    expect(required.preflight?.required).toBe(true);
+    expect(required.instruction).toContain("Reply by default");
+    expect(required.instruction).toContain("latest human message");
+    expect(enforced.filter(({ preflight }) => preflight?.required === false).every(({ agent, instruction }) => instruction === `original:${agent}`)).toBe(true);
+    expect(routePreflightTurns(turns, "shadow", decision, "decision-direct").map(({ instruction }) => instruction))
+      .toEqual(turns.map(({ instruction }) => instruction));
+    expect(routePreflightTurns(turns, "off")).toBe(turns);
+  });
+
   it("always invokes a healthy mentioned agent while retaining one balanced ambient seat", () => {
     const trigger = humanMessage({ mentions: [mention("claude-sonnet")] });
     const decision = decidePreflight({
