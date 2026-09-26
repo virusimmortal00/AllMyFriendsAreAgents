@@ -13,10 +13,10 @@ import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import {
-  largeStudyProfile,
-  largeStudyProfileDigest,
   LARGE_STUDY_PROFILES,
   type LargeStudyProfileId,
+  largeStudyProfile,
+  largeStudyProfileDigest,
 } from "./conversation-routing-live-large-fixtures.js";
 import {
   buildLiveScenario,
@@ -326,9 +326,21 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       const factor = factorOf(a, b);
       const profile = largeStudyProfile(row.scenarioProfileId as string);
       const expectedSuffix = { jev: "j", gate: "g", "agent-prompt": "p" }[factor];
+      const expectedArcAndMessages: Record<RoutingDynamic, readonly [ArcProfileId, number]> = {
+        direct: ["single-v1", 1],
+        broadcast: ["single-v1", 1],
+        "quoted-name": ["single-v1", 1],
+        casual: ["casual-thread-v1", 2],
+        "multi-address": ["agent-exchange-v2", 2],
+        handoff: ["handoff-choice-v1", 3],
+        disagreement: ["dispute-resolution-v1", 3],
+      };
+      const [expectedArc, expectedMessages] = expectedArcAndMessages[profile.dynamic];
       if (
         !profile.id.endsWith(`-${expectedSuffix}`) ||
         profile.dynamic !== row.dynamic ||
+        row.arcProfileId !== expectedArc ||
+        profile.messages.length !== expectedMessages ||
         a.roomSystemProfileId !== "room-v1" ||
         b.roomSystemProfileId !== "room-v1" ||
         a.terminalInstructionProfileId !== "contribution-first-v1" ||
