@@ -5,6 +5,11 @@ import {
   jevProfileMetadata,
 } from "../server/jev-experiment-profiles.js";
 import { DEFAULT_ROOM_BASE_PROMPT } from "../server/room-configuration.js";
+import {
+  TASK_TERMINAL_INSTRUCTIONS,
+  TERMINAL_INSTRUCTION_PROFILES,
+  type TerminalInstructionProfile,
+} from "../server/conversation.js";
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import {
@@ -16,6 +21,9 @@ import {
   ROUTING_ENERGIES,
   type RoutingDynamic,
   SCENARIO_PROFILE_IDS,
+  TERMINAL_SCENARIO_PROFILES,
+  TERMINAL_SCENARIO_TEXT,
+  type TerminalScenarioProfileId,
   type ScenarioProfileId,
 } from "./conversation-routing-live-scenarios.js";
 
@@ -103,7 +111,19 @@ export interface StudyPlanV2 extends Omit<StudyPlanV1, "schemaVersion" | "blocks
   blocks: StudyBlockV2[];
 }
 
-export type StudyPlan = StudyPlanV1 | StudyPlanV2;
+export interface StudyArmV3 extends StudyArmV2 {
+  terminalInstructionProfileId: TerminalInstructionProfile;
+}
+export interface StudyBlockV3 extends Omit<StudyBlockV2, "scenarioProfileId" | "arms"> {
+  scenarioProfileId: TerminalScenarioProfileId;
+  arms: { a: StudyArmV3; b: StudyArmV3 };
+}
+export interface StudyPlanV3 extends Omit<StudyPlanV2, "schemaVersion" | "blocks"> {
+  schemaVersion: 3;
+  blocks: StudyBlockV3[];
+}
+
+export type StudyPlan = StudyPlanV1 | StudyPlanV2 | StudyPlanV3;
 
 export interface StudyCaseMetadataV2 extends Omit<StudyCaseMetadataV1, "schemaVersion" | "factor"> {
   schemaVersion: 2;
@@ -114,7 +134,16 @@ export interface StudyCaseMetadataV2 extends Omit<StudyCaseMetadataV1, "schemaVe
   roomSystemProfileDigest: string;
 }
 
-export type StudyCaseMetadata = StudyCaseMetadataV1 | StudyCaseMetadataV2;
+export interface StudyCaseMetadataV3
+  extends Omit<StudyCaseMetadataV2, "schemaVersion" | "factor" | "scenarioProfileId"> {
+  schemaVersion: 3;
+  factor: "terminal-instruction";
+  scenarioProfileId: TerminalScenarioProfileId;
+  terminalInstructionProfileId: TerminalInstructionProfile;
+  terminalInstructionProfileDigest: string;
+  terminalInstructionCharacters: number;
+}
+export type StudyCaseMetadata = StudyCaseMetadataV1 | StudyCaseMetadataV2 | StudyCaseMetadataV3;
 
 // IDs are deliberately short because trigger scenario IDs include all three components.
 const SAFE_ID = /^[a-z][a-z0-9-]{0,11}$/;
@@ -155,7 +184,7 @@ function factorOf(a: StudyArmV1, b: StudyArmV1): StudyFactor {
 export function parseStudyPlan(input: unknown): StudyPlan {
   const top = object(input, ["schemaVersion", "planId", "orderSeed", "maxCases", "blocks"]);
   if (
-    (top.schemaVersion !== 1 && top.schemaVersion !== 2) ||
+    (top.schemaVersion !== 1 && top.schemaVersion !== 2 && top.schemaVersion !== 3) ||
     typeof top.planId !== "string" ||
     !SAFE_ID.test(top.planId) ||
     !Number.isSafeInteger(top.orderSeed) ||
@@ -179,7 +208,7 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       "rosterOrder",
       "energy",
       "arms",
-      ...(top.schemaVersion === 2 ? ["scenarioProfileId"] : []),
+      ...(top.schemaVersion !== 1 ? ["scenarioProfileId"] : []),
     ]);
     if (
       typeof row.blockId !== "string" ||
@@ -202,11 +231,25 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       row.scenarioProfileId !== "everyday-chat-v3"
     )
       throw new Error("Invalid closed study scenario profile.");
+    if (
+      top.schemaVersion === 3 &&
+      !TERMINAL_SCENARIO_PROFILES.includes(row.scenarioProfileId as TerminalScenarioProfileId)
+    )
+      throw new Error("Invalid closed terminal scenario profile.");
     const rosterOrder = row.rosterOrder as ActiveAgentId[];
     const expected = AGENT_IDS.slice(0, rosterOrder.length);
     if (expected.some((agent) => !rosterOrder.includes(agent))) throw new Error("Invalid closed study plan.");
     if (["multi-address", "disagreement"].includes(row.dynamic as string) && row.rosterOrder.length < 2)
       throw new Error("Invalid closed study plan.");
+    if (
+      top.schemaVersion === 3 &&
+      (row.dynamic !== "direct" ||
+        row.arcProfileId !== "single-v1" ||
+        row.rosterOrder.length !== 1 ||
+        row.rosterOrder[0] !== "codex-sol" ||
+        row.energy !== "low")
+    )
+      throw new Error("Terminal instruction study requires one fixed direct turn.");
     if (
       (row.arcProfileId === "casual-thread-v1" && row.dynamic !== "casual") ||
       ((row.arcProfileId === "agent-exchange-v1" || row.arcProfileId === "agent-exchange-v2") &&
@@ -216,7 +259,20 @@ export function parseStudyPlan(input: unknown): StudyPlan {
     )
       throw new Error("Invalid closed study plan.");
     const arms = object(row.arms, ["a", "b"]);
-    if (top.schemaVersion === 2) {
+    if (top.schemaVersion === 3) {
+      const a = profileArmV3(arms.a),
+        b = profileArmV3(arms.b);
+      if (
+        a.terminalInstructionProfileId !== "current-v1" ||
+        b.terminalInstructionProfileId !== "contribution-first-v1" ||
+        a.roomSystemProfileId !== "room-v1" ||
+        b.roomSystemProfileId !== "room-v1" ||
+        a.jevProfileId !== b.jevProfileId ||
+        a.gateProfileId !== b.gateProfileId ||
+        a.agentPromptProfileId !== b.agentPromptProfileId
+      )
+        throw new Error("Terminal instruction arms must differ only in terminal instruction profile.");
+    } else if (top.schemaVersion === 2) {
       const a = profileArmV2(arms.a),
         b = profileArmV2(arms.b);
       if (
@@ -228,8 +284,18 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       )
         throw new Error("Identity study arms must differ only in room system profile.");
     } else factorOf(profileArm(arms.a), profileArm(arms.b));
-    const a = top.schemaVersion === 2 ? profileArmV2(arms.a) : profileArm(arms.a);
-    const b = top.schemaVersion === 2 ? profileArmV2(arms.b) : profileArm(arms.b);
+    const a =
+      top.schemaVersion === 3
+        ? profileArmV3(arms.a)
+        : top.schemaVersion === 2
+          ? profileArmV2(arms.a)
+          : profileArm(arms.a);
+    const b =
+      top.schemaVersion === 3
+        ? profileArmV3(arms.b)
+        : top.schemaVersion === 2
+          ? profileArmV2(arms.b)
+          : profileArm(arms.b);
     return {
       blockId: row.blockId,
       replicateId: row.replicateId,
@@ -238,28 +304,59 @@ export function parseStudyPlan(input: unknown): StudyPlan {
       rosterOrder,
       energy: row.energy,
       arms: { a, b },
-      ...(top.schemaVersion === 2
-        ? { scenarioProfileId: row.scenarioProfileId as StudyBlockV2["scenarioProfileId"] }
+      ...(top.schemaVersion !== 1
+        ? { scenarioProfileId: row.scenarioProfileId as StudyBlockV2["scenarioProfileId"] | TerminalScenarioProfileId }
         : {}),
     };
   });
   if (new Set(blocks.map(({ blockId, replicateId }) => `${blockId}\0${replicateId}`)).size !== blocks.length)
     throw new Error("Duplicate study block and replicate.");
-  return top.schemaVersion === 2
+  if (top.schemaVersion === 3 &&
+    (top.maxCases !== 6 || blocks.length !== 3 ||
+      new Set(blocks.map(({ scenarioProfileId }) => scenarioProfileId)).size !== 3))
+    throw new Error("Terminal instruction study requires all three independent domains.");
+  return top.schemaVersion === 3
     ? ({
-        schemaVersion: 2,
+        schemaVersion: 3,
         planId: top.planId,
         orderSeed: Number(top.orderSeed),
         maxCases: Number(top.maxCases),
         blocks,
-      } as StudyPlanV2)
-    : ({
-        schemaVersion: 1,
-        planId: top.planId,
-        orderSeed: Number(top.orderSeed),
-        maxCases: Number(top.maxCases),
-        blocks,
-      } as StudyPlanV1);
+      } as StudyPlanV3)
+    : top.schemaVersion === 2
+      ? ({
+          schemaVersion: 2,
+          planId: top.planId,
+          orderSeed: Number(top.orderSeed),
+          maxCases: Number(top.maxCases),
+          blocks,
+        } as StudyPlanV2)
+      : ({
+          schemaVersion: 1,
+          planId: top.planId,
+          orderSeed: Number(top.orderSeed),
+          maxCases: Number(top.maxCases),
+          blocks,
+        } as StudyPlanV1);
+}
+
+function profileArmV3(value: unknown): StudyArmV3 {
+  const row = object(value, [
+    "jevProfileId",
+    "gateProfileId",
+    "agentPromptProfileId",
+    "roomSystemProfileId",
+    "terminalInstructionProfileId",
+  ]);
+  const arm = profileArmV2({
+    jevProfileId: row.jevProfileId,
+    gateProfileId: row.gateProfileId,
+    agentPromptProfileId: row.agentPromptProfileId,
+    roomSystemProfileId: row.roomSystemProfileId,
+  });
+  if (!TERMINAL_INSTRUCTION_PROFILES.includes(row.terminalInstructionProfileId as TerminalInstructionProfile))
+    throw new Error("Invalid closed terminal instruction profile.");
+  return { ...arm, terminalInstructionProfileId: row.terminalInstructionProfileId as TerminalInstructionProfile };
 }
 
 function profileArmV2(value: unknown): StudyArmV2 {
@@ -290,6 +387,7 @@ function nextRandom(seed: number) {
 
 /** The seed randomizes only block order and AB/BA order, never the product or model. */
 export function expandStudyPlan(plan: StudyPlan): LiveScenario[] {
+  if (plan.schemaVersion === 3) return expandTerminalStudyPlan(plan);
   if (plan.schemaVersion === 2) return expandIdentityStudyPlan(plan);
   const digest = studyPlanDigest(plan);
   if (!SHA.test(digest)) throw new Error("Invalid study digest.");
@@ -354,6 +452,80 @@ export function expandStudyPlan(plan: StudyPlan): LiveScenario[] {
         scenarioId: `${base.scenarioId}${suffix}`,
         ...(scriptedFollowups.length ? { scriptedFollowups } : {}),
         rosterOrder: [...block.rosterOrder],
+        study,
+      };
+    });
+  });
+}
+
+export function terminalInstructionProfileDigest(id: TerminalInstructionProfile): string {
+  if (!TERMINAL_INSTRUCTION_PROFILES.includes(id)) throw new Error("Invalid closed terminal instruction profile.");
+  return createHash("sha256").update(TASK_TERMINAL_INSTRUCTIONS[id]).digest("hex");
+}
+
+export function terminalScenarioProfileDigest(id: TerminalScenarioProfileId): string {
+  if (!TERMINAL_SCENARIO_PROFILES.includes(id)) throw new Error("Invalid closed terminal scenario profile.");
+  return createHash("sha256").update(TERMINAL_SCENARIO_TEXT[id]).digest("hex");
+}
+
+function expandTerminalStudyPlan(plan: StudyPlanV3): LiveScenario[] {
+  const digest = studyPlanDigest(plan);
+  const random = nextRandom(plan.orderSeed);
+  const blocks = [...plan.blocks];
+  for (let index = blocks.length - 1; index > 0; index--) {
+    const selected = Math.floor(random() * (index + 1));
+    [blocks[index], blocks[selected]] = [blocks[selected]!, blocks[index]!];
+  }
+  const firstOrder = random() < 0.5 ? "ab" : "ba";
+  return blocks.flatMap((block, index) => {
+    const order = index % 2 === 0 ? firstOrder : firstOrder === "ab" ? "ba" : "ab";
+    return [...order].map((arm) => {
+      const selected = block.arms[arm as "a" | "b"];
+      const profile = jevProfileMetadata(
+        selected.jevProfileId === "off-v1" ? "current-v1" : selected.jevProfileId,
+        selected.gateProfileId,
+      );
+      const pairId = `${plan.planId}-${block.blockId}-${block.replicateId}`;
+      const study: StudyCaseMetadataV3 = {
+        schemaVersion: 3,
+        planId: plan.planId,
+        planSha256: digest,
+        blockId: block.blockId,
+        replicateId: block.replicateId,
+        pairId,
+        caseId: `${pairId}-${arm}`,
+        arm: arm as "a" | "b",
+        factor: "terminal-instruction",
+        order,
+        arcProfileId: block.arcProfileId,
+        ...selected,
+        scenarioProfileId: block.scenarioProfileId,
+        scenarioProfileDigest: terminalScenarioProfileDigest(block.scenarioProfileId),
+        roomSystemProfileDigest: roomSystemProfileDigest("room-v1"),
+        terminalInstructionProfileDigest: terminalInstructionProfileDigest(selected.terminalInstructionProfileId),
+        terminalInstructionCharacters: TASK_TERMINAL_INSTRUCTIONS[selected.terminalInstructionProfileId].length,
+        jevProfileDigest:
+          selected.jevProfileId === "off-v1"
+            ? createHash("sha256").update("off-v1").digest("hex")
+            : profile.jevProfileDigest,
+        gateProfileDigest: profile.gateProfileDigest,
+        agentPromptProfileDigest: createHash("sha256")
+          .update(STUDY_AGENT_BASE_PROMPTS[selected.agentPromptProfileId])
+          .digest("hex"),
+        rosterOrder: [...block.rosterOrder],
+      };
+      return {
+        scenarioId: `direct-1-low-enforce-${study.caseId}`,
+        variant: selected.jevProfileId === "off-v1" ? "jev-off" : "jev-on",
+        dynamic: "direct" as const,
+        agentCount: 1 as const,
+        energy: "low" as const,
+        preflightMode: "enforce" as const,
+        classifierEnabled: selected.jevProfileId !== "off-v1",
+        text: TERMINAL_SCENARIO_TEXT[block.scenarioProfileId],
+        expectedDirectAgents: ["codex-sol" as const],
+        rosterOrder: [...block.rosterOrder],
+        scenarioProfileId: block.scenarioProfileId,
         study,
       };
     });

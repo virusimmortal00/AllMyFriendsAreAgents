@@ -10,6 +10,7 @@ import {
   STUDY_ARC_PROFILES,
   scenarioProfileDigest,
   studyPlanDigest,
+  terminalInstructionProfileDigest,
 } from "./conversation-routing-live-study.js";
 
 const current = { jevProfileId: "current-v1", gateProfileId: "current-v1", agentPromptProfileId: "current-v1" };
@@ -41,6 +42,68 @@ function plan(
 }
 
 describe("closed live study plan", () => {
+  it("keeps a six-case terminal study to one instruction factor with fresh-room case IDs", async () => {
+    const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-terminal-v3.json", "utf8"));
+    const parsed = parseStudyPlan(raw);
+    expect(parsed.schemaVersion).toBe(3);
+    expect(studyPlanDigest(parsed)).toBe("ff7d56d0562891a74024f6bc426a6a70c8a0f7a3dae22adb79884bfd454a9e54");
+    const cases = expandStudyPlan(parsed);
+    expect(cases).toHaveLength(6);
+    expect(new Set(cases.map(({ study }) => study?.caseId)).size).toBe(6);
+    expect(new Set(cases.map(({ study }) => study?.pairId)).size).toBe(3);
+    expect(cases.filter(({ study }) => study?.order === "ab")).toHaveLength(2);
+    expect(cases.filter(({ study }) => study?.order === "ba")).toHaveLength(4);
+    for (let index = 0; index < cases.length; index += 2) {
+      const [first, second] = [cases[index]!, cases[index + 1]!];
+      expect(first.text).toBe(second.text);
+      expect(first.rosterOrder).toEqual(second.rosterOrder);
+      expect(first.energy).toBe(second.energy);
+      expect(first.preflightMode).toBe(second.preflightMode);
+      expect(first.study?.schemaVersion).toBe(3);
+      expect(second.study?.schemaVersion).toBe(3);
+      expect(first.study?.factor).toBe("terminal-instruction");
+      const left = first.study as Extract<NonNullable<typeof first.study>, { schemaVersion: 3 }>;
+      const right = second.study as typeof left;
+      expect(left.roomSystemProfileId).toBe("room-v1");
+      expect(left.roomSystemProfileDigest).toBe(right.roomSystemProfileDigest);
+      expect(left.jevProfileDigest).toBe(right.jevProfileDigest);
+      expect(left.gateProfileDigest).toBe(right.gateProfileDigest);
+      expect(left.agentPromptProfileDigest).toBe(right.agentPromptProfileDigest);
+      expect(left.scenarioProfileDigest).toBe(right.scenarioProfileDigest);
+      expect(new Set([left.terminalInstructionProfileId, right.terminalInstructionProfileId])).toEqual(
+        new Set(["current-v1", "contribution-first-v1"]),
+      );
+      expect(left.terminalInstructionProfileDigest).not.toBe(right.terminalInstructionProfileDigest);
+    }
+    expect(terminalInstructionProfileDigest("current-v1")).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => terminalInstructionProfileDigest("unknown" as never)).toThrow();
+    expect(() =>
+      parseStudyPlan({
+        ...raw,
+        blocks: [
+          {
+            ...raw.blocks[0],
+            arms: { ...raw.blocks[0].arms, b: { ...raw.blocks[0].arms.b, gateProfileId: "relevance-v1" } },
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseStudyPlan({
+        ...raw,
+        blocks: [
+          {
+            ...raw.blocks[0],
+            arms: { ...raw.blocks[0].arms, b: { ...raw.blocks[0].arms.b, terminalInstructionProfileId: "unknown" } },
+          },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseStudyPlan({ ...raw, blocks: [{ ...raw.blocks[0], scenarioProfileId: "everyday-chat-v3" }] }),
+    ).toThrow();
+    expect(() => parseStudyPlan({ ...raw, blocks: raw.blocks.slice(0, 2) })).toThrow();
+  });
   it("keeps the existing v1 example digest and metadata unchanged", async () => {
     const raw = JSON.parse(await readFile("docs/testing/conversation-routing-study-example.json", "utf8"));
     const parsed = parseStudyPlan(raw);

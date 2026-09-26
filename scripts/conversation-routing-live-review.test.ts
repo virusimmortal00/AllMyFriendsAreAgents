@@ -209,6 +209,37 @@ describe("private offline review pack", () => {
     const mixed = structuredClone(studyManifest);
     mixed.cases[0]!.study.schemaVersion = 1;
     expect(() => selectCompleteFrameReviewQueue(mixed, locator, "fixed-seed")).toThrow();
+    const terminalCases = cases.map((row) => ({
+      ...row,
+      study: {
+        ...row.study,
+        schemaVersion: 3,
+        factor: "terminal-instruction",
+        roomSystemProfileId: "room-v1",
+        terminalInstructionProfileId: row.study.arm === "a" ? "current-v1" : "contribution-first-v1",
+      },
+    }));
+    const terminalManifest = { ...studyManifest, studyPlan: { schemaVersion: 3 }, cases: terminalCases };
+    const terminalFingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceSha256: terminalManifest.sourceSha256,
+          studyPlan: terminalManifest.studyPlan,
+          cases: terminalCases.map((row) => ({
+            scenarioId: row.scenarioId,
+            study: row.study,
+            triggers: row.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+          })),
+        }),
+      )
+      .digest("hex");
+    const terminalLocator = { ...locator, manifestFingerprint: terminalFingerprint };
+    expect(
+      selectCompleteFrameReviewQueue(terminalManifest, terminalLocator, "fixed-seed").queue.reviewIds,
+    ).toHaveLength(4);
+    const invalidTerminal = structuredClone(terminalManifest);
+    invalidTerminal.cases[0]!.study.roomSystemProfileId = "legacy-v1";
+    expect(() => selectCompleteFrameReviewQueue(invalidTerminal, terminalLocator, "fixed-seed")).toThrow();
   });
   it("samples 12 distinct factor-balanced pairs without judge-score influence and keeps flagged cases separate", () => {
     const cases: Record<string, unknown>[] = [];

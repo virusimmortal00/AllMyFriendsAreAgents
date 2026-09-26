@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { latestHumanBroadcastPolicy, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, type ConversationTurn, type TurnResult } from "./conversation.js";
+import { latestHumanBroadcastPolicy, latestHumanInvitesWholeRoom, parseAgentTurn, rankRoomAgents, roomMessageTurns, runAgentConversation, runEnergyConversation, terminalInstructionProfile, TASK_TERMINAL_INSTRUCTIONS, type ConversationTurn, type TurnResult } from "./conversation.js";
 import type { AgentId, RoomMessage, RoomState } from "./types.js";
 import { DEFAULT_PARTICIPANT_STYLES } from "../shared/chat-style.js";
 import { AGENT_IDS } from "../shared/participants.js";
@@ -323,6 +323,32 @@ describe("agent conversations", () => {
 });
 
 describe("room message policy", () => {
+  it("selects the generic task instruction for the V3 plain-name direct smoke, but the reply instruction for a structured mention", () => {
+    const text = "Riley, I need to invite the team to a 20-minute check-in about next week's schedule. What one-sentence agenda should I put in the invite?";
+    const plain = roomState([{ id: "direct", speaker: "you", text, timestamp: "2026-09-26T12:00:00Z" }]);
+    expect(roomMessageTurns(plain).find(({ agent }) => agent === "codex-sol")?.instruction).toBe(TASK_TERMINAL_INSTRUCTIONS["current-v1"]);
+    const structured = roomState([{ ...plain.messages[0]!, mentions: [{ targetKind: "agent", targetId: "codex-sol", label: "Riley", revision: 1, start: 0, end: 5 }] }]);
+    expect(roomMessageTurns(structured).find(({ agent }) => agent === "codex-sol")?.instruction).toContain("Reply by default");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AMFAA_ROUTING_STUDY_ISOLATED", "true");
+    vi.stubEnv("AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE", "contribution-first-v1");
+    try {
+      expect(roomMessageTurns(plain).find(({ agent }) => agent === "codex-sol")?.instruction).toBe(TASK_TERMINAL_INSTRUCTIONS["contribution-first-v1"]);
+      expect(roomMessageTurns(structured).find(({ agent }) => agent === "codex-sol")?.instruction).toContain("Reply by default");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects unknown or non-isolated terminal profiles", () => {
+    expect(terminalInstructionProfile({})).toBe("current-v1");
+    expect(terminalInstructionProfile({ NODE_ENV: "test", AMFAA_ROUTING_STUDY_ISOLATED: "true", AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "contribution-first-v1" })).toBe("contribution-first-v1");
+    for (const env of [
+      { AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "current-v1" },
+      { NODE_ENV: "test", AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "current-v1" },
+      { NODE_ENV: "test", AMFAA_ROUTING_STUDY_ISOLATED: "true", AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE: "unknown" },
+    ]) expect(() => terminalInstructionProfile(env)).toThrow();
+  });
   it("ranks every configured agent as a staged candidate", () => {
     const turns = roomMessageTurns(roomState([]));
     expect(new Set(turns.map(({ agent }) => agent))).toEqual(new Set(AGENT_IDS));

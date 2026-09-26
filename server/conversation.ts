@@ -194,6 +194,23 @@ export function latestHumanInvitesWholeRoom(state: RoomState) {
   return latestHumanBroadcastPolicy(state).inviteAll;
 }
 
+export const TERMINAL_INSTRUCTION_PROFILES = ["current-v1", "contribution-first-v1"] as const;
+export type TerminalInstructionProfile = (typeof TERMINAL_INSTRUCTION_PROFILES)[number];
+export const TASK_TERMINAL_INSTRUCTIONS: Record<TerminalInstructionProfile, string> = {
+  "current-v1": "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether you have a distinct, useful contribution, real answer, or useful disagreement. Respond only if so; otherwise yield with the appropriate TURN_DISPOSITION reason.",
+  "contribution-first-v1": "Read the latest human message and current room discussion. If you are addressed or have a distinct, useful contribution, give the answer or reaction directly in natural room language. If you have no useful contribution, yield with the appropriate TURN_DISPOSITION reason.",
+};
+
+/** This override is available only to a fresh, isolated test server. */
+export function terminalInstructionProfile(env: NodeJS.ProcessEnv = process.env): TerminalInstructionProfile {
+  const selected = env.AMFAA_ROUTING_TERMINAL_INSTRUCTION_PROFILE;
+  if (selected === undefined) return "current-v1";
+  if (env.NODE_ENV !== "test" || env.AMFAA_ROUTING_STUDY_ISOLATED !== "true" ||
+    !TERMINAL_INSTRUCTION_PROFILES.includes(selected as TerminalInstructionProfile))
+    throw new Error("Terminal instruction override requires an isolated study and a known profile.");
+  return selected as TerminalInstructionProfile;
+}
+
 export function roomMessageTurns(state: RoomState): ConversationTurn[] {
   const latestHumanMessage = state.messages.findLast(({ speaker }) => speaker === "you");
   const wholeRoomInvitation = latestHumanInvitesWholeRoom(state);
@@ -210,7 +227,7 @@ export function roomMessageTurns(state: RoomState): ConversationTurn[] {
         ? "The latest human message explicitly invites the whole room, including you. Give your own concise, natural answer. A brief reaction with your own flavor is valid even if someone else has already reacted; do not manufacture a question merely to keep the room moving. Yield with the appropriate TURN_DISPOSITION reason only when silence is still more natural."
         : conversational
         ? "The latest human message is conversational. A one-line social reaction is a valid response: offer a distinct take, brief agreement, or text smiley if natural. Another participant's reaction does not bar your own distinct-flavored reaction. Do not manufacture a question merely to keep the room moving; yield with the appropriate TURN_DISPOSITION reason only if even a brief reaction would feel forced."
-        : "Read the latest human message and current room discussion. First decide whether the message is actually directed at you or whether you have a distinct, useful contribution, real answer, or useful disagreement. Respond only if so; otherwise yield with the appropriate TURN_DISPOSITION reason.",
+        : TASK_TERMINAL_INSTRUCTIONS[terminalInstructionProfile()],
     };
   });
 }

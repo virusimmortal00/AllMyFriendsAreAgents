@@ -691,6 +691,36 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("accepts V3 terminal pairs and rejects a second changed profile", () => {
+    const base = identityFixture();
+    const fixture = {
+      ...base,
+      studyPlan: { ...base.studyPlan, schemaVersion: 3 },
+      cases: base.cases.map((row, index) => ({
+        ...row,
+        triggers: row.triggers.slice(0, 1),
+        qualityJudge: row.qualityJudge.slice(0, 1),
+        frameJudge: row.frameJudge.slice(0, 1),
+        study: {
+          ...row.study,
+          schemaVersion: 3,
+          factor: "terminal-instruction",
+          arcProfileId: "single-v1",
+          scenarioProfileId: "brief-v1",
+          roomSystemProfileId: "room-v1",
+          roomSystemProfileDigest: "e".repeat(64),
+          terminalInstructionProfileId: index === 0 ? "current-v1" : "contribution-first-v1",
+          terminalInstructionProfileDigest: (index === 0 ? "f" : "1").repeat(64),
+          terminalInstructionCharacters: index === 0 ? 291 : 271,
+        },
+      })),
+    };
+    const parsed = parseScalarCanaryManifest(fixture);
+    expect(analyzeQualityStudy(parsed).byFactor["terminal-instruction"]?.paired.triggerPairs).toBe(1);
+    const invalid = structuredClone(fixture);
+    invalid.cases[1]!.study.gateProfileDigest = "2".repeat(64);
+    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(invalid))).toThrow();
+  });
   it("keeps V2 identity pairs closed and reports independent frame deltas", () => {
     const fixture = identityFixture();
     const parsed = parseScalarCanaryManifest(fixture);

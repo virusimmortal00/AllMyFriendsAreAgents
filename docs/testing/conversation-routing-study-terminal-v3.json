@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 3,
+  "planId": "terminalv3",
+  "orderSeed": 427,
+  "maxCases": 6,
+  "blocks": [
+    {
+      "blockId": "brief", "replicateId": "r1", "dynamic": "direct", "arcProfileId": "single-v1",
+      "scenarioProfileId": "brief-v1", "rosterOrder": ["codex-sol"], "energy": "low",
+      "arms": {
+        "a": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "current-v1" },
+        "b": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "contribution-first-v1" }
+      }
+    },
+    {
+      "blockId": "compare", "replicateId": "r1", "dynamic": "direct", "arcProfileId": "single-v1",
+      "scenarioProfileId": "comparison-v1", "rosterOrder": ["codex-sol"], "energy": "low",
+      "arms": {
+        "a": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "current-v1" },
+        "b": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "contribution-first-v1" }
+      }
+    },
+    {
+      "blockId": "draft", "replicateId": "r1", "dynamic": "direct", "arcProfileId": "single-v1",
+      "scenarioProfileId": "draft-v1", "rosterOrder": ["codex-sol"], "energy": "low",
+      "arms": {
+        "a": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "current-v1" },
+        "b": { "jevProfileId": "current-v1", "gateProfileId": "current-v1", "agentPromptProfileId": "current-v1", "roomSystemProfileId": "room-v1", "terminalInstructionProfileId": "contribution-first-v1" }
+      }
+    }
+  ]
+}
