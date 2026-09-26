@@ -114,6 +114,22 @@ run for analysis.
 
 ## Four-axis A/B study analysis
 
+Schema-version-2 identity studies keep the older four quality axes and the
+independent frame-integrity axis. Their closed pair contrast changes only the
+room-system profile (`legacy-v1` or `room-v1`); the scenario profile and the
+Jev, gate, and agent-prompt profile IDs and digests must match. Mixed versions,
+incomplete arms, or a mislabeled contrast are rejected. Frame outcomes report
+rated, not-assessable, failed, and missing trigger denominators, separate
+reported judge cost, and a paired room-system score difference only when both
+arms have rated outcomes from the same provider-resolved judge model. These
+descriptive pilot observations do not establish a causal effect.
+The frame-only review converter writes a separate private `schemaVersion: 3`
+file. Pass it to the analysis CLI with `--frame-ratings /PRIVATE/human-frame-ratings.json`
+alongside the final scalar manifests (and optional four-axis `--ratings`). The
+report keeps frame-human rated, not-assessable, and missing denominators,
+status/score agreement, and A/B paired differences only where both human
+ratings are present. An absent review is never scored as a favorable frame.
+
 For a completed study using `--judge-rubric v2`, repeat `--manifest` for the
 final scalar manifest from each invocation. The same provider-free command
 prints `conversation-routing-live-study-analysis`; `--template` creates a

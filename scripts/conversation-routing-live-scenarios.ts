@@ -1,7 +1,7 @@
 import type { ConversationEnergy } from "../shared/conversation-energy.js";
 import type { ActiveAgentId } from "../shared/participants.js";
 import type { PreflightMode } from "../shared/preflight.js";
-import type { StudyCaseMetadataV1 } from "./conversation-routing-live-study.js";
+import type { StudyCaseMetadata } from "./conversation-routing-live-study.js";
 
 export type RoutingDynamic =
   | "direct"
@@ -31,7 +31,7 @@ export interface LiveScenario {
   scriptedFollowups?: Array<{ text: string; expectedDirectAgents: ActiveAgentId[]; scenarioId: string }>;
   rosterOrder?: ActiveAgentId[];
   scenarioProfileId?: ScenarioProfileId;
-  study?: StudyCaseMetadataV1;
+  study?: StudyCaseMetadata;
 }
 
 export const FIXTURE_AGENTS = [

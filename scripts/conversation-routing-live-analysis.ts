@@ -3,8 +3,10 @@ import { readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   type ConversationRating,
+  type FrameHumanRating,
   type ObservedConversationRun,
   parsePrivateConversationRatings,
+  parsePrivateFrameRatings,
   parsePrivateQualityRatings,
   type QualityHumanRating,
   summarizeConversationRatings,
@@ -12,7 +14,7 @@ import {
 import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
-import type { StudyCaseMetadataV1 } from "./conversation-routing-live-study.js";
+import type { StudyCaseMetadata } from "./conversation-routing-live-study.js";
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const SHA = /^[a-f0-9]{64}$/;
@@ -139,7 +141,7 @@ export interface ScalarCanaryManifest {
   actorModel: string;
   judgeModel: string | null;
   judgeRubric: "v1" | "v2" | "v3";
-  studyPlan: { schemaVersion: 1; planId: string; planSha256: string; orderSeed: number; jevModel: string } | null;
+  studyPlan: { schemaVersion: 1 | 2; planId: string; planSha256: string; orderSeed: number; jevModel: string } | null;
   studyBatch: {
     schemaVersion: 1;
     planCaseCount: number;
@@ -161,7 +163,7 @@ export interface ScalarCanaryManifest {
     judge: JudgeScalarResult[];
     qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: ParsedQualityAxisOutcome[] }>;
     frameJudge: Array<{ scenarioId: string; runId: string; outcome: FrameIntegrityOutcome }>;
-    study: StudyCaseMetadataV1 | null;
+    study: StudyCaseMetadata | null;
     availabilityCheck: AvailabilityCheck | null;
   }>;
 }
@@ -369,7 +371,8 @@ function parseJudge(value: unknown, scenarioId: string, runId: string, judgeMode
   };
 }
 
-function parseStudy(value: unknown): StudyCaseMetadataV1 {
+function parseStudy(value: unknown): StudyCaseMetadata {
+  const version = (value as Record<string, unknown> | null)?.schemaVersion;
   const row = object(value, [
     "schemaVersion",
     "planId",
@@ -389,15 +392,18 @@ function parseStudy(value: unknown): StudyCaseMetadataV1 {
     "jevProfileDigest",
     "gateProfileDigest",
     "rosterOrder",
+    ...(version === 2
+      ? ["scenarioProfileId", "scenarioProfileDigest", "roomSystemProfileId", "roomSystemProfileDigest"]
+      : []),
   ]);
   if (
-    row.schemaVersion !== 1 ||
+    (version !== 1 && version !== 2) ||
     !["planId", "blockId", "replicateId", "pairId", "caseId"].every((key) => id(row[key])) ||
     ![row.planSha256, row.jevProfileDigest, row.gateProfileDigest, row.agentPromptProfileDigest].every(
       (value) => typeof value === "string" && SHA.test(value),
     ) ||
     !["a", "b"].includes(String(row.arm)) ||
-    !["jev", "gate", "agent-prompt"].includes(String(row.factor)) ||
+    (version === 1 ? !["jev", "gate", "agent-prompt"].includes(String(row.factor)) : row.factor !== "room-system") ||
     !["ab", "ba"].includes(String(row.order)) ||
     ![
       "single-v1",
@@ -414,10 +420,15 @@ function parseStudy(value: unknown): StudyCaseMetadataV1 {
     row.rosterOrder.length < 1 ||
     row.rosterOrder.length > 4 ||
     row.rosterOrder.some((value) => !id(value)) ||
-    new Set(row.rosterOrder).size !== row.rosterOrder.length
+    new Set(row.rosterOrder).size !== row.rosterOrder.length ||
+    (version === 2 &&
+      (row.scenarioProfileId !== "garden-chat-v2" ||
+        !SHA.test(String(row.scenarioProfileDigest)) ||
+        !["legacy-v1", "room-v1"].includes(String(row.roomSystemProfileId)) ||
+        !SHA.test(String(row.roomSystemProfileDigest))))
   )
     throw new Error("Invalid scalar canary manifest.");
-  return row as unknown as StudyCaseMetadataV1;
+  return row as unknown as StudyCaseMetadata;
 }
 
 function parseQualityOutcome(
@@ -686,7 +697,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   if (top.studyPlan !== undefined) {
     const plan = object(top.studyPlan, ["schemaVersion", "planId", "planSha256", "orderSeed", "jevModel"]);
     if (
-      plan.schemaVersion !== 1 ||
+      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2) ||
       !id(plan.planId) ||
       typeof plan.planSha256 !== "string" ||
       !SHA.test(plan.planSha256) ||
@@ -696,6 +707,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     )
       throw new Error("Invalid scalar canary manifest.");
     studyPlan = plan as unknown as NonNullable<ScalarCanaryManifest["studyPlan"]>;
+    if (plan.schemaVersion === 2 && top.judgeRubric !== "v3") throw new Error("Invalid scalar canary manifest.");
   }
   let studyBatch: ScalarCanaryManifest["studyBatch"] = null;
   if (top.studyBatch !== undefined) {
@@ -776,7 +788,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     if (
       (studyPlan === null) !== (study === null) ||
       (study &&
-        (study.planId !== studyPlan?.planId ||
+        (study.schemaVersion !== studyPlan?.schemaVersion ||
+          study.planId !== studyPlan?.planId ||
           study.planSha256 !== studyPlan?.planSha256 ||
           study.rosterOrder.length !== row.agentCount))
     )
@@ -1182,6 +1195,12 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
       ["jev", row.study.jevProfileId, row.study.jevProfileDigest],
       ["gate", row.study.gateProfileId, row.study.gateProfileDigest],
       ["agent-prompt", row.study.agentPromptProfileId, row.study.agentPromptProfileDigest],
+      ...(row.study.schemaVersion === 2
+        ? ([
+            ["scenario", row.study.scenarioProfileId, row.study.scenarioProfileDigest],
+            ["room-system", row.study.roomSystemProfileId, row.study.roomSystemProfileDigest],
+          ] as [string, string, string][])
+        : []),
     ];
     for (const [kind, profileId, digest] of profiles) {
       const key = `${kind}:${profileId}`;
@@ -1253,6 +1272,7 @@ export function analyzeQualityStudy(
   manifest: ScalarCanaryManifest,
   ratings: readonly QualityHumanRating[] = [],
   options: { seed?: string; maxSpotChecks?: number } = {},
+  frameRatings: readonly FrameHumanRating[] = [],
 ) {
   if (
     (manifest.judgeRubric !== "v2" && manifest.judgeRubric !== "v3") ||
@@ -1263,6 +1283,8 @@ export function analyzeQualityStudy(
   if (manifest.studyBatch && manifest.cases.length !== manifest.studyBatch.planCaseCount)
     throw new Error("A complete set of final study batches is required.");
   const parsedRatings = parsePrivateQualityRatings({ schemaVersion: 2, ratings });
+  const studyVersion = manifest.studyPlan.schemaVersion;
+  const factors = studyVersion === 2 ? (["room-system"] as const) : (["jev", "gate", "agent-prompt"] as const);
   const all = manifest.cases.flatMap((caseRow) =>
     caseRow.triggers.map((trigger, ordinal) => ({
       caseRow,
@@ -1287,6 +1309,16 @@ export function analyzeQualityStudy(
   if (parsedRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))
     throw new Error("Private rating does not match a completed canary run.");
   const human = new Map(parsedRatings.map((row) => [key(row.scenarioId, row.runId), row]));
+  const parsedFrameRatings = parsePrivateFrameRatings({
+    schemaVersion: 3,
+    rubricVersion: "room-frame-integrity-v1",
+    ratings: frameRatings,
+  });
+  if (parsedFrameRatings.length && (studyVersion !== 2 || manifest.judgeRubric !== "v3"))
+    throw new Error("Frame human ratings require a V2 frame study.");
+  if (parsedFrameRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))
+    throw new Error("Private frame rating does not match a completed canary run.");
+  const frameHuman = new Map(parsedFrameRatings.map((row) => [key(row.scenarioId, row.runId), row]));
   const outcome = (item: (typeof all)[number], axis: QualityAxis) =>
     item.judgment?.outcomes.find((row) => row.axis === axis);
   const scoreOf = (item: (typeof all)[number], axis: QualityAxis) => {
@@ -1329,6 +1361,8 @@ export function analyzeQualityStudy(
     if (
       x.arm !== "a" ||
       y.arm !== "b" ||
+      x.schemaVersion !== studyVersion ||
+      y.schemaVersion !== studyVersion ||
       x.factor !== y.factor ||
       x.blockId !== y.blockId ||
       x.replicateId !== y.replicateId ||
@@ -1341,6 +1375,26 @@ export function analyzeQualityStudy(
       a.triggers.length !== b.triggers.length
     )
       return false;
+    if (x.schemaVersion === 2 && y.schemaVersion === 2)
+      return (
+        x.factor === "room-system" &&
+        y.factor === "room-system" &&
+        x.scenarioProfileId === y.scenarioProfileId &&
+        x.scenarioProfileDigest === y.scenarioProfileDigest &&
+        x.roomSystemProfileId === "legacy-v1" &&
+        y.roomSystemProfileId === "room-v1" &&
+        x.roomSystemProfileDigest !== y.roomSystemProfileDigest &&
+        x.jevProfileId === y.jevProfileId &&
+        x.jevProfileDigest === y.jevProfileDigest &&
+        x.gateProfileId === y.gateProfileId &&
+        x.gateProfileDigest === y.gateProfileDigest &&
+        x.agentPromptProfileId === y.agentPromptProfileId &&
+        x.agentPromptProfileDigest === y.agentPromptProfileDigest &&
+        a.preflightMode === b.preflightMode &&
+        a.variant === b.variant &&
+        a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
+      );
+    if (x.schemaVersion !== 1 || y.schemaVersion !== 1) return false;
     const changed = [
       x.jevProfileId !== y.jevProfileId ? "jev" : null,
       x.gateProfileId !== y.gateProfileId ? "gate" : null,
@@ -1367,6 +1421,7 @@ export function analyzeQualityStudy(
     const a = cases.find((row) => row.study!.arm === "a"),
       b = cases.find((row) => row.study!.arm === "b");
     if (cases.length !== 2 || !a || !b || !compatible(a, b)) {
+      if (studyVersion === 2) throw new Error("Mislabeled or incomplete identity study pair.");
       excludedCasePairs++;
       continue;
     }
@@ -1587,6 +1642,14 @@ export function analyzeQualityStudy(
     gateProfileDigest: row.study!.gateProfileDigest,
     agentPromptProfileId: row.study!.agentPromptProfileId,
     agentPromptProfileDigest: row.study!.agentPromptProfileDigest,
+    ...(row.study!.schemaVersion === 2
+      ? {
+          scenarioProfileId: row.study!.scenarioProfileId,
+          scenarioProfileDigest: row.study!.scenarioProfileDigest,
+          roomSystemProfileId: row.study!.roomSystemProfileId,
+          roomSystemProfileDigest: row.study!.roomSystemProfileDigest,
+        }
+      : {}),
   });
   const dynamicFor = (row: StudyCase) => {
     const prefix = /^(direct|multi-address|broadcast|casual|handoff|disagreement|quoted-name)-/.exec(
@@ -1784,7 +1847,7 @@ export function analyzeQualityStudy(
       ),
     );
   const byFactorBlocks = Object.fromEntries(
-    (["jev", "gate", "agent-prompt"] as const).map((factor) => {
+    factors.map((factor) => {
       const requestedBlocks = [...group.values()].filter((rows) => rows[0]?.study?.factor === factor).length;
       const factorBlocks = structurallyMatchedBlocks.filter((block) => block.factor === factor);
       const contrasts = [...contrastGroups.values()]
@@ -1867,7 +1930,7 @@ export function analyzeQualityStudy(
         ]
       : [],
   );
-  for (const factor of ["jev", "gate", "agent-prompt"] as const) {
+  for (const factor of factors) {
     if (byFactorBlocks[factor]?.requestedBlocks === 0)
       blockWarnings.push({ code: "missing-factor", factor, contrastId: "", stratumId: "" });
     const contrasts = byFactorBlocks[factor]?.contrasts ?? [];
@@ -1894,6 +1957,39 @@ export function analyzeQualityStudy(
       ? [outcome.result.judgeUsage.reportedCostUsd]
       : [],
   );
+  const frameOutcome = (item: (typeof all)[number]) =>
+    item.caseRow.frameJudge.find(
+      (entry) => entry.scenarioId === item.trigger.scenarioId && entry.runId === item.trigger.runId,
+    )?.outcome;
+  const frameReviewed = all.map((item) => ({
+    model: frameOutcome(item),
+    human: frameHuman.get(key(item.trigger.scenarioId, item.trigger.runId))?.frame_integrity,
+  }));
+  const frameJointlyRated = frameReviewed.filter(
+    ({ model, human }) => model?.status === "completed" && model.result.status === "rated" && human?.status === "rated",
+  );
+  const frameHumanPairDeltas = pairs.flatMap(({ a, b }) => {
+    const first = frameHuman.get(key(a.trigger.scenarioId, a.trigger.runId))?.frame_integrity;
+    const second = frameHuman.get(key(b.trigger.scenarioId, b.trigger.runId))?.frame_integrity;
+    return first?.status === "rated" && second?.status === "rated" ? [second.score - first.score] : [];
+  });
+  const framePairDeltas: number[] = [];
+  let framePairModelUnknown = 0;
+  let framePairModelMismatch = 0;
+  for (const { a, b } of pairs) {
+    const first = frameOutcome(a),
+      second = frameOutcome(b);
+    if (
+      first?.status !== "completed" ||
+      second?.status !== "completed" ||
+      first.result.status !== "rated" ||
+      second.result.status !== "rated"
+    )
+      continue;
+    if (first.result.resolvedJudgeModel === null || second.result.resolvedJudgeModel === null) framePairModelUnknown++;
+    else if (first.result.resolvedJudgeModel !== second.result.resolvedJudgeModel) framePairModelMismatch++;
+    else framePairDeltas.push(second.result.score! - first.result.score!);
+  }
   return {
     schemaVersion: 2 as const,
     kind: "conversation-routing-live-study-analysis" as const,
@@ -1909,7 +2005,7 @@ export function analyzeQualityStudy(
     availability: {
       overall: availabilityCoverage(manifest.cases),
       byFactorAndArm: Object.fromEntries(
-        (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+        factors.flatMap((factor) =>
           (["a", "b"] as const).map((arm) => [
             `${factor}:${arm}`,
             availabilityCoverage(
@@ -1927,7 +2023,7 @@ export function analyzeQualityStudy(
       required: attributionCoverage(all.filter(({ trigger }) => trigger.requiredTargetCount > 0)),
       optional: attributionCoverage(all.filter(({ trigger }) => trigger.requiredTargetCount === 0)),
       byFactorAndArm: Object.fromEntries(
-        (["jev", "gate", "agent-prompt"] as const).flatMap((factor) =>
+        factors.flatMap((factor) =>
           (["a", "b"] as const).map((arm) => [
             `${factor}:${arm}`,
             attributionCoverage(
@@ -1966,7 +2062,7 @@ export function analyzeQualityStudy(
       paired: pairedReadout(pairs.filter((pair) => pair.pairId === pairId)),
     })),
     byFactor: Object.fromEntries(
-      (["jev", "gate", "agent-prompt"] as const).map((factor) => {
+      factors.map((factor) => {
         const cases = manifest.cases.filter((row) => row.study!.factor === factor);
         const selectedPairs = pairs.filter((pair) => pair.a.caseRow.study!.factor === factor);
         return [
@@ -2032,6 +2128,45 @@ export function analyzeQualityStudy(
         missing: frameOutcomes.length - frameCosts.length,
         total: frameCosts.length ? frameCosts.reduce((sum, value) => sum + value, 0) : null,
       },
+      ...(studyVersion === 2
+        ? {
+            human: {
+              rated: frameReviewed.filter(({ human }) => human?.status === "rated").length,
+              notAssessable: frameReviewed.filter(({ human }) => human?.status === "not_assessable").length,
+              missing: frameReviewed.filter(({ human }) => human === undefined).length,
+              pairedRoomSystemArmBMinusA: delta(frameHumanPairDeltas),
+              agreement: {
+                jointStatusReviews: frameReviewed.filter(
+                  ({ model, human }) => model?.status === "completed" && human !== undefined,
+                ).length,
+                statusExact: frameReviewed.filter(
+                  ({ model, human }) => model?.status === "completed" && model.result.status === human?.status,
+                ).length,
+                jointlyRated: frameJointlyRated.length,
+                scoreExact: frameJointlyRated.filter(
+                  ({ model, human }) =>
+                    model?.status === "completed" && human?.status === "rated" && model.result.score === human.score,
+                ).length,
+                scoreWithinOne: frameJointlyRated.filter(
+                  ({ model, human }) =>
+                    model?.status === "completed" &&
+                    human?.status === "rated" &&
+                    Math.abs(model.result.score! - human.score) <= 1,
+                ).length,
+              },
+            },
+            pairedRoomSystemArmBMinusA: {
+              ...delta(framePairDeltas),
+              unscoredPairs: pairs.length - framePairDeltas.length,
+              resolvedJudgeModelUnknownPairs: framePairModelUnknown,
+              resolvedJudgeModelMismatchPairs: framePairModelMismatch,
+            },
+            pairedReportedJudgeCostUsdArmBMinusA: pairedMetric(pairs, (item) => {
+              const entry = frameOutcome(item);
+              return entry?.status === "completed" ? entry.result.judgeUsage.reportedCostUsd : null;
+            }),
+          }
+        : {}),
     },
     resources: {
       actorEstimatedCostUsd: metric((item) =>
@@ -2363,7 +2498,7 @@ async function main() {
       template = true;
       continue;
     }
-    if (!["--manifest", "--ratings", "--seed", "--spot-checks"].includes(arg) || !args[i + 1])
+    if (!["--manifest", "--ratings", "--frame-ratings", "--seed", "--spot-checks"].includes(arg) || !args[i + 1])
       throw new Error("Invalid analysis invocation.");
     if (arg === "--manifest") {
       if (manifestPaths.length >= MAX_STUDY_PAIRS) throw new Error("Invalid analysis invocation.");
@@ -2373,16 +2508,21 @@ async function main() {
     if (values.has(arg)) throw new Error("Invalid analysis invocation.");
     values.set(arg, args[++i]!);
   }
-  if (!manifestPaths.length || (template && values.has("--ratings"))) throw new Error("Invalid analysis invocation.");
+  if (!manifestPaths.length || (template && (values.has("--ratings") || values.has("--frame-ratings"))))
+    throw new Error("Invalid analysis invocation.");
   const manifests: ScalarCanaryManifest[] = [];
   for (const path of manifestPaths) manifests.push(parseScalarCanaryManifest(await readBounded(path)));
   const manifest = mergeScalarCanaryManifests(manifests);
   const rawRatings = values.has("--ratings") ? await readBounded(values.get("--ratings")!) : undefined;
+  const rawFrameRatings = values.has("--frame-ratings") ? await readBounded(values.get("--frame-ratings")!) : undefined;
+  const parsedFrame = rawFrameRatings === undefined ? [] : parsePrivateFrameRatings(rawFrameRatings);
+  if (rawFrameRatings !== undefined && (manifest.studyPlan?.schemaVersion !== 2 || manifest.judgeRubric !== "v3"))
+    throw new Error("Frame ratings require a V2 frame study.");
   const maxSpotChecks = values.has("--spot-checks") ? Number(values.get("--spot-checks")) : 4;
   if (!Number.isSafeInteger(maxSpotChecks) || maxSpotChecks < 0 || maxSpotChecks > 12)
     throw new Error("Invalid analysis invocation.");
   process.stdout.write(
-    `${JSON.stringify(template ? privateRatingTemplate(manifest) : manifest.judgeRubric === "v2" || manifest.judgeRubric === "v3" ? analyzeQualityStudy(manifest, rawRatings === undefined ? [] : parsePrivateQualityRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }) : analyzeConversationCanary(manifest, rawRatings === undefined ? [] : parsePrivateConversationRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }), null, 2)}\n`,
+    `${JSON.stringify(template ? privateRatingTemplate(manifest) : manifest.judgeRubric === "v2" || manifest.judgeRubric === "v3" ? analyzeQualityStudy(manifest, rawRatings === undefined ? [] : parsePrivateQualityRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }, parsedFrame) : analyzeConversationCanary(manifest, rawRatings === undefined ? [] : parsePrivateConversationRatings(rawRatings), { ...(values.has("--seed") ? { seed: values.get("--seed")! } : {}), maxSpotChecks }), null, 2)}\n`,
   );
 }
 

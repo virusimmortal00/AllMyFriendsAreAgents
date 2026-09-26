@@ -258,6 +258,53 @@ Budget **five** calls per trigger and an adequate total watchdog when selecting
 v3. The frame call is a distinct rubric; it does not change the four existing
 axes or their historical scores.
 
+## Room system identity study (schema v2)
+
+The [closed identity example](conversation-routing-study-identity-v2.json) compares
+`legacy-v1` and `room-v1` inside one committed source tree. Both arms keep the
+same actor, pinned Jev and judge models, Jev/gate/agent-prompt profiles, room
+roster, energy, and invented human messages. The opt-in `garden-chat-v2`
+fixture sounds like ordinary garden planning and contains no evaluation cues.
+The only assigned treatment is whether the isolated OpenCode room agent has
+the explicit room system prompt. Arm A is always the legacy identity and arm B
+is always the explicit room identity; seeded execution balances AB/BA order.
+Six matched pairs include
+two four-agent lively casual continuations, one two-agent exchange, one
+four-agent broadcast, and two three-message disagreements. This is an
+identity contrast, not a calibrated claim about response quality. V1 plans,
+their digests, and their manifest fields remain unchanged.
+
+The V2 parser accepts only `garden-chat-v2` and closed
+`legacy-v1`/`room-v1` selectors; it rejects unknown fields and arms that differ
+in another factor. The runner requires a distinct pinned judge and rubric v3
+so the frame-integrity outcome is always scheduled. The selected ID and deterministic profile digests appear in
+case metadata, while the source digest binds the prompt implementation and all
+fixture and judge code. The selector is passed to the loopback test server only
+for validated V2 cases, under `NODE_ENV=test` and
+`AMFAA_ROUTING_STUDY_ISOLATED=true`. It is never a production room setting.
+The provider-resolved Jev model may be absent; no model identity is inferred
+from the requested ID.
+
+Inspect ordering and caps without credentials or a provider call:
+
+```bash
+pnpm exec tsx scripts/conversation-routing-live-canary.ts \
+  --dry-run --allow-wide-matrix \
+  --study-plan "$PWD/docs/testing/conversation-routing-study-identity-v2.json" \
+  --model openrouter/anthropic/claude-haiku-4.5 --jev-model typesafe/jev-1.13 \
+  --judge-model openrouter/google/gemini-3.8-flash --judge-rubric v3 \
+  --max-cases 12 --max-judge-calls 130 --max-generations 18 \
+  --timeout-ms 120000 --total-timeout-ms 9000000
+```
+
+The example schedules 12 cases, 26 human triggers, and **130** independent
+judge calls (five axes per trigger). The 9,000,000 ms total watchdog exceeds
+the conservative planning allowance; it is a time bound, not a USD cap or a
+strict provider invocation ceiling. A live invocation additionally needs the
+audited absolute `--opencode` and `--secret-launcher`, the explicit
+`AMFAA_CANARY_ALLOW_REAL_PROVIDER=true` opt-in, and launch-time credentials as
+documented above. Do not launch it merely to inspect the plan.
+
 ## Expanded paired study
 
 The [versioned 72-case example](conversation-routing-study-large-v1.json) has

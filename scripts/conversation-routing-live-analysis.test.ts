@@ -131,6 +131,33 @@ function studyFixture() {
   };
 }
 
+function identityFixture() {
+  const base = studyFixture();
+  const offClassifier = base.cases[1]!.triggers[0]!.classifier;
+  return {
+    ...base,
+    judgeRubric: "v3",
+    studyPlan: { ...base.studyPlan, schemaVersion: 2 },
+    cases: base.cases.map((row, index) => ({
+      ...row,
+      variant: "jev-off",
+      triggers: row.triggers.map((trigger) => ({ ...trigger, variant: "jev-off", classifier: offClassifier })),
+      frameJudge: row.triggers.map((trigger) => frameReceipt(trigger.scenarioId, trigger.runId, index === 0 ? 1 : 5)),
+      study: {
+        ...row.study,
+        schemaVersion: 2,
+        factor: "room-system",
+        jevProfileId: "off-v1",
+        jevProfileDigest: "b".repeat(64),
+        scenarioProfileId: "garden-chat-v2",
+        scenarioProfileDigest: "c".repeat(64),
+        roomSystemProfileId: index === 0 ? "legacy-v1" : "room-v1",
+        roomSystemProfileDigest: (index === 0 ? "d" : "e").repeat(64),
+      },
+    })),
+  };
+}
+
 const frameReceipt = (scenarioId: string, runId: string, score: 1 | 5) => ({
   scenarioId,
   runId,
@@ -644,6 +671,100 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("keeps V2 identity pairs closed and reports independent frame deltas", () => {
+    const fixture = identityFixture();
+    const parsed = parseScalarCanaryManifest(fixture);
+    const report = analyzeQualityStudy(parsed);
+    expect(report.denominators.matchedTriggerPairs).toBe(2);
+    expect(report.byFactor["room-system"]?.paired.triggerPairs).toBe(2);
+    expect(report.frameIntegrity).toMatchObject({
+      rated: 4,
+      missing: 0,
+      pairedRoomSystemArmBMinusA: { pairedRuns: 2, candidateMinusBaselineMean: 4 },
+      pairedReportedJudgeCostUsdArmBMinusA: { pairedRuns: 2, candidateMinusBaselineMean: 0 },
+    });
+    const humanFrame = [
+      {
+        scenarioId: fixture.cases[0]!.triggers[0]!.scenarioId,
+        runId: fixture.cases[0]!.triggers[0]!.runId,
+        frame_integrity: { status: "rated" as const, score: 1 as const },
+      },
+      {
+        scenarioId: fixture.cases[1]!.triggers[0]!.scenarioId,
+        runId: fixture.cases[1]!.triggers[0]!.runId,
+        frame_integrity: { status: "rated" as const, score: 5 as const },
+      },
+      {
+        scenarioId: fixture.cases[0]!.triggers[1]!.scenarioId,
+        runId: fixture.cases[0]!.triggers[1]!.runId,
+        frame_integrity: { status: "not_assessable" as const },
+      },
+    ];
+    expect(analyzeQualityStudy(parsed, [], {}, humanFrame).frameIntegrity).toMatchObject({
+      human: {
+        rated: 2,
+        notAssessable: 1,
+        missing: 1,
+        pairedRoomSystemArmBMinusA: { pairedRuns: 1, candidateMinusBaselineMean: 4 },
+        agreement: { jointStatusReviews: 3, statusExact: 2, jointlyRated: 2, scoreExact: 2, scoreWithinOne: 2 },
+      },
+    });
+    expect(() => analyzeQualityStudy(parsed, [], {}, [{ scenarioId: "unknown", runId: "unknown" }])).toThrow();
+    const scratch = mkdtempSync(join(tmpdir(), "identity-frame-analysis-"));
+    try {
+      const manifestPath = join(scratch, "manifest.json");
+      const ratingsPath = join(scratch, "frame-ratings.json");
+      writeFileSync(manifestPath, JSON.stringify(fixture));
+      writeFileSync(
+        ratingsPath,
+        JSON.stringify({ schemaVersion: 3, rubricVersion: "room-frame-integrity-v1", ratings: humanFrame }),
+      );
+      const output = JSON.parse(
+        execFileSync(
+          "pnpm",
+          [
+            "exec",
+            "tsx",
+            "scripts/conversation-routing-live-analysis.ts",
+            "--manifest",
+            manifestPath,
+            "--frame-ratings",
+            ratingsPath,
+          ],
+          { encoding: "utf8" },
+        ),
+      );
+      expect(output.frameIntegrity.human).toMatchObject({ rated: 2, notAssessable: 1, missing: 1 });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+    const failedFrame = structuredClone(fixture);
+    failedFrame.cases[1]!.frameJudge = failedFrame.cases[1]!.frameJudge.map((row) => ({
+      ...row,
+      outcome: { axis: "frame_integrity", status: "failed", category: "transport" },
+    })) as unknown as (typeof failedFrame.cases)[1]["frameJudge"];
+    expect(analyzeQualityStudy(parseScalarCanaryManifest(failedFrame)).frameIntegrity).toMatchObject({
+      rated: 2,
+      failed: 2,
+      pairedRoomSystemArmBMinusA: { pairedRuns: 0, unscoredPairs: 2 },
+    });
+    const mislabeled = structuredClone(fixture);
+    mislabeled.cases[1]!.study.gateProfileDigest = "f".repeat(64);
+    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(mislabeled))).toThrow(/Mislabeled/);
+    const mixed = structuredClone(fixture);
+    mixed.cases[1]!.study.schemaVersion = 1;
+    expect(() => parseScalarCanaryManifest(mixed)).toThrow();
+    const wrongRubric = structuredClone(fixture);
+    wrongRubric.judgeRubric = "v2";
+    expect(() => parseScalarCanaryManifest(wrongRubric)).toThrow();
+    const changed = structuredClone(fixture);
+    changed.cases[1]!.study.scenarioProfileDigest = "f".repeat(64);
+    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(changed))).toThrow(/Mislabeled/);
+    const reversed = structuredClone(fixture);
+    reversed.cases[0]!.study.roomSystemProfileId = "room-v1";
+    reversed.cases[1]!.study.roomSystemProfileId = "legacy-v1";
+    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(reversed))).toThrow(/Mislabeled/);
+  });
   it("keeps old four-axis receipts missing for frame integrity and parses separate version-3 receipts", () => {
     const legacy = analyzeQualityStudy(parseScalarCanaryManifest(studyFixture()));
     expect(legacy.frameIntegrity).toMatchObject({ rubricVersion: null, totalTriggers: 4, rated: 0, missing: 4 });
