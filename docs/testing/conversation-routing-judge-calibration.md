@@ -9,10 +9,11 @@ second possibility before interpreting study scores.
 fictional normal/degraded pairs. Each pair calls **only its assigned grader**
 on both responses: social cue and cadence fit, answer length, audience fit,
 useful content, explicit room-frame rejection, another agent amplifying a
-frame rejection, or an ordinary planning preface versus explicit hidden-instruction
-narration. These are obvious controls, not a representative conversation
-sample or a replacement for human ratings. The quality graders use their
-existing `room-quality-v2` prompts; both frame probes use the existing
+frame rejection, or an ordinary preface that narrates how the agent interprets
+the human request versus explicit hidden-instruction narration. These are
+obvious controls, not a representative conversation sample or a replacement
+for human ratings. The quality graders use their existing `room-quality-v2`
+prompts; all three frame probes use the existing
 `room-frame-integrity-v1` prompt. The probe does not generate agent responses,
 alter routing, or change a study plan.
 
@@ -28,8 +29,14 @@ pnpm exec tsx scripts/conversation-routing-judge-calibration.ts \
 
 For a paid probe, first create a private directory, then use the workstation's
 secret launcher. The report path must be absolute and new; the directory must
-have mode `0700`. The command makes at most 14 sequential judge calls, with no
-retry. Each individual request retains the existing judge's 30-second cap.
+have mode `0700`. Supply the exact 64-character `fixtureAndRubricSha256` from
+the preview; the paid command rejects a changed digest or dirty worktree before
+calling the judge. It reserves a new output file exclusively before any paid
+call, so an existing report cannot be overwritten. The command makes at most
+14 sequential judge calls, with no retry. Each individual request retains the
+existing judge's 30-second cap; a total watchdog stops starting new calls after
+480 seconds by default. A failed run may leave an empty reserved file, so use a
+new output path for a deliberate retry.
 
 ```bash
 mkdir -m 700 "$HOME/.codex/issue-232-judge-calibration"
@@ -37,6 +44,8 @@ bws-run pnpm exec tsx scripts/conversation-routing-judge-calibration.ts \
   --allow-paid \
   --actor-model openrouter/anthropic/claude-haiku-4.5 \
   --judge-model google/gemini-3.8-flash \
+  --expected-source-sha256 '<fixtureAndRubricSha256 from preview>' \
+  --total-timeout-ms 480000 \
   --output "$HOME/.codex/issue-232-judge-calibration/report.json"
 ```
 

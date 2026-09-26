@@ -1,6 +1,14 @@
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CALIBRATION_PROBES } from "./conversation-routing-judge-calibration-fixtures.js";
-import { main, runCalibration } from "./conversation-routing-judge-calibration.js";
+import {
+  calibrationSourceDigest,
+  main,
+  reservePrivateReportPath,
+  runCalibration,
+} from "./conversation-routing-judge-calibration.js";
 
 const judgeModel = "google/gemini-3.8-flash";
 const actorModel = "openrouter/anthropic/claude-haiku-4.5";
@@ -151,5 +159,54 @@ describe("conversation judge calibration", () => {
     await expect(
       main(["--dry-run", "--allow-paid", "--judge-model", judgeModel, "--actor-model", actorModel], {}),
     ).rejects.toThrow();
+  });
+
+  it("rejects source drift before a judge call and skips all calls after a total cancellation", async () => {
+    const fetchImpl = fakeJudge();
+    await expect(
+      runCalibration({
+        judgeModel,
+        actorModel,
+        apiKey: "test-key",
+        fetchImpl: fetchImpl as typeof fetch,
+        expectedSourceSha256: "0".repeat(64),
+      }),
+    ).rejects.toThrow("source digest");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const abort = new AbortController();
+    abort.abort();
+    const report = await runCalibration({
+      judgeModel,
+      actorModel,
+      apiKey: "test-key",
+      fetchImpl: fetchImpl as typeof fetch,
+      expectedSourceSha256: await calibrationSourceDigest(),
+      signal: abort.signal,
+      totalTimeoutMs: 1_000,
+    });
+    expect(report.observedCalls).toBe(0);
+    expect(report.totalTimeoutMs).toBe(1_000);
+    expect(report.rows).toHaveLength(7);
+    expect(report.rows.every((row) => row.normal.failureCategory === "cancelled")).toBe(true);
+    expect(report.reportedCostUsd).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reserves a private new report path exclusively before provider work", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "amfaa-judge-calibration-"));
+    try {
+      const output = path.join(directory, "report.json");
+      const handle = await reservePrivateReportPath(output);
+      await handle.close();
+      expect((await stat(output)).mode & 0o777).toBe(0o600);
+      await writeFile(output, "earlier receipt");
+      await expect(reservePrivateReportPath(output)).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await readFile(output, "utf8")).toBe("earlier receipt");
+      await expect(reservePrivateReportPath(path.join(process.cwd(), "report.json"))).rejects.toThrow(
+        "outside the repository",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

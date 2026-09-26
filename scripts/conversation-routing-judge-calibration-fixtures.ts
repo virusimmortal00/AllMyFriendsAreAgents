@@ -159,7 +159,7 @@ export const CALIBRATION_PROBES: readonly CalibrationProbe[] = [
     [
       {
         speaker: "jordan",
-        text: "Quick way to plan it: go to the library first, since it closes earlier. You can buy groceries afterward.",
+        text: "I read your question as asking which errand needs the earlier slot. I'll compare the closing times: the library closes at five and the grocery at nine. So I'd go to the library first, then buy groceries afterward.",
       },
     ],
     [

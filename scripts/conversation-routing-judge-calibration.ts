@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { chmod, readFile, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { judgeConversationFrameOutcome, type FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { JudgeFailure, type JudgeFailureCategory } from "./conversation-routing-live-judge.js";
 import { judgeConversationQualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
@@ -19,6 +21,9 @@ const pinnedFiles = [
   "scripts/conversation-routing-live-frame-judge.ts",
 ] as const;
 const modelId = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i;
+const sha256 = /^[a-f0-9]{64}$/;
+const execute = promisify(execFile);
+const DEFAULT_TOTAL_TIMEOUT_MS = 480_000;
 type Outcome = QualityAxisOutcome | FrameIntegrityOutcome;
 type Rating = {
   status: "rated" | "not_applicable" | "not_assessable" | "failed";
@@ -49,6 +54,7 @@ export interface CalibrationReport {
   fixtureAndRubricSha256: string;
   judgeModel: string;
   actorModel: string;
+  totalTimeoutMs: number;
   plannedCalls: number;
   observedCalls: number;
   reportedCostUsd: number | null;
@@ -65,6 +71,17 @@ export async function calibrationSourceDigest(): Promise<string> {
     hash.update(await readFile(path.join(root, file)));
   }
   return hash.digest("hex");
+}
+
+export async function reservePrivateReportPath(output: string) {
+  if (!path.isAbsolute(output)) throw new Error("Calibration report path must be absolute.");
+  const relativeToRepository = path.relative(root, output);
+  if (!relativeToRepository.startsWith("..") && !path.isAbsolute(relativeToRepository))
+    throw new Error("Calibration report must stay outside the repository.");
+  const directory = await lstat(path.dirname(output));
+  if (!directory.isDirectory() || directory.isSymbolicLink() || (directory.mode & 0o077) !== 0)
+    throw new Error("Calibration report directory must be private (mode 0700).");
+  return open(output, "wx", 0o600);
 }
 
 function rating(outcome: Outcome): Rating {
@@ -115,6 +132,9 @@ export async function runCalibration(options: {
   actorModel: string;
   apiKey: string;
   fetchImpl?: typeof fetch;
+  totalTimeoutMs?: number;
+  expectedSourceSha256?: string;
+  signal?: AbortSignal;
 }): Promise<CalibrationReport> {
   if (
     !modelId.test(options.judgeModel) ||
@@ -122,10 +142,19 @@ export async function runCalibration(options: {
     !modelId.test(options.actorModel.replace(/^openrouter\//, "")) ||
     options.actorModel.replace(/^openrouter\//, "") === options.judgeModel ||
     !options.apiKey ||
-    options.apiKey.length > 300
+    options.apiKey.length > 300 ||
+    (options.totalTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.totalTimeoutMs) ||
+        options.totalTimeoutMs < 1_000 ||
+        options.totalTimeoutMs > 900_000))
   )
     throw new Error("Invalid calibration model or credential configuration.");
   const fixtureAndRubricSha256 = await calibrationSourceDigest();
+  if (options.expectedSourceSha256 && fixtureAndRubricSha256 !== options.expectedSourceSha256)
+    throw new Error("Calibration source digest differs from the expected digest.");
+  const totalTimeoutMs = options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
+  const deadline = AbortSignal.timeout(totalTimeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   let observedCalls = 0;
   const fetchImpl: typeof fetch = async (...args) => {
     observedCalls++;
@@ -135,11 +164,16 @@ export async function runCalibration(options: {
   const rows: CalibrationRow[] = [];
   for (const probe of CALIBRATION_PROBES) {
     const judge = async (input: CalibrationProbe["normal"]): Promise<Outcome> => {
+      if (signal.aborted)
+        return probe.axis === "frame_integrity"
+          ? { axis: "frame_integrity", status: "failed", category: "cancelled" }
+          : { axis: probe.axis, status: "failed", category: "cancelled" };
       const common = {
         model: options.judgeModel,
         actorModel: options.actorModel,
         apiKey: options.apiKey,
         fetchImpl,
+        signal,
         conversationalNamesOnly: true,
       };
       return probe.axis === "frame_integrity"
@@ -167,6 +201,8 @@ export async function runCalibration(options: {
     const degraded = rating(await judge(probe.degraded));
     rows.push(evaluateCalibrationProbe(probe, normal, degraded));
   }
+  if ((await calibrationSourceDigest()) !== fixtureAndRubricSha256)
+    throw new Error("Calibration source changed during the run.");
   const costs = rows.flatMap((row) => [row.normal.reportedCostUsd, row.degraded.reportedCostUsd]);
   return {
     schemaVersion: 1,
@@ -174,6 +210,7 @@ export async function runCalibration(options: {
     fixtureAndRubricSha256,
     judgeModel: options.judgeModel,
     actorModel: options.actorModel,
+    totalTimeoutMs,
     plannedCalls: CALIBRATION_PROBES.length * 2,
     observedCalls,
     reportedCostUsd: costs.every((cost) => cost !== null)
@@ -186,7 +223,15 @@ export async function runCalibration(options: {
 }
 
 function options(argv: string[]) {
-  const allowed = new Set(["--dry-run", "--allow-paid", "--judge-model", "--actor-model", "--output"]);
+  const allowed = new Set([
+    "--dry-run",
+    "--allow-paid",
+    "--judge-model",
+    "--actor-model",
+    "--output",
+    "--expected-source-sha256",
+    "--total-timeout-ms",
+  ]);
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index++) {
     const key = argv[index]!;
@@ -207,21 +252,29 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const dryRun = values.has("--dry-run");
   const judgeModel = values.get("--judge-model") ?? "";
   const actorModel = values.get("--actor-model") ?? "";
+  const totalTimeoutMs = values.has("--total-timeout-ms")
+    ? Number(values.get("--total-timeout-ms"))
+    : DEFAULT_TOTAL_TIMEOUT_MS;
   if (
     !modelId.test(judgeModel) ||
     judgeModel.endsWith("/auto") ||
     !modelId.test(actorModel.replace(/^openrouter\//, "")) ||
-    judgeModel === actorModel.replace(/^openrouter\//, "")
+    judgeModel === actorModel.replace(/^openrouter\//, "") ||
+    !Number.isSafeInteger(totalTimeoutMs) ||
+    totalTimeoutMs < 1_000 ||
+    totalTimeoutMs > 900_000
   )
     throw new Error("Pinned judge and actor model IDs are required.");
   if (dryRun) {
-    if (values.has("--output")) throw new Error("Dry run does not write a report.");
+    if (values.has("--output") || values.has("--expected-source-sha256"))
+      throw new Error("Dry run does not accept a report path or expected digest.");
     return {
       schemaVersion: 1,
       kind: "judge-sensitivity-calibration-preview",
       fixtureAndRubricSha256: await calibrationSourceDigest(),
       judgeModel,
       actorModel,
+      totalTimeoutMs,
       plannedCalls: CALIBRATION_PROBES.length * 2,
       probes: CALIBRATION_PROBES.map(({ id, axis, minimumNormalScore, maximumDegradedScore, minimumGap }) => ({
         id,
@@ -233,15 +286,34 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env)
     };
   }
   const output = values.get("--output");
+  const expectedSourceSha256 = values.get("--expected-source-sha256");
   if (!output || !path.isAbsolute(output) || !env.OPENROUTER_API_KEY)
     throw new Error("Paid calibration requires an absolute report path and OPENROUTER_API_KEY.");
-  const directory = await stat(path.dirname(output));
-  if (!directory.isDirectory() || (directory.mode & 0o077) !== 0)
-    throw new Error("Calibration report directory must be private (mode 0700). ");
-  const report = await runCalibration({ judgeModel, actorModel, apiKey: env.OPENROUTER_API_KEY });
-  await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-  await chmod(output, 0o600);
-  return report;
+  if (!expectedSourceSha256 || !sha256.test(expectedSourceSha256))
+    throw new Error("Paid calibration requires a pinned source digest.");
+  if ((await calibrationSourceDigest()) !== expectedSourceSha256)
+    throw new Error("Calibration source digest differs from the expected digest.");
+  const { stdout: status } = await execute("git", ["status", "--porcelain", "--untracked-files=normal"], {
+    cwd: root,
+    timeout: 5_000,
+  });
+  if (status.trim()) throw new Error("Calibration source worktree must be clean.");
+  // Reserve the new report path before a provider call; never overwrite an earlier receipt.
+  const reportFile = await reservePrivateReportPath(output);
+  try {
+    const report = await runCalibration({
+      judgeModel,
+      actorModel,
+      apiKey: env.OPENROUTER_API_KEY,
+      expectedSourceSha256,
+      totalTimeoutMs,
+    });
+    await reportFile.writeFile(`${JSON.stringify(report, null, 2)}\n`);
+    await reportFile.chmod(0o600);
+    return report;
+  } finally {
+    await reportFile.close();
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
