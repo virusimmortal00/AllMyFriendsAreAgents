@@ -205,6 +205,16 @@ Jev-reported cost, judge-reported cost, OpenCode-observed tokens, and measured
 latency remain separate, each with its own coverage. Old v1 manifests retain
 their original analysis path and cannot be mixed into a v2 study.
 
+Schema-version-4 actor-model studies use three matched direct-message pairs.
+The scalar parser requires the closed scenario and prompt digests, the exact
+Haiku/Sonnet actor model assignment for each arm, and matching requested,
+roster, and wrapper model IDs in each case. The provider-resolved actor identity
+is explicitly unknown. The report keeps the four quality axes, frame integrity,
+judge receipts, resources, and paired denominators separate, under the
+`actor-model` factor. A changed scenario or other profile within a pair rejects
+the analysis. A complete final batch set is required for the main report;
+interrupted batches are not silently counted as missing cases.
+
 `resources.judgeReportedAxisCostUsd` sums every judge-axis cost actually
 reported, including axes from triggers whose other judge outcomes lack cost.
 It gives the total axis denominator, reported axes, confirmed deterministic

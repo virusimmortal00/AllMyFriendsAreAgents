@@ -178,3 +178,18 @@ contains opaque review IDs, not arm labels or transcript text. This complete
 pilot census is separate from the unbiased calibration queue and the
 outcome-conditioned frame-candidate queue. Missing ratings remain missing and
 NA is explicit; a small pilot is not a population prevalence estimate.
+
+For the complete six-case schema-version-4 actor-model pilot, use `blind` with
+all final batch manifests and private source directories, then run
+`select-model-all` with the same manifest set, `--map`, fixed `--seed`,
+`--output`, and `--receipt`. This selects every matched pair once, with the
+three A/B counterparts separated in the queue. The private receipt includes
+`privateArmMap` for later reveal; keep it outside the repository and do not
+show it while grading. The queue, HTML pack, and ratings export contain only
+opaque review IDs. Run `pack --review-set model-complete` for the four quality
+axes, and `convert --review-set model-complete` to produce the private human
+ratings file. The existing export/import controls support partial grading and
+resume. `select-frame-all` can create a separate complete frame-integrity pack
+for the same V4 study. The normal CLI requires all three completed pairs; an
+early-stopped pilot needs a separately marked diagnostic review path and cannot
+be presented as the complete comparison.

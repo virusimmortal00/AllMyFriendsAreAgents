@@ -14,9 +14,15 @@ import {
 import type { FrameIntegrityOutcome } from "./conversation-routing-live-frame-judge.js";
 import { type JudgeScalarResult, selectHumanSpotChecks } from "./conversation-routing-live-judge.js";
 import { QUALITY_AXES, type QualityAxis, type QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
+import { TASK_TERMINAL_INSTRUCTIONS } from "../server/conversation.js";
+import { jevProfileMetadata } from "../server/jev-experiment-profiles.js";
 import {
+  modelScenarioProfileDigest,
   roomSystemProfileDigest,
   scenarioProfileDigest,
+  STUDY_ACTOR_MODELS,
+  STUDY_AGENT_BASE_PROMPTS,
+  terminalInstructionProfileDigest,
   type StudyCaseMetadata,
 } from "./conversation-routing-live-study.js";
 
@@ -101,10 +107,52 @@ type NoVisibleAttribution = {
   generations: Array<{ ordinal: number; category: (typeof GENERATION_CATEGORIES)[number] }>;
 };
 const FAILURE_ORIGINS = ["provider", "process", "structured-output", "local-launch", "unknown"] as const;
-const FAILURE_CATEGORIES = ["authentication", "rate-limit", "quota", "model", "timeout", "server", "transport", "schema", "process-exit", "local-launch", "provider-other", "unknown"] as const;
-const FAILURE_HEALTH_REASONS = ["authentication", "rate_limit", "timeout", "transient_provider", "configuration", "provider_error", "usage_exhausted", "usage_not_included", "account_rate_limit", "unknown"] as const;
-const FAILURE_PROVIDER_CODES = ["insufficient_quota", "free_tier_limit", "account_rate_limit", "usage_not_included"] as const;
-type FailureEvidence = { schemaVersion: 1; failures: Array<{ ordinal: number; origin: (typeof FAILURE_ORIGINS)[number]; category: (typeof FAILURE_CATEGORIES)[number]; statusCode: number | null; providerCode: (typeof FAILURE_PROVIDER_CODES)[number] | null; retryable: boolean | null; exitCode: number | null; durationMs: number | null; healthReason: (typeof FAILURE_HEALTH_REASONS)[number] }> };
+const FAILURE_CATEGORIES = [
+  "authentication",
+  "rate-limit",
+  "quota",
+  "model",
+  "timeout",
+  "server",
+  "transport",
+  "schema",
+  "process-exit",
+  "local-launch",
+  "provider-other",
+  "unknown",
+] as const;
+const FAILURE_HEALTH_REASONS = [
+  "authentication",
+  "rate_limit",
+  "timeout",
+  "transient_provider",
+  "configuration",
+  "provider_error",
+  "usage_exhausted",
+  "usage_not_included",
+  "account_rate_limit",
+  "unknown",
+] as const;
+const FAILURE_PROVIDER_CODES = [
+  "insufficient_quota",
+  "free_tier_limit",
+  "account_rate_limit",
+  "usage_not_included",
+] as const;
+type FailureEvidence = {
+  schemaVersion: 1;
+  failures: Array<{
+    ordinal: number;
+    origin: (typeof FAILURE_ORIGINS)[number];
+    category: (typeof FAILURE_CATEGORIES)[number];
+    statusCode: number | null;
+    providerCode: (typeof FAILURE_PROVIDER_CODES)[number] | null;
+    retryable: boolean | null;
+    exitCode: number | null;
+    durationMs: number | null;
+    healthReason: (typeof FAILURE_HEALTH_REASONS)[number];
+  }>;
+};
 interface ScalarTrigger {
   scenarioId: string;
   runId: string;
@@ -149,10 +197,11 @@ export interface ScalarCanaryManifest {
   scenarioCatalogSha256s: string[];
   openCodeVersion: string;
   actorModel: string;
+  actorModelScope: "per-case-v1" | null;
   judgeModel: string | null;
   judgeRubric: "v1" | "v2" | "v3";
   studyPlan: {
-    schemaVersion: 1 | 2 | 3;
+    schemaVersion: 1 | 2 | 3 | 4;
     planId: string;
     planSha256: string;
     orderSeed: number;
@@ -180,6 +229,14 @@ export interface ScalarCanaryManifest {
     qualityJudge: Array<{ scenarioId: string; runId: string; outcomes: ParsedQualityAxisOutcome[] }>;
     frameJudge: Array<{ scenarioId: string; runId: string; outcome: FrameIntegrityOutcome }>;
     study: StudyCaseMetadata | null;
+    actorModel: string | null;
+    actorModelProvenanceV1: {
+      schemaVersion: 1;
+      requestedModelId: string;
+      rosterModelId: string;
+      wrapperModelId: string;
+      providerObservedModelId: null;
+    } | null;
     availabilityCheck: AvailabilityCheck | null;
   }>;
 }
@@ -298,21 +355,51 @@ function parseFailureEvidence(input: unknown, trigger: Record<string, unknown>):
   const row = object(input, ["schemaVersion", "failures"]);
   const failureCount = integer(trigger.generationFailures, 100);
   const starts = integer(trigger.generationStarts, 100);
-  if (Object.keys(row).length !== 2 || row.schemaVersion !== 1 || !Array.isArray(row.failures) || failureCount === null || starts === null || row.failures.length !== failureCount)
+  if (
+    Object.keys(row).length !== 2 ||
+    row.schemaVersion !== 1 ||
+    !Array.isArray(row.failures) ||
+    failureCount === null ||
+    starts === null ||
+    row.failures.length !== failureCount
+  )
     throw new Error("Invalid scalar failure evidence.");
   const seen = new Set<number>();
   const failures = row.failures.map((entry: unknown) => {
-    const record = object(entry, ["ordinal", "origin", "category", "statusCode", "providerCode", "retryable", "exitCode", "durationMs", "healthReason"]);
-    if (Object.keys(record).length !== 9 || !Number.isSafeInteger(record.ordinal) || Number(record.ordinal) < 1 || Number(record.ordinal) > starts || seen.has(Number(record.ordinal)) ||
+    const record = object(entry, [
+      "ordinal",
+      "origin",
+      "category",
+      "statusCode",
+      "providerCode",
+      "retryable",
+      "exitCode",
+      "durationMs",
+      "healthReason",
+    ]);
+    if (
+      Object.keys(record).length !== 9 ||
+      !Number.isSafeInteger(record.ordinal) ||
+      Number(record.ordinal) < 1 ||
+      Number(record.ordinal) > starts ||
+      seen.has(Number(record.ordinal)) ||
       !FAILURE_ORIGINS.includes(record.origin as FailureEvidence["failures"][number]["origin"]) ||
       !FAILURE_CATEGORIES.includes(record.category as FailureEvidence["failures"][number]["category"]) ||
       !FAILURE_HEALTH_REASONS.includes(record.healthReason as FailureEvidence["failures"][number]["healthReason"]) ||
-      (record.providerCode !== null && !FAILURE_PROVIDER_CODES.includes(record.providerCode as NonNullable<FailureEvidence["failures"][number]["providerCode"]>)) ||
-      (record.statusCode !== null && (!Number.isSafeInteger(record.statusCode) || Number(record.statusCode) < 100 || Number(record.statusCode) > 599)) ||
+      (record.providerCode !== null &&
+        !FAILURE_PROVIDER_CODES.includes(
+          record.providerCode as NonNullable<FailureEvidence["failures"][number]["providerCode"]>,
+        )) ||
+      (record.statusCode !== null &&
+        (!Number.isSafeInteger(record.statusCode) ||
+          Number(record.statusCode) < 100 ||
+          Number(record.statusCode) > 599)) ||
       (record.retryable !== null && typeof record.retryable !== "boolean") ||
       (record.exitCode !== null && !Number.isSafeInteger(record.exitCode)) ||
       (record.durationMs !== null && (!Number.isSafeInteger(record.durationMs) || Number(record.durationMs) < 0)) ||
-      (record.origin !== "provider" && (record.statusCode !== null || record.providerCode !== null || record.retryable !== null)))
+      (record.origin !== "provider" &&
+        (record.statusCode !== null || record.providerCode !== null || record.retryable !== null))
+    )
       throw new Error("Invalid scalar failure evidence.");
     seen.add(Number(record.ordinal));
     return record as FailureEvidence["failures"][number];
@@ -438,15 +525,16 @@ function parseStudy(value: unknown): StudyCaseMetadata {
     "jevProfileDigest",
     "gateProfileDigest",
     "rosterOrder",
-    ...(version === 2 || version === 3
+    ...([2, 3, 4].includes(Number(version))
       ? ["scenarioProfileId", "scenarioProfileDigest", "roomSystemProfileId", "roomSystemProfileDigest"]
       : []),
-    ...(version === 3
+    ...([3, 4].includes(Number(version))
       ? ["terminalInstructionProfileId", "terminalInstructionProfileDigest", "terminalInstructionCharacters"]
       : []),
+    ...(version === 4 ? ["actorModelId"] : []),
   ]);
   if (
-    (version !== 1 && version !== 2 && version !== 3) ||
+    (version !== 1 && version !== 2 && version !== 3 && version !== 4) ||
     !["planId", "blockId", "replicateId", "pairId", "caseId"].every((key) => id(row[key])) ||
     ![row.planSha256, row.jevProfileDigest, row.gateProfileDigest, row.agentPromptProfileDigest].every(
       (value) => typeof value === "string" && SHA.test(value),
@@ -456,7 +544,9 @@ function parseStudy(value: unknown): StudyCaseMetadata {
       ? !["jev", "gate", "agent-prompt"].includes(String(row.factor))
       : version === 2
         ? row.factor !== "room-system"
-        : row.factor !== "terminal-instruction") ||
+        : version === 3
+          ? row.factor !== "terminal-instruction"
+          : row.factor !== "actor-model") ||
     !["ab", "ba"].includes(String(row.order)) ||
     ![
       "single-v1",
@@ -487,7 +577,24 @@ function parseStudy(value: unknown): StudyCaseMetadata {
         !SHA.test(String(row.roomSystemProfileDigest)) ||
         !["current-v1", "contribution-first-v1"].includes(String(row.terminalInstructionProfileId)) ||
         !SHA.test(String(row.terminalInstructionProfileDigest)) ||
-        integer(row.terminalInstructionCharacters, 1000) === null))
+        integer(row.terminalInstructionCharacters, 1000) === null)) ||
+    (version === 4 &&
+      (!["draft-known-v1", "meal-holdout-v1", "travel-holdout-v1"].includes(String(row.scenarioProfileId)) ||
+        row.scenarioProfileDigest !==
+          modelScenarioProfileDigest(row.scenarioProfileId as Parameters<typeof modelScenarioProfileDigest>[0]) ||
+        row.roomSystemProfileId !== "room-v1" ||
+        row.roomSystemProfileDigest !== roomSystemProfileDigest("room-v1") ||
+        row.terminalInstructionProfileId !== "contribution-first-v1" ||
+        row.terminalInstructionProfileDigest !== terminalInstructionProfileDigest("contribution-first-v1") ||
+        row.terminalInstructionCharacters !== TASK_TERMINAL_INSTRUCTIONS["contribution-first-v1"].length ||
+        row.jevProfileId !== "current-v1" ||
+        row.gateProfileId !== "current-v1" ||
+        row.jevProfileDigest !== jevProfileMetadata("current-v1", "current-v1").jevProfileDigest ||
+        row.gateProfileDigest !== jevProfileMetadata("current-v1", "current-v1").gateProfileDigest ||
+        row.agentPromptProfileId !== "current-v1" ||
+        row.agentPromptProfileDigest !==
+          createHash("sha256").update(STUDY_AGENT_BASE_PROMPTS["current-v1"]).digest("hex") ||
+        !STUDY_ACTOR_MODELS.includes(row.actorModelId as (typeof STUDY_ACTOR_MODELS)[number])))
   )
     throw new Error("Invalid scalar canary manifest.");
   return row as unknown as StudyCaseMetadata;
@@ -708,6 +815,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     "scenarioCatalogSha256",
     "openCodeVersion",
     "actorModel",
+    "actorModelScope",
     "judgeModel",
     "judgeRubric",
     "maximumScheduledJudgeCalls",
@@ -759,7 +867,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
   if (top.studyPlan !== undefined) {
     const plan = object(top.studyPlan, ["schemaVersion", "planId", "planSha256", "orderSeed", "jevModel"]);
     if (
-      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2 && plan.schemaVersion !== 3) ||
+      (plan.schemaVersion !== 1 && plan.schemaVersion !== 2 && plan.schemaVersion !== 3 && plan.schemaVersion !== 4) ||
       !id(plan.planId) ||
       typeof plan.planSha256 !== "string" ||
       !SHA.test(plan.planSha256) ||
@@ -771,6 +879,12 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     studyPlan = plan as unknown as NonNullable<ScalarCanaryManifest["studyPlan"]>;
     if (plan.schemaVersion !== 1 && top.judgeRubric !== "v3") throw new Error("Invalid scalar canary manifest.");
   }
+  if (
+    studyPlan?.schemaVersion === 4
+      ? top.actorModelScope !== "per-case-v1" || top.actorModel !== STUDY_ACTOR_MODELS[0]
+      : top.actorModelScope !== undefined
+  )
+    throw new Error("Invalid scalar canary manifest.");
   let studyBatch: ScalarCanaryManifest["studyBatch"] = null;
   if (top.studyBatch !== undefined) {
     const batch = object(top.studyBatch, [
@@ -823,6 +937,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       "qualityJudge",
       "frameJudge",
       "study",
+      "actorModel",
+      "actorModelProvenanceV1",
       "privateReviewRetained",
       "availabilityCheck",
     ]);
@@ -845,6 +961,31 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     )
       throw new Error("Invalid scalar canary manifest.");
     const study = row.study === undefined ? null : parseStudy(row.study);
+    let actorModel: string | null = null;
+    let actorModelProvenanceV1: ScalarCanaryManifest["cases"][number]["actorModelProvenanceV1"] = null;
+    if (study?.schemaVersion === 4) {
+      const provenance = object(row.actorModelProvenanceV1, [
+        "schemaVersion",
+        "requestedModelId",
+        "rosterModelId",
+        "wrapperModelId",
+        "providerObservedModelId",
+      ]);
+      if (
+        Object.keys(provenance).length !== 5 ||
+        provenance.schemaVersion !== 1 ||
+        row.actorModel !== study.actorModelId ||
+        provenance.requestedModelId !== study.actorModelId ||
+        provenance.rosterModelId !== study.actorModelId ||
+        provenance.wrapperModelId !== study.actorModelId ||
+        provenance.providerObservedModelId !== null
+      )
+        throw new Error("Invalid scalar actor model provenance.");
+      actorModel = study.actorModelId;
+      actorModelProvenanceV1 = provenance as ScalarCanaryManifest["cases"][number]["actorModelProvenanceV1"];
+    } else if (row.actorModel !== undefined || row.actorModelProvenanceV1 !== undefined) {
+      throw new Error("Invalid scalar canary manifest.");
+    }
     const availabilityCheck =
       row.availabilityCheck === undefined ? null : parseAvailabilityCheck(row.availabilityCheck);
     if (
@@ -929,7 +1070,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
         trigger.noVisibleAttributionV1 === undefined
           ? null
           : parseNoVisibleAttribution(trigger.noVisibleAttributionV1, trigger);
-      const failureEvidenceV1 = trigger.failureEvidenceV1 === undefined ? null : parseFailureEvidence(trigger.failureEvidenceV1, trigger);
+      const failureEvidenceV1 =
+        trigger.failureEvidenceV1 === undefined ? null : parseFailureEvidence(trigger.failureEvidenceV1, trigger);
       const classifier = object(trigger.classifier, [
         "outcome",
         "reason",
@@ -1153,6 +1295,8 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
       qualityJudge,
       frameJudge,
       study,
+      actorModel,
+      actorModelProvenanceV1,
       availabilityCheck,
     };
   });
@@ -1183,6 +1327,7 @@ export function parseScalarCanaryManifest(input: unknown): ScalarCanaryManifest 
     scenarioCatalogSha256s: [top.scenarioCatalogSha256],
     openCodeVersion: top.openCodeVersion,
     actorModel: top.actorModel,
+    actorModelScope: top.actorModelScope === "per-case-v1" ? "per-case-v1" : null,
     judgeModel: top.judgeModel,
     judgeRubric: (top.judgeRubric ?? "v1") as "v1" | "v2" | "v3",
     studyPlan,
@@ -1241,6 +1386,7 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
         manifest.sourceSha256 !== first.sourceSha256 ||
         manifest.openCodeVersion !== first.openCodeVersion ||
         manifest.actorModel !== first.actorModel ||
+        manifest.actorModelScope !== first.actorModelScope ||
         manifest.judgeModel !== first.judgeModel ||
         manifest.judgeRubric !== first.judgeRubric ||
         JSON.stringify(manifest.studyPlan) !== JSON.stringify(first.studyPlan) ||
@@ -1266,12 +1412,12 @@ export function mergeScalarCanaryManifests(manifests: readonly ScalarCanaryManif
             ["room-system", row.study.roomSystemProfileId, row.study.roomSystemProfileDigest],
           ] as [string, string, string][])
         : []),
-      ...(row.study.schemaVersion === 3
+      ...([3, 4].includes(row.study.schemaVersion)
         ? [
             [
               "terminal-instruction",
-              row.study.terminalInstructionProfileId,
-              row.study.terminalInstructionProfileDigest,
+              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>).terminalInstructionProfileId,
+              (row.study as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>).terminalInstructionProfileDigest,
             ] as [string, string, string],
           ]
         : []),
@@ -1359,11 +1505,13 @@ export function analyzeQualityStudy(
   const parsedRatings = parsePrivateQualityRatings({ schemaVersion: 2, ratings });
   const studyVersion = manifest.studyPlan.schemaVersion;
   const factors =
-    studyVersion === 3
-      ? (["terminal-instruction"] as const)
-      : studyVersion === 2
-        ? (["room-system"] as const)
-        : (["jev", "gate", "agent-prompt"] as const);
+    studyVersion === 4
+      ? (["actor-model"] as const)
+      : studyVersion === 3
+        ? (["terminal-instruction"] as const)
+        : studyVersion === 2
+          ? (["room-system"] as const)
+          : (["jev", "gate", "agent-prompt"] as const);
   const all = manifest.cases.flatMap((caseRow) =>
     caseRow.triggers.map((trigger, ordinal) => ({
       caseRow,
@@ -1394,7 +1542,7 @@ export function analyzeQualityStudy(
     ratings: frameRatings,
   });
   if (parsedFrameRatings.length && (studyVersion === 1 || manifest.judgeRubric !== "v3"))
-    throw new Error("Frame human ratings require a V2 or V3 frame study.");
+    throw new Error("Frame human ratings require a V2, V3, or V4 frame study.");
   if (parsedFrameRatings.some((row) => !known.has(key(row.scenarioId, row.runId))))
     throw new Error("Private frame rating does not match a completed canary run.");
   const frameHuman = new Map(parsedFrameRatings.map((row) => [key(row.scenarioId, row.runId), row]));
@@ -1485,6 +1633,31 @@ export function analyzeQualityStudy(
         x.terminalInstructionProfileId === "current-v1" &&
         y.terminalInstructionProfileId === "contribution-first-v1" &&
         x.terminalInstructionProfileDigest !== y.terminalInstructionProfileDigest &&
+        x.jevProfileId === y.jevProfileId &&
+        x.jevProfileDigest === y.jevProfileDigest &&
+        x.gateProfileId === y.gateProfileId &&
+        x.gateProfileDigest === y.gateProfileDigest &&
+        x.agentPromptProfileId === y.agentPromptProfileId &&
+        x.agentPromptProfileDigest === y.agentPromptProfileDigest &&
+        a.preflightMode === b.preflightMode &&
+        a.variant === b.variant &&
+        a.triggers.every((trigger, ordinal) => trigger.variant === b.triggers[ordinal]?.variant)
+      );
+    if (x.schemaVersion === 4 && y.schemaVersion === 4)
+      return (
+        x.factor === "actor-model" &&
+        y.factor === "actor-model" &&
+        x.actorModelId === STUDY_ACTOR_MODELS[0] &&
+        y.actorModelId === STUDY_ACTOR_MODELS[1] &&
+        a.actorModel === x.actorModelId &&
+        b.actorModel === y.actorModelId &&
+        x.scenarioProfileId === y.scenarioProfileId &&
+        x.scenarioProfileDigest === y.scenarioProfileDigest &&
+        x.roomSystemProfileId === y.roomSystemProfileId &&
+        x.roomSystemProfileDigest === y.roomSystemProfileDigest &&
+        x.terminalInstructionProfileId === y.terminalInstructionProfileId &&
+        x.terminalInstructionProfileDigest === y.terminalInstructionProfileDigest &&
+        x.terminalInstructionCharacters === y.terminalInstructionCharacters &&
         x.jevProfileId === y.jevProfileId &&
         x.jevProfileDigest === y.jevProfileDigest &&
         x.gateProfileId === y.gateProfileId &&
@@ -1751,13 +1924,17 @@ export function analyzeQualityStudy(
           roomSystemProfileDigest: row.study!.roomSystemProfileDigest,
         }
       : {}),
-    ...(row.study!.schemaVersion === 3
+    ...([3, 4].includes(row.study!.schemaVersion)
       ? {
-          terminalInstructionProfileId: row.study!.terminalInstructionProfileId,
-          terminalInstructionProfileDigest: row.study!.terminalInstructionProfileDigest,
-          terminalInstructionCharacters: row.study!.terminalInstructionCharacters,
+          terminalInstructionProfileId: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+            .terminalInstructionProfileId,
+          terminalInstructionProfileDigest: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+            .terminalInstructionProfileDigest,
+          terminalInstructionCharacters: (row.study! as Extract<StudyCaseMetadata, { schemaVersion: 3 | 4 }>)
+            .terminalInstructionCharacters,
         }
       : {}),
+    ...(row.study!.schemaVersion === 4 ? { actorModelId: row.study!.actorModelId } : {}),
   });
   const dynamicFor = (row: StudyCase) => {
     const prefix = /^(direct|multi-address|broadcast|casual|handoff|disagreement|quoted-name)-/.exec(
@@ -2106,6 +2283,13 @@ export function analyzeQualityStudy(
       digest: manifest.sourceSha256,
       openCodeVersion: manifest.openCodeVersion,
       actorModelRequested: manifest.actorModel,
+      ...(studyVersion === 4
+        ? {
+            actorModelScope: "per-case-v1" as const,
+            actorModelsByArm: { a: STUDY_ACTOR_MODELS[0], b: STUDY_ACTOR_MODELS[1] },
+            providerObservedActorModel: null,
+          }
+        : {}),
       jevModelRequested: manifest.studyPlan.jevModel,
       judgeModelRequested: manifest.judgeModel,
     },
@@ -2242,7 +2426,8 @@ export function analyzeQualityStudy(
               rated: frameReviewed.filter(({ human }) => human?.status === "rated").length,
               notAssessable: frameReviewed.filter(({ human }) => human?.status === "not_assessable").length,
               missing: frameReviewed.filter(({ human }) => human === undefined).length,
-              [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]: delta(frameHumanPairDeltas),
+              [studyVersion === 3 ? "pairedTerminalInstructionArmBMinusA" : "pairedRoomSystemArmBMinusA"]:
+                delta(frameHumanPairDeltas),
               agreement: {
                 jointStatusReviews: frameReviewed.filter(
                   ({ model, human }) => model?.status === "completed" && human !== undefined,
@@ -2626,7 +2811,7 @@ async function main() {
   const parsedFrame = rawFrameRatings === undefined ? [] : parsePrivateFrameRatings(rawFrameRatings);
   if (
     rawFrameRatings !== undefined &&
-    (![2, 3].includes(manifest.studyPlan?.schemaVersion ?? 0) || manifest.judgeRubric !== "v3")
+    (![2, 3, 4].includes(manifest.studyPlan?.schemaVersion ?? 0) || manifest.judgeRubric !== "v3")
   )
     throw new Error("Frame ratings require a V2 frame study.");
   const maxSpotChecks = values.has("--spot-checks") ? Number(values.get("--spot-checks")) : 4;

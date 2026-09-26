@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,13 @@ import {
   parsePrivateConversationRatings,
   parsePrivateQualityRatings,
 } from "./conversation-routing-live-annotations.js";
-import { roomSystemProfileDigest, scenarioProfileDigest } from "./conversation-routing-live-study.js";
+import {
+  expandStudyPlan,
+  parseStudyPlan,
+  roomSystemProfileDigest,
+  scenarioProfileDigest,
+  type StudyCaseMetadataV4,
+} from "./conversation-routing-live-study.js";
 
 const sha = "a".repeat(64);
 const judge = (scenarioId: string, runId: string, naturalness: number, cost: number) => ({
@@ -60,6 +66,84 @@ const qualityOutcome = (axis: string, scenarioId: string, runId: string, score: 
   },
 });
 const axes = ["social_cadence", "length_fit", "address_radius", "contribution_value"];
+function modelStudyFixture() {
+  const plan = parseStudyPlan(
+    JSON.parse(
+      readFileSync(new URL("../docs/testing/conversation-routing-study-model-v4.json", import.meta.url), "utf8"),
+    ),
+  );
+  const scenarios = expandStudyPlan(plan);
+  const base = identityFixture();
+  const cases = scenarios.map((scenario, index) => {
+    const metadata = scenario.study as StudyCaseMetadataV4;
+    const template = base.cases[index % 2]!;
+    const scenarioId = scenario.scenarioId;
+    const runId = `model-run-${index}`;
+    return {
+      ...template,
+      scenarioId,
+      variant: "jev-on" as const,
+      agentCount: 1,
+      study: metadata,
+      actorModel: metadata.actorModelId,
+      actorModelProvenanceV1: {
+        schemaVersion: 1,
+        requestedModelId: metadata.actorModelId,
+        rosterModelId: metadata.actorModelId,
+        wrapperModelId: metadata.actorModelId,
+        providerObservedModelId: null,
+      },
+      triggers: [
+        {
+          ...template.triggers[0]!,
+          scenarioId,
+          runId,
+          variant: "jev-on",
+          classifier: {
+            outcome: "completed",
+            reason: null,
+            durationMs: 1,
+            reportedInputTokens: 1,
+            reportedOutputTokens: 1,
+            reportedCostUsd: 0.001,
+            resolvedModelId: "openrouter/example/jev",
+          },
+        },
+      ],
+      qualityJudge: [
+        {
+          scenarioId,
+          runId,
+          outcomes: axes.map((axis) => qualityOutcome(axis, scenarioId, runId, metadata.arm === "a" ? 3 : 4)),
+        },
+      ],
+      frameJudge: [frameReceipt(scenarioId, runId, metadata.arm === "a" ? 1 : 5)],
+    };
+  });
+  return {
+    ...base,
+    actorModel: "openrouter/anthropic/claude-haiku-4.5",
+    actorModelScope: "per-case-v1",
+    maxCases: 6,
+    studyPlan: {
+      ...base.studyPlan,
+      schemaVersion: 4,
+      planId: plan.planId,
+      planSha256: scenarios[0]!.study!.planSha256,
+    },
+    studyBatch: {
+      schemaVersion: 1,
+      planCaseCount: 6,
+      planPairCount: 3,
+      batchIndex: 0,
+      batchCount: 1,
+      pairsPerBatch: 3,
+      pairCount: 3,
+      pairIds: [...new Set(cases.map((row) => row.study.pairId))],
+    },
+    cases,
+  };
+}
 function studyFixture() {
   const base = manifest();
   const cases = base.cases.map((row, index) => {
@@ -383,21 +467,49 @@ describe("provider-free conversation canary analysis", () => {
   it("accepts optional closed failure evidence, rejects private or contradictory fields, and keeps legacy absence", () => {
     const base = manifest();
     expect(parseScalarCanaryManifest(base)).toBeTruthy();
-    const failure = { ordinal: 1, origin: "provider", category: "quota", statusCode: 402, providerCode: "insufficient_quota", retryable: false, exitCode: 1, durationMs: 23, healthReason: "usage_exhausted" };
+    const failure = {
+      ordinal: 1,
+      origin: "provider",
+      category: "quota",
+      statusCode: 402,
+      providerCode: "insufficient_quota",
+      retryable: false,
+      exitCode: 1,
+      durationMs: 23,
+      healthReason: "usage_exhausted",
+    };
     const scalar = trigger("jev-on", {
-      generationStarts: 1, generationCompletions: 0, generationFailures: 1,
-      confirmedDeliveredBursts: 0, respondedTurns: 0,
-      noVisibleAttributionV1: { schemaVersion: 1, category: "generation-failed", generations: [{ ordinal: 1, category: "failed" }] },
+      generationStarts: 1,
+      generationCompletions: 0,
+      generationFailures: 1,
+      confirmedDeliveredBursts: 0,
+      respondedTurns: 0,
+      noVisibleAttributionV1: {
+        schemaVersion: 1,
+        category: "generation-failed",
+        generations: [{ ordinal: 1, category: "failed" }],
+      },
       failureEvidenceV1: { schemaVersion: 1, failures: [failure] },
     });
     const row = { ...base.cases[0]!, triggers: [scalar] };
-    expect(parseScalarCanaryManifest(manifest({ cases: [row] })).cases[0]!.triggers[0]!.failureEvidenceV1?.failures).toEqual([failure]);
+    expect(
+      parseScalarCanaryManifest(manifest({ cases: [row] })).cases[0]!.triggers[0]!.failureEvidenceV1?.failures,
+    ).toEqual([failure]);
     for (const invalid of [
       { ...failure, rawError: "private text" },
       { ...failure, ordinal: 2 },
       { ...failure, category: "some-private-model-output" },
       { ...failure, origin: "process" },
-    ]) expect(() => parseScalarCanaryManifest(manifest({ cases: [{ ...row, triggers: [{ ...scalar, failureEvidenceV1: { schemaVersion: 1, failures: [invalid] } }] }] }))).toThrow();
+    ])
+      expect(() =>
+        parseScalarCanaryManifest(
+          manifest({
+            cases: [
+              { ...row, triggers: [{ ...scalar, failureEvidenceV1: { schemaVersion: 1, failures: [invalid] } }] },
+            ],
+          }),
+        ),
+      ).toThrow();
   });
 
   it("pairs Jev variants and keeps judge-only and human-rated naturalness separate", () => {
@@ -718,6 +830,39 @@ describe("versioned quality study analysis", () => {
     expect(() => parseScalarCanaryManifest(wrongRoomDigest)).toThrow(/Invalid scalar canary manifest/);
   });
 
+  it("analyzes the closed V4 model comparison and rejects provenance or pair drift", () => {
+    const fixture = modelStudyFixture();
+    const parsed = parseScalarCanaryManifest(fixture);
+    const report = analyzeQualityStudy(parsed);
+    expect(report.denominators.matchedCasePairs).toBe(3);
+    expect(report.byFactor["actor-model"]?.paired.triggerPairs).toBe(3);
+    expect(report.source).toMatchObject({
+      actorModelsByArm: {
+        a: "openrouter/anthropic/claude-haiku-4.5",
+        b: "openrouter/anthropic/claude-sonnet-4.6",
+      },
+      providerObservedActorModel: null,
+    });
+    const wrongRoster = structuredClone(fixture);
+    wrongRoster.cases[0]!.actorModelProvenanceV1.rosterModelId =
+      wrongRoster.cases[0]!.study.actorModelId === "openrouter/anthropic/claude-haiku-4.5"
+        ? "openrouter/anthropic/claude-sonnet-4.6"
+        : "openrouter/anthropic/claude-haiku-4.5";
+    expect(() => parseScalarCanaryManifest(wrongRoster)).toThrow();
+    const wrongDigest = structuredClone(fixture);
+    wrongDigest.cases[0]!.study.scenarioProfileDigest = "f".repeat(64);
+    expect(() => parseScalarCanaryManifest(wrongDigest)).toThrow();
+    const mixedPair = structuredClone(fixture);
+    const different = fixture.cases.find(
+      (row) => row.study.scenarioProfileId !== mixedPair.cases[0]!.study.scenarioProfileId,
+    )!;
+    mixedPair.cases[0]!.study.scenarioProfileId = different.study.scenarioProfileId;
+    mixedPair.cases[0]!.study.scenarioProfileDigest = different.study.scenarioProfileDigest;
+    expect(() => analyzeQualityStudy(parseScalarCanaryManifest(mixedPair))).toThrow();
+    const incomplete = structuredClone(fixture);
+    incomplete.cases.pop();
+    expect(() => parseScalarCanaryManifest(incomplete)).toThrow();
+  });
   it("accepts V3 terminal pairs and rejects a second changed profile", () => {
     const base = identityFixture();
     const fixture = {

@@ -17,6 +17,7 @@ import {
   reviewFingerprint,
   selectCalibrationReviewQueue,
   selectCompleteFrameReviewQueue,
+  selectCompleteModelReviewQueue,
   selectFlaggedReviewQueue,
   selectFrameCandidateReviewQueue,
   selectPairedReviewQueue,
@@ -159,6 +160,70 @@ const exported = () => ({
 });
 
 describe("private offline review pack", () => {
+  it("selects all six V4 cards with arm mapping only in the private receipt", () => {
+    const cases = ["draft", "meal", "travel"].flatMap((pairId) =>
+      (["a", "b"] as const).map((arm) => ({
+        scenarioId: `${pairId}-${arm}`,
+        study: {
+          schemaVersion: 4,
+          factor: "actor-model",
+          pairId,
+          arm,
+          actorModelId:
+            arm === "a" ? "openrouter/anthropic/claude-haiku-4.5" : "openrouter/anthropic/claude-sonnet-4.6",
+          terminalInstructionProfileId: "contribution-first-v1",
+          roomSystemProfileId: "room-v1",
+        },
+        triggers: [{ scenarioId: `${pairId}-${arm}`, runId: `run-${pairId}-${arm}` }],
+      })),
+    );
+    const studyManifest = { sourceSha256: "a".repeat(64), judgeRubric: "v3", studyPlan: { schemaVersion: 4 }, cases };
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          sourceSha256: studyManifest.sourceSha256,
+          studyPlan: studyManifest.studyPlan,
+          cases: cases.map((row) => ({
+            scenarioId: row.scenarioId,
+            study: row.study,
+            triggers: row.triggers.map((trigger) => [trigger.scenarioId, trigger.runId]),
+          })),
+        }),
+      )
+      .digest("hex");
+    const entries = cases.map((row, index) => ({
+      reviewId: ids[index]!,
+      scenarioId: row.scenarioId,
+      runId: row.triggers[0]!.runId,
+      sourceFile: `source-${index}.json`,
+      priority: "sample",
+    }));
+    const locator = { schemaVersion: 1, manifestFingerprint: fingerprint, entries };
+    const selected = selectCompleteModelReviewQueue(studyManifest, locator, "fixed-seed");
+    expect(selected.queue.reviewIds).toHaveLength(6);
+    expect(selected.receipt).toMatchObject({
+      kind: "model-complete",
+      screenedTriggers: 6,
+      privateArmMap: expect.arrayContaining([
+        { reviewId: ids[0], pairId: "draft", arm: "a", actorModelId: "openrouter/anthropic/claude-haiku-4.5" },
+      ]),
+    });
+    const cards = selected.queue.reviewIds.map((id) => bundle(id, "Could you draft a short note?"));
+    const html = buildOfflineReviewHtml(selected.queue, cards, "model-complete");
+    expect(html).toContain("complete model pilot");
+    expect(html).not.toContain("claude-haiku");
+    expect(html).not.toContain("claude-sonnet");
+    expect(JSON.stringify(selected.queue)).not.toContain("actorModelId");
+    const partial = {
+      schemaVersion: 1,
+      kind: "blinded-quality-ratings",
+      packFingerprint: reviewFingerprint(selected.queue, cards),
+      ratings: [{ reviewId: ids[0], axes: { social_cadence: { status: "rated", score: 4 } } }],
+    };
+    expect(parseOfflineReviewExport(partial, selected.queue, partial.packFingerprint).ratings).toHaveLength(1);
+    const incomplete = { ...studyManifest, cases: cases.slice(0, 4) };
+    expect(() => selectCompleteModelReviewQueue(incomplete, locator, "fixed-seed")).toThrow();
+  });
   it("selects every small V2 identity trigger without judge-dependent filtering or adjacent twins", () => {
     const cases = ["one", "two"].flatMap((pairId) =>
       ["a", "b"].map((arm) => ({
