@@ -17,6 +17,8 @@ import {
 } from "./conversation-routing-live-annotations.js";
 import {
   buildOfflineReviewHtml,
+  convertOfflineFrameExport,
+  reviewFingerprint,
   selectCalibrationReviewQueue,
   selectEverydayCensusReviewQueues,
   selectFirstBatchAllTriggersReviewQueue,
@@ -243,9 +245,47 @@ describe("schema-5 everyday analysis and private review", () => {
         plannedPairs: 36,
       }),
     ).toContain("PARTIAL DIAGNOSTIC first batch, all triggers");
+    const frameHtml = buildOfflineReviewHtml(result.queue, bundles, "first-batch-frame", {
+      completedPairs: 3,
+      plannedPairs: 36,
+    });
+    expect(frameHtml).toContain("PARTIAL DIAGNOSTIC first-batch frame check");
+    expect(frameHtml).toContain("blinded-frame-ratings");
+    expect(frameHtml).not.toContain("Four independent ratings");
+    const frameExport = {
+      schemaVersion: 1,
+      kind: "blinded-frame-ratings",
+      packFingerprint: reviewFingerprint(result.queue, bundles),
+      ratings: result.queue.reviewIds.map((reviewId, index) => ({
+        reviewId,
+        axes: {
+          frame_integrity: index % 2 ? { status: "not_assessable" } : { status: "rated", score: 5 },
+        },
+      })),
+    };
+    const frameRatings = convertOfflineFrameExport(frameExport, result.queue, locator, partial, bundles);
+    expect(frameRatings.ratings).toHaveLength(12);
+    expect(frameRatings.ratings.filter((row) => row.frame_integrity?.status === "rated")).toHaveLength(6);
+    expect(frameRatings.ratings.filter((row) => row.frame_integrity?.status === "not_assessable")).toHaveLength(6);
+    expect(JSON.stringify(frameRatings)).not.toContain("social_cadence");
+    expect(() =>
+      buildOfflineReviewHtml(result.queue, bundles, "first-batch-frame", { completedPairs: 6, plannedPairs: 36 }),
+    ).toThrow();
+    expect(() =>
+      convertOfflineFrameExport(
+        frameExport,
+        { schemaVersion: 1, reviewIds: result.queue.reviewIds.slice(1) },
+        locator,
+        partial,
+        bundles,
+      ),
+    ).toThrow();
     const missingCase = structuredClone(partial);
     missingCase.cases.pop();
     expect(() => selectFirstBatchAllTriggersReviewQueue(missingCase, locator, "first-batch-seed")).toThrow();
+    const halfPair = structuredClone(partial);
+    halfPair.cases.splice(1, 1);
+    expect(() => selectFirstBatchAllTriggersReviewQueue(halfPair, locator, "first-batch-seed")).toThrow();
     const shifted = structuredClone(partial);
     shifted.studyBatch!.batchIndex = 1;
     expect(() => selectFirstBatchAllTriggersReviewQueue(shifted, locator, "first-batch-seed")).toThrow();

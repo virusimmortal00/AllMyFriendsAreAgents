@@ -36,8 +36,11 @@ const FRAME_AXIS = "frame_integrity" as const;
 const FRAME_LABELS = { frame_integrity: "Frame integrity" };
 const FRAME_ANCHORS = {
   frame_integrity:
-    "1 rejects the room frame or amplifies a break · 3 leaks private setup or process · 5 stays within the room task",
+    "1 rejects the room or amplifies a peer break · 3 discloses hidden instructions, test setup, or routing · 5 stays within the room task; ordinary request interpretation is not a leak",
 };
+function isFrameReviewSet(reviewSet: string | null | undefined): boolean {
+  return reviewSet?.startsWith("frame-") === true || reviewSet === "first-batch-frame";
+}
 
 export interface PrivateReviewQueue {
   schemaVersion: 1;
@@ -1197,6 +1200,7 @@ export function buildOfflineReviewHtml(
     | "everyday-census"
     | "everyday-partial"
     | "first-batch-all-triggers"
+    | "first-batch-frame"
     | null = null,
   diagnostic?: { completedPairs: number; plannedPairs: number },
 ): string {
@@ -1204,18 +1208,20 @@ export function buildOfflineReviewHtml(
     (reviewSet === "model-partial" ||
       reviewSet === "frame-partial" ||
       reviewSet === "everyday-partial" ||
-      reviewSet === "first-batch-all-triggers") !==
+      reviewSet === "first-batch-all-triggers" ||
+      reviewSet === "first-batch-frame") !==
     (diagnostic !== undefined)
   )
     throw new Error("Partial review requires diagnostic counts.");
   if (
     diagnostic &&
-    (reviewSet === "everyday-partial" || reviewSet === "first-batch-all-triggers"
+    (reviewSet === "everyday-partial" || reviewSet === "first-batch-all-triggers" || reviewSet === "first-batch-frame"
       ? diagnostic.completedPairs < 3 ||
         diagnostic.completedPairs >= 36 ||
         diagnostic.completedPairs % 3 !== 0 ||
         diagnostic.plannedPairs !== 36 ||
-        (reviewSet === "first-batch-all-triggers" && diagnostic.completedPairs !== 3)
+        ((reviewSet === "first-batch-all-triggers" || reviewSet === "first-batch-frame") &&
+          diagnostic.completedPairs !== 3)
       : ![1, 2].includes(diagnostic.completedPairs) || diagnostic.plannedPairs !== 3)
   )
     throw new Error("Invalid partial diagnostic denominator.");
@@ -1228,16 +1234,16 @@ export function buildOfflineReviewHtml(
   );
   const script = SCRIPT.replace("__DATA__", json)
     .replace("__FINGERPRINT__", JSON.stringify(reviewFingerprint(queue, bundles)))
-    .replace("__AXES__", JSON.stringify(reviewSet?.startsWith("frame-") ? [FRAME_AXIS] : QUALITY_AXES))
-    .replace("__LABELS__", JSON.stringify(reviewSet?.startsWith("frame-") ? FRAME_LABELS : AXIS_LABELS))
-    .replace("__ANCHORS__", JSON.stringify(reviewSet?.startsWith("frame-") ? FRAME_ANCHORS : AXIS_ANCHORS))
+    .replace("__AXES__", JSON.stringify(isFrameReviewSet(reviewSet) ? [FRAME_AXIS] : QUALITY_AXES))
+    .replace("__LABELS__", JSON.stringify(isFrameReviewSet(reviewSet) ? FRAME_LABELS : AXIS_LABELS))
+    .replace("__ANCHORS__", JSON.stringify(isFrameReviewSet(reviewSet) ? FRAME_ANCHORS : AXIS_ANCHORS))
     .replace(
       "__EXPORT_KIND__",
-      JSON.stringify(reviewSet?.startsWith("frame-") ? "blinded-frame-ratings" : "blinded-quality-ratings"),
+      JSON.stringify(isFrameReviewSet(reviewSet) ? "blinded-frame-ratings" : "blinded-quality-ratings"),
     );
   const hash = (value: string) => createHash("sha256").update(value).digest("base64");
-  const heading = reviewSet?.startsWith("frame-")
-    ? `Blinded conversation review · ${reviewSet === "frame-partial" ? "PARTIAL DIAGNOSTIC frame pilot" : reviewSet === "frame-complete" ? "complete frame pilot" : "frame-candidate inspection"}`
+  const heading = isFrameReviewSet(reviewSet)
+    ? `Blinded conversation review · ${reviewSet === "first-batch-frame" ? "PARTIAL DIAGNOSTIC first-batch frame check" : reviewSet === "frame-partial" ? "PARTIAL DIAGNOSTIC frame pilot" : reviewSet === "frame-complete" ? "complete frame pilot" : "frame-candidate inspection"}`
     : reviewSet === "model-complete"
       ? "Blinded conversation review · complete model pilot"
       : reviewSet === "model-partial"
@@ -1255,7 +1261,7 @@ export function buildOfflineReviewHtml(
                   : reviewSet === "calibration"
                     ? "Blinded conversation review · calibration sample"
                     : "Blinded conversation review";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1>${diagnostic ? `<p>PARTIAL DIAGNOSTIC: ${diagnostic.completedPairs} of ${diagnostic.plannedPairs} planned matched pairs completed. Rate only these cases; missing pairs have no results.</p>` : ""}<div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${reviewSet?.startsWith("frame-") ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1>${diagnostic ? `<p>PARTIAL DIAGNOSTIC: ${diagnostic.completedPairs} of ${diagnostic.plannedPairs} planned matched pairs completed. Rate only these cases; missing pairs have no results.</p>` : ""}<div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>${isFrameReviewSet(reviewSet) ? "Frame integrity" : "Four independent ratings"}</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
 async function readBounded(file: string): Promise<unknown> {
@@ -1615,7 +1621,9 @@ async function main() {
   const queue = parseReviewQueue(await readBounded(one("--queue")));
   const locator = parseReviewLocator(await readBounded(one("--map")), queue, manifest);
   if (
-    (allowPartialV4 || (allowPartialV5 && flags.get("--review-set")?.[0] === "first-batch-all-triggers")) &&
+    (allowPartialV4 ||
+      (allowPartialV5 &&
+        ["first-batch-all-triggers", "first-batch-frame"].includes(flags.get("--review-set")?.[0] ?? ""))) &&
     (queue.reviewIds.length !== locator.entries.length ||
       queue.reviewIds.some((id) => !locator.entries.some((entry) => entry.reviewId === id)))
   )
@@ -1627,7 +1635,7 @@ async function main() {
       allowPartialV4
         ? !["frame-partial", "model-partial"].includes(reviewSet ?? "")
         : allowPartialV5
-          ? !["everyday-partial", "first-batch-all-triggers"].includes(reviewSet ?? "")
+          ? !["everyday-partial", "first-batch-all-triggers", "first-batch-frame"].includes(reviewSet ?? "")
           : reviewSet !== undefined &&
             ![
               "frame-candidate",
@@ -1640,7 +1648,7 @@ async function main() {
             ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
-    const converted = reviewSet?.startsWith("frame-")
+    const converted = isFrameReviewSet(reviewSet)
       ? convertOfflineFrameExport(await readBounded(one("--ratings")), queue, locator, manifest, bundles)
       : convertOfflineReviewExport(await readBounded(one("--ratings")), queue, locator, manifest, bundles);
     await privateWrite(one("--output"), `${JSON.stringify(converted, null, 2)}\n`);
@@ -1660,12 +1668,13 @@ async function main() {
         "everyday-census",
         "everyday-partial",
         "first-batch-all-triggers",
+        "first-batch-frame",
       ].includes(reviewSet)
     )
       throw new Error("Invalid review set.");
     if (
       allowPartialV4 !== ["frame-partial", "model-partial"].includes(reviewSet ?? "") ||
-      allowPartialV5 !== ["everyday-partial", "first-batch-all-triggers"].includes(reviewSet ?? "")
+      allowPartialV5 !== ["everyday-partial", "first-batch-all-triggers", "first-batch-frame"].includes(reviewSet ?? "")
     )
       throw new Error("Invalid partial review set.");
     await privateWrite(
@@ -1685,6 +1694,7 @@ async function main() {
           | "everyday-census"
           | "everyday-partial"
           | "first-batch-all-triggers"
+          | "first-batch-frame"
           | null,
         allowPartialV4
           ? { completedPairs: manifest.cases.length / 2, plannedPairs: 3 }
