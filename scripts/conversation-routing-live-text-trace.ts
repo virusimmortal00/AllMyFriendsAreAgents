@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_LOG_BYTES = 32 * 1024 * 1024;
@@ -8,6 +8,15 @@ const MAX_EVENTS = 2048;
 const MAX_PARTS = 64;
 const MAX_TEXT_UNITS = 32 * 1024;
 const MAX_GENERATIONS = 32;
+export const PRIVATE_TEXT_TRACE_SUBDIRECTORY = "text-boundaries-v1";
+
+/** The parent is the canary's newly created, validated private review directory. */
+export async function createPrivateTextTraceDirectory(parent: string) {
+  const directory = path.join(parent, PRIVATE_TEXT_TRACE_SUBDIRECTORY);
+  await mkdir(directory, { mode: 0o700 });
+  await chmod(directory, 0o700);
+  return directory;
+}
 
 type Row = Record<string, unknown>;
 const object = (value: unknown): Row | null =>

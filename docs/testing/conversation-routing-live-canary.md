@@ -39,9 +39,12 @@ under a new `0700` directory; an existing path is rejected. Delete that director
 this flag, private bundles remain only in disposable case roots and are deleted
 on completion or interruption.
 
-This flag also writes one `text-boundaries-case-N-trigger-M.json` file per
-completed trigger. Its `generations` array uses one-based completion ordinals;
-each generation records parser-accepted OpenCode text-part ordinals, message
+This flag also creates a `0700` `text-boundaries-v1/` subdirectory and writes
+one `0600` `text-boundaries-case-N-trigger-M.json` file there per completed
+trigger. The top-level directory remains reserved for review bundles. Its
+`generations` array uses one-based source enumeration ordinals; rotated log
+filenames are sorted lexically, so these ordinals do not prove chronology.
+Each generation records parser-accepted OpenCode text-part ordinals, message
 and step ordinals, UTF-16 start/end offsets into the parser-assembled response, part
 lengths and SHA-256 hashes, plus counts of unfinished snapshots skipped and
 completed snapshots replaced by a later snapshot of the same part. The

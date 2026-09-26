@@ -52,7 +52,11 @@ import {
   scenarioProfileDigest,
   studyPlanDigest,
 } from "./conversation-routing-live-study.js";
-import { retainPrivateTextTrace } from "./conversation-routing-live-text-trace.js";
+import {
+  createPrivateTextTraceDirectory,
+  PRIVATE_TEXT_TRACE_SUBDIRECTORY,
+  retainPrivateTextTrace,
+} from "./conversation-routing-live-text-trace.js";
 import { createLiveOpenCodeWrapper } from "./conversation-routing-live-wrapper.js";
 
 const execute = promisify(execFile);
@@ -1225,7 +1229,7 @@ async function runCase(
         if (!trigger.runId) throw new Error("Private text trace requires a correlated run.");
         await retainPrivateTextTrace(
           path.join(data, "logs", "authoritative-v1"),
-          privateDirectory,
+          path.join(privateDirectory, PRIVATE_TEXT_TRACE_SUBDIRECTORY),
           caseOrdinal,
           index + 1,
           trigger.runId,
@@ -1360,6 +1364,7 @@ async function main() {
     if (canonical === repositoryRoot || canonical.startsWith(`${repositoryRoot}${path.sep}`))
       throw new Error("Private review files must stay outside the repository.");
     await chmod(canonical, 0o700);
+    await createPrivateTextTraceDirectory(canonical);
   }
   const abort = new AbortController();
   const interrupt = () => abort.abort();
