@@ -458,6 +458,36 @@ describe("room prompt context", () => {
     expect(prompt).not.toContain("and .");
   });
 
+  it.each([false, true])("keeps direct-reply guidance in the shared read-only prompt for the %s output lane", async (structured) => {
+    const soloState = {
+      ...state,
+      roster: { schemaVersion: 3 as const, revision: 2, entries: [
+        { agentId: "codex-sol", conversationalName: "Riley", providerId: "openai", modelId: "gpt-5.6-sol", enabled: true, configurationRevision: 2 },
+      ] },
+    } satisfies RoomState;
+    const profiles = ["legacy-v1", "room-v1"] as const;
+    for (const configuredState of [soloState, state]) {
+      const prompts = [];
+      for (const profile of profiles) {
+        const environment = __testing.opencodeEnvironment({
+          NODE_ENV: "test",
+          AMFAA_ROUTING_STUDY_ISOLATED: "true",
+          AMFAA_ROUTING_ROOM_SYSTEM_PROFILE: profile,
+        }, "read-only");
+        const inline = JSON.parse(environment.OPENCODE_CONFIG_CONTENT!);
+        const { prompt } = await __testing.buildPromptBundle("codex-sol", configuredState, "Draft a reply.", false, "read-only", undefined, structured);
+        expect(prompt).toContain("Begin a visible reply with your contribution.");
+        expect(prompt).toContain("Do not describe who addressed you, restate the request, announce your answer, or assess how straightforward it is.");
+        expect(prompt).toContain("When asked for a draft, give the draft directly.");
+        expect(inline.agent[__testing.roomAgentName].prompt ?? "").not.toContain("Begin a visible reply with your contribution.");
+        prompts.push(prompt.split("ROOM RULES\n")[1]?.split("\nCURRENT ROOM CONVERSATION")[0]);
+      }
+      expect(prompts[0]).toBe(prompts[1]);
+    }
+    const writablePrompt = await __testing.buildPrompt("codex-sol", state, "Draft a reply.", false, "writable");
+    expect(writablePrompt).not.toContain("Begin a visible reply with your contribution.");
+  });
+
   it.each([false, true])("instructs direct answers to specified casual creative requests in the %s output lane", async (structured) => {
     const instruction = "Everyone, please each suggest one name for the library cat.";
     const { prompt } = await __testing.buildPromptBundle("codex-sol", state, instruction, false, "read-only", undefined, structured);
