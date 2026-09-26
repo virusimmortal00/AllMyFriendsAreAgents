@@ -16,9 +16,11 @@ import {
   projectFailedCaseEvidence,
   projectPairCompleteProgress,
   stopProcessGroup,
+  validateQualityJudgeObservation,
 } from "./conversation-routing-live-canary.js";
 import type { LiveScenarioResult } from "./conversation-routing-live-evidence.js";
 import { JudgeFailure } from "./conversation-routing-live-judge.js";
+import type { QualityAxisOutcome } from "./conversation-routing-live-judge-v2.js";
 import { buildLiveScenario, pilotScenarios } from "./conversation-routing-live-scenarios.js";
 import { parseStudyPlan } from "./conversation-routing-live-study.js";
 
@@ -32,6 +34,50 @@ const base = [
 ];
 const execute = promisify(execFile);
 const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
+
+const lengthOutcome = (
+  reasonCode: "required_reply_missing" | "silence_fit" | "observable_exchange",
+): QualityAxisOutcome => ({
+  axis: "length_fit",
+  status: "completed",
+  result: {
+    schemaVersion: 2,
+    rubricVersion: "room-quality-v2",
+    scenarioId: "fixture",
+    runId: "run-fixture",
+    judgeModel: "google/pinned-judge",
+    resolvedJudgeModel: null,
+    axis: "length_fit",
+    status: "rated",
+    score: reasonCode === "required_reply_missing" ? 1 : 3,
+    reasonCode,
+    details: { direction: reasonCode === "required_reply_missing" ? "too_short" : "appropriate" },
+    judgeUsage: { inputTokens: null, outputTokens: null, reportedCostUsd: null },
+  },
+});
+
+describe("quality judge acquisition semantics", () => {
+  it("downgrades a missing-reply obligation contradicted by authoritative routing", () => {
+    expect(validateQualityJudgeObservation([lengthOutcome("required_reply_missing")], 0, 0)).toEqual([
+      { axis: "length_fit", status: "failed", category: "judgment-schema" },
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("required_reply_missing")], 0, 1)).toEqual([
+      lengthOutcome("required_reply_missing"),
+    ]);
+  });
+
+  it("keeps valid optional silence and visible replies but rejects a reply claim without delivery", () => {
+    expect(validateQualityJudgeObservation([lengthOutcome("silence_fit")], 0, 0)).toEqual([
+      lengthOutcome("silence_fit"),
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("observable_exchange")], 1, 0)).toEqual([
+      lengthOutcome("observable_exchange"),
+    ]);
+    expect(validateQualityJudgeObservation([lengthOutcome("observable_exchange")], 0, 0)).toEqual([
+      { axis: "length_fit", status: "failed", category: "judgment-schema" },
+    ]);
+  });
+});
 
 async function withAvailabilityServer(
   input: {
@@ -480,6 +526,12 @@ describe("routing canary selection", () => {
     }
   });
   it("retains closed scalar evidence on a visible-delivery failure without copying private fields", () => {
+    const poisonedAttribution = {
+      schemaVersion: 1 as const,
+      category: "completed-yielded" as const,
+      generations: [{ ordinal: 1, category: "yielded" as const, rawText: "private generation text" }],
+      rawText: "private attribution text",
+    };
     const collected = {
       schemaVersion: 1,
       openCodeUsageProvenance: "step-fields-v1",
@@ -508,6 +560,7 @@ describe("routing canary selection", () => {
       generationStarts: 1,
       generationCompletions: 1,
       generationFailures: 0,
+      noVisibleAttributionV1: poisonedAttribution,
       openCodeObservedInputTokens: 2,
       openCodeObservedOutputTokens: 20,
       openCodeObservedReasoningTokens: 0,
@@ -528,8 +581,23 @@ describe("routing canary selection", () => {
       confirmedDeliveredBursts: 0,
       openCodeObservedTotalTokens: 40,
       openCodeTotalCoverage: "reported",
+      noVisibleAttributionV1: {
+        schemaVersion: 1,
+        category: "completed-yielded",
+        generations: [{ ordinal: 1, category: "yielded" }],
+      },
     });
-    expect(JSON.stringify(projected)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
+    expect(JSON.stringify(projected)).not.toMatch(
+      /private fictional response|do-not-copy|private generation text|private attribution text|rawText|credential/,
+    );
+    const unsupported = projectFailedCaseEvidence({
+      ...collected,
+      noVisibleAttributionV1: {
+        ...poisonedAttribution,
+        category: "private unbounded attribution" as "completed-yielded",
+      },
+    });
+    expect(unsupported.noVisibleAttributionV1).toBeUndefined();
     const poisonedAvailabilityCheck = {
       initialDiscoveryStatus: "error",
       initialUnavailableReasons: ["runtime_unavailable"],

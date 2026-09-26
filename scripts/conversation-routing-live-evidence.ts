@@ -74,6 +74,30 @@ export interface LiveScenarioResult {
   generationStarts: number;
   generationCompletions: number;
   generationFailures: number;
+  /** Closed, observed status only; absent on manifests written before this projection. */
+  noVisibleAttributionV1?: {
+    schemaVersion: 1;
+    category:
+      | "visible-delivered"
+      | "gate-suppressed"
+      | "routing-unavailable"
+      | "generation-failed"
+      | "completed-yielded"
+      | "completed-no-delivery"
+      | "mixed-or-unresolved";
+    /** One entry per generation start, in observed start order. No generation IDs leave this projection. */
+    generations: Array<{
+      ordinal: number;
+      category:
+        | "delivered"
+        | "yielded"
+        | "undelivered"
+        | "completed-no-delivery-evidence"
+        | "failed"
+        | "cancelled"
+        | "incomplete";
+    }>;
+  };
   openCodeObservedInputTokens: number | null;
   openCodeObservedOutputTokens: number | null;
   openCodeObservedReasoningTokens: number | null;
@@ -266,6 +290,7 @@ export function collectLiveScenarioEvidence(input: {
   const starts = generationRecords.filter((record) => event(record, "generation.started"));
   const completions = generationRecords.filter((record) => event(record, "generation.completed"));
   const failures = generationRecords.filter((record) => event(record, "generation.failed"));
+  const cancellations = generationRecords.filter((record) => event(record, "generation.cancelled"));
   const retries = generationRecords.filter((record) => event(record, "generation.retry"));
   const startedIds = new Set(starts.map((record) => record.generationId));
   if (
@@ -332,6 +357,74 @@ export function collectLiveScenarioEvidence(input: {
       : null;
   const firstVisible = stage("first-visible");
   if (firstVisible.length > 1) throw new Error("First-visible timing evidence is ambiguous.");
+  const generationCategories = starts.map((started, index) => {
+    const generationId = started.generationId;
+    const matchingTurns = turns.filter((turn) => turn.generationId === generationId);
+    const finished = matchingTurns.length === 1 ? matchingTurns[0] : undefined;
+    const matchingDelivery = generationRecords.filter(
+      (record) => event(record, "generation.delivery") && record.generationId === generationId,
+    );
+    const delivery = object(finished?.delivery);
+    const deliveryRecord = matchingDelivery.length === 1 ? matchingDelivery[0] : undefined;
+    const interpretation = object(finished?.interpretation);
+    const completed = completions.some((record) => record.generationId === generationId);
+    const failed = failures.some((record) => record.generationId === generationId);
+    const cancelled = cancellations.some((record) => record.generationId === generationId);
+    let category: NonNullable<LiveScenarioResult["noVisibleAttributionV1"]>["generations"][number]["category"] =
+      "incomplete";
+    if (completed && !failed && !cancelled) {
+      if (
+        (count(delivery?.confirmedDeliveredBurstCount) ?? 0) > 0 ||
+        (count(deliveryRecord?.confirmedDeliveredBurstCount) ?? 0) > 0
+      )
+        category = "delivered";
+      else if (
+        finished?.outcome === "yielded" &&
+        finished.reason === "yielded" &&
+        interpretation?.dispositionAction === "yield"
+      )
+        category = "yielded";
+      else if (
+        (count(delivery?.confirmedUndeliveredBurstCount) ?? 0) > 0 ||
+        (count(delivery?.unconfirmedBurstCount) ?? 0) > 0 ||
+        (count(deliveryRecord?.confirmedUndeliveredBurstCount) ?? 0) > 0 ||
+        (count(deliveryRecord?.unconfirmedBurstCount) ?? 0) > 0 ||
+        delivery?.outcome === "failed" ||
+        deliveryRecord?.outcome === "failed"
+      )
+        category = "undelivered";
+      else category = "completed-no-delivery-evidence";
+    } else if (failed && !completed && !cancelled) category = "failed";
+    else if (cancelled && !completed && !failed) category = "cancelled";
+    return { ordinal: index + 1, category };
+  });
+  const generationKinds = generationCategories.map(({ category }) => category);
+  let attributionCategory: NonNullable<LiveScenarioResult["noVisibleAttributionV1"]>["category"] =
+    "mixed-or-unresolved";
+  if (confirmedDeliveredBursts > 0) attributionCategory = "visible-delivered";
+  else if (
+    preflightMode === "enforce" &&
+    starts.length === 0 &&
+    routing.length > 0 &&
+    routing.every(({ outcome }) => outcome === "suppress")
+  )
+    attributionCategory = "gate-suppressed";
+  else if (
+    preflightMode === "enforce" &&
+    starts.length === 0 &&
+    routing.some(({ outcome }) => outcome === "unavailable") &&
+    routing.every(({ outcome }) => outcome !== "invoke")
+  )
+    attributionCategory = "routing-unavailable";
+  else if (generationKinds.length > 0 && generationKinds.every((category) => category === "failed"))
+    attributionCategory = "generation-failed";
+  else if (generationKinds.length > 0 && generationKinds.every((category) => category === "yielded"))
+    attributionCategory = "completed-yielded";
+  else if (
+    generationKinds.length > 0 &&
+    generationKinds.every((category) => category === "undelivered" || category === "completed-no-delivery-evidence")
+  )
+    attributionCategory = "completed-no-delivery";
   return {
     schemaVersion: 1,
     openCodeUsageProvenance: "step-fields-v1",
@@ -352,6 +445,11 @@ export function collectLiveScenarioEvidence(input: {
     generationStarts: starts.length,
     generationCompletions: completions.length,
     generationFailures: failures.length,
+    noVisibleAttributionV1: {
+      schemaVersion: 1,
+      category: attributionCategory,
+      generations: generationCategories,
+    },
     openCodeObservedInputTokens: reported("input"),
     openCodeObservedOutputTokens: reported("output"),
     openCodeObservedReasoningTokens: reportedBreakdown("reasoning"),

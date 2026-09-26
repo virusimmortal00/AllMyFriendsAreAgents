@@ -123,6 +123,24 @@ evidence, redirect stdout to a new mode-`0600` JSONL file inside a private
 mode-`0700` directory; failed cases print closed scalar records but no final
 manifest.
 
+New triggers also carry optional `noVisibleAttributionV1` for diagnosis. Older
+manifests omit it. It records only a closed trigger category and an ordered,
+one-based category for each observed generation start; generation IDs and raw
+errors stay out of this projection. `gate-suppressed` requires a persisted
+decision with only suppressed targets and no generation start.
+`routing-unavailable` requires no invoked target or generation start and at
+least one persisted unavailable target. It identifies an availability finding
+at routing time, not the cause of a change since the earlier roster check.
+`generation-failed` requires all started generations to have failed;
+`completed-yielded` requires every started generation to have an explicit
+interpreted yield. A legacy empty response is not an explicit yield.
+`completed-no-delivery` covers completed generations with no confirmed visible
+burst and no explicit yield; per-generation categories distinguish a recorded
+undelivered burst from missing delivery evidence. Mixed, cancelled, incomplete,
+or contradictory paths remain `mixed-or-unresolved`. A category describes the
+structured observation, not the agent's intent or a provider root cause. The
+collector does not infer deliberate gate silence from a missing reply.
+
 Matched cases hold fictional prompt, roster, energy, mode, and actor model
 constant while toggling Jev. The model may still produce different replies,
 and these small observational pairs do not establish causal quality or token
@@ -215,7 +233,12 @@ The independent v2 judge makes four bounded calls per trigger for social
 cadence, length fit, address radius, and contribution value. Its private v2
 bundle adds the fictional human alias and roster names for audience grading;
 the public scalar report contains only closed axis outcomes and separate judge
-usage. The case cap, generation-start cap, per-trigger room watchdog, explicit
+usage. Before storing each completed axis, the canary compares its closed
+reason and score to authoritative routing obligations and confirmed delivery.
+A contradictory result becomes a failed `judgment-schema` axis with no score or
+usage in the scalar manifest. This check does not reinterpret older manifests;
+the analysis tool keeps their invalid receipts as missing observations.
+The case cap, generation-start cap, per-trigger room watchdog, explicit
 judge-call cap, and total watchdog limit exposure, but OpenCode may use several
 internal provider steps per generation, so these are not strict token or USD
 caps. The dry-run shows a conservative planning allowance and whether the

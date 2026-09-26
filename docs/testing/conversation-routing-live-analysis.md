@@ -215,6 +215,21 @@ An interrupted case appears only in private progress, not in a final paired
 manifest; these counts never infer its outcome or turn it into a completed pair.
 No catalog text, diagnostic string, or credential enters the analysis report.
 
+Future final triggers may also carry `noVisibleAttributionV1`. The parser accepts
+only the versioned, closed trigger and generation categories, consecutive
+generation ordinals, and counts consistent with recorded starts and delivery.
+It rejects unknown fields and contradictory top-level categories. The
+`noVisibleAttributionV1` readout reports recorded versus legacy-missing
+triggers, category counts, generation-category counts, required and optional
+subsets, and factor/arm subsets. Older finalized manifests remain valid with
+this field absent; their missing categories are never inferred from zero
+visible replies. `gate-suppressed` and `routing-unavailable` require persisted
+enforced routing and zero generation starts. `completed-yielded` requires
+explicit structured yield evidence. `completed-no-delivery` describes missing
+delivery after completion but cannot establish why it happened; mixed and
+incomplete evidence remains unresolved. These are descriptive counts, not
+causal treatment effects.
+
 ```sh
 umask 077
 pnpm exec tsx scripts/conversation-routing-live-analysis.ts \

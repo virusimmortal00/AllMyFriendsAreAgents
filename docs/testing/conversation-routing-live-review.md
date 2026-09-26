@@ -35,6 +35,7 @@ pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
   --queue /PRIVATE/calibration-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
   --blinded-dir /PRIVATE/blinded-review/blinded \
   --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
+  --review-set calibration \
   --output /PRIVATE/calibration.html
 
 pnpm exec tsx scripts/conversation-routing-live-review.ts select-flagged \
@@ -43,6 +44,20 @@ pnpm exec tsx scripts/conversation-routing-live-review.ts select-flagged \
   --calibration-receipt /PRIVATE/calibration-selection.json \
   --seed PLAN_SHA256 --output /PRIVATE/flagged-queue.json \
   --receipt /PRIVATE/flagged-selection.json
+
+pnpm exec tsx scripts/conversation-routing-live-review.ts select-visible \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --map /PRIVATE/blinded-review/blinded-map.json \
+  --calibration-receipt /PRIVATE/calibration-selection.json \
+  --seed PLAN_SHA256 --output /PRIVATE/visible-queue.json \
+  --receipt /PRIVATE/visible-selection.json
+
+pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --queue /PRIVATE/visible-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
+  --blinded-dir /PRIVATE/blinded-review/blinded \
+  --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
+  --review-set visible-enriched --output /PRIVATE/visible.html
 ```
 
 Open the HTML locally in a browser. Review each card on its own merits. The
@@ -97,3 +112,16 @@ ratings separately. Keep flagged ratings and their denominator separate from
 the seed-only calibration sample; do not combine them into an unbiased quality
 estimate. The older `select` command remains available for intentionally
 judge-prioritized spot checks, not for the calibration sample.
+
+`select-visible` creates a separate **visible-response enriched** inspection
+set for judge calibration. Both arms must have a visible delivered agent reply
+at the chosen trigger. The selector excludes an identical pair/ordinal already
+in calibration and chooses 10 distinct pairs by seed: two agent-prompt, four
+optional-gate, and four Jev-question pairs. It prefers blocks outside
+calibration but may use a different ordinal from a calibration block when
+necessary. Insufficient eligible pairs fail closed. Its 20 blinded cards keep
+counterparts apart, and the private receipt records the outcome-conditioned
+selection. The HTML heading identifies the set. Convert its ratings with the
+same command using the visible queue and distinct output paths. Keep its
+ratings and denominator separate from calibration and flagged inspection.
+This enriched set is not a prevalence estimate or an unbiased quality sample.

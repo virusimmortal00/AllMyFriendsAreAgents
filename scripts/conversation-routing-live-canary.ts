@@ -639,8 +639,51 @@ class CaseFailure extends Error {
   }
 }
 
+const ATTRIBUTION_TRIGGER_CATEGORIES = new Set([
+  "visible-delivered",
+  "gate-suppressed",
+  "routing-unavailable",
+  "generation-failed",
+  "completed-yielded",
+  "completed-no-delivery",
+  "mixed-or-unresolved",
+]);
+const ATTRIBUTION_GENERATION_CATEGORIES = new Set([
+  "delivered",
+  "yielded",
+  "undelivered",
+  "completed-no-delivery-evidence",
+  "failed",
+  "cancelled",
+  "incomplete",
+]);
+
+function projectNoVisibleAttribution(value: LiveScenarioResult["noVisibleAttributionV1"]) {
+  if (
+    !value ||
+    value.schemaVersion !== 1 ||
+    !ATTRIBUTION_TRIGGER_CATEGORIES.has(value.category) ||
+    !Array.isArray(value.generations) ||
+    value.generations.length > 100 ||
+    value.generations.some(
+      (entry, index) =>
+        !entry ||
+        typeof entry !== "object" ||
+        entry.ordinal !== index + 1 ||
+        !ATTRIBUTION_GENERATION_CATEGORIES.has(entry.category),
+    )
+  )
+    return undefined;
+  return {
+    schemaVersion: 1 as const,
+    category: value.category,
+    generations: value.generations.map(({ ordinal, category }) => ({ ordinal, category })),
+  };
+}
+
 /** Preserve only the collector's closed scalar fields when a case stops after routing. */
 export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScenarioResult {
+  const noVisibleAttributionV1 = projectNoVisibleAttribution(result.noVisibleAttributionV1);
   return {
     schemaVersion: result.schemaVersion,
     openCodeUsageProvenance: result.openCodeUsageProvenance,
@@ -669,6 +712,7 @@ export function projectFailedCaseEvidence(result: LiveScenarioResult): LiveScena
     generationStarts: result.generationStarts,
     generationCompletions: result.generationCompletions,
     generationFailures: result.generationFailures,
+    ...(noVisibleAttributionV1 ? { noVisibleAttributionV1 } : {}),
     openCodeObservedInputTokens: result.openCodeObservedInputTokens,
     openCodeObservedOutputTokens: result.openCodeObservedOutputTokens,
     openCodeObservedReasoningTokens: result.openCodeObservedReasoningTokens,
@@ -754,6 +798,38 @@ async function writePrivateReview(
   await writeFile(file, `${JSON.stringify(payload)}\n`, { mode: 0o600, flag: "wx" });
   await chmod(file, 0o600);
   return payload;
+}
+
+/** Reject a judge's structurally valid score when it contradicts the server's closed delivery/routing counts. */
+export function validateQualityJudgeObservation(
+  outcomes: readonly QualityAxisOutcome[],
+  visibleBursts: number,
+  requiredTargets: number,
+): QualityAxisOutcome[] {
+  return outcomes.map((outcome): QualityAxisOutcome => {
+    if (outcome.status !== "completed") return outcome;
+    const result = outcome.result;
+    const requiredMissing =
+      result.axis === "length_fit" &&
+      visibleBursts === 0 &&
+      requiredTargets > 0 &&
+      result.status === "rated" &&
+      result.score === 1 &&
+      result.reasonCode === "required_reply_missing" &&
+      result.details.direction === "too_short";
+    const optionalSilence =
+      result.axis === "length_fit" &&
+      visibleBursts === 0 &&
+      requiredTargets === 0 &&
+      result.status === "rated" &&
+      result.reasonCode === "silence_fit" &&
+      (result.details.direction === "too_short" || result.details.direction === "appropriate");
+    const semanticConflict =
+      result.status === "rated"
+        ? !requiredMissing && !optionalSilence && (result.reasonCode !== "observable_exchange" || visibleBursts === 0)
+        : visibleBursts > 0 && result.reasonCode === "no_visible_reply";
+    return semanticConflict ? { axis: outcome.axis, status: "failed", category: "judgment-schema" } : outcome;
+  });
 }
 
 export function buildPrivateReviewPayload(
@@ -1080,7 +1156,11 @@ async function runCase(
             qualityJudgments.push({
               scenarioId: result.scenarioId,
               runId: result.runId,
-              outcomes: await judgeConversationQualityAxes(privateCase, judgeOptions),
+              outcomes: validateQualityJudgeObservation(
+                await judgeConversationQualityAxes(privateCase, judgeOptions),
+                result.confirmedDeliveredBursts,
+                result.requiredAddressAgents.length,
+              ),
             });
           } else {
             judgments.push(await judgeConversationCase(parsePrivateJudgeCase(privateCase), judgeOptions));

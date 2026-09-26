@@ -211,6 +211,120 @@ const manifest = (changes: Record<string, unknown> = {}) => ({
 });
 
 describe("provider-free conversation canary analysis", () => {
+  it("accepts closed attribution and counts legacy-missing evidence without imputing silence", () => {
+    const fixture = studyFixture();
+    const first = fixture.cases[0]!.triggers[0]!;
+    Object.assign(first, {
+      noVisibleAttributionV1: {
+        schemaVersion: 1,
+        category: "visible-delivered",
+        generations: [{ ordinal: 1, category: "delivered" }],
+      },
+    });
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(report.noVisibleAttributionV1.overall).toMatchObject({
+      observedTriggers: 4,
+      recordedTriggers: 1,
+      legacyMissingTriggers: 3,
+      categories: { "visible-delivered": 1, "gate-suppressed": 0 },
+      generationCategories: { delivered: 1, yielded: 0 },
+    });
+    expect(report.noVisibleAttributionV1.required).toMatchObject({ recordedTriggers: 1 });
+    expect(report.noVisibleAttributionV1.byFactorAndArm["jev:a"]).toMatchObject({ recordedTriggers: 1 });
+    expect(report.noVisibleAttributionV1.byFactorAndArm["jev:b"]).toMatchObject({ recordedTriggers: 0 });
+  });
+
+  it("validates no-visible categories against routing, generation, and delivery scalars", () => {
+    const cases = [
+      {
+        category: "gate-suppressed",
+        routing: [{ agentId: "codex-sol", outcome: "suppress", reason: "no_routing_signal" }],
+        kinds: [],
+        starts: 0,
+        completions: 0,
+        failures: 0,
+      },
+      {
+        category: "routing-unavailable",
+        routing: [{ agentId: "codex-sol", outcome: "unavailable", reason: "runtime_unavailable" }],
+        kinds: [],
+        starts: 0,
+        completions: 0,
+        failures: 0,
+      },
+      {
+        category: "generation-failed",
+        routing: [{ agentId: "codex-sol", outcome: "invoke", reason: "required_plain_address" }],
+        kinds: ["failed"],
+        starts: 1,
+        completions: 0,
+        failures: 1,
+      },
+      {
+        category: "completed-yielded",
+        routing: [{ agentId: "codex-sol", outcome: "invoke", reason: "required_plain_address" }],
+        kinds: ["yielded"],
+        starts: 1,
+        completions: 1,
+        failures: 0,
+      },
+      {
+        category: "completed-no-delivery",
+        routing: [{ agentId: "codex-sol", outcome: "invoke", reason: "required_plain_address" }],
+        kinds: ["completed-no-delivery-evidence"],
+        starts: 1,
+        completions: 1,
+        failures: 0,
+      },
+      {
+        category: "mixed-or-unresolved",
+        routing: [{ agentId: "codex-sol", outcome: "invoke", reason: "required_plain_address" }],
+        kinds: ["incomplete"],
+        starts: 1,
+        completions: 0,
+        failures: 0,
+      },
+    ] as const;
+    for (const scenario of cases) {
+      const attribution = {
+        schemaVersion: 1,
+        category: scenario.category,
+        generations: scenario.kinds.map((category, index) => ({ ordinal: index + 1, category })),
+      };
+      const scalar = trigger("jev-on", {
+        routing: scenario.routing,
+        confirmedDeliveredBursts: 0,
+        respondedTurns: 0,
+        generationStarts: scenario.starts,
+        generationCompletions: scenario.completions,
+        generationFailures: scenario.failures,
+        noVisibleAttributionV1: attribution,
+      });
+      const caseRow = { ...manifest().cases[0]!, triggers: [scalar] };
+      expect(parseScalarCanaryManifest(manifest({ cases: [caseRow] }))).toBeTruthy();
+      for (const invalid of [
+        { ...attribution, category: "gate-suppressed" },
+        { ...attribution, generations: [{ ordinal: 2, category: "yielded" }] },
+        { ...attribution, rawError: "private content" },
+      ]) {
+        if (JSON.stringify(invalid) === JSON.stringify(attribution)) continue;
+        expect(() =>
+          parseScalarCanaryManifest(
+            manifest({ cases: [{ ...caseRow, triggers: [{ ...scalar, noVisibleAttributionV1: invalid }] }] }),
+          ),
+        ).toThrow();
+      }
+      if (scenario.category === "completed-yielded") {
+        expect(() =>
+          parseScalarCanaryManifest(
+            manifest({
+              cases: [{ ...caseRow, triggers: [{ ...scalar, generationCompletions: 0 }] }],
+            }),
+          ),
+        ).toThrow();
+      }
+    }
+  });
   it("pairs Jev variants and keeps judge-only and human-rated naturalness separate", () => {
     const scalar = parseScalarCanaryManifest(manifest());
     const ratings = parsePrivateConversationRatings({

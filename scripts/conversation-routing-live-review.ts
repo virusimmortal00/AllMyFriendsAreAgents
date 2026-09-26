@@ -427,7 +427,7 @@ type ReviewPair = {
   pairId: string;
   factor: StudyFactor;
   agentCount: number;
-  ordinals: Array<{ ids: [string, string]; requiredNoVisible: boolean }>;
+  ordinals: Array<{ ids: [string, string]; requiredNoVisible: boolean; bothVisible: boolean }>;
 };
 type SelectedReviewPair = {
   pairId: string;
@@ -438,7 +438,7 @@ type SelectedReviewPair = {
 };
 export interface PrivateReviewSelectionReceipt {
   schemaVersion: 1;
-  kind: "calibration" | "flagged-inspection";
+  kind: "calibration" | "flagged-inspection" | "visible-enriched";
   manifestFingerprint: string;
   seed: string;
   selected: SelectedReviewPair[];
@@ -503,7 +503,15 @@ function studyPairs(manifest: unknown, locatorInput: unknown): ReviewPair[] {
           (Array.isArray(trigger.requiredAddressAgents) ? trigger.requiredAddressAgents.length : null);
         return typeof required === "number" && required > 0 && trigger.confirmedDeliveredBursts === 0;
       });
-      return { ids: [idA, idB] as [string, string], requiredNoVisible: missing };
+      return {
+        ids: [idA, idB] as [string, string],
+        requiredNoVisible: missing,
+        bothVisible:
+          typeof left.confirmedDeliveredBursts === "number" &&
+          left.confirmedDeliveredBursts > 0 &&
+          typeof right.confirmedDeliveredBursts === "number" &&
+          right.confirmedDeliveredBursts > 0,
+      };
     });
     pairs.push({ pairId, factor: record(a.study).factor as StudyFactor, agentCount: Number(a.agentCount), ordinals });
   }
@@ -649,11 +657,84 @@ export function selectFlaggedReviewQueue(manifest: unknown, locator: unknown, ca
   return { queue: selected.length ? blindSelected(selected, seed) : null, receipt };
 }
 
+/** Outcome-conditioned both-visible inspection, with its own denominator. */
+export function selectVisibleReviewQueue(manifest: unknown, locator: unknown, calibrationInput: unknown, seed: string) {
+  validSeed(seed);
+  const calibration = exact(calibrationInput, [
+    "schemaVersion",
+    "kind",
+    "manifestFingerprint",
+    "seed",
+    "selected",
+    "unavailableFactors",
+  ]);
+  if (
+    calibration.schemaVersion !== 1 ||
+    calibration.kind !== "calibration" ||
+    calibration.manifestFingerprint !== manifestFingerprint(manifest) ||
+    typeof calibration.seed !== "string"
+  )
+    throw new Error("Invalid private calibration receipt.");
+  const expected = selectCalibrationReviewQueue(manifest, locator, calibration.seed).receipt;
+  if (JSON.stringify(calibration) !== JSON.stringify(expected)) throw new Error("Invalid private calibration receipt.");
+  const covered = new Set(expected.selected.map((row) => `${row.pairId}:${row.triggerOrdinal}`));
+  const usedPairs = new Set(expected.selected.map((row) => row.pairId));
+  const pairs = studyPairs(manifest, locator);
+  const quota: Record<StudyFactor, number> = { "agent-prompt": 2, gate: 4, jev: 4 };
+  const selected: SelectedReviewPair[] = [];
+  for (const factor of ["agent-prompt", "gate", "jev"] as const) {
+    const options = pairs
+      .filter((pair) => pair.factor === factor)
+      .flatMap((pair) =>
+        pair.ordinals.flatMap((ordinal, triggerOrdinal) =>
+          ordinal.bothVisible && !covered.has(`${pair.pairId}:${triggerOrdinal}`)
+            ? [{ pair, triggerOrdinal, ids: ordinal.ids }]
+            : [],
+        ),
+      );
+    // A different ordinal from a calibration block is allowed, but prefer a new block.
+    options.sort(
+      (a, b) =>
+        Number(usedPairs.has(a.pair.pairId)) - Number(usedPairs.has(b.pair.pairId)) ||
+        seedHash(seed, `visible:${a.pair.pairId}:${a.triggerOrdinal}`).localeCompare(
+          seedHash(seed, `visible:${b.pair.pairId}:${b.triggerOrdinal}`),
+        ),
+    );
+    const distinct = new Set<string>();
+    for (const option of options) {
+      if (distinct.has(option.pair.pairId)) continue;
+      distinct.add(option.pair.pairId);
+      selected.push({
+        pairId: option.pair.pairId,
+        factor,
+        agentCount: option.pair.agentCount,
+        triggerOrdinal: option.triggerOrdinal,
+        reviewIds: option.ids,
+      });
+      if (distinct.size === quota[factor]) break;
+    }
+    if (distinct.size !== quota[factor]) throw new Error("Insufficient both-visible review pairs.");
+  }
+  const receipt: PrivateReviewSelectionReceipt = {
+    schemaVersion: 1,
+    kind: "visible-enriched",
+    manifestFingerprint: manifestFingerprint(manifest),
+    seed,
+    selected,
+    unavailableFactors: [],
+  };
+  return { queue: blindSelected(selected, seed), receipt };
+}
+
 const STYLE = `:root{font:16px system-ui,sans-serif;color:#17212b;background:#f4f7fa}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:1rem 1rem 4rem}header{position:sticky;top:0;background:#f4f7fa;padding:.75rem 0;z-index:1;border-bottom:1px solid #cad4de}h1{font-size:1.45rem;margin:.25rem 0}button,.file-button{border:1px solid #45657e;background:#fff;color:#123;padding:.55rem .75rem;border-radius:.4rem;cursor:pointer;font:inherit}button:focus-visible,input:focus-visible,.file-button:focus-within{outline:3px solid #2369b4}.toolbar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.toolbar output{margin-left:auto}section,.card,fieldset{background:white;border:1px solid #c7d2dc;border-radius:.5rem;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:.4rem 0}.message{border-left:3px solid #8aa4bc;padding:.4rem .75rem;margin:.7rem 0;background:#f8fafc}.message strong{display:block}fieldset legend{font-weight:700;padding:0 .3rem}.anchors{color:#40576b;font-size:.92rem}.choices{display:flex;flex-wrap:wrap;gap:.8rem;margin-top:.65rem}.choices label{display:flex;align-items:center;gap:.2rem;min-height:2rem}#status{min-height:1.5rem;color:#345}#importFile{position:absolute;opacity:0;width:1px;height:1px}@media(max-width:550px){main{padding:.5rem}.toolbar output{margin-left:0;width:100%}}`;
 const SCRIPT = `(function(){"use strict";const data=__DATA__;const fingerprint=__FINGERPRINT__;const axes=__AXES__;const labels=__LABELS__;const anchors=__ANCHORS__;const choices=["1","2","3","4","5","NA","Clear"];let index=0;const ratings={};const byId=new Set(data.map(x=>x.reviewId));const $=id=>document.getElementById(id);function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}function el(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node}function complete(id){return axes.every(axis=>ratings[id]?.axes?.[axis])}function render(){const item=data[index];$("counter").textContent=(index+1)+" / "+data.length;$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete";$("reviewId").textContent=item.reviewId;$("kind").textContent=item.scenarioKind;$("human").textContent=item.qualityContext.originalHumanAlias;$("roster").textContent=item.qualityContext.roster.map(x=>x.conversationalName).join(", ");$("expected").textContent=item.expectedDirectAgents.map(id=>item.qualityContext.roster.find(x=>x.agentId===id)?.conversationalName||id).join(", ")||"None stated";$("prompt").textContent=item.prompt;const messages=$("messages");clear(messages);let latestHuman=-1;item.messages.forEach((message,i)=>{if(message.kind==="human")latestHuman=i});const currentReplies=item.messages.slice(latestHuman+1).filter(message=>message.kind==="agent").length;$("replyStatus").textContent=currentReplies===0?"No visible agent reply after the latest human prompt.":currentReplies+" visible agent reply"+(currentReplies===1?"":"ies")+" after the latest human prompt.";for(const message of item.messages){const box=el("div","message");box.append(el("strong","",message.speaker+" · "+message.kind),el("pre","",message.text));messages.append(box)}const scores=$("scores");clear(scores);for(const axis of axes){const group=el("fieldset","");group.dataset.axis=axis;group.append(el("legend","",labels[axis]),el("div","anchors",anchors[axis]));const row=el("div","choices");for(const option of choices){const label=el("label","");const input=document.createElement("input");input.type="radio";input.name=axis;input.value=option;input.checked=(option==="Clear"&&!ratings[item.reviewId]?.axes?.[axis])||(option==="NA"&&ratings[item.reviewId]?.axes?.[axis]?.status==="not_assessable")||(ratings[item.reviewId]?.axes?.[axis]?.status==="rated"&&String(ratings[item.reviewId].axes[axis].score)===option);input.addEventListener("change",()=>{const entry=ratings[item.reviewId]??={reviewId:item.reviewId,axes:{}};if(option==="Clear")delete entry.axes[axis];else entry.axes[axis]=option==="NA"?{status:"not_assessable"}:{status:"rated",score:Number(option)};if(!Object.keys(entry.axes).length)delete ratings[item.reviewId];$("progress").textContent=data.filter(x=>complete(x.reviewId)).length+" complete"});label.append(input,document.createTextNode(option));row.append(label)}group.append(row);scores.append(group)}$("previous").disabled=index===0;$("next").disabled=index===data.length-1}function validate(input){if(!input||input.schemaVersion!==1||input.kind!=="blinded-quality-ratings"||input.packFingerprint!==fingerprint||Object.keys(input).some(k=>!["schemaVersion","kind","packFingerprint","ratings"].includes(k))||!Array.isArray(input.ratings)||input.ratings.length>data.length)throw Error();const seen=new Set();const parsed={};for(const row of input.ratings){if(!row||typeof row.reviewId!=="string"||!byId.has(row.reviewId)||seen.has(row.reviewId)||!row.axes||typeof row.axes!=="object"||Array.isArray(row.axes)||Object.keys(row).some(k=>!["reviewId","axes"].includes(k)))throw Error();seen.add(row.reviewId);const entry={reviewId:row.reviewId,axes:{}};for(const axis of Object.keys(row.axes)){if(!axes.includes(axis))throw Error();const rating=row.axes[axis];if(!rating||typeof rating!=="object"||Array.isArray(rating))throw Error();if(rating.status==="rated"&&Number.isInteger(rating.score)&&rating.score>=1&&rating.score<=5&&Object.keys(rating).length===2)entry.axes[axis]={status:"rated",score:rating.score};else if(rating.status==="not_assessable"&&Object.keys(rating).length===1)entry.axes[axis]={status:"not_assessable"};else throw Error()}if(Object.keys(entry.axes).length)parsed[row.reviewId]=entry}return parsed}$("previous").onclick=()=>{index=Math.max(0,index-1);render()};$("next").onclick=()=>{index=Math.min(data.length-1,index+1);render()};$("export").onclick=()=>{const payload={schemaVersion:1,kind:"blinded-quality-ratings",packFingerprint:fingerprint,ratings:data.flatMap(x=>ratings[x.reviewId]?[ratings[x.reviewId]]:[])};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}));const anchor=document.createElement("a");anchor.href=url;anchor.download="blinded-ratings.json";anchor.click();setTimeout(()=>URL.revokeObjectURL(url),3000);$("status").textContent="Private ratings exported. Save outside the repository."};$("importFile").onchange=async event=>{const file=event.target.files?.[0];if(!file)return;try{if(file.size>128000)throw Error();const parsed=validate(JSON.parse(await file.text()));for(const key of Object.keys(ratings))delete ratings[key];Object.assign(ratings,parsed);$("status").textContent="Private partial ratings imported.";render()}catch{$("status").textContent="Invalid ratings file; current ratings were retained."}event.target.value=""};document.addEventListener("keydown",event=>{if(event.altKey&&event.key==="ArrowRight"){event.preventDefault();$("next").click()}else if(event.altKey&&event.key==="ArrowLeft"){event.preventDefault();$("previous").click()}else if(!event.altKey&&!event.metaKey&&!event.ctrlKey&&event.target.closest?.("[data-axis]")){const option=/^[1-5]$/.test(event.key)?event.key:event.key.toLowerCase()==="n"?"NA":null;if(option){event.preventDefault();const input=event.target.closest("[data-axis]").querySelector('input[value="'+option+'"]');input?.click()}}});render()})();`;
 
 /** Pure HTML renderer. No run IDs, policy metadata, cost, or judge scores enter the page. */
-export function buildOfflineReviewHtml(queueInput: unknown, bundlesInput: readonly unknown[]): string {
+export function buildOfflineReviewHtml(
+  queueInput: unknown,
+  bundlesInput: readonly unknown[],
+  reviewSet: "calibration" | "flagged" | "visible-enriched" | null = null,
+): string {
   const queue = parseReviewQueue(queueInput);
   if (bundlesInput.length !== queue.reviewIds.length) throw new Error("Invalid private review input.");
   const bundles = queue.reviewIds.map((id, index) => parseOfflineReviewBundle(bundlesInput[index], id));
@@ -667,7 +748,15 @@ export function buildOfflineReviewHtml(queueInput: unknown, bundlesInput: readon
     .replace("__LABELS__", JSON.stringify(AXIS_LABELS))
     .replace("__ANCHORS__", JSON.stringify(AXIS_ANCHORS));
   const hash = (value: string) => createHash("sha256").update(value).digest("base64");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private blinded conversation review</title><style>${STYLE}</style></head><body><main><header><h1>Blinded conversation review</h1><div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>Four independent ratings</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
+  const heading =
+    reviewSet === "visible-enriched"
+      ? "Blinded conversation review · visible-response enriched inspection"
+      : reviewSet === "flagged"
+        ? "Blinded conversation review · flagged inspection"
+        : reviewSet === "calibration"
+          ? "Blinded conversation review · calibration sample"
+          : "Blinded conversation review";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(STYLE)}'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; form-action 'none'"><title>Private ${heading}</title><style>${STYLE}</style></head><body><main><header><h1>${heading}</h1><div class="toolbar"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="export" type="button">Export partial ratings</button><label class="file-button">Import ratings<input id="importFile" type="file" accept="application/json,.json"></label><output id="counter"></output><output id="progress"></output></div><div id="status" role="status" aria-live="polite"></div></header><section><strong id="reviewId"></strong><p>Conversation: <span id="kind"></span></p><p>Original human: <span id="human"></span></p><p>Roster: <span id="roster"></span></p><p>Expected direct agents: <span id="expected"></span></p><h2>Latest prompt</h2><pre id="prompt"></pre><h2>Visible messages</h2><p id="replyStatus"></p><div id="messages"></div></section><section><h2>Four independent ratings</h2><p>Choose 1–5, NA if not assessable, or Clear to leave missing. Tab to an axis and press 1–5 or N; Alt+arrows move between reviews.</p><div id="scores"></div></section></main><script>${script}</script></body></html>`;
 }
 
 async function readBounded(file: string): Promise<unknown> {
@@ -819,12 +908,19 @@ async function main() {
           ? ["--manifest", "--map", "--seed", "--output", "--receipt"]
           : command === "select-flagged"
             ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
-            : command === "pack"
-              ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
-              : command === "convert"
-                ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
-                : [];
-  if (!required.length || flags.size !== required.length || required.some((key) => !flags.has(key)))
+            : command === "select-visible"
+              ? ["--manifest", "--map", "--seed", "--calibration-receipt", "--output", "--receipt"]
+              : command === "pack"
+                ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--output"]
+                : command === "convert"
+                  ? ["--manifest", "--queue", "--map", "--blinded-dir", "--source-dir", "--ratings", "--output"]
+                  : [];
+  if (
+    !required.length ||
+    (flags.size !== required.length &&
+      !(command === "pack" && flags.size === required.length + 1 && flags.has("--review-set"))) ||
+    required.some((key) => !flags.has(key))
+  )
     throw new Error("Invalid review command.");
   if (
     [...flags].some(
@@ -866,12 +962,14 @@ async function main() {
     process.stdout.write("Private review artifact created.\n");
     return;
   }
-  if (command === "select-calibration" || command === "select-flagged") {
+  if (command === "select-calibration" || command === "select-flagged" || command === "select-visible") {
     const locator = await readBounded(one("--map"));
     const result =
       command === "select-calibration"
         ? selectCalibrationReviewQueue(manifest, locator, one("--seed"))
-        : selectFlaggedReviewQueue(manifest, locator, await readBounded(one("--calibration-receipt")), one("--seed"));
+        : command === "select-flagged"
+          ? selectFlaggedReviewQueue(manifest, locator, await readBounded(one("--calibration-receipt")), one("--seed"))
+          : selectVisibleReviewQueue(manifest, locator, await readBounded(one("--calibration-receipt")), one("--seed"));
     if (result.queue) await privateWrite(one("--output"), `${JSON.stringify(result.queue, null, 2)}\n`);
     await privateWrite(one("--receipt"), `${JSON.stringify(result.receipt, null, 2)}\n`);
     process.stdout.write(
@@ -892,7 +990,17 @@ async function main() {
     );
     await privateWrite(one("--output"), `${JSON.stringify(converted, null, 2)}\n`);
   } else {
-    await privateWrite(one("--output"), buildOfflineReviewHtml(queue, bundles));
+    const reviewSet = flags.get("--review-set")?.[0];
+    if (reviewSet !== undefined && !["calibration", "flagged", "visible-enriched"].includes(reviewSet))
+      throw new Error("Invalid review set.");
+    await privateWrite(
+      one("--output"),
+      buildOfflineReviewHtml(
+        queue,
+        bundles,
+        (reviewSet ?? null) as "calibration" | "flagged" | "visible-enriched" | null,
+      ),
+    );
   }
   process.stdout.write("Private review artifact created.\n");
 }
