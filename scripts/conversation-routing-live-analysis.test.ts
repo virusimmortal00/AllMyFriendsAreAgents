@@ -503,6 +503,80 @@ describe("provider-free conversation canary analysis", () => {
 });
 
 describe("versioned quality study analysis", () => {
+  it("preserves legacy studies and counts closed availability recovery only on completed cases", () => {
+    const legacy = analyzeQualityStudy(parseScalarCanaryManifest(studyFixture()));
+    expect(legacy.availability.overall).toMatchObject({
+      completedCases: 2,
+      checksRecorded: 0,
+      legacyMissingChecks: 2,
+      refreshAttempted: 0,
+    });
+    const fixture = studyFixture();
+    Object.assign(fixture.cases[0]!, {
+      availabilityCheck: {
+        initialDiscoveryStatus: "error",
+        initialUnavailableReasons: ["runtime_unavailable"],
+        refreshAttempted: true,
+        finalDiscoveryStatus: "available",
+        finalUnavailableReasons: [],
+        recovered: true,
+      },
+    });
+    Object.assign(fixture.cases[1]!, {
+      availabilityCheck: {
+        initialDiscoveryStatus: "available",
+        initialUnavailableReasons: [],
+        refreshAttempted: false,
+        finalDiscoveryStatus: "available",
+        finalUnavailableReasons: [],
+        recovered: false,
+      },
+    });
+    const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
+    expect(report.availability.overall).toMatchObject({
+      completedCases: 2,
+      checksRecorded: 2,
+      legacyMissingChecks: 0,
+      initiallyUnavailable: 1,
+      refreshAttempted: 1,
+      recovered: 1,
+      finallyUnavailable: 0,
+      initialDiscoveryStatuses: { error: 1, available: 1 },
+    });
+    expect(report.availability.byFactorAndArm["jev:a"]).toMatchObject({ recovered: 1, checksRecorded: 1 });
+    expect(report.availability.byFactorAndArm["jev:b"]).toMatchObject({ recovered: 0, checksRecorded: 1 });
+  });
+
+  it("rejects malformed or contradictory case-level availability evidence", () => {
+    const fixture = studyFixture();
+    const valid = {
+      initialDiscoveryStatus: "error",
+      initialUnavailableReasons: ["runtime_unavailable"],
+      refreshAttempted: true,
+      finalDiscoveryStatus: "available",
+      finalUnavailableReasons: [],
+      recovered: true,
+    };
+    Object.assign(fixture.cases[0]!, { availabilityCheck: valid });
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.availabilityCheck).toMatchObject(valid);
+    for (const invalid of [
+      { ...valid, initialDiscoveryStatus: "mystery" },
+      { ...valid, finalDiscoveryStatus: "mystery" },
+      { ...valid, finalDiscoveryStatus: "error", recovered: false },
+      { ...valid, initialUnavailableReasons: ["runtime_unavailable", "runtime_unavailable"] },
+      { ...valid, finalUnavailableReasons: ["variant_removed", "model_removed"] },
+      { ...valid, finalUnavailableReasons: ["model_removed"], recovered: false },
+      { ...valid, initialUnavailableReasons: ["provider_removed"] },
+      { ...valid, finalUnavailableReasons: ["secret-text"] },
+      { ...valid, recovered: false },
+      { ...valid, refreshAttempted: false },
+      { ...valid, refreshAttempted: false, recovered: false },
+      { ...valid, rawDiagnostic: "never accepted" },
+    ]) {
+      Object.assign(fixture.cases[0]!, { availabilityCheck: invalid });
+      expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    }
+  });
   it("weights correlated trigger turns once per room pair and keeps missing human coverage", () => {
     const fixture = studyFixture();
     const report = analyzeQualityStudy(parseScalarCanaryManifest(fixture));
@@ -661,6 +735,56 @@ describe("versioned quality study analysis", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("accepts the expanded exchange arc across six final batches but rejects unknown arcs", () => {
+    const fixture = studyFixture();
+    const batches = Array.from({ length: 6 }, (_, index) => {
+      const cases = structuredClone(fixture.cases);
+      for (const row of cases) {
+        row.scenarioId = `batch-${index}-${row.scenarioId}`;
+        row.study.arcProfileId = "agent-exchange-v2";
+        row.study.pairId = `pair-${index}`;
+        row.study.blockId = `block-${index}`;
+        row.study.caseId = `batch-${index}-${row.study.caseId}`;
+        for (const turn of row.triggers) {
+          turn.scenarioId = `batch-${index}-${turn.scenarioId}`;
+          turn.runId = `batch-${index}-${turn.runId}`;
+        }
+        for (const judgment of row.qualityJudge) {
+          judgment.scenarioId = `batch-${index}-${judgment.scenarioId}`;
+          judgment.runId = `batch-${index}-${judgment.runId}`;
+          for (const outcome of judgment.outcomes) {
+            outcome.result.scenarioId = judgment.scenarioId;
+            outcome.result.runId = judgment.runId;
+          }
+        }
+      }
+      return {
+        ...fixture,
+        cases,
+        studyBatch: {
+          schemaVersion: 1,
+          planCaseCount: 12,
+          planPairCount: 6,
+          batchIndex: index,
+          batchCount: 6,
+          pairsPerBatch: 1,
+          pairCount: 1,
+          pairIds: [`pair-${index}`],
+        },
+      };
+    });
+    const parsed = batches.map(parseScalarCanaryManifest);
+    expect(mergeScalarCanaryManifests(parsed).cases).toHaveLength(12);
+    Object.assign(batches[1]!.cases[0]!.triggers[0]!.classifier, {
+      resolvedModelId: "openrouter/example/other-snapshot",
+    });
+    expect(() => analyzeQualityStudy(mergeScalarCanaryManifests(batches.map(parseScalarCanaryManifest)))).toThrow(
+      /Mixed provider-resolved Jev snapshot IDs: openrouter\/example\/jev, openrouter\/example\/other-snapshot/,
+    );
+    batches[0]!.cases[0]!.study.arcProfileId = "agent-exchange-v3";
+    expect(() => parseScalarCanaryManifest(batches[0])).toThrow(/Invalid scalar canary manifest/);
+  });
   it("keeps four independent axis denominators and pairs only matching trigger ordinals", () => {
     const parsed = parseScalarCanaryManifest(studyFixture());
     const human = parsePrivateQualityRatings({
@@ -745,6 +869,47 @@ describe("versioned quality study analysis", () => {
       unresolvedCostAxes: 5,
     });
     expect(report.resources.judgeReportedAxisCostUsd.reportedTotalUsd).toBeCloseTo(0.011);
+  });
+
+  it("marks a contradictory judge axis invalid without scoring it or erasing its receipt", () => {
+    const fixture = studyFixture();
+    const quiet = fixture.cases[0]!.triggers[0]!;
+    quiet.requiredAddressAgents = [];
+    quiet.confirmedDeliveredBursts = 0;
+    quiet.respondedTurns = 0;
+    const axis = fixture.cases[0]!.qualityJudge[0]!.outcomes[1]!;
+    axis.result.score = 1;
+    axis.result.reasonCode = "required_reply_missing";
+    axis.result.details = { direction: "too_short" };
+    axis.result.judgeUsage = { inputTokens: null, outputTokens: null, reportedCostUsd: null } as never;
+    for (const index of [0, 2, 3]) {
+      const other = fixture.cases[0]!.qualityJudge[0]!.outcomes[index]!;
+      other.result.status = "not_assessable";
+      other.result.score = null;
+      other.result.reasonCode = "no_visible_reply";
+      other.result.details =
+        index === 0
+          ? { cueFit: null, textTurnRhythm: null }
+          : index === 2
+            ? { observedAudience: null, audienceFit: null }
+            : { valueMode: null };
+      other.result.judgeUsage = { inputTokens: null, outputTokens: null, reportedCostUsd: null } as never;
+    }
+    const parsed = parseScalarCanaryManifest(fixture);
+    expect(parsed.cases[0]!.qualityJudge[0]!.outcomes[1]).toEqual({
+      axis: "length_fit",
+      status: "invalid",
+      category: "semantic_conflict",
+    });
+    const report = analyzeQualityStudy(parsed);
+    expect(report.axes.length_fit!.judge).toMatchObject({ rated: 3, invalid: 1 });
+    expect(report.resources.judgeReportedAxisCostUsd).toMatchObject({ totalAxes: 16, unresolvedCostAxes: 1 });
+    expect(report.blockLevelV1.byFactor.jev!.contrasts[0]!.paired.axes.length_fit!.judgeArmBMinusA).toMatchObject({
+      pairedBlocks: 0,
+      missingBlocks: 1,
+    });
+    axis.result.reasonCode = "unknown";
+    expect(() => parseScalarCanaryManifest(fixture)).toThrow(/Invalid scalar canary manifest/);
   });
 
   it("keeps failed study Jev consultation as coverage but excludes its paired effect", () => {
@@ -845,17 +1010,17 @@ describe("versioned quality study analysis", () => {
     result.details = { direction: "appropriate" };
     expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("completed");
     quiet.requiredAddressAgents = ["codex-sol"];
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     quiet.requiredAddressAgents = [];
     quiet.confirmedDeliveredBursts = 1;
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     quiet.confirmedDeliveredBursts = 0;
     result.details = { direction: "too_long" };
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[1]!.status).toBe("invalid");
     result.details = { direction: "appropriate" };
     result.reasonCode = "observable_exchange";
     fixture.cases[0]!.qualityJudge[0]!.outcomes[0]!.result.reasonCode = "silence_fit";
-    expect(() => parseScalarCanaryManifest(fixture)).toThrow();
+    expect(parseScalarCanaryManifest(fixture).cases[0]!.qualityJudge[0]!.outcomes[0]!.status).toBe("invalid");
   });
 
   it("counts deterministic no-call axes separately from missing reported judge cost", () => {

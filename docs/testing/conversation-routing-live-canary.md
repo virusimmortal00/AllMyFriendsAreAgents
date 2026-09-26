@@ -85,6 +85,20 @@ group on every exit, deletes temporary state, and verifies the fixture project
 did not change. Raw server logs and provider output stay inside that root and
 are discarded.
 
+Each case records a closed `availabilityCheck` before sending a human message:
+the initial and final model-discovery statuses, sorted reasons for selected
+unavailable participants, whether a refresh was attempted, and whether it
+recovered. A fresh server may cache a transient discovery `error` for 30
+seconds. Only when that is the initial status and every selected unavailable
+participant has `runtime_unavailable` does the harness attempt one authenticated
+forced discovery refresh with the room member's CSRF token. It then rechecks
+the roster and proceeds only if every selected participant is available.
+Authentication, configuration, runtime-version, and model-selection failures
+are never retried. The refresh request has a separate 30-second deadline; the
+case and whole-study watchdogs still apply. Failed cases may carry the same
+closed check in their scalar failure record. No model catalog, diagnostic text,
+or token is included.
+
 The scalar manifest records source commit, scenario catalog digest, OpenCode
 version, requested actor model ID and selected policy/configuration, run IDs, required-address
 decisions, Jev outcome and duration, queue/first-visible timing, turn and
@@ -153,7 +167,9 @@ before every case is scheduled; the dry-run rejects such a plan. Its seed
 shuffles block order and balances AB/BA arm order; it does **not** seed
 OpenCode, the model, or product scheduling, whose
 rank and follow-up draws depend on fresh server message IDs. A fresh room is
-used for every arm. Repeated blocks need distinct replicate IDs. The private
+used for every arm. Study plans reject `--require-visible` so optional quiet
+outcomes remain in the matched sample. Repeated blocks need distinct replicate
+IDs. The private
 prompt profile is one of the checked-in fixture values in
 `scripts/conversation-routing-live-study.ts`; the plan accepts no free-text
 prompt. The Jev `lean-v1` profile omits an unused question. The experimental

@@ -1,11 +1,15 @@
 import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  type AvailabilityCheckV1,
   buildPrivateReviewPayload,
+  checkIsolatedRosterAvailability,
   matchesPinnedJevResolution,
   parseLiveCanaryOptions,
   projectCaseFailedEvent,
@@ -27,8 +31,133 @@ const base = [
   "/fixture/bws-run",
 ];
 const execute = promisify(execFile);
+const fixtureCsrf = "11111111-2222-4333-8444-555555555555";
+
+async function withAvailabilityServer(
+  input: {
+    initialStatus: string;
+    initialReason: string;
+    refreshedStatus?: string;
+    refreshedReason?: string;
+    refreshHttpStatus?: number;
+  },
+  check: (base: string, requests: Array<{ route: string; method: string; authorized: boolean }>) => Promise<void>,
+) {
+  const requests: Array<{ route: string; method: string; authorized: boolean }> = [];
+  let refreshed = false;
+  const server = createServer((request, response) => {
+    const route = request.url ?? "";
+    const authorized =
+      request.headers.cookie === "fixture-session=known" && request.headers["x-amfaa-csrf"] === fixtureCsrf;
+    requests.push({ route, method: request.method ?? "", authorized });
+    response.setHeader("content-type", "application/json");
+    if (route === "/api/model-discovery/refresh") {
+      response.statusCode = authorized ? (input.refreshHttpStatus ?? 200) : 403;
+      if (response.statusCode === 200) refreshed = true;
+      response.end(JSON.stringify({ status: refreshed ? input.refreshedStatus : input.initialStatus }));
+      return;
+    }
+    if (route !== "/api/roster") {
+      response.statusCode = 404;
+      response.end("{}");
+      return;
+    }
+    const status = refreshed ? input.refreshedStatus : input.initialStatus;
+    const reason = refreshed ? input.refreshedReason : input.initialReason;
+    response.end(
+      JSON.stringify({
+        modelDiscovery: { status },
+        participantAvailability: {
+          "codex-sol": reason ? { available: false, reason } : { available: true },
+        },
+        access: { kind: "room-member", csrfToken: fixtureCsrf },
+      }),
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Fixture server port is unavailable.");
+    await check(`http://127.0.0.1:${address.port}`, requests);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
 
 describe("routing canary selection", () => {
+  it("refreshes one transient discovery error with the room-member CSRF token before a prompt", async () => {
+    await withAvailabilityServer(
+      { initialStatus: "error", initialReason: "runtime_unavailable", refreshedStatus: "available" },
+      async (base, requests) => {
+        const result = await checkIsolatedRosterAvailability(base, "fixture-session=known", ["codex-sol"]);
+        expect(result).toEqual({
+          available: true,
+          check: {
+            initialDiscoveryStatus: "error",
+            initialUnavailableReasons: ["runtime_unavailable"],
+            refreshAttempted: true,
+            finalDiscoveryStatus: "available",
+            finalUnavailableReasons: [],
+            recovered: true,
+          },
+        });
+        expect(requests).toEqual([
+          { route: "/api/roster", method: "GET", authorized: false },
+          { route: "/api/model-discovery/refresh", method: "POST", authorized: true },
+          { route: "/api/roster", method: "GET", authorized: false },
+        ]);
+      },
+    );
+  });
+
+  it("fails closed when the authenticated refresh is denied", async () => {
+    await withAvailabilityServer(
+      { initialStatus: "error", initialReason: "runtime_unavailable", refreshHttpStatus: 403 },
+      async (base, requests) => {
+        const result = await checkIsolatedRosterAvailability(base, "fixture-session=known", ["codex-sol"]);
+        expect(result.available).toBe(false);
+        expect(result.check).toMatchObject({ refreshAttempted: true, recovered: false, finalDiscoveryStatus: "error" });
+        expect(requests.map(({ route }) => route)).toEqual(["/api/roster", "/api/model-discovery/refresh"]);
+        expect(requests[1]?.authorized).toBe(true);
+      },
+    );
+  });
+
+  it("does not proceed when the single refresh leaves discovery unavailable", async () => {
+    await withAvailabilityServer(
+      {
+        initialStatus: "error",
+        initialReason: "runtime_unavailable",
+        refreshedStatus: "error",
+        refreshedReason: "runtime_unavailable",
+      },
+      async (base, requests) => {
+        const result = await checkIsolatedRosterAvailability(base, "fixture-session=known", ["codex-sol"]);
+        expect(result.available).toBe(false);
+        expect(result.check).toMatchObject({ refreshAttempted: true, finalDiscoveryStatus: "error", recovered: false });
+        expect(requests.map(({ route }) => route)).toEqual([
+          "/api/roster",
+          "/api/model-discovery/refresh",
+          "/api/roster",
+        ]);
+      },
+    );
+  });
+
+  it.each([
+    { status: "authentication_required", reason: "runtime_unavailable" },
+    { status: "configuration_required", reason: "runtime_unavailable" },
+    { status: "runtime_incompatible", reason: "runtime_unavailable" },
+    { status: "available", reason: "model_removed" },
+  ])("never refreshes $status/$reason exclusions", async ({ status, reason }) => {
+    await withAvailabilityServer({ initialStatus: status, initialReason: reason }, async (base, requests) => {
+      const result = await checkIsolatedRosterAvailability(base, "fixture-session=known", ["codex-sol"]);
+      expect(result.available).toBe(false);
+      expect(result.check.refreshAttempted).toBe(false);
+      expect(requests.map(({ route }) => route)).toEqual(["/api/roster"]);
+    });
+  });
   it("selects six bounded whole-pair batches from the 72-case plan", async () => {
     const study = parseStudyPlan(
       JSON.parse(await readFile("docs/testing/conversation-routing-study-large-v1.json", "utf8")),
@@ -243,6 +372,9 @@ describe("routing canary selection", () => {
     expect(options.maxJudgeCalls).toBe(104);
     expect(options.planningAllowanceMs).toBe(6_850_000);
     expect(options.totalTimeoutMs).toBeGreaterThan(options.planningAllowanceMs);
+    expect(() => parseLiveCanaryOptions([...args, "--require-visible"], {}, study)).toThrow(
+      "Study plans must retain quiet outcomes",
+    );
     const tooLow = [...args];
     tooLow[tooLow.indexOf("--max-generations") + 1] = "8";
     expect(() => parseLiveCanaryOptions(tooLow, {}, study)).toThrow("roster-by-trigger planning minimum");
@@ -398,6 +530,15 @@ describe("routing canary selection", () => {
       openCodeTotalCoverage: "reported",
     });
     expect(JSON.stringify(projected)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
+    const poisonedAvailabilityCheck = {
+      initialDiscoveryStatus: "error",
+      initialUnavailableReasons: ["runtime_unavailable"],
+      refreshAttempted: true,
+      finalDiscoveryStatus: "error",
+      finalUnavailableReasons: ["runtime_unavailable"],
+      recovered: false,
+      diagnostic: "private diagnostic must not be copied",
+    } as AvailabilityCheckV1 & { diagnostic: string };
     const failed = projectCaseFailedEvent({
       scenarioId: collected.scenarioId,
       variant: collected.variant,
@@ -406,13 +547,17 @@ describe("routing canary selection", () => {
       completedCases: 0,
       triggers: [collected],
       judgeCategory: new JudgeFailure("judgment-schema").category,
+      availabilityCheck: poisonedAvailabilityCheck,
     });
     expect(failed).toMatchObject({
       event: "case-failed",
       judgeCategory: "judgment-schema",
+      availabilityCheck: { refreshAttempted: true, finalDiscoveryStatus: "error", recovered: false },
       observedTriggers: [projected],
     });
-    expect(JSON.stringify(failed)).not.toMatch(/private fictional response|do-not-copy|rawText|credential/);
+    expect(JSON.stringify(failed)).not.toMatch(
+      /private fictional response|do-not-copy|rawText|credential|private diagnostic|diagnostic/,
+    );
   });
   it("makes six matched Jev-on/off pairs in twelve isolated cases", () => {
     const scenarios = pilotScenarios();

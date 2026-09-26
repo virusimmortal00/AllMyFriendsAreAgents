@@ -155,15 +155,21 @@ reported cost, judge reported cost, OpenCode-observed total tokens, and first
 visible latency each have their own paired denominator. A missing value or
 unrated axis reduces only its corresponding denominator. There is no pooled
 quality or resource effect across different factors.
-Each axis has its own rated, not-applicable, not-assessable, missing, and failed
-denominators. Human-versus-judge agreement reports status agreement across
-joint reviews and exact/within-one score agreement only for jointly rated
+Each axis has its own rated, not-applicable, not-assessable, missing, failed,
+and semantically invalid denominators. A structurally valid judge receipt that
+contradicts the observed turn remains counted as invalid, but its score and cost
+are excluded from valid-score and complete-cost coverage. Unknown schema values
+still reject the manifest. Human-versus-judge agreement reports status
+agreement across joint reviews and exact/within-one score agreement only for jointly rated
 axes. Arm B minus arm A differences use matching plan, source, model settings,
 roster order, factor profiles, and trigger ordinal. Known resolved Jev model
 mismatches or missing resolved identity in both-consulted pairs exclude those
 trigger comparisons. Failed, skipped, or absent Jev-on consultation remains in the
 completion/coverage counts and its trigger pair is excluded from arm-difference
-estimates. Judge score pairs also require matching resolved judge
+estimates. Across the full study, two or more distinct provider-resolved Jev
+snapshot IDs stop pooled analysis and the error lists those IDs. Older manifests
+without resolved IDs remain readable; an unknown ID is not inferred from the
+requested model. Judge score pairs also require matching resolved judge
 models. Actor provider-resolved identity is unavailable and never inferred.
 The report has no composite score or causal claim. Actor estimated cost,
 Jev-reported cost, judge-reported cost, OpenCode-observed tokens, and measured
@@ -194,6 +200,20 @@ an interrupted batch is not a final manifest. The merger requires all batch
 indices, whole A/B pairs, unique pair and run IDs, and matching plan, source,
 runtime, model, limits, and profile-digest provenance. It rejects partial,
 overlapping, or drifted sets before reporting a study result.
+
+New final cases may carry `availabilityCheck`, a closed scalar record of the
+initial and final OpenCode discovery status, selected unavailable-reason enums,
+and whether one forced catalog refresh was attempted and recovered readiness.
+The parser rejects unknown statuses, duplicate or unsorted reason arrays,
+contradictory refresh/recovery flags, and extra fields. Older manifests remain
+valid with that record absent. A completed case must have no final unavailable
+reasons; unresolved checks belong only in failed-case progress.
+`availability.overall` and
+`availability.byFactorAndArm` count recorded, legacy-missing, initially
+unavailable, refreshed, recovered, and finally unavailable **completed cases**.
+An interrupted case appears only in private progress, not in a final paired
+manifest; these counts never infer its outcome or turn it into a completed pair.
+No catalog text, diagnostic string, or credential enters the analysis report.
 
 ```sh
 umask 077

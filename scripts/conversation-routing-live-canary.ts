@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PreflightStore } from "../server/preflight-store.js";
 import { RoomStore } from "../server/room-store.js";
+import type { DiscoveryStatus, ModelAvailability } from "../shared/model-discovery.js";
 import {
   collectLiveScenarioEvidence,
   type LiveScenarioResult,
@@ -219,6 +220,8 @@ export function parseLiveCanaryOptions(
     Number(flags.has("--pilot")) + Number(values.has("--case")) + Number(values.has("--study-plan"));
   if (selectedInputs !== 1 || Boolean(studyPlan) !== values.has("--study-plan"))
     throw new Error("Choose one pilot, case list, or validated study plan.");
+  if (studyPlan && flags.has("--require-visible"))
+    throw new Error("Study plans must retain quiet outcomes; --require-visible is not allowed.");
   const allowWideMatrix = flags.has("--allow-wide-matrix");
   const allowLargeStudy = flags.has("--allow-large-study");
   if (allowLargeStudy && !studyPlan) throw new Error("Large-study opt-in requires a validated study plan.");
@@ -424,12 +427,18 @@ async function requestJson(
   route: string,
   cookie: string | undefined,
   body?: unknown,
+  csrfToken?: string,
+  timeoutMs = 10_000,
 ): Promise<{ status: number; json: Record<string, unknown>; cookie?: string }> {
   const response = await fetch(base + route, {
     method: body === undefined ? "GET" : "POST",
-    headers: { ...(cookie ? { cookie } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: {
+      ...(cookie ? { cookie } : {}),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...(csrfToken ? { "x-amfaa-csrf": csrfToken } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const json = (await response.json()) as Record<string, unknown>;
   return {
@@ -437,6 +446,140 @@ async function requestJson(
     json,
     ...(response.headers.get("set-cookie") ? { cookie: response.headers.get("set-cookie")!.split(";")[0] } : {}),
   };
+}
+
+const DISCOVERY_STATUSES: readonly DiscoveryStatus[] = [
+  "available",
+  "cli_missing",
+  "authentication_required",
+  "configuration_required",
+  "discovery_unsupported",
+  "runtime_incompatible",
+  "error",
+];
+type AvailabilityReason = NonNullable<ModelAvailability["reason"]>;
+const AVAILABILITY_REASONS: readonly AvailabilityReason[] = [
+  "runtime_unavailable",
+  "model_removed",
+  "provider_removed",
+  "variant_removed",
+  "reasoning_effort_removed",
+  "variant_conflict",
+  "selection_unpinnable",
+];
+
+export interface AvailabilityCheckV1 {
+  initialDiscoveryStatus: DiscoveryStatus;
+  initialUnavailableReasons: AvailabilityReason[];
+  refreshAttempted: boolean;
+  finalDiscoveryStatus: DiscoveryStatus;
+  finalUnavailableReasons: AvailabilityReason[];
+  recovered: boolean;
+}
+
+function projectAvailabilityCheck(check: AvailabilityCheckV1): AvailabilityCheckV1 {
+  return {
+    initialDiscoveryStatus: check.initialDiscoveryStatus,
+    initialUnavailableReasons: [...check.initialUnavailableReasons],
+    refreshAttempted: check.refreshAttempted,
+    finalDiscoveryStatus: check.finalDiscoveryStatus,
+    finalUnavailableReasons: [...check.finalUnavailableReasons],
+    recovered: check.recovered,
+  };
+}
+
+function rosterAvailabilitySnapshot(
+  response: Awaited<ReturnType<typeof requestJson>>,
+  selectedAgentIds: readonly string[],
+) {
+  if (response.status !== 200 || !selectedAgentIds.length) throw new Error("Isolated room roster check failed.");
+  const discovery = response.json.modelDiscovery;
+  const status =
+    discovery && typeof discovery === "object" && !Array.isArray(discovery)
+      ? (discovery as { status?: unknown }).status
+      : undefined;
+  if (!DISCOVERY_STATUSES.includes(status as DiscoveryStatus)) throw new Error("Invalid closed discovery status.");
+  const entries = response.json.participantAvailability;
+  if (!entries || typeof entries !== "object" || Array.isArray(entries))
+    throw new Error("Invalid closed participant availability.");
+  const availability = entries as Record<string, unknown>;
+  const reasons: AvailabilityReason[] = [];
+  let allAvailable = true;
+  for (const agentId of selectedAgentIds) {
+    const entry = availability[agentId];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new Error("Invalid closed participant availability.");
+    const selected = entry as { available?: unknown; reason?: unknown };
+    if (selected.available === true) continue;
+    if (selected.available !== false || !AVAILABILITY_REASONS.includes(selected.reason as AvailabilityReason))
+      throw new Error("Invalid closed participant availability.");
+    allAvailable = false;
+    reasons.push(selected.reason as AvailabilityReason);
+  }
+  return {
+    status: status as DiscoveryStatus,
+    reasons: [...new Set(reasons)].sort() as AvailabilityReason[],
+    available: allAvailable && (status === "available" || status === "discovery_unsupported"),
+    csrfToken:
+      response.json.access && typeof response.json.access === "object"
+        ? (response.json.access as { kind?: unknown; csrfToken?: unknown })
+        : undefined,
+  };
+}
+
+/** The only recovery is one authenticated catalog refresh before any human prompt. */
+export async function checkIsolatedRosterAvailability(
+  base: string,
+  cookie: string,
+  selectedAgentIds: readonly string[],
+) {
+  const initial = rosterAvailabilitySnapshot(await requestJson(base, "/api/roster", cookie), selectedAgentIds);
+  const initialCheck: AvailabilityCheckV1 = {
+    initialDiscoveryStatus: initial.status,
+    initialUnavailableReasons: initial.reasons,
+    refreshAttempted: false,
+    finalDiscoveryStatus: initial.status,
+    finalUnavailableReasons: initial.reasons,
+    recovered: false,
+  };
+  if (
+    initial.available ||
+    initial.status !== "error" ||
+    initial.reasons.length !== 1 ||
+    initial.reasons[0] !== "runtime_unavailable"
+  )
+    return { available: initial.available, check: initialCheck };
+  if (
+    initial.csrfToken?.kind !== "room-member" ||
+    typeof initial.csrfToken.csrfToken !== "string" ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(initial.csrfToken.csrfToken)
+  )
+    return { available: false, check: initialCheck };
+  const attempted: AvailabilityCheckV1 = { ...initialCheck, refreshAttempted: true };
+  try {
+    const refreshed = await requestJson(
+      base,
+      "/api/model-discovery/refresh",
+      cookie,
+      {},
+      initial.csrfToken.csrfToken,
+      30_000,
+    );
+    if (refreshed.status !== 200) return { available: false, check: attempted };
+    const final = rosterAvailabilitySnapshot(await requestJson(base, "/api/roster", cookie), selectedAgentIds);
+    const available = final.available && final.status === "available";
+    return {
+      available,
+      check: {
+        ...attempted,
+        finalDiscoveryStatus: final.status,
+        finalUnavailableReasons: final.reasons,
+        recovered: available,
+      },
+    };
+  } catch {
+    return { available: false, check: attempted };
+  }
 }
 
 interface CaseResult {
@@ -450,6 +593,7 @@ interface CaseResult {
   judge: JudgeScalarResult[];
   qualityJudge?: Array<{ scenarioId: string; runId: string; outcomes: QualityAxisOutcome[] }>;
   privateReviewRetained: boolean;
+  availabilityCheck: AvailabilityCheckV1;
   study?: NonNullable<LiveScenario["study"]>;
 }
 
@@ -489,6 +633,7 @@ class CaseFailure extends Error {
     readonly category: FailureCategory,
     readonly triggers: readonly LiveScenarioResult[] = [],
     readonly judgeCategory: JudgeFailureCategory | null = null,
+    readonly availabilityCheck?: AvailabilityCheckV1,
   ) {
     super("Isolated live case failed.");
   }
@@ -543,6 +688,7 @@ export function projectCaseFailedEvent(input: {
   completedCases: number;
   triggers: readonly LiveScenarioResult[];
   judgeCategory: JudgeFailureCategory | null;
+  availabilityCheck?: AvailabilityCheckV1;
   study?: NonNullable<LiveScenario["study"]>;
 }) {
   return {
@@ -554,6 +700,7 @@ export function projectCaseFailedEvent(input: {
     completedCases: input.completedCases,
     observedTriggers: input.triggers.map(projectFailedCaseEvidence),
     ...(input.judgeCategory ? { judgeCategory: input.judgeCategory } : {}),
+    ...(input.availabilityCheck ? { availabilityCheck: projectAvailabilityCheck(input.availabilityCheck) } : {}),
     ...(input.study ? { study: input.study } : {}),
   };
 }
@@ -667,6 +814,7 @@ async function runCase(
   const xdgData = path.join(root, "xdg-data");
   let child: ChildProcess | undefined;
   let stage: FailureStage = "fixture";
+  let availabilityCheck: AvailabilityCheckV1 | undefined;
   const triggerResults: LiveScenarioResult[] = [];
   try {
     await mkdir(project, { mode: 0o700 });
@@ -783,13 +931,13 @@ async function runCase(
     if (joined.status !== 201 || !joined.cookie) throw new Error("Isolated room membership failed.");
     const cookie = joined.cookie;
     stage = "availability";
-    const rosterResponse = await requestJson(base, "/api/roster", cookie);
-    if (rosterResponse.status !== 200) throw new Error("Isolated room roster check failed.");
-    const availability = rosterResponse.json.participantAvailability as
-      | Record<string, { available?: boolean }>
-      | undefined;
-    if (roster.some(({ agentId }) => availability?.[agentId]?.available !== true))
-      throw new Error("Selected OpenCode participant is unavailable.");
+    const checked = await checkIsolatedRosterAvailability(
+      base,
+      cookie,
+      roster.map(({ agentId }) => agentId),
+    );
+    availabilityCheck = checked.check;
+    if (!checked.available) throw new Error("Selected OpenCode participant is unavailable.");
     const judgments: JudgeScalarResult[] = [];
     const qualityJudgments: NonNullable<CaseResult["qualityJudge"]> = [];
     const prompts = [
@@ -948,6 +1096,7 @@ async function runCase(
       env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
     });
     if (unchanged.stdout.trim()) throw new Error("Disposable fixture project changed.");
+    if (!availabilityCheck) throw new Error("Isolated room availability proof is missing.");
     return {
       schemaVersion: 1,
       scenarioId: scenario.scenarioId,
@@ -959,6 +1108,7 @@ async function runCase(
       judge: judgments,
       ...(options.judgeRubric === "v2" ? { qualityJudge: qualityJudgments } : {}),
       privateReviewRetained: Boolean(privateDirectory),
+      availabilityCheck: projectAvailabilityCheck(availabilityCheck),
       ...(scenario.study ? { study: scenario.study } : {}),
     };
   } catch (error) {
@@ -969,6 +1119,7 @@ async function runCase(
           failureCategory(error),
           triggerResults,
           error instanceof JudgeFailure ? error.category : null,
+          availabilityCheck,
         );
   } finally {
     await stopProcessGroup(child);
@@ -1090,6 +1241,7 @@ async function main() {
               completedCases: results.length,
               triggers: failure.triggers,
               judgeCategory: failure.judgeCategory,
+              ...(failure.availabilityCheck ? { availabilityCheck: failure.availabilityCheck } : {}),
               ...(scenario.study ? { study: scenario.study } : {}),
             }),
           ),

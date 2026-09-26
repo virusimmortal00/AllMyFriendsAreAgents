@@ -13,6 +13,10 @@ batch's private bundle directory with a repeated `--source-dir`. The CLI uses
 the strict canary parser and complete-batch merger; it rejects missing,
 overlapping, incompatible, or duplicate cases. It also rejects missing or
 duplicate source bundles. All created private files have `0600` permissions.
+Pass the same manifests in the same batch order on every command, since the
+private locator pins that exact collection. For an already completed plan,
+use its previously fixed `studyPlan.planSha256` as the selection seed; for a
+future study, fix the seed before reviewing outcomes.
 
 ```bash
 pnpm exec tsx scripts/conversation-routing-live-review.ts blind \
@@ -20,17 +24,25 @@ pnpm exec tsx scripts/conversation-routing-live-review.ts blind \
   --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
   --output-dir /PRIVATE/blinded-review
 
-pnpm exec tsx scripts/conversation-routing-live-review.ts select \
+pnpm exec tsx scripts/conversation-routing-live-review.ts select-calibration \
   --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
   --map /PRIVATE/blinded-review/blinded-map.json \
-  --seed fictional-review-seed --pairs 12 --output /PRIVATE/blinded-queue.json
+  --seed PLAN_SHA256 --output /PRIVATE/calibration-queue.json \
+  --receipt /PRIVATE/calibration-selection.json
 
 pnpm exec tsx scripts/conversation-routing-live-review.ts pack \
   --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
-  --queue /PRIVATE/blinded-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
+  --queue /PRIVATE/calibration-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
   --blinded-dir /PRIVATE/blinded-review/blinded \
   --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
-  --output /PRIVATE/review.html
+  --output /PRIVATE/calibration.html
+
+pnpm exec tsx scripts/conversation-routing-live-review.ts select-flagged \
+  --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
+  --map /PRIVATE/blinded-review/blinded-map.json \
+  --calibration-receipt /PRIVATE/calibration-selection.json \
+  --seed PLAN_SHA256 --output /PRIVATE/flagged-queue.json \
+  --receipt /PRIVATE/flagged-selection.json
 ```
 
 Open the HTML locally in a browser. Review each card on its own merits. The
@@ -51,7 +63,7 @@ fingerprint. Convert it privately using the locator map and original bundles:
 ```bash
 pnpm exec tsx scripts/conversation-routing-live-review.ts convert \
   --manifest /PRIVATE/batch-1.json --manifest /PRIVATE/batch-2.json \
-  --queue /PRIVATE/blinded-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
+  --queue /PRIVATE/calibration-queue.json --map /PRIVATE/blinded-review/blinded-map.json \
   --blinded-dir /PRIVATE/blinded-review/blinded \
   --source-dir /PRIVATE/batch-1-review --source-dir /PRIVATE/batch-2-review \
   --ratings /PRIVATE/blinded-ratings.json --output /PRIVATE/human-ratings.json
@@ -63,11 +75,25 @@ selected source text again and refuses changed or ambiguous files. The pack
 has a restrictive content security policy, no external assets or network
 requests, no forms, and renders conversation text as text rather than HTML.
 
-`select` samples both arms at the same trigger ordinal, stratifies by study
-factor and agent count, and puts paired cards apart in a seeded blind order.
-It prioritizes low, failed, unassessable, or discordant model judgments while
-retaining ordinary controls. A 12-pair/24-card selection samples **one trigger
-ordinal per selected pair**. It supports trigger-level human calibration and
-spot checking; a multi-trigger block has no complete human A/B block delta
-unless every ordinal in both arms receives a rating. Do not describe this
-sample as a full human evaluation of long arcs or a causal estimate.
+Choose and record the calibration seed before inspecting model judgments or
+reply outcomes. `select-calibration` uses the seed and study design only: it
+selects 12 distinct pairs (four per changed factor), covers each available
+agent-count stratum, then selects one trigger ordinal per pair. Both arms are
+included. The resulting 24 cards are shuffled and paired cards separated;
+the private selection receipt records pair IDs and strata but neither the
+HTML nor rating export contains them. Selection fails if the factor/agent-count
+coverage is insufficient. This balanced calibration sample is **not** a
+population estimate or a full evaluation of long arcs. A multi-trigger block
+has no complete human A/B block delta unless every ordinal in both arms is
+rated.
+
+`select-flagged` is a separate, outcome-conditioned inspection set: up to one
+additional paired trigger per factor where a required target had no visible
+reply. It excludes an identical pair/ordinal already in calibration. The
+private receipt lists factors without an additional eligible trigger. If none
+are eligible, no queue file is created. To review the flagged queue, use the
+same `pack` command with that queue and a distinct HTML output. Convert its
+ratings separately. Keep flagged ratings and their denominator separate from
+the seed-only calibration sample; do not combine them into an unbiased quality
+estimate. The older `select` command remains available for intentionally
+judge-prioritized spot checks, not for the calibration sample.
