@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -58,6 +58,21 @@ describe("self-contained native application build workflow", () => {
     expect(retention).toContain("actions/download-artifact@");
     expect(retention).not.toMatch(/build-native-opencode\.ts build|build:native-application|package:native-application/);
     expect(retention.indexOf("evidence:native-release -- verify")).toBeLessThan(retention.indexOf("actions/upload-artifact@"));
+  });
+
+  it("assesses the packaged macOS runtime before retention", () => {
+    const packageStep = workflow.indexOf("Package the application with pinned private runtimes");
+    const gate = workflow.indexOf("Assess the bundled macOS runtime for Gatekeeper");
+    const upload = workflow.indexOf("Upload this run's self-contained application archive");
+    expect(packageStep).toBeLessThan(gate);
+    expect(gate).toBeLessThan(upload);
+    expect(workflow).toContain("codesign --verify --strict --verbose=2 \"$opencode\"");
+  });
+
+  it("keeps Homebrew publication paused", () => {
+    expect(existsSync(path.join(root, "homebrew/Casks/amfaa.rb"))).toBe(false);
+    expect(existsSync(path.join(root, ".github/workflows/homebrew-formula.yml"))).toBe(false);
+    expect(promotion).not.toContain("bump-homebrew-formula");
   });
 
   it("leaves the independently audited container runtime inputs pinned", () => {

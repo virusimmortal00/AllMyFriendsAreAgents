@@ -98,6 +98,8 @@ describe("native OpenCode artifact build", () => {
     expect(buildSource).toContain('INIT_CWD: checkout');
     expect(buildSource).toContain('["install", "--no-save", "--ignore-scripts"]');
     expect(buildSource).toContain("readFileSync(lockfile).equals(lockedBytes)");
+    expect(buildSource).toContain('run("codesign", ["--force", "--sign", "-", binary])');
+    expect(buildSource).toContain('run("codesign", ["--verify", "--strict", binary])');
   });
 
   it("rejects a target that does not match the native verification host", () => {

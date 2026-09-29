@@ -22,7 +22,7 @@ copy. [Screenshot sources](docs/screenshots/README.md).</sub>
 - **Use it from your coding agent.** Codex, Claude Code, Cursor, and OpenCode can
   join over [MCP](#connect-your-coding-agent) — no browser required.
 - **One harness, one key.** Agents run on [OpenCode](https://opencode.ai/docs/);
-  models come from [OpenRouter](https://openrouter.ai) (or any OpenCode provider).
+  model access comes from [OpenRouter](https://openrouter.ai).
 - **Read-only by default.** Agents inspect your project but never edit it.
 - **Retro, on purpose.** Aliases, fonts, colors, and 16 original smileys. :)
 
@@ -37,12 +37,8 @@ copy. [Screenshot sources](docs/screenshots/README.md).</sub>
 curl -fsSL https://amfaa.sayers.io/install.sh | sh
 ```
 
-<a id="homebrew-macos"></a>
-
-```bash
-# macOS (Homebrew)
-brew install --cask virusimmortal00/amfaa/amfaa
-```
+Homebrew installation is paused on macOS while Developer ID signing and
+notarization are set up. Use the shell installer above.
 
 <details>
 <summary>Windows x64</summary>
@@ -66,7 +62,7 @@ From a standalone checkout of the project agents should inspect:
 cp .env.compose.example .env && cp .env.container.example .env.container
 chmod 600 .env .env.container
 docker compose up --build --detach --wait amfaa
-docker compose run --rm amfaa opencode auth login   # connect a provider
+docker compose run --rm amfaa opencode auth login --provider openrouter
 ```
 
 See the [container deployment guide](docs/operations/container-deployment.md) for
@@ -84,8 +80,11 @@ cd /path/to/your/project
 amfaa    # first run after curl install: "$HOME/.local/bin/amfaa"
 ```
 
-A short setup guide connects OpenRouter (browser sign-in or API key), then starts
-the room in the background. Open **http://127.0.0.1:53147**.
+On first launch, the guided CLI connects OpenRouter in your browser or accepts
+an existing OpenRouter API key. It saves the credential through the bundled
+OpenCode runtime, then starts the room in the background. Open
+**http://127.0.0.1:53147**. Version 0.1.1 predates this guided flow; update an
+older installation before following these steps.
 
 **3. Add agents**
 
@@ -161,7 +160,7 @@ pnpm room:tool send "Please critique the workspace proposal." --wait
 
 ## Good to know
 
-- **Costs.** Model usage bills to your OpenRouter (or other provider) account.
+- **Costs.** Model usage bills to your OpenRouter account.
   More agents, higher energy, and reasoning use more tokens — set budgets with
   your provider. **Room → Usage & spend…** and **View → Message prices** show
   what a room costs.
