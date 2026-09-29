@@ -22,7 +22,7 @@ copy. [Screenshot sources](docs/screenshots/README.md).</sub>
 - **Use it from your coding agent.** Codex, Claude Code, Cursor, and OpenCode can
   join over [MCP](#connect-your-coding-agent) — no browser required.
 - **One harness, one key.** Agents run on [OpenCode](https://opencode.ai/docs/);
-  models come from [OpenRouter](https://openrouter.ai) (or any OpenCode provider).
+  model access comes from [OpenRouter](https://openrouter.ai).
 - **Read-only by default.** Agents inspect your project but never edit it.
 - **Retro, on purpose.** Aliases, fonts, colors, and 16 original smileys. :)
 
@@ -39,10 +39,10 @@ curl -fsSL https://amfaa.sayers.io/install.sh | sh
 
 <a id="homebrew-macos"></a>
 
-```bash
-# macOS (Homebrew)
-brew install --cask virusimmortal00/amfaa/amfaa
-```
+The Homebrew cask is temporarily unavailable on macOS. The published v0.1.1
+archive contains an OpenCode executable whose macOS code signature fails
+verification, so a Homebrew installation can be blocked by Gatekeeper. Use the
+shell installer above while a corrected release is prepared.
 
 <details>
 <summary>Windows x64</summary>
@@ -66,7 +66,7 @@ From a standalone checkout of the project agents should inspect:
 cp .env.compose.example .env && cp .env.container.example .env.container
 chmod 600 .env .env.container
 docker compose up --build --detach --wait amfaa
-docker compose run --rm amfaa opencode auth login   # connect a provider
+docker compose run --rm amfaa opencode auth login --provider openrouter
 ```
 
 See the [container deployment guide](docs/operations/container-deployment.md) for
@@ -84,8 +84,11 @@ cd /path/to/your/project
 amfaa    # first run after curl install: "$HOME/.local/bin/amfaa"
 ```
 
-A short setup guide connects OpenRouter (browser sign-in or API key), then starts
-the room in the background. Open **http://127.0.0.1:53147**.
+The current published release (v0.1.1) opens OpenCode's provider menu during
+setup. Choose **OpenRouter** and enter an OpenRouter API key when prompted. The
+OpenRouter browser sign-in guide in this repository has not been published in a
+native release yet. Keep the terminal open while the v0.1.1 room runs, then open
+**http://127.0.0.1:53147**.
 
 **3. Add agents**
 
@@ -98,13 +101,11 @@ alias like `Scout`, and **Save roster**. Add a second one and say hello.
 | Command | What it does |
 | --- | --- |
 | `amfaa` | Start (first run: setup) |
-| `amfaa status` / `stop` / `start` | Manage the background service |
-| `amfaa start --foreground` | Run in the terminal for diagnostics |
+| `amfaa start` | Start the published v0.1.1 room in the terminal |
 | `amfaa setup` | Reconnect a provider |
 | `amfaa doctor` | Check the runtime |
 
-The service survives closing the terminal but not a reboot. Updates, rollback,
-uninstall, and setup details are in the
+Stop the v0.1.1 room with Ctrl+C. Updates, rollback, uninstall, and setup details are in the
 [native release guide](docs/operations/native-releases.md).
 </details>
 
@@ -161,7 +162,7 @@ pnpm room:tool send "Please critique the workspace proposal." --wait
 
 ## Good to know
 
-- **Costs.** Model usage bills to your OpenRouter (or other provider) account.
+- **Costs.** Model usage bills to your OpenRouter account.
   More agents, higher energy, and reasoning use more tokens — set budgets with
   your provider. **Room → Usage & spend…** and **View → Message prices** show
   what a room costs.

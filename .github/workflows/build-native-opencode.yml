@@ -110,6 +110,18 @@ jobs:
             --opencode-archive "$opencode_archive" \
             --opencode-evidence "$opencode_evidence" \
             --output native-application-artifacts
+      - name: Assess the bundled macOS runtime for Gatekeeper
+        if: startsWith(matrix.target, 'darwin-')
+        shell: bash
+        run: |
+          archive=$(find native-application-artifacts -maxdepth 1 -type f -name '*.tar.gz' -print -quit)
+          test -n "$archive"
+          mkdir -p "$RUNNER_TEMP/amfaa-macos-validation"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/amfaa-macos-validation"
+          opencode=$(find "$RUNNER_TEMP/amfaa-macos-validation" -type f -path '*/runtime/opencode/bin/opencode' -print -quit)
+          test -n "$opencode"
+          codesign --verify --strict --verbose=2 "$opencode"
+          spctl --assess --type execute --verbose=2 "$opencode"
       - name: Upload this run's self-contained application archive
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

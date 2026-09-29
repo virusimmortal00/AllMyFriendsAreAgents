@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = readFileSync(path.join(root, ".github/workflows/build-native-opencode.yml"), "utf8");
 const promotion = readFileSync(path.join(root, ".github/workflows/publish-native-release.yml"), "utf8");
+const homebrew = readFileSync(path.join(root, ".github/workflows/homebrew-formula.yml"), "utf8");
 const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
 
 describe("self-contained native application build workflow", () => {
@@ -58,6 +59,19 @@ describe("self-contained native application build workflow", () => {
     expect(retention).toContain("actions/download-artifact@");
     expect(retention).not.toMatch(/build-native-opencode\.ts build|build:native-application|package:native-application/);
     expect(retention.indexOf("evidence:native-release -- verify")).toBeLessThan(retention.indexOf("actions/upload-artifact@"));
+  });
+
+  it("assesses the packaged macOS runtime before retention and after Homebrew installation", () => {
+    const packageStep = workflow.indexOf("Package the application with pinned private runtimes");
+    const gate = workflow.indexOf("Assess the bundled macOS runtime for Gatekeeper");
+    const upload = workflow.indexOf("Upload this run's self-contained application archive");
+    expect(packageStep).toBeLessThan(gate);
+    expect(gate).toBeLessThan(upload);
+    expect(workflow).toContain("codesign --verify --strict --verbose=2 \"$opencode\"");
+    expect(workflow).toContain("spctl --assess --type execute --verbose=2 \"$opencode\"");
+    expect(homebrew).toContain("codesign --verify --strict --verbose=2 \"$opencode\"");
+    expect(homebrew).toContain("spctl --assess --type execute --verbose=2 \"$opencode\"");
+    expect(homebrew).toContain("\"$(brew --prefix)/bin/amfaa\" doctor");
   });
 
   it("leaves the independently audited container runtime inputs pinned", () => {

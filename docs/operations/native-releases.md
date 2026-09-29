@@ -127,8 +127,11 @@ downstream identities through `amfaa version` and runtime readiness through
 
 ## Homebrew
 
-macOS users can also install through Homebrew (issue #200), on top of the
-same signed `darwin-arm64`/`darwin-x64` artifacts described above:
+The Homebrew cask is temporarily unavailable for macOS users (issue #200).
+The published v0.1.1 archive contains a bundled OpenCode executable whose
+code signature fails `codesign --verify --strict`, and Gatekeeper can block it.
+Do not recommend the cask until a corrected artifact passes the installed
+runtime check on a clean macOS host. The intended command is:
 
 ```sh
 brew install --cask virusimmortal00/amfaa/amfaa
@@ -160,8 +163,9 @@ bookkeeping is redundant under brew).
 2. That PR gets a second, independent gate:
    `.github/workflows/homebrew-formula.yml` runs on any PR touching
    `homebrew/Casks/amfaa.rb` and performs a real `brew install --cask`
-   against the published artifact, then runs the installed launcher and
-   checks its reported version, before the PR is allowed to merge.
+   against the published artifact, verifies the bundled OpenCode code
+   signature and Gatekeeper assessment, runs `amfaa doctor`, and checks the
+   reported version before the PR is allowed to merge.
 3. [`virusimmortal00/homebrew-amfaa`](https://github.com/virusimmortal00/homebrew-amfaa)
    (the actual tap users install from) mirrors that file: its own scheduled
    `sync.yml` workflow pulls it from this repository's `main` branch, lints
@@ -170,10 +174,10 @@ bookkeeping is redundant under brew).
    `GITHUB_TOKEN`, since reading a public file here needs no cross-repository
    credential.
 
-A broken cask never silently reaches users: it either fails to open a PR
-here (lint/audit failure), opens one that never auto-merges (install/run
-failure), or fails the tap's own sync verification instead of getting
-mirrored.
+The v0.1.1 failure showed that installing the cask and invoking `amfaa version`
+were insufficient: neither step executed or assessed the bundled OpenCode
+binary. The signature and runtime checks above cover that gap for future cask
+changes. The published v0.1.1 cask remains affected until replaced.
 
 Remaining follow-up work, out of scope for this change:
 

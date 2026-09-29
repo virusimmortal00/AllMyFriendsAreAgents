@@ -9,17 +9,19 @@ function runInteractive(command: string, args: readonly string[]): Promise<numbe
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "inherit" });
     child.once("error", reject);
-    child.once("exit", (code, signal) => resolve(signal ? 128 : code ?? 1));
+    child.once("exit", (code, signal) => resolve(signal ? 128 : (code ?? 1)));
   });
 }
 
-export async function authenticateWithSelectedOpenCode(options: {
-  resolve?: () => Promise<OpenCodeRuntimeResolution>;
-  run?: AuthenticationRunner;
-} = {}): Promise<number> {
+export async function authenticateWithSelectedOpenCode(
+  options: { resolve?: () => Promise<OpenCodeRuntimeResolution>; run?: AuthenticationRunner } = {},
+): Promise<number> {
   const runtime = await (options.resolve || resolveOpenCodeRuntime)();
-  if (runtime.state !== "ready") throw new Error(`The application-owned OpenCode runtime is unavailable (${runtime.reason}). Run pnpm setup before authenticating.`);
-  return (options.run || runInteractive)(runtime.command, ["auth", "login"]);
+  if (runtime.state !== "ready")
+    throw new Error(
+      `The application-owned OpenCode runtime is unavailable (${runtime.reason}). Run pnpm setup before authenticating.`,
+    );
+  return (options.run || runInteractive)(runtime.command, ["auth", "login", "--provider", "openrouter"]);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
