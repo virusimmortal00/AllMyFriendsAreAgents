@@ -37,12 +37,8 @@ copy. [Screenshot sources](docs/screenshots/README.md).</sub>
 curl -fsSL https://amfaa.sayers.io/install.sh | sh
 ```
 
-<a id="homebrew-macos"></a>
-
-The Homebrew cask is temporarily unavailable on macOS. The published v0.1.1
-archive contains an OpenCode executable whose macOS code signature fails
-verification, so a Homebrew installation can be blocked by Gatekeeper. Use the
-shell installer above while a corrected release is prepared.
+Homebrew installation is paused on macOS while Developer ID signing and
+notarization are set up. Use the shell installer above.
 
 <details>
 <summary>Windows x64</summary>
@@ -84,11 +80,11 @@ cd /path/to/your/project
 amfaa    # first run after curl install: "$HOME/.local/bin/amfaa"
 ```
 
-The current published release (v0.1.1) opens OpenCode's provider menu during
-setup. Choose **OpenRouter** and enter an OpenRouter API key when prompted. The
-OpenRouter browser sign-in guide in this repository has not been published in a
-native release yet. Keep the terminal open while the v0.1.1 room runs, then open
-**http://127.0.0.1:53147**.
+On first launch, the guided CLI connects OpenRouter in your browser or accepts
+an existing OpenRouter API key. It saves the credential through the bundled
+OpenCode runtime, then starts the room in the background. Open
+**http://127.0.0.1:53147**. Version 0.1.1 predates this guided flow; update an
+older installation before following these steps.
 
 **3. Add agents**
 
@@ -101,11 +97,13 @@ alias like `Scout`, and **Save roster**. Add a second one and say hello.
 | Command | What it does |
 | --- | --- |
 | `amfaa` | Start (first run: setup) |
-| `amfaa start` | Start the published v0.1.1 room in the terminal |
+| `amfaa status` / `stop` / `start` | Manage the background service |
+| `amfaa start --foreground` | Run in the terminal for diagnostics |
 | `amfaa setup` | Reconnect a provider |
 | `amfaa doctor` | Check the runtime |
 
-Stop the v0.1.1 room with Ctrl+C. Updates, rollback, uninstall, and setup details are in the
+The service survives closing the terminal but not a reboot. Updates, rollback,
+uninstall, and setup details are in the
 [native release guide](docs/operations/native-releases.md).
 </details>
 

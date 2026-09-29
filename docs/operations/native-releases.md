@@ -127,71 +127,16 @@ downstream identities through `amfaa version` and runtime readiness through
 
 ## Homebrew
 
-The Homebrew cask is temporarily unavailable for macOS users (issue #200).
-The published v0.1.1 archive contains a bundled OpenCode executable whose
-code signature fails `codesign --verify --strict`, and Gatekeeper can block it.
-Do not recommend the cask until a corrected artifact passes the installed
-runtime check on a clean macOS host. The intended command is:
+Homebrew distribution is paused. The v0.1.1 cask remains a historical release,
+but its bundled OpenCode executable fails macOS code-signature verification.
+The main repository no longer publishes a cask or updates the tap during native
+release promotion. The tap has removed its cask and disabled scheduled sync.
 
-```sh
-brew install --cask virusimmortal00/amfaa/amfaa
-```
-
-This installs as a **cask** rather than a formula -- every from-source
-Formula install runs Homebrew's Mach-O linkage-fixing pass unconditionally,
-and that pass fails on this fully self-contained bundle (see
-`homebrew/README.md` for why). The fully qualified `user/repo/cask` form
-above taps [`virusimmortal00/homebrew-amfaa`](https://github.com/virusimmortal00/homebrew-amfaa)
-and trusts only this one cask automatically; modern Homebrew (6.0+) requires
-explicit trust before loading any third-party tap's code, and a bare
-`brew tap` followed by installing a short name needs a separate `brew trust`
-step that the command above skips. See the tap's own README for details, and
-for how `brew upgrade --cask`/`brew uninstall --cask` relate to this
-section's `update`/`rollback`/`uninstall` subcommands (Homebrew replaces the
-whole install directory on upgrade, so the tarball's own rollback
-bookkeeping is redundant under brew).
-
-**This is wired into the release pipeline end to end**, not a manual step:
-
-1. The `bump-homebrew-formula` job at the end of **Publish accepted native
-   release** runs [`scripts/update-homebrew-formula.ts`](../../scripts/update-homebrew-formula.ts)
-   against the manifest it just published, lints and audits the regenerated
-   cask against a throwaway local tap, and -- only if the cask actually
-   changed -- opens a pull request against
-   [`homebrew/Casks/amfaa.rb`](../../homebrew/Casks/amfaa.rb) (this
-   repository's source of truth) and requests auto-merge.
-2. That PR gets a second, independent gate:
-   `.github/workflows/homebrew-formula.yml` runs on any PR touching
-   `homebrew/Casks/amfaa.rb` and performs a real `brew install --cask`
-   against the published artifact, verifies the bundled OpenCode code
-   signature and Gatekeeper assessment, runs `amfaa doctor`, and checks the
-   reported version before the PR is allowed to merge.
-3. [`virusimmortal00/homebrew-amfaa`](https://github.com/virusimmortal00/homebrew-amfaa)
-   (the actual tap users install from) mirrors that file: its own scheduled
-   `sync.yml` workflow pulls it from this repository's `main` branch, lints
-   it, commits it there when it changes, and verifies the published tap
-   installs and runs for real -- using only that repository's own
-   `GITHUB_TOKEN`, since reading a public file here needs no cross-repository
-   credential.
-
-The v0.1.1 failure showed that installing the cask and invoking `amfaa version`
-were insufficient: neither step executed or assessed the bundled OpenCode
-binary. The signature and runtime checks above cover that gap for future cask
-changes. The published v0.1.1 cask remains affected until replaced.
-
-The native build now repairs Bun's stale macOS linker signature with an ad-hoc
-signature before retaining the runtime artifact and verifies the packaged
-executable. This permits the shell installer to ship a code-valid executable;
-it does not confer Gatekeeper trust on a Homebrew-quarantined download. The
-Homebrew gate therefore also requires `spctl --assess` and will remain closed
-until Developer ID signing is available.
-
-Remaining follow-up work, out of scope for this change:
-
-- `gh pr merge --auto` only truly blocks on checks that branch protection
-  marks as required; consider marking **Real brew install and run** (from
-  `homebrew-formula.yml`) as a required status check for `main` so a slow or
-  still-running check can't be raced by auto-merge.
+The native build repairs the stale linker signature with an ad-hoc signature,
+which makes the shell-installed executable code-valid. Apple Gatekeeper does not
+trust an ad-hoc signature on a quarantined Homebrew download. Restoring the cask
+requires Developer ID Application signing, notarization, and clean-host checks
+for both macOS architectures. See [Apple's Developer ID guidance](https://developer.apple.com/developer-id/).
 
 ## Native setup presentation
 
