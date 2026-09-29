@@ -179,6 +179,13 @@ were insufficient: neither step executed or assessed the bundled OpenCode
 binary. The signature and runtime checks above cover that gap for future cask
 changes. The published v0.1.1 cask remains affected until replaced.
 
+The native build now repairs Bun's stale macOS linker signature with an ad-hoc
+signature before retaining the runtime artifact and verifies the packaged
+executable. This permits the shell installer to ship a code-valid executable;
+it does not confer Gatekeeper trust on a Homebrew-quarantined download. The
+Homebrew gate therefore also requires `spctl --assess` and will remain closed
+until Developer ID signing is available.
+
 Remaining follow-up work, out of scope for this change:
 
 - `gh pr merge --auto` only truly blocks on checks that branch protection

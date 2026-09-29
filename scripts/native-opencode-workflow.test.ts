@@ -68,7 +68,6 @@ describe("self-contained native application build workflow", () => {
     expect(packageStep).toBeLessThan(gate);
     expect(gate).toBeLessThan(upload);
     expect(workflow).toContain("codesign --verify --strict --verbose=2 \"$opencode\"");
-    expect(workflow).toContain("spctl --assess --type execute --verbose=2 \"$opencode\"");
     expect(homebrew).toContain("codesign --verify --strict --verbose=2 \"$opencode\"");
     expect(homebrew).toContain("spctl --assess --type execute --verbose=2 \"$opencode\"");
     expect(homebrew).toContain("\"$(brew --prefix)/bin/amfaa\" doctor");

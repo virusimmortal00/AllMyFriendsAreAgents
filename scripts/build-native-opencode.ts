@@ -246,7 +246,15 @@ export function buildNativeTarget(input: { targetId: string; outputDirectory: st
       cwd: checkout,
       env: { ...env, OPENCODE_CHANNEL: "latest", OPENCODE_VERSION: downstream.version },
     });
-    return packageVerifiedExecutable({ context, targetId: target.id, binary: sourceBinaryPath(checkout, target), outputDirectory: input.outputDirectory });
+    const binary = sourceBinaryPath(checkout, target);
+    if (target.os === "darwin") {
+      // Bun's compiled Mach-O can carry a stale linker signature. Sign the
+      // exact executable we retain so macOS can validate its code pages.
+      // Ad-hoc signing does not make a Homebrew-quarantined download trusted.
+      run("codesign", ["--force", "--sign", "-", binary]);
+      run("codesign", ["--verify", "--strict", binary]);
+    }
+    return packageVerifiedExecutable({ context, targetId: target.id, binary, outputDirectory: input.outputDirectory });
   } finally {
     rmSync(checkout, { recursive: true, force: true });
   }
